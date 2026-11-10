@@ -365,7 +365,7 @@ app.include_router(_chat.router)
 # feat/chat-workspace: the workspace's unified conversation list (chat:, obs:, cv:) and its pins/titles; owner-only by
 # omission from PUBLIC, like /api/chat
 from observatory.api import workspace as _ws  # noqa: E402
-_ws.bind(lambda: pool, ESTATE, roster=lambda: set(agent_meta()), charter=lambda n: _charter_path(n))
+_ws.bind(lambda: pool, ESTATE, roster=lambda: set(agent_meta()), charter=lambda n: _charter_path(n), owner=lambda r: owner_call(r))
 app.include_router(_ws.router)
 
 # feat/chat-workspace: the artifact store (a git repo under data/workspace: versions, restore, annotations) and a

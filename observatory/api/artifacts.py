@@ -7,6 +7,8 @@ that agent, an owner edit or restore is a commit by owner. History is never rewr
 
     POST /api/ws/artifacts/open                {path, thread, author?, label?}  import / re-import -> artifact
     GET  /api/ws/artifacts?thread=             the thread's artifacts, newest first
+    GET  /api/ws/artifacts                     THE LIBRARY: every artifact, newest first, + title/author/updated
+    POST /api/ws/artifacts/{id}/export         a path an agent (and chat.readable) can read holding the head's bytes
     GET  /api/ws/artifacts/{id}                artifact
     GET  /api/ws/artifacts/{id}/content?rev=   the raw bytes of a version (head by default)
     POST /api/ws/artifacts/{id}/save           {text, message?}  text/table/code only; 409 when unchanged
@@ -14,6 +16,7 @@ that agent, an owner edit or restore is a commit by owner. History is never rewr
     GET  /api/ws/artifacts/{id}/annotations    {etag, items}
     PUT  /api/ws/artifacts/{id}/annotations    If-Match: <etag>; [annotation...]; 412 when stale
     GET  /api/ws/media?thread=                 every [[file:]] embed in the thread, oldest first
+    GET  /api/ws/media                         every embed in every owner conversation, newest first, + artifact id
 
 THE STORE is <estate>/data/workspace (data/ is gitignored: private to the org), or $ASTRYX_WS_STORE (a dev API points
 it at a scratch dir). `git init` on first write; never a remote. Each commit names its author with -c user.name /
@@ -296,6 +299,63 @@ class Store:
         order = {h: i for i, h in enumerate(self.git("log", "--format=%H").stdout.decode().split())}
         return sorted(arts, key=lambda a: order.get(a["head"], len(order)))   # newest head first (ts ties in a second)
 
+    def list_all(self) -> list[dict]:
+        """Every artifact (the library), newest head first, from ONE git log (not a log per artifact), each with
+        `author` (who made v1), `updated` (the head's time) on top of the artifact shape."""
+        if not self.ready():
+            return []
+        out = self.git("log", "--format=%x1e%H%x1f%h%x1f%an%x1f%aI%x1f%s", "--name-only").stdout.decode(errors="replace")
+        by: dict[str, list[list[str]]] = {}
+        order: dict[str, int] = {}
+        for chunk in out.split("\x1e")[1:]:
+            head, _, files = chunk.partition("\n")
+            parts = head.split("\x1f")
+            if len(parts) != 5:
+                continue
+            order.setdefault(parts[0], len(order))
+            for f in files.splitlines():
+                if f.strip():
+                    by.setdefault(f.strip(), []).append(parts)
+        arts = []
+        for aid, e in self.index().items():
+            if not (ID_RE.fullmatch(aid) and isinstance(e, dict) and e.get("path")):
+                continue
+            rows = by.get(e["path"], [])
+            vs = [{"rev": h, "short": sh, "n": len(rows) - i, "author": a, "ts": t, "message": m}
+                  for i, (h, sh, a, t, m) in enumerate(rows)]
+            try:
+                size = (self.root / e["path"]).stat().st_size
+            except OSError:
+                continue                            # indexed but gone from the tree: not a file anyone can open
+            arts.append({"id": aid, "thread": e.get("thread", ""), "name": e.get("name", ""), "kind": kind_of(e.get("name", "")),
+                         "path_in_store": e["path"], "size": size, "head": vs[0]["rev"] if vs else None, "versions": vs,
+                         "author": vs[-1]["author"] if vs else None, "updated": vs[0]["ts"] if vs else None})
+        return sorted(arts, key=lambda x: order.get(x["head"], len(order)))
+
+    def export(self, aid: str, media: Path) -> dict:
+        """A readable path holding the head's bytes, for a [[file:]] embed an AGENT will read (a project's pinned
+        files ride a project chat's first message). The source it was imported from, while that still holds exactly
+        these bytes; else a snapshot under <media>/upload/ named by the bytes' hash (the same head -> the same file,
+        written once), with the artifact's own extension. Nothing outside the store and the media dir is touched."""
+        e = self.entry(aid)
+        data, name, _ = self.content(aid)
+        sha = hashlib.sha256(data).hexdigest()
+        srcs = self.sources().get(aid)
+        for src, h in (srcs.items() if isinstance(srcs, dict) else ()):
+            p = _chat.readable(src) if h == sha else None
+            try:
+                if p is not None and hashlib.sha256(p.read_bytes()).hexdigest() == sha:
+                    return {"id": aid, "name": name, "path": str(p)}
+            except OSError:
+                continue
+        ext = PurePosixPath(e["name"]).suffix.lower()
+        ext = ext if re.fullmatch(r"\.[a-z0-9]{1,5}", ext) else ".bin"
+        dest = Path(media) / "upload" / f"{sha[:32]}{ext}"
+        with self.lock:
+            if not dest.is_file():
+                atomic_write(dest, data, mode=0o640)
+        return {"id": aid, "name": name, "path": str(dest.resolve())}
+
     def version(self, path: str, rev: str | None) -> dict:
         vs = self.versions(path)
         if not vs:
@@ -469,10 +529,53 @@ async def art_open(body: Open):
 
 
 @router.get("/api/ws/artifacts")
-async def art_list(thread: str = ""):
-    if not valid_thread(thread):
-        return JSONResponse({"error": "a thread is required"}, status_code=400)
-    return await _run(store().list, thread)
+async def art_list(request: Request, thread: str | None = None):
+    """?thread= -> that thread's artifacts; no thread -> THE LIBRARY: every artifact, each with its conversation's
+    `title` (a project's knowledge, thread project:<id>, is titled by the project)."""
+    if thread is not None:
+        if not valid_thread(thread):
+            return JSONResponse({"error": "a thread is required"}, status_code=400)
+        return await _run(store().list, thread)
+    arts = await _run(store().list_all)
+    if isinstance(arts, Response):
+        return arts
+    titles = await thread_titles(request, {a["thread"] for a in arts})
+    return [{**a, "title": titles.get(a["thread"]) or a["thread"]} for a in arts]
+
+
+async def thread_titles(request: Request, threads: set[str]) -> dict[str, str]:
+    """Each conversation's name as the sidebar shows it (workspace.derive_title over the same inputs), a project's
+    knowledge thread named by its project. Best effort: a thread the database can't name keeps its id."""
+    from observatory.api import workspace as _ws
+    out: dict[str, str] = {}
+    projects = {p.get("id"): p.get("name") for p in _ws._projects() if isinstance(p, dict)}
+    for t in threads:
+        if t.startswith("project:") and projects.get(t[8:]):
+            out[t] = projects[t[8:]]
+    convo = sorted(t for t in threads if _ws.surface_of(t))
+    if not convo:
+        return out
+    try:
+        pool = _get_pool() if _get_pool else request.app.state.pool
+        rows = await pool.fetch(
+            "SELECT thread, (array_agg(left(" + _ws._BODY + ", 400) ORDER BY id) FILTER (WHERE from_agent = 'owner'))[1] "
+            "AS first_owner, array_agg(DISTINCT from_agent) || array_agg(DISTINCT to_agent) AS parties "
+            "FROM messages WHERE thread = ANY($1::text[]) GROUP BY thread", convo)
+    except Exception:                               # noqa: BLE001 — no database: ids stand in for titles
+        return out
+    meta, roster = _ws.read_meta(), set(_ws._roster())
+    for r in rows:
+        t = r["thread"]
+        agents = _ws.agents_of(t, list(r["parties"] or []), roster)
+        out[t] = _ws.derive_title(t, (meta.get(t) or {}).get("title"), r["first_owner"], None, agents)
+    return out
+
+
+@router.post("/api/ws/artifacts/{aid}/export")
+async def art_export(aid: str):
+    if _chat.MEDIA is None:
+        return JSONResponse({"error": "no media dir"}, status_code=503)
+    return await _run(store().export, aid, _chat.MEDIA)
 
 
 @router.get("/api/ws/artifacts/{aid}")
@@ -527,11 +630,36 @@ async def art_annotations_put(aid: str, request: Request):
     return JSONResponse(got, headers={"ETag": f'"{got["etag"]}"'})
 
 
+def library_media(rows: list[dict], index: dict) -> list[dict]:
+    """GET /api/ws/media without a thread: every embed in the owner's conversations, newest first, ONE entry per
+    (thread, file) at its newest mention, each with `thread` and `artifact` (its id when the store already holds it,
+    else None: the library offers it as not opened yet)."""
+    seen, out = set(), []
+    for r in sorted(rows, key=lambda r: r["id"], reverse=True):
+        for m in parse_media([r]):
+            key = (r.get("thread"), m["path"])
+            if key in seen:
+                continue
+            seen.add(key)
+            aid = artifact_id(r.get("thread") or "", m["name"])
+            out.append({**m, "thread": r.get("thread"), "artifact": aid if aid in index else None})
+    return out
+
+
+MEDIA_ALL_SQL = ("SELECT id, ts, from_agent, thread, body FROM messages "
+                 "WHERE (thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%') AND body LIKE '%[[file:%' "
+                 "AND (from_agent = 'owner' OR to_agent = 'owner' OR thread LIKE 'chat:%') ORDER BY id DESC LIMIT 2000")
+
+
 @router.get("/api/ws/media")
-async def ws_media(request: Request, thread: str = ""):
+async def ws_media(request: Request, thread: str | None = None):
+    pool = _get_pool() if _get_pool else request.app.state.pool
+    if thread is None:
+        rows = [dict(r) for r in await pool.fetch(MEDIA_ALL_SQL)]
+        idx = await asyncio.to_thread(lambda: store().index() if store().ready() else {})
+        return library_media(rows, idx)
     if not valid_thread(thread):
         return JSONResponse({"error": "a thread is required"}, status_code=400)
-    pool = _get_pool() if _get_pool else request.app.state.pool
     rows = await pool.fetch("SELECT id, ts, from_agent, body FROM messages WHERE thread = $1 AND body LIKE '%[[file:%' "
                             "ORDER BY id LIMIT 5000", thread)
     return parse_media([dict(r) for r in rows])

@@ -44,7 +44,9 @@ export const FILE_EMBED = /\[\[file:([^\]\n]+)\]\](?: \(([^)\n]{1,120})\))?/g   
 export interface Embed { path: string; label?: string }
 export function embeds(body: string): Embed[] { return [...body.matchAll(FILE_EMBED)].map((m) => ({ path: m[1].trim(), label: m[2] })) }
 /* an annotation ask's [[ann:<id>]] marker (artifacts/annotate/ask.ts) is the margin's, never the reader's */
-export function stripEmbeds(body: string): string { return body.replace(FILE_EMBED, '').replace(/\s*\[\[ann:[\w.-]{1,80}\]\]/g, '').replace(/^\[chat with [^\]]*\]\n/, '').trim() }
+/* a project chat's first message opens with the project's context block (projects/context.ts): the agents', hidden here */
+export const PROJECT_BLOCK = /^\[project: [^\]\n]{1,80}\]\n(?:[\s\S]*?\n\[\/project\]\n?|[\s\S]*$)/
+export function stripEmbeds(body: string): string { return body.replace(FILE_EMBED, '').replace(/\s*\[\[ann:[\w.-]{1,80}\]\]/g, '').trimStart().replace(PROJECT_BLOCK, '').replace(/^\[chat with [^\]]*\]\n/, '').trim() }
 export const fileUrl = (path: string) => `/api/chat/file?path=${encodeURIComponent(path)}`
 export function kindOf(path: string): 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'other' {
   const e = path.toLowerCase().split('.').pop() ?? ''
@@ -89,7 +91,12 @@ export async function upload(file: Blob, name: string): Promise<Uploaded> {
 }
 
 /* ------------------------------------------------------------------------------------------------- projects */
-export interface Project { id: string; name: string; brief: string; agents: string[]; threads: string[] }
+/* iteration 5: a project = its instructions (the brief its team works under), its TEAM, its conversations (any owner
+   surface), its pinned files (artifact ids); created/updated are stamped by the server. Logic: projects/model.ts */
+export interface Project {
+  id: string; name: string; instructions: string; agents: string[]; threads: string[]; files: string[]
+  color?: string | null; emoji?: string | null; created?: string | null; updated?: string | null; missing?: string[]
+}
 export interface Projects { etag: string; projects: Project[] }
 export const loadProjects = () => api<Projects>('/chat/projects')
 export async function saveProjects(etag: string, projects: Project[]): Promise<Projects> {

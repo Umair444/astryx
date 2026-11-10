@@ -4,13 +4,22 @@ import AgentFace from '../../components/AgentFace'
 import { GROUPS, SURFACE_LABEL, groupOf, type Group, type WsThread } from '../data'
 import type { Project } from '../model'
 import { I } from '../icons'
+import { FilterChip, MoveItems, Nav, ProjectRows, type View } from '../projects/Sidebar'
 
 /* THE CONVERSATION LIST: every conversation the owner has with agents, from any surface (chat, a floor desk, a
    canvas), grouped Pinned / Today / Yesterday / This week / Earlier. A row is its title, its agents' faces and
    "agent · age"; a thread an agent is working on right now carries a 2px bar in that agent's colour. Pin and rename
    live in the row's menu (and rename on double-click), both stored server-side (PUT /api/ws/threads/meta). */
 
-export default function ConversationList({ threads, loaded, current, live, projects, project, onGo, onNew, onProject, onPin, onRename, onClose, className = '' }: {
+export default function ConversationList({ threads, loaded, current, live, projects, project, onGo, onNew, onProject, onPin, onRename, onClose, className = '', unread, view = 'thread', filter = null, onFilter, onLibrary, onProjects, onNewProject, onMove }: {
+  view?: View                                  // which page is open (the nav marks it)
+  filter?: string | null                       // a project the list is focused on
+  onFilter?: (id: string | null) => void
+  onLibrary?: () => void
+  onProjects?: () => void
+  onNewProject?: () => void
+  onMove?: (t: WsThread, project: string | null) => void
+  unread?: Set<string>                         // threads with an agent reply the owner hasn't opened (chat/live.ts)
   threads: WsThread[]
   loaded: boolean
   current: string | null
@@ -35,12 +44,13 @@ export default function ConversationList({ threads, loaded, current, live, proje
     const hit = (t: WsThread) => !s || t.title.toLowerCase().includes(s) || t.preview.toLowerCase().includes(s)
       || t.agents.some((a) => a.includes(s) || displayName(a).toLowerCase().includes(s))
     const by = new Map<Group, WsThread[]>()
-    for (const t of threads.filter(hit)) {
+    const only = filter ? new Set(projects.find((p) => p.id === filter)?.threads ?? []) : null
+    for (const t of threads.filter((x) => hit(x) && (!only || only.has(x.thread)))) {
       const g = groupOf(t)
       by.set(g, [...(by.get(g) ?? []), t])
     }
     return GROUPS.filter((g) => by.has(g)).map((g) => [g, by.get(g)!] as const)
-  }, [threads, q])
+  }, [threads, q, filter, projects])
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null) }
@@ -66,30 +76,20 @@ export default function ConversationList({ threads, loaded, current, live, proje
         </label>
       </div>
 
+      {onLibrary && onProjects && <Nav view={view} onLibrary={onLibrary} onProjects={onProjects} />}
+      {filter && projects.find((p) => p.id === filter) && <FilterChip p={projects.find((p) => p.id === filter)!} onClear={() => onFilter?.(null)} />}
       <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-4" onScroll={() => menu && setMenu(null)}>
-        {(projects.length > 0) && !q && (
-          <section className="mb-1">
-            <div className="ws-label px-2.5 pt-2 pb-1">Projects</div>
-            {projects.map((p) => (
-              <button key={p.id} onClick={() => onProject(p.id)} aria-current={project === p.id && !current}
-                className="ws-row w-full flex items-center gap-2.5 rounded-[10px] px-2.5 py-[7px] text-left">
-                <span className="w-6 h-6 rounded-[8px] grid place-items-center bg-[color-mix(in_srgb,var(--t-accent)_12%,transparent)] text-cyan shrink-0">{I.folder('w-3.5 h-3.5')}</span>
-                <span className="text-[13.5px] text-ink truncate flex-1">{p.name}</span>
-                <span className="flex -space-x-1.5">{p.agents.slice(0, 3).map((a) => <AgentFace key={a} name={a} size={16} />)}</span>
-              </button>
-            ))}
-          </section>
-        )}
-
+        {!q && <ProjectRows projects={projects} threads={threads} active={view === 'project' ? project : null} filter={filter} onOpen={onProject} onNew={() => onNewProject?.()} onFilter={(id) => onFilter?.(id)} />}
         {groups.map(([g, rows]) => (
           <section key={g} className="mb-1">
             <div className="ws-label px-2.5 pt-3 pb-1">{g}</div>
             {rows.map((t) => (
-              <Row key={t.thread} t={t} current={t.thread === current} live={live[t.thread] ?? null}
+              <Row key={t.thread} t={t} current={t.thread === current} live={live[t.thread] ?? null} unread={!!unread?.has(t.thread)}
                 editing={editing === t.thread} menuOpen={menu === t.thread}
                 onGo={() => onGo(t.thread)} onMenu={() => setMenu((m) => (m === t.thread ? null : t.thread))}
                 onEdit={() => { setMenu(null); setEditing(t.thread) }}
                 onPin={() => { setMenu(null); onPin(t) }}
+                move={onMove ? <MoveItems thread={t.thread} projects={projects} onMove={(to) => { setMenu(null); onMove(t, to) }} /> : null}
                 onRename={(title) => { setEditing(null); if (title !== t.title) onRename(t, title) }}
                 onCancel={() => setEditing(null)} />
             ))}
@@ -105,8 +105,8 @@ export default function ConversationList({ threads, loaded, current, live, proje
   )
 }
 
-function Row({ t, current, live, editing, menuOpen, onGo, onMenu, onEdit, onPin, onRename, onCancel }: {
-  t: WsThread; current: boolean; live: string | null; editing: boolean; menuOpen: boolean
+function Row({ t, current, live, unread, editing, menuOpen, move, onGo, onMenu, onEdit, onPin, onRename, onCancel }: {
+  t: WsThread; current: boolean; live: string | null; unread: boolean; editing: boolean; menuOpen: boolean; move: React.ReactNode
   onGo: () => void; onMenu: () => void; onEdit: () => void; onPin: () => void; onRename: (title: string) => void; onCancel: () => void
 }) {
   const [v, setV] = useState(t.title)
@@ -131,7 +131,8 @@ function Row({ t, current, live, editing, menuOpen, onGo, onMenu, onEdit, onPin,
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-1.5">
               {t.pinned && <span className="text-ink-mute shrink-0" title="pinned">{I.pin('w-3 h-3')}</span>}
-              <span className={`block truncate text-[13.5px] leading-[1.3] ${current ? 'text-ink font-medium' : 'text-ink'}`}>{t.title}</span>
+              <span className={`block truncate text-[13.5px] leading-[1.3] ${current || unread ? 'text-ink font-medium' : 'text-ink'}`}>{t.title}</span>
+              {unread && <span className="ws-unread ml-auto" role="img" aria-label="new reply" title="New reply" />}
             </span>
             <span className="block truncate text-[11.5px] text-ink-mute leading-[1.4] mt-[1px]">
               {live ? <span className="text-cyan">{displayName(live)} is working</span> : <>{who} · {fmtAgo(t.last_ts)}</>}
@@ -147,9 +148,10 @@ function Row({ t, current, live, editing, menuOpen, onGo, onMenu, onEdit, onPin,
         </button>
       )}
       {menuOpen && (
-        <div className="ws-menu absolute right-1.5 top-[calc(100%-4px)] z-30 w-40 p-1" role="menu">
+        <div className="ws-menu absolute right-1.5 top-[calc(100%-4px)] z-30 w-52 p-1" role="menu">
           <button role="menuitem" onClick={onPin} className="ws-row w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] text-ink">{I.pin('w-3.5 h-3.5')}{t.pinned ? 'Unpin' : 'Pin'}</button>
           <button role="menuitem" onClick={onEdit} className="ws-row w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] text-ink">{I.edit('w-3.5 h-3.5')}Rename</button>
+          {move}
         </div>
       )}
     </div>

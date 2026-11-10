@@ -5,6 +5,12 @@ import { KindIcon, KIND_WORD } from './kinds'
    A click opens it in the artifact panel, attributed to whoever posted the message. */
 export interface OpenRequest { path: string; label?: string; from: string }
 
+/* motion follows the action (DESIGN.md): the panel grows in from the height of the chip that opened it */
+export function originFrom(el: Element) {
+  const r = el.getBoundingClientRect()
+  document.documentElement.style.setProperty('--ws-from-y', `${Math.round(r.top + r.height / 2)}px`)
+}
+
 export default function FileChip({ path, label, from, active, onOpen }: {
   path: string
   label?: string
@@ -15,7 +21,7 @@ export default function FileChip({ path, label, from, active, onOpen }: {
   const name = nameOf(path, label)
   const kind = kindOfName(name)
   return (
-    <button onClick={() => onOpen({ path, label, from })} title={`Open ${name} beside the chat`} aria-pressed={active}
+    <button onClick={(e) => { originFrom(e.currentTarget); onOpen({ path, label, from }) }} title={`Open ${name} beside the chat`} aria-pressed={active}
       className="ws-chip group inline-flex items-center gap-2.5 max-w-[300px] rounded-[12px] pl-2 pr-3 py-1.5 text-left">
       <span className="ws-chip-icon shrink-0 grid place-items-center w-8 h-8 rounded-[9px]"><KindIcon kind={kind} className="w-[17px] h-[17px]" /></span>
       <span className="min-w-0 flex flex-col leading-tight">

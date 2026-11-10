@@ -11,6 +11,9 @@ holds the census).
     GET  /api/chat/file?path=        a file under the media dir or an agent home, for the side panel (C4)
     GET  /api/chat/projects          {etag, projects}                          (C5)
     PUT  /api/chat/projects          If-Match: <etag>; the whole list (one writer: hostfile.atomic_write)
+                                     a project = name, instructions (the brief its team works under), agents (the
+                                     team), threads (any owner conversation: chat:/obs:/cv:), files (artifact ids
+                                     pinned as its knowledge), color/emoji; created/updated are stamped HERE
     POST /api/chat/dictate/session   an ephemeral TRANSCRIPTION-only realtime secret (C6), spent through voice_mint
     POST /api/chat/dictate/usage     connected seconds for that session
 
@@ -147,17 +150,32 @@ async def file(request: Request, path: str = ""):
 
 
 # ----------------------------------------------------------------------------------------------------- projects
+# Iteration 5 widened a project from {name, brief, agents, chat: threads} to what claude.ai/ChatGPT call a project
+# plus a TEAM: `instructions` (the old `brief`, read as it until rewritten), pinned artifact `files`, any owner thread
+# kind, a colour/emoji, and server-stamped created/updated. An old file reads unchanged; the next write upgrades it.
+PROJECT_COLORS = ("violet", "blue", "teal", "green", "amber", "orange", "rose", "slate")
+PROJECT_THREADS = ("chat:", "obs:", "cv:")         # the owner's three surfaces (workspace.SURFACES)
+INSTRUCTIONS_MAX = 20000
+FILES_MAX = 200
+
+
 class Project(BaseModel):
     id: str
     name: str
-    brief: str = ""
+    instructions: str = ""
+    brief: str = ""                  # the pre-iteration-5 name of `instructions`: accepted on a write, never stored
     agents: list[str] = []
     threads: list[str] = []
+    files: list[str] = []            # artifact ids (observatory/api/artifacts.py: 16 hex)
+    color: str | None = None
+    emoji: str | None = None
+    created: str | None = None       # read-side: the server stamps both, a client's value is ignored
+    updated: str | None = None
     missing: list[str] = []          # D6': read-side only; never stored
 
 
 def _valid(projects: list[Project]) -> str:
-    seen = set()
+    seen, held = set(), set()
     for p in projects:
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,40}", p.id):
             return f"project id {p.id!r} must be lowercase letters, digits and dashes"
@@ -168,14 +186,48 @@ def _valid(projects: list[Project]) -> str:
             return "a project needs a name of at most 80 characters"
         if any(not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,40}", a) for a in p.agents):
             return "an agent name isn't valid"
-        if any(not t.startswith("chat:") or len(t) > 120 for t in p.threads):
-            return "a project holds only chat threads"
+        if any(not t.startswith(PROJECT_THREADS) or len(t) > 200 or not t.split(":", 1)[1] or re.search(r"[\x00-\x1f]", t)
+               for t in p.threads):
+            return "a project holds only conversations (chat:, obs: or cv: threads)"
+        if held & set(p.threads):
+            return "a conversation sits in one project at most"
+        held |= set(p.threads)
+        if len(p.files) > FILES_MAX or any(not re.fullmatch(r"[0-9a-f]{16}", f) for f in p.files):
+            return "a project's files are artifact ids"
+        if len(p.instructions) > INSTRUCTIONS_MAX or len(p.brief) > INSTRUCTIONS_MAX:
+            return f"instructions run to at most {INSTRUCTIONS_MAX} characters"
+        if p.color is not None and p.color not in PROJECT_COLORS:
+            return "not a project colour"
+        if p.emoji is not None and (len(p.emoji) > 8 or re.search(r"[\x00-\x20A-Za-z0-9<>&\"']", p.emoji)):
+            return "an emoji is one emoji"
     return ""
+
+
+def upgrade(p: dict) -> dict:
+    """A stored project as the current shape: `brief` read as `instructions`, the new fields defaulted."""
+    out = {"id": p.get("id"), "name": p.get("name"), "instructions": p.get("instructions") or p.get("brief") or "",
+           "agents": list(p.get("agents") or []), "threads": list(p.get("threads") or []), "files": list(p.get("files") or []),
+           "color": p.get("color"), "emoji": p.get("emoji"), "created": p.get("created"), "updated": p.get("updated")}
+    return out
+
+
+def stamp(new: list[dict], old: list[dict], now: str) -> list[dict]:
+    """created/updated are the SERVER's: a project keeps its stored `created` (or gets `now` when it is new) and its
+    stored `updated` unless what the owner can see of it changed."""
+    before = {p.get("id"): upgrade(p) for p in old if isinstance(p, dict)}
+    out = []
+    for p in new:
+        was = before.get(p["id"])
+        same = was is not None and all(was.get(k) == p.get(k) for k in p if k not in ("created", "updated"))
+        out.append({**p, "created": (was or {}).get("created") or now,
+                    "updated": ((was or {}).get("updated") or now) if same else now})
+    return out
 
 
 def _read_projects() -> list[dict]:
     try:
-        return json.loads(projects_file().read_text()).get("projects", [])
+        raw = json.loads(projects_file().read_text()).get("projects", [])
+        return [upgrade(p) for p in raw if isinstance(p, dict)] if isinstance(raw, list) else []
     except (OSError, ValueError, AttributeError):
         return []
 
@@ -185,10 +237,7 @@ async def projects_get():
     """D6': every read is checked against the LIVE roster: an agent retired since the project was made is named in
     `missing`, so the page shows the gap instead of a project that quietly fans out to nobody."""
     live = _roster()
-    out = []
-    for p in _read_projects():
-        if isinstance(p, dict):
-            out.append({**p, "missing": [a for a in p.get("agents", []) if a not in live]})
+    out = [{**p, "missing": [a for a in p["agents"] if a not in live]} for p in _read_projects()]
     return {"etag": etag(projects_file()), "projects": out}
 
 
@@ -200,8 +249,14 @@ async def projects_put(body: list[Project], request: Request):
     why = _valid(body)
     if why:
         return JSONResponse({"error": why}, status_code=400)
-    keep = [p.model_dump(exclude={"missing"}) for p in body]
-    text = json.dumps({"projects": keep}, indent=2) + "\n"
+    keep = []
+    for p in body:
+        d = p.model_dump(exclude={"missing", "brief", "created", "updated"})
+        d["instructions"] = p.instructions or p.brief
+        d["name"] = p.name.strip()
+        keep.append(d)
+    keep = stamp(keep, _read_projects(), time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    text = json.dumps({"projects": keep}, indent=2, ensure_ascii=False) + "\n"
     try:
         new = atomic_write(projects_file(), text, if_match=tag)
     except Conflict:

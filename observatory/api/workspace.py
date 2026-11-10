@@ -14,6 +14,10 @@ A thread is listed only when the owner is a party of it (an invitee's canvas cha
     GET /api/ws/threads         the unified list: thread, title, agents, surface, last_ts, preview, count, pinned, project
     PUT /api/ws/threads/meta    {thread, title?, pinned?}: a custom title / a pin, stored in <estate>/chat/threads.json
     GET /api/ws/agents          each agent's role (its charter's italic subtitle) and its last word to the owner
+    GET /api/ws/handoffs        ?thread=: the turns that answered here but were STARTED by another agent's message
+                                (a handoff into the conversation), each with that message (the payload)
+    POST /api/ws/agents/{name}/interrupt   Stop: one Escape keystroke into the agent's tmux pane (its turn halts;
+                                the session, its context and the wire are untouched)
 
 OWNER-ONLY BY OMISSION, like chat.py: none of these paths is in main.PUBLIC, so the default-deny gate answers 403 to
 anyone without the owner key before a handler runs. Writes go through hostfile.atomic_write with the etag read (one
@@ -22,8 +26,10 @@ tests/test_ws_threads.py holds them without a database.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -38,20 +44,24 @@ _get_pool = None
 ESTATE: Path | None = None
 _roster = lambda: set()                            # noqa: E731 — the live agent names (main.agent_meta)
 _charter = lambda name: None                       # noqa: E731 — name -> its charter Path (main._charter_path)
+_owner = lambda request: False                     # noqa: E731 — main.owner_call; unbound = nobody (deny by default)
 
 SURFACES = {"chat:": "chat", "obs:": "floor", "cv:": "canvas"}
 TITLE_MAX = 80
 PREVIEW_MAX = 140
 
 
-def bind(get_pool, estate: Path, roster=None, charter=None) -> None:
-    """The host app hands over its pool getter, its estate, its roster and its charter resolver (read at call time)."""
-    global _get_pool, ESTATE, _roster, _charter
+def bind(get_pool, estate: Path, roster=None, charter=None, owner=None) -> None:
+    """The host app hands over its pool getter, its estate, its roster, its charter resolver and its owner check
+    (read at call time)."""
+    global _get_pool, ESTATE, _roster, _charter, _owner
     _get_pool, ESTATE = get_pool, Path(estate)
     if roster is not None:
         _roster = roster
     if charter is not None:
         _charter = charter
+    if owner is not None:
+        _owner = owner
 
 
 def meta_file() -> Path:
@@ -69,20 +79,24 @@ def surface_of(thread: str | None) -> str | None:
 
 _EMBED = re.compile(r"\[\[file:[^\]\n]+\]\](?: \([^)\n]{1,120}\))?|\[\[ann:[^\]\n]{1,120}\]\]")   # + an ask-the-margin marker
 _TEAM = re.compile(r"^\[chat with [^\]\n]*\]\n?")                  # model.bodyFor's first line
+# a project chat's first message opens with the project's context (web/src/chat/projects/context.ts):
+# "[project: <name>]\n<instructions + pinned files>\n[/project]\n" — the agents', never the reader's; a body cut
+# short before the close (a 400-char preview) loses the whole block
+_PROJECT = re.compile(r"^\[project: [^\]\n]{1,80}\]\n(?:[\s\S]*?\n\[/project\]\n?|[\s\S]*$)")
 _CANVAS = re.compile(r"^\[canvas #\d+[^\]\n]*\]\s*")               # the canvas shell's context prefix
 _BRIEF = re.compile(r'^NEW CANVAS #\d+\s*\W\s*"([^"]{1,80})"')     # the canvas bridge's first message to a painter
 
 
 def clean(body: str | None) -> str:
     """A body as a person reads it in a list: no file embeds, no routing prefixes, whitespace folded."""
-    s = _EMBED.sub("", body or "")
+    s = _PROJECT.sub("", _EMBED.sub("", body or "").lstrip())
     s = _TEAM.sub("", s.lstrip())
     s = _CANVAS.sub("", s)
     return re.sub(r"\s+", " ", s).strip()
 
 
 def first_line(body: str | None) -> str:
-    s = _TEAM.sub("", _EMBED.sub("", body or "").lstrip())
+    s = _TEAM.sub("", _PROJECT.sub("", _EMBED.sub("", body or "").lstrip()).lstrip())
     s = _CANVAS.sub("", s)
     for line in s.splitlines():
         if line.strip():
@@ -268,10 +282,14 @@ def _pool(request: Request):
 
 
 # ------------------------------------------------------------------------------------------------------ routes
-THREADS_SQL = """
+# a project chat's context block is cut off in SQL, before the 400-char clip, so the title and the preview are the
+# owner's own words however long the project's instructions run
+_BODY = "CASE WHEN strpos(body, E'\\n[/project]\\n') > 0 AND body LIKE '[project: %' " \
+        "THEN substr(body, strpos(body, E'\\n[/project]\\n') + 12) ELSE body END"
+THREADS_SQL = f"""
 SELECT thread, count(*) AS count, max(ts) AS last_ts,
-       (array_agg(left(body, 400) ORDER BY id) FILTER (WHERE from_agent = 'owner'))[1] AS first_owner,
-       (array_agg(left(body, 400) ORDER BY id DESC))[1] AS last_body,
+       (array_agg(left({_BODY}, 400) ORDER BY id) FILTER (WHERE from_agent = 'owner'))[1] AS first_owner,
+       (array_agg(left({_BODY}, 400) ORDER BY id DESC))[1] AS last_body,
        (array_agg(from_agent ORDER BY id DESC))[1] AS last_from,
        array_agg(DISTINCT from_agent) || array_agg(DISTINCT to_agent) AS parties
   FROM messages
@@ -340,3 +358,90 @@ async def ws_agents(request: Request):
                     "last_thread": r["thread"] if r else None,
                     "last_said": clip(clean(r["body"]), PREVIEW_MAX) if r else ""})
     return out
+
+
+# ------------------------------------------------------------------------------------------------------ handoffs
+HANDOFFS_SQL = """
+SELECT DISTINCT ON (t.id) t.id AS turn_id, t.agent, m.id AS at,
+       i.id, i.ts, i.from_agent, i.to_agent, i.thread, i.intent, left(i.body, $2) AS body
+  FROM messages m
+  JOIN turns t ON t.id = m.turn_id
+  JOIN messages i ON i.id = t.input_msg_id
+ WHERE m.thread = $1 AND i.from_agent <> 'owner' AND i.thread IS DISTINCT FROM $1
+ ORDER BY t.id, m.id
+ LIMIT 200"""
+HANDOFF_BODY_MAX = 4000
+
+
+def handoffs_of(rows: list[dict], roster: set[str]) -> list[dict]:
+    """A HANDOFF into a conversation: a turn that wrote here, opened by a message from ANOTHER AGENT on another thread
+    (seed asked db on a plan thread; db's answer landed in the owner's chat). The pulse, a canvas page or a peer
+    opening a turn is not a handoff (no agent passed work), and a message already on this thread renders as its own
+    row. Ordered by where the turn first wrote here (`at`), so the divider sits right above that answer."""
+    out = []
+    for r in rows:
+        frm, to = r.get("from_agent"), r.get("agent")
+        if not frm or frm == to or frm not in roster:
+            continue
+        ts = r.get("ts")
+        out.append({"turn_id": r["turn_id"], "agent": to, "at": r["at"],
+                    "msg": {"id": r["id"], "ts": ts.isoformat() if hasattr(ts, "isoformat") else ts, "from": frm,
+                            "to": r.get("to_agent"), "thread": r.get("thread"), "intent": r.get("intent"),
+                            "body": r.get("body") or ""}})
+    return sorted(out, key=lambda h: h["at"])
+
+
+@router.get("/api/ws/handoffs")
+async def ws_handoffs(request: Request, thread: str = ""):
+    if not valid_thread(thread):
+        return JSONResponse({"error": "not a conversation thread"}, status_code=400)
+    rows = [dict(r) for r in await _pool(request).fetch(HANDOFFS_SQL, thread, HANDOFF_BODY_MAX)]
+    return handoffs_of(rows, set(_roster()))
+
+
+# ----------------------------------------------------------------------------------------------------- interrupt
+AGENT_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,40}$")     # main._PUBLIC_AVATAR's name shape: no dots, no colon, no '='
+INTERRUPT_TIMEOUT = 5
+
+
+def interrupt_check(name: str, roster: set[str]) -> tuple[int, str] | None:
+    """Why `name` may NOT be interrupted, as (status, reason), or None. The name is checked by SHAPE before the roster
+    is consulted, so nothing a URL can carry ever reaches tmux's target parser (a '.', ':' or '=' would re-aim it)."""
+    if not isinstance(name, str) or not AGENT_NAME.fullmatch(name):
+        return 400, "not an agent name"
+    if name not in roster:
+        return 404, "no such agent"
+    return None
+
+
+def interrupt_argv(name: str, tmux: list[str]) -> list[str]:
+    """One Escape into the agent's pane: Claude Code's own "interrupt" key, the same thing the owner would press in
+    its tmux window. `=ax-<name>:` is an EXACT session match (a bare target falls back to a prefix match and would
+    reach ax-<name>x; main.agent_retire's measured lesson) and its current window, the one context_compact also
+    targets. A key NAME, never literal text: nothing typed reaches the prompt."""
+    return [*tmux, "send-keys", "-t", f"=ax-{name}:", "Escape"]
+
+
+def _tmux() -> list[str]:
+    from astryx import orgs                        # the ONE resolver of this org's tmux server (main.py imports it too)
+    return orgs.tmux()
+
+
+@router.post("/api/ws/agents/{name}/interrupt")
+async def ws_interrupt(name: str, request: Request):
+    """Stop an agent's current turn. Owner-only twice: the gate (not in PUBLIC) and the owner check here."""
+    if not _owner(request):
+        return JSONResponse({"error": "owner only"}, status_code=403)
+    bad = interrupt_check(name, set(_roster()))
+    if bad:
+        return JSONResponse({"error": bad[1]}, status_code=bad[0])
+    try:
+        r = await asyncio.to_thread(subprocess.run, interrupt_argv(name, _tmux()),
+                                    capture_output=True, text=True, timeout=INTERRUPT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return JSONResponse({"error": "tmux did not answer"}, status_code=504)
+    except OSError:
+        return JSONResponse({"error": "tmux is not available here"}, status_code=503)
+    if r.returncode != 0:                           # no such session: the body is down (tmux's stderr is not echoed)
+        return JSONResponse({"error": f"{name} is not running"}, status_code=409)
+    return {"ok": True, "agent": name}
