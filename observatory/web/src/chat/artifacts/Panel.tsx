@@ -89,6 +89,7 @@ export default function Panel({ panel, layout, onAttach, onDirty, annotate }: {
     el.addEventListener('pointermove', move); el.addEventListener('pointerup', up)
   }
 
+  const overPanel = () => [...document.querySelectorAll('[role="dialog"]')].some((d) => !d.closest('[aria-label="artifact panel"]'))
   // ── keys: ⌘⇧F fullscreen, ⌘S save an edit, Esc leaves fullscreen first ──────────────────────────────────────
   const saveRef = useRef<() => void>(() => {})
   useEffect(() => {
@@ -96,7 +97,9 @@ export default function Panel({ panel, layout, onAttach, onDirty, annotate }: {
       const mod = e.metaKey || e.ctrlKey
       if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setFull((f) => !f) }
       else if (mod && e.key.toLowerCase() === 's' && view.edit) { e.preventDefault(); saveRef.current() }
-      else if (e.key === 'Escape' && full && !document.querySelector('[data-ann-open]')) { e.preventDefault(); e.stopImmediatePropagation(); setFull(false) }
+      // Esc closes the TOP layer only: a dialog over the full-screen panel (⌘K, ⌘/, a new project, the team map) is
+      // that dialog's to close (iteration 11: Esc in the palette left full screen and the palette stayed open)
+      else if (e.key === 'Escape' && full && !document.querySelector('[data-ann-open]') && !overPanel()) { e.preventDefault(); e.stopImmediatePropagation(); setFull(false) }
     }
     addEventListener('keydown', k, true)
     return () => removeEventListener('keydown', k, true)
