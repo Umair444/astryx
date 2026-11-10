@@ -11,24 +11,26 @@ ENV = "PULSE_SRC"
 TIMEOUT = 300
 
 MUTANTS = {
-    'the pulse ignores the tombstone (a python trigger_rm is undone within a minute)':
-        ('            if tomb.exists():\n                retired_notice(conn, agent, t["name"], f.name, tomb)\n'
+    "the pulse ignores the tombstone (a python retire is undone within a minute)":
+        ('            if tomb.exists():\n'
+         '                conn.execute("UPDATE triggers SET off_reason=\'retired\', enabled=false WHERE agent=%s AND name=%s "\n'
+         '                             "AND kind=\'python\'",\n'
+         '                             (agent, t["name"]))\n'
+         '                retired_notice(conn, agent, t["name"], f.name, tomb)\n'
+         '                seen.add((agent, t["name"]))\n'
          '                continue\n',
          ''),
     "any agent's tombstone retires the name everywhere (not per target agent)":
-        ('            tomb = REPO / "triggers" / agent / ".retired" / t["name"]\n',
-         '            tomb = next((d / ".retired" / t["name"] for d in (REPO / "triggers").iterdir()\n'
-         '                         if (d / ".retired" / t["name"]).exists()), REPO / "triggers" / agent / ".retired" / t["name"])\n'),
+        ('            tomb = ESTATE / "triggers" / agent / ".retired" / t["name"]\n',
+         '            tomb = next((d / ".retired" / t["name"] for d in (ESTATE / "triggers").iterdir()\n'
+         '                         if (d / ".retired" / t["name"]).exists()), ESTATE / "triggers" / agent / ".retired" / t["name"])\n'),
     'a held-off name is never said (the re-create miss is silent again)':
         ('                retired_notice(conn, agent, t["name"], f.name, tomb)\n',
          ''),
     'said every minute once delivered (only the pending-coalesce left)':
         ('"AND ts >= %s LIMIT 1", (agent, f"[trigger {key}]%", since)).fetchone():',
          '"AND ts >= %s LIMIT 0", (agent, f"[trigger {key}]%", since)).fetchone():'),
-    "said once EVER (a fresh trigger_rm earns no notice)":
+    "said once EVER (a fresh retire earns no notice)":
         ('"AND ts >= %s LIMIT 1", (agent, f"[trigger {key}]%", since)).fetchone():',
          '"AND ts >= %s - interval \'100 years\' LIMIT 1", (agent, f"[trigger {key}]%", since)).fetchone():'),
-    '`pulse.py --names` answers nothing (trigger_set clears no tombstone)':
-        ('        print(json.dumps([t["name"] for t in found]))\n',
-         '        print(json.dumps([]))\n'),
-}
+    }

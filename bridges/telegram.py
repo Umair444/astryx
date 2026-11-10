@@ -51,7 +51,8 @@ API_BASE = env("TG_API_BASE", "https://api.telegram.org")
 PROXY = env("TG_PROXY") or None
 API = f"{API_BASE}/bot{TOKEN}"
 FILE_API = f"{API_BASE}/file/bot{TOKEN}"
-ROUTES_FILE = HERE / "routes-telegram.json"
+from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
+ROUTES_FILE = ESTATE / "bridges" / "routes-telegram.json"
 
 pool: asyncpg.Pool | None = None
 http: httpx.AsyncClient | None = None
@@ -109,7 +110,7 @@ async def deliver(row):
                 out.sent(res.message_id)
             else:
                 out.failed("text", res.error or "provider reported not-ok")
-        route = next((r for r in routes() if str(r.get("chat")) == chat), None)
+        route = routes().chat(chat)
         for f in files:
             p = Path(f)
             try:                                   # the SENDER's roots, not the bridge's reach (embed_root.py)
@@ -213,7 +214,7 @@ async def fetch_file(file_id: str, name: str, kind: str = "") -> str:
 
 async def on_message(msg: dict):
     chat = str(msg.get("chat", {}).get("id", ""))
-    route = next((r for r in routes() if str(r.get("chat")) == chat), None)
+    route = routes().chat(chat)
     sender = msg.get("from", {}) or {}
     uid = sender.get("id")
     if route is None:
@@ -286,7 +287,7 @@ async def on_poll_answer(pa: dict):
     agg = {o: sum(1 for v in voters if o in (v.get("selected") or [])) for o in opts}
     old = await update_poll_votes(pool, pid, agg, voters)
     chat = rec["chat"]                             # "tg:<chat_id>"
-    route = next((r for r in routes() if f"tg:{r.get('chat')}" == chat), None)
+    route = routes().chat(chat.removeprefix("tg:"))
     trusted = route and user.get("id") in route.get("trusted_ids", [])
     name = user.get("first_name") or str(user.get("id"))
     changes = [f'{name} → {", ".join(picked) if picked else "(retracted)"}']
@@ -300,7 +301,7 @@ async def on_message_reaction(mr: dict):
     """A Telegram message_reaction update -> a wire signal to the message's agent.
     (Groups deliver these only if the bot is an admin; DMs work directly.)"""
     chat = str((mr.get("chat") or {}).get("id", ""))
-    route = next((r for r in routes() if str(r.get("chat")) == chat), None)
+    route = routes().chat(chat)
     if route is None:
         return
     uid = (mr.get("user") or {}).get("id")

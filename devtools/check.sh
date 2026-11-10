@@ -44,6 +44,15 @@ for v in $(compgen -e | grep "^GIT_"); do unset "$v"; done
 # fake turns to it (a2 #53059), and so would any future probe (a stationed call now names ITSELF: station.py). The pulse's run_check already runs
 # every gate with no name (systemd env), so no gate needs one. Oracle: tests/test_check_noagent.py.
 unset ASTRYX_AGENT
+# The timer's seen-set role reaches ONE gate (plan-11908 D5, a3 BC-1 #62652): check_watch.sh exports it, it's read once
+# here and unset, and only the enforce line below carries it back. Every other gate (and anything it spawns) runs
+# without it, so no second process can become a writer of the live sqlguard_seen. Oracle: tests/test_sqlguard_seen.py N6.
+SQLGUARD_WRITE_SEEN=${ASTRYX_SQLGUARD_WRITE_SEEN:-}; unset ASTRYX_SQLGUARD_WRITE_SEEN
+# No gate sees the HOST's org registry either (plan-11324 S3f S3, seed #60778 item 4). /etc/astryx/cog.json is a host
+# FILE that no env scrub removes, so in a cog every gate would run under multi. Pinned to a path that names no file, a
+# gate runs as this checkout's own org, which in a cog is the PRIMARY's (its HOME is the checkout), exactly as before the
+# cog; an oracle that needs a cog builds its own registry and names it, as every one does. Before the first estate read.
+export ASTRYX_COG_REGISTRY="${TMPDIR:-/tmp}/astryx-gate-$$-no-registry/cog.json"
 cd "$(dirname "$0")/.."
 PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
 
@@ -54,7 +63,7 @@ PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
 # node on PATH from the ASTRYX_NODE anchor (env first, then .env — the same host-config
 # spawn.sh honors; pulse.py loads only ASTRYX_DSN, not the whole .env, so read it here).
 # Harmless where ASTRYX_NODE is unset or node is already found. (seed, steward check_stamp finding 2026-09-20.)
-NODE_BIN=${ASTRYX_NODE:-$(sed -n 's/^ASTRYX_NODE=//p' .env 2>/dev/null | head -1)}
+NODE_BIN=$("$PY" src/astryx/config.py get ASTRYX_NODE 2>/dev/null)   # env first, then the org's settings: the ONE resolver (plan-11324 S3a)
 [ -n "$NODE_BIN" ] && export PATH="$(dirname "$NODE_BIN"):$PATH"
 
 EXIT_SKIP=77
@@ -207,6 +216,22 @@ run() {
 skip() { [ -n "${ASTRYX_SQLGUARD_DIR:-}" ] && printf '%s\t77\n' "$1" >> "$ASTRYX_SQLGUARD_DIR/gates.tsv"
   UNVERIFIED+=("$1"); printf '\033[33m○\033[0m %s — VERIFIED NOTHING (%s)\n' "$1" "$2"; }
 
+# KEEP ON RED ONLY (seed #61226, goal 11580): the sqlguard trace dir this run MADE is removed on a green verdict and
+# kept on a red one, its path named on the line above the verdict line, for a reviewer to read the traces. Each
+# run used to leave it in tmpfs /tmp: 129 a day, 45 MB (steward #61225). Only a dir check.sh itself created is
+# ever removed: branch_check, mutation_probe, sqlsite and several oracles pass their OWN dir and read it after.
+# So the ownership flag is set in the mktemp branch alone, unset here first (never inherited from the
+# environment), and NEVER exported. test_check_verdict sources this file inside a real run and drives green
+# verdicts, and an exported flag would let that child delete the parent's dir mid-suite.
+unset _SQLGUARD_OWNED
+_sqlguard_settle() {
+  [ -n "${_SQLGUARD_OWNED:-}" ] && [ -n "${ASTRYX_SQLGUARD_DIR:-}" ] && [ -d "$ASTRYX_SQLGUARD_DIR" ] || return 0
+  if [ "$1" = 0 ]; then
+    rm -rf -- "$ASTRYX_SQLGUARD_DIR"
+  else
+    echo "sqlguard traces kept (red verdict): $ASTRYX_SQLGUARD_DIR"
+  fi
+}
 verdict() {
   echo
   for l in "${LIARS[@]}"; do
@@ -221,17 +246,22 @@ verdict() {
   fi
   echo
   # The verdict may never out-claim its parts. "ALL" is spoken only when nothing skipped.
+  # The rc is decided FIRST so the trace dir is settled before the verdict line, which stays the LAST `check:`
+  # line every reader keys on (merge_check, branch_check, pushed_tree_check, check_watch, check_stamp).
+  local rc=1
+  if [ "$fail" = 0 ] && { [ "${#UNVERIFIED[@]}" = 0 ] || [ -n "${CHECK_ALLOW_SKIP:-}" ]; }; then rc=0; fi
+  _sqlguard_settle "$rc"
   if [ "$fail" != 0 ]; then
-    echo "check: FAILURES above — a committed invariant regressed"; return 1
+    echo "check: FAILURES above — a committed invariant regressed"
   elif [ "${#UNVERIFIED[@]}" = 0 ]; then
-    echo "check: ALL CODE INVARIANTS PASS ($verified gates verified)"; return 0
+    echo "check: ALL CODE INVARIANTS PASS ($verified gates verified)"
   elif [ -n "${CHECK_ALLOW_SKIP:-}" ]; then
-    echo "check: $verified verified, ${#UNVERIFIED[@]} UNVERIFIED (skips allowed here) — NOT a full pass"; return 0
+    echo "check: $verified verified, ${#UNVERIFIED[@]} UNVERIFIED (skips allowed here) — NOT a full pass"
   else
     echo "check: $verified verified, ${#UNVERIFIED[@]} UNVERIFIED — a gate that observes nothing is RED here."
     echo "       Set CHECK_ALLOW_SKIP=1 only where the missing prerequisites are expected (a bare CI clone)."
-    return 1
   fi
+  return "$rc"
 }
 
 # Sourcing hook for tests/test_check_verdict.py, which drives run()/skip()/verdict()
@@ -251,18 +281,30 @@ run "identity gate: this tree's python imports only this tree's astryx" "$PY" te
 # its own prefix.
 export ASTRYX_RUNSCOPE_TEST=1                # every run role a gate makes is a TEST role (runscope TEST_STAMP)
 export ASTRYX_SQLGUARD_RUN="${ASTRYX_SQLGUARD_RUN:-r$(date +%s)x$$}"
-export ASTRYX_SQLGUARD_DIR="${ASTRYX_SQLGUARD_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/sqlguard.XXXXXX")}"
+if [ -z "${ASTRYX_SQLGUARD_DIR:-}" ]; then
+  ASTRYX_SQLGUARD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sqlguard.XXXXXX")"; _SQLGUARD_OWNED=1   # ours: settled at verdict
+fi
+export ASTRYX_SQLGUARD_DIR
 export PYTHONPATH="$PWD/src/astryx/security/sqlguard/shim${PYTHONPATH:+:$PYTHONPATH}"
 echo "$ASTRYX_SQLGUARD_RUN" > "$ASTRYX_SQLGUARD_DIR/run_id"
 # The canary proves THIS run's shim can observe: one statement through the REAL pulse_run.Ctx.sql. If it isn't
 # RESPONSIVE, the whole sqlguard verdict is NOT SEARCHED (a check that can't observe says so).
 run "sqlguard canary: the shim observes through the real Ctx.sql" "$PY" -m astryx.security.sqlguard.canary
 run "sqlguard oracle: privacy (P1) + controls"          "$PY" tests/test_sqlguard.py
+run "sqlguard shim: a fetchval counts its rows (one record, the value unchanged)" "$PY" tests/test_sqlguard_fetchval.py
 run "sqlguard site forms: a bare verb is no statement, every caller names its form, drops only by safe use" "$PY" tests/test_sqlguard_forms.py
 # a3 night-review 10-09: a range that re-texts a LISTED SQL literal without moving its ledger row is RED before
 # merge, statically (plan-4918 was backed out twice for exactly that). Hermetic, ~2s. Reviewers run the tool:
 #   venv/bin/python -m astryx.security.sqlguard.rekey <base> <head>
 run "sqlguard rekey: a re-texted listed literal needs its ledger move" "$PY" tests/test_sqlguard_rekey.py
+# plan-11908 D1-D3. Mutants: tests/mutants_sqlguard_seal.py (a3, 13 caught).
+run "sqlguard seal: a grade is judged from sealed evidence, and every reader reads that seal" "$PY" tests/test_sqlguard_seal.py
+# plan-11908 D5: only the timer advances sqlguard_seen. Mutants: tests/mutants_sqlguard_seen.py.
+run "sqlguard seen: enforce is read-only on the seen-set clocks unless it is the timer" "$PY" tests/test_sqlguard_seen.py
+# plan-11908 D6: the land judge (hermetic half; the f46eb3e5 replay needs the fixture DB).
+# Mutants: tests/mutants_sqlguard_landjudge.py.
+run "sqlguard land judge: a range that adds SQL sites is graded before it pushes" "$PY" tests/test_sqlguard_landjudge.py
+run "sqlguard land judge replay: f46eb3e5 without its D4 arms is refused, with them it passes" "$PY" tests/test_sqlguard_landjudge_replay.py
 # seed #56874 / a3 #56878: a hashed absent row's R-STALE says its own admitted date and reason, every path-shaped
 # token masked when private. Hermetic. Mutants: tests/mutants_sqlguard_stale_reason.py.
 run "sqlguard stale reason: a hashed absent row names its ledger text, never a private path" "$PY" tests/test_sqlguard_stale_reason.py
@@ -289,6 +331,7 @@ run "branch_check: differential verdict, prod witness, clean refusal" "$PY" test
 # init.sh's harden node (plan-4918 P0-a): a fresh org is born with no PUBLIC CONNECT on the databases it
 # administers. Run against the oracle's own scratch DBs only, by name. Mutants: tests/mutants_init_harden.py.
 run "init.sh harden: no PUBLIC CONNECT on the org's databases" "$PY" tests/test_init_harden.py
+run "every role a test plants is reapable after a killed run: a derived census of CREATE ROLE (a2 msg 62900)" "$PY" tests/test_planted_roles.py
 # init.sh's schema node (seed #38258): GREEN iff the database carries the stamp of the EXACT schema.sql last applied
 # in full, so a pulled NEW table is applied, and a failed apply never reads green. On a scratch DB. Mutants:
 # tests/mutants_init_schema.py.
@@ -318,6 +361,15 @@ run "merge_check: one base read, conflicts refused, links removed" "$PY" tests/t
 # devtools/review_range.sh: a review range is the MERGE-BASE..the branch head, both read from git; --check refuses the
 # merged-ONTO sha, an older base, a stale or unresolvable head (a4 night-review 10-12). Mutants: tests/mutants_review_range.py.
 run "review_range: base is the merge-base, head is the branch, typed shas refused" "$PY" tests/test_review_range.py
+# rebase_equiv (a4 night-review 10-21, per-commit replay per a3 #61571): a REBASED range is PROVEN the reviewed work
+# only when each reviewed commit replays (merge-tree) onto its twin's parent as the twin's tree; a conflicted commit is
+# HAND-RESOLVED (rc 3) unless its labelled fallback finds a difference; raw messages compared; a merge refused. Hermetic.
+# Mutants: tests/mutants_rebase_equiv.py.
+run "rebase_equiv: per-commit replay proves a rebase, hand resolutions named, raw messages equal" "$PY" tests/test_rebase_equiv.py
+# devtools/marker.sh (a4 night-review 10-22): the author's pushed_tree_check clause for a merge-ready marker, read from
+# git and the check, never typed: full shas, no timeout, refused when the branch moved or the check printed no verdict.
+# Hermetic (stub checks). Mutants: tests/mutants_marker.py.
+run "marker: the author's pushed_tree_check clause read from git and the check, never typed" "$PY" tests/test_marker.py
 # devtools/review_live.py: branch code measured against the LIVE tree (repo_root rebound only for the extract), the
 # child read-only by default and without ASTRYX_AGENT (a3 night-review 10-16, seed #56224). Mutants: tests/mutants_review_live.py.
 run "review_live: branch code reads the live REPO, fixtures untouched, postgres read-only, no agent identity" "$PY" tests/test_review_live.py
@@ -329,6 +381,7 @@ run "land: ff only, clean tree, body sha, tests without agent identity, red roll
 # table, column by column, with types. Catches a column added inside an existing CREATE TABLE IF NOT EXISTS (a no-op
 # on a live host) and a hand DROP. Live read is read-only. Mutants: tests/mutants_schema_parity.py.
 run "schema parity: the live catalog has every table and column the schema files define" "$PY" tests/test_schema_parity.py
+run "schema current: every org of this host carries this schema.sql's stamp (a2 msg 65100 B3, plan-12214)" "$PY" tests/test_schema_current.py
 # people library 1a: relation details readable only by people_cleared, the network layer by the resident role;
 # the move's receipt; the writers' cutover. ACCIDENT-GRADE (a same-uid resident can read the superuser credential),
 # proven on scratch roles and DBs. Mutants: tests/mutants_people_gate.py, tests/mutants_people_move.py.
@@ -437,6 +490,7 @@ run "hands cell: per-lease egress, wipe on kill, step + wall caps" "$PY" tests/t
 # agent's own REAL desktop on this machine (headless sway + its own seat via wayvnc), watched, joined and
 # stopped from the observatory. Two tools, text replies, a 960x600 view: the token budget is pinned.
 run "hands desktop: real clicks/typing land, owner stop refuses, two small tools" "$PY" tests/test_hands_desktop.py
+run "hands portal: a desk file chooser opens on the desk, never on the owner screen (seed 57131)" "$PY" tests/test_hands_portal.py
 # The phone (plan-8675): the facade's census/allowlist/telemetry, the surface stamp, step.py's phone strip and the HELD
 # leases, with no device (77 where the pinned upstream isn't installed). tests/test_android_device.py drives a REAL
 # phone end to end; it boots a ~3 GB emulator for minutes, so it verifies only when asked (ANDROID_DEVICE_TEST=1)
@@ -470,6 +524,17 @@ run "install + platform: WSL/systemd doctor checks, docker host address order, i
 run "turns retention: old images stripped, words kept, recent untouched, idempotent" "$PY" tests/test_turns_retention.py
 # deploy.sh restart's failure paths, all side effects stubbed: a refusing spawn is a named ✗, the run continues,
 # ends INCOMPLETE, and the pulse is started again (a2 #42367)
+run "cog_add_org: an org's own setup path, every step judged first, nothing made on a dry-run (plan-11324 S3f S5)" "$PY" tests/test_cog_add_org.py
+run "org names: each org of a cog under its own federation name (10224 NAMES)" "$PY" tests/test_org_names.py
+run "env reader: every Python .env read goes through config.read_env, per line, a bad line skipped loudly (10224 ENVREAD)" "$PY" tests/test_envread.py
+run "org auth: each org of a cog runs its agents on its own login, never another org's (10224 ORGAUTH)" "$PY" tests/test_org_auth.py
+run "org backup: a cog org's own dump and restore-verify triggers, the shims' one source (plan-10224 add-org-parity)" "$PY" tests/test_org_backup.py
+run "init.sh schedules a one-org backup, deferentially by either name (seed 61526)" "$PY" tests/test_init_orgbackup.py
+run "cog rehearsal: the runbook's steps 2-6 end to end on a fixture registry, the double spawn seen and refused (plan-11324 S3f S6)" "$PY" tests/test_cog_rehearsal.py
+run "doctor in a cog: the primary served, its units-drift its own units only, its seats on its own server; another org refused (plan-11324 S3f S7)" "$PY" tests/test_doctor_cog.py
+run "ops cog: pause, smoke, refresh and vitals act on THIS org in a cog (plan-11324 S3f S4)" "$PY" tests/test_ops_cog.py
+run "wall cog: one wall of every org's agents titled agent@org, each pane from its own org's table, each bell to its own org; one org as before" "$PY" tests/test_wall_cog.py
+run "deploy cog: each org's own units, only the primary touches the database, the cog's gateway and front say so (plan-11324 S3f S4)" "$PY" tests/test_deploy_cog.py
 run "deploy restart: a failed resident is named, the run continues, the pulse comes back" bash tests/test_deploy_restart.sh
 run "context compact: /compact reaches only the named session (exact tmux target, no prefix fallback)" "$PY" tests/test_compact_exact_target.py
 run "tmux: no pane command targets a bare =session (capture-pane on \"=ax-x\" fails silently: 09-29 idle gates, 10-10 restart)" "$PY" tests/test_tmux_targets.py
@@ -477,7 +542,9 @@ run "the Room: addressing, the wire message, voiceprint lines, every reply kind 
 run "the Room's SQL on a fixture schema: voiceprints, the router, the ear's speaker stamp, the speaker's claim/voice/ask" "$PY" tests/test_room_db.py
 run "channel oracles: none stages server.mjs without its sibling modules (10-11)" "$PY" tests/test_stage_channel_users.py
 run "pushed_tree_check: the committed tree inherits no database or credential env (a4, 10-11)" "$PY" tests/test_pushed_tree_env.py
-run "trigger_set: a python trigger name can never write outside triggers/<agent>/ (a2 #45063)" node tests/test_trigger_name.mjs
+run "pushed_tree_check: WHO LAST TOUCHED names each failing gate's script from check.sh's own block (a4, 10-25)" "$PY" tests/test_ptc_who.py
+run "trigger: the sql watch's memory and wake (new, while, renag, over cap, storm; a4 plan-12214)" "$PY" tests/test_trigger_watch.py
+run "trigger: the expand, normalize, guarded read, one-shots, the tool's naive path (a4 plan-12214)" "$PY" tests/test_trigger_tool.py
 run "send: a malformed [[poll:]]/[[file:]] to a human surface is refused before the INSERT, in parity with the bridge grammar" node tests/test_send_embeds.mjs
 run "bridges: a [[file:]] embed is read only from the SENDER's roots (home, scratchpad, media/; tier/ to the owner alone), realpath + O_NOFOLLOW + /proc" "$PY" tests/test_embed_root.py
 run "bridges: every real [[file:]] ever sent to a human, through the root rule (933 /tmp + 19814 tier/-to-group + 2 home dot-path embeds refused)" "$PY" tests/test_embed_root.py --census
@@ -509,7 +576,12 @@ run "steps doorbell resolves only the named agent's step" "$PY" tests/test_step_
 # agent's own last message); the surface default only when none. Synthetic threads, stamped fixture.
 run "bridge replies route to who the thread is talking with" "$PY" tests/test_bridge_routing.py
 run "whatsapp /hook: one message, one wire row, however its webhooks arrive" "$PY" tests/test_wa_hook_dedup.py
+run "whatsapp /hook: every inbound file arrives as a path beside its caption, or says why not" "$PY" tests/test_wa_media.py
 run "whatsapp: wacli retries only transient errors (store locked, 429), bounded" "$PY" tests/test_wa_retry.py
+run "whatsapp /hook: a reaction to an agent's message reaches that agent" "$PY" tests/test_wa_reactions.py
+run "workflows: one DAG converging on one agent, actuals measured from main (plan-11324 S4)" "$PY" tests/test_workflow.py
+run "workflow SQL: load, goals, save and the observatory endpoint against a fixture database" "$PY" tests/test_workflow_sql.py
+run "observatory overview: the header counts the tree's agents, never a charterless name" "$PY" tests/test_observatory_overview_roster.py
 # the registry door (goal 4227, S4): find + run, and never a new capability. run() executes
 # registered SCRIPTS only, as an argv list (no shell), with a clamped timeout, and never starts
 # an MCP server, because that would walk past its charter grant. Mutants: tests/mutants_tools_door.py.
@@ -540,6 +612,7 @@ run "tool nudge (O5): never blocks, never leaks, recurrence-gated" "$PY" tests/t
 # effect, and every resident gets the door and the nudge (own UserPromptSubmit group, timeout 3
 # < usage.py's 5); stationed agents never get the door. Mutants: tests/mutants_spawn_wiring.py.
 run "spawn --render: real generation, no side effect; S4 wiring" "$PY" tests/test_spawn_wiring.py
+run "spawn --which-cli: the harness binary is resolved (mise, its install, PATH), never the boot wrapper" "$PY" tests/test_spawn_cli.py
 # This suite's own blind spot: the list below is hand-maintained, so a newly committed
 # tests/test_*.py was silently never run and this still printed ALL PASS (reproduced
 # 08-13). Derives the expected set from the tests/test_*.py glob — a new oracle must
@@ -558,8 +631,18 @@ run "every committed nucleus script is invoked" "$PY" tests/test_reachability.py
 # declares SUBJECT/ORACLE/ENV/MUTANTS, points at files that exist, and still has patterns
 # that apply. It asserts APPLICABILITY and never discrimination. Pure stdlib, no DB, ~0.1s.
 run "mutants files still point at something real" "$PY" tests/test_mutants_wellformed.py
+# mutation_probe REFUSING names its arm: the baseline oracle's own failing lines are printed, so a one-off loaded refusal
+# is attributable (a4 night 10-16, memory #57741). Hermetic. Mutants: tests/mutants_mutation_probe_refusal.py.
+run "mutation_probe: a refusing baseline prints its own failing lines (never a bare exit code)" "$PY" tests/test_mutation_probe_refusal.py
+# mutation_probe's TREE form (a1 #62024, a4 #62026): a spec whose mutants span several files names each mutant's file, and
+# every run happens in a fresh copy of the tree, never the checkout; the same baseline/canary/skip refusals as the single
+# form. Hermetic (temp git trees). Mutants: tests/mutants_mutation_probe_tree.py.
+run "mutation_probe tree form: multi-file specs, graded in a copy, with every refusal" "$PY" tests/test_mutation_probe_tree.py
 # ...and the probe MACHINERY demonstrably runs (one family, ~4s). The full battery is the
 # monthly steward trigger; this edge is what keeps probe_all/mutation_probe auto-reached.
+# probe_all's REFUSED block keeps the probe's refusal HEADER (timeout vs red vs wiring fault), never only its tail
+# (a1 #62229, a4 #62230). Hermetic: a stub probe in a temp tree. Mutants: tests/mutants_probe_all.py.
+run "probe_all: a refused set shows the refusal's own header, then its last lines" "$PY" tests/test_probe_all.py
 run "mutant machinery smoke (one family)" bash devtools/probe_all.sh --smoke
 # The SECOND blind spot in this file, the same shape one level down: the gate above proves
 # every oracle is INVOKED; this one proves an invoked oracle actually RAN. Drives this
@@ -568,8 +651,17 @@ run "a skip is not a pass (verdict accounting)" "$PY" tests/test_check_verdict.p
 # per-gate wall clock (seed #45252): an expired gate is ✗ TIMED OUT and its whole process group dies; a signal to
 # check.sh reaches the running gate. Driven through the REAL run() with stub gates and 1-2s caps.
 run "check.sh gate cap: an expired gate is TIMED OUT and its group killed" "$PY" tests/test_check_gate_cap.py
+run "check.sh registry pin: no gate sees the host's org registry; each runs as the checkout's own org (plan-11324 S3f S3)" "$PY" tests/test_check_registry_pin.py
 run "check.sh gate dir: each gate gets its own short TMPDIR, and nothing of it outlives the gate (plan-10108 D1)" "$PY" tests/test_gate_dir.py
 run "gate census: no literal port, probe-then-release or shared-root write in any gate's reach, unless declared (plan-10108 D4)" "$PY" tests/test_gate_census.py
+# plan-10224 child-env-gate (seed #61406): no oracle hands a subprocess an env that silently drops the parent's cog
+# registry pin (10-20: three reds and a masked fourth read /etc/astryx/cog.json). Hermetic AST. Mutants:
+# tests/mutants_child_env_gate.py.
+run "child-env gate: every subprocess env in tests/ carries the registry pin, provably plain, or declared (plan-10224)" "$PY" tests/test_child_env_gate.py
+# steward 10-20: the review queue counts a medic/* branch's open work by PATCH (git cherry), never by sha; seed lands by
+# replaying, so rev-list read every landed branch as open forever. Hermetic (a throwaway repo). Mutants:
+# tests/mutants_pr_review.py.
+run "pr_review: a branch's open work is counted by patch, so a replayed (landed) branch drops out of the queue" "$PY" tests/test_pr_review.py
 # The gate on the OTHER actuator. .git/hooks/pre-push is a COPY of the tracked hooks/pre-push,
 # so the reviewed artifact and the executed one are two writers of one fact with no reconciler
 # — and privacy_gate already rides on that copy. Proves the installed hook matches byte for
@@ -634,6 +726,13 @@ run "pulse witness: clock death stays learnable" "$PY" tests/test_pulse_witness.
 # a planted defect reports "none dormant" in exactly the same words as a clean estate.
 run "glob-vacuity can still find a planted dormant glob" "$PY" devtools/glob_vacuity.py --selftest
 run "referral opt-in + static-literal" bash devtools/referral_guard.sh
+# its ORACLE (plan-10224 S2F, seed #61794): the guard on ~1 MB producers, the offending line first, 3 runs each, because
+# its pipe-into-grep -q form passed on SIGPIPE under pipefail. Hermetic fixture trees. Mutants: tests/mutants_referral_guard.py.
+run "referral_guard oracle: a leaked or fetched referral FAILs on any producer size" "$PY" tests/test_referral_guard.py
+# the CLASS (plan-10224 S2F): no `producer | grep -q` in a tracked shell file that turns pipefail on. grep -q exits at its
+# first match, the producer takes SIGPIPE, and pipefail reads the match as a failure (restore_verify 08-14, check.sh's
+# belt, sqlsite 10-21). Capture, then grep -q <<<"$v". The race itself is measured, and a parser arm pairs every shape.
+run "pipefail early-exit readers: no grep -q/-m/-l, head or sed q whose pipeline status is a condition (SIGPIPE reads a match as a failure)" "$PY" tests/test_pipefail_grep_q.py
 # OKF frontmatter for the memory estate. The invariant is ADDITIVITY: attaching metadata
 # must change nothing the three live lints read. Pure stdlib; the arms that touch the real
 # estate skip on a clean checkout (memory/ is gitignored), and the PyYAML cross-check arm
@@ -670,9 +769,9 @@ run "no undefined name in any tracked .py (pyflakes; a deleted class under a laz
 # ...and the half of that family pyflakes can't see: a name bound somewhere, but not yet when an import-time annotation
 # runs (a later class, a class naming itself, a TYPE_CHECKING-only import). Fixtures checked against a real 3.12.
 run "no import-time annotation names a not-yet-bound name (3.12 NameError, hidden by lazy 3.14)" "$PY" tests/test_eager_annotations.py
-# plan-9853 D2: a python trigger's retirement is trigger_rm's per-(agent, name) TOMBSTONE, which the pulse honours (it
-# used to re-enable the row within a minute); trigger_set clears it. Runs tests/test_tombstone.mjs (the wiring) too.
-run "trigger tombstone: trigger_rm retires a python trigger for good, per agent and name" "$PY" tests/test_trigger_tombstone.py
+# plan-9853 D2: a python trigger's retirement is the trigger tool's retire's per-(agent, name) TOMBSTONE, which the pulse honours (it
+# used to re-enable the row within a minute); the trigger tool clears it. 
+run "trigger tombstone: the trigger tool's retire retires a python trigger for good, per agent and name" "$PY" tests/test_trigger_tombstone.py
 run "fixture gates with no database: 77 on a committed-only tree, 1 on a live host, never a traceback (seed 54113)" "$PY" tests/test_fixture_unavailable.py
 # plan-9853 D1/D3/D4: "is trigger N installed?" is ONE helper modelling the pulse (checked against discover()), and
 # every init.sh trigger install asks it by NAME
@@ -680,11 +779,59 @@ run "trigger names: the pulse's registration model (closure, blind → defer, re
 run "agent heal: a dead resident body is respawned, a DEAF idle one restarted (busy never cut), live ones never touched, crash loops stop, a blind tmux or db acts on nothing" "$PY" tests/test_agent_heal.py
 run "agent heal arm two: its pending-rows SQL in a fixture" "$PY" tests/test_agent_heal_sql.py
 run "launch flags: a body missing the channel flag or its charter's permission mode is named" "$PY" tests/test_launch_flags.py
+# plan-11859 U5 (D10): the CLI adapter table is the one source of a resident's launch: spawn types its line, every value
+# quoted; a CLI with no launcher refuses; a table that can't launch on the wire is refused at load. Mutants:
+# tests/mutants_cli_adapters.py, tests/mutants_spawn_launch.py.
+run "cli adapters: spawn types the table's line, today's argv for every live value, one argument for any other (U5)" "$PY" tests/test_cli_adapters.py
 # goal 10224 S6: medic sends a framework fix upstream (fork + PR, never instance data, privacy-gated, deduped, capped,
 # 77 without gh), and the upstream org's medic hears each outside PR once per head, fenced as DATA. A fake gh; no GitHub.
 run "upstream PR tool: instance paths and privacy hits refused, dedup to a comment, the cap, fork or not, 77 without gh" "$PY" tests/test_upstream_pr.py
 run "upstream PR watch: each outside PR reaches medic once per head, fenced as DATA; gh trouble said once per change" "$PY" tests/test_upstream_prs.py
 run "init.sh trigger installs: by NAME through the helper, never over a retirement or a legacy row; --reinstall; census" "$PY" tests/test_init_trigger_names.py
+# plan-11324 S3a: THE ORG IS ITS HOME. On a two-org fixture registry and an estate-free checkout, every process binds
+# its own org's HOME, database and law (H1-H9); an org-B resident's pane carries none of org A's names (P1-P2); and the
+# census finds no org-state read outside the resolvers, sees the pre-S3a class, and keeps both partitions total (C1-C5).
+# Mutants: tests/mutants_org_home_*.py. With no registry (this host), nothing they test changes a byte.
+run "org home: each org process binds its own HOME, DSN and law; the backup is the org's; one org is unchanged" "$PY" tests/test_org_home.py
+run "restore row counts: an empty table restores as empty only where live is empty (seed 61553)" "$PY" tests/test_restore_counts.py
+run "org home pane: an org-B resident's environment is built from HOME-B, none of org A's names" "$PY" tests/test_org_home_pane.py
+run "org home units: each org's units are its own @<org> instance files, the partition (org_units.json) is total, one org is plain" "$PY" tests/test_org_home_units.py
+run "gateway cog: one door serves every org of a cog by federation name; a sibling's row goes in process through its own door's checks" "$PY" tests/test_gateway_cog.py
+run "gateway pickup: what a NAT'd org collects by long-polling passes the one inbound door (reach, intent, cap, replay)" "$PY" tests/test_gateway_pickup.py
+run "cog scope: every registry iterator is declared (tests/cog_scope.json); only the design's cog-scoped set opens every org" "$PY" tests/test_cog_scope.py
+run "observatory cog: the cog's front lists every org and pipes each to its own observatory, adding no authority" "$PY" tests/test_observatory_cog.py
+# plan-11859 U0 (D3+D4): every relay applies ONE allowlist header policy (src/astryx/security/relay.py): only the
+# destination's own cookie, never the caller's x-forwarded-* or X-Forwarded-For, the relay's observed view set; the
+# observatory units pin their proxy trust. Hermetic (stub backends). Mutants: tests/mutants_relay_headers.py.
+run "relay headers: one allowlist for every relay, the destination's own cookie only, the relay's observed view (plan-11859 D3)" "$PY" tests/test_relay_headers.py
+# plan-11859 U0 (D6, BLOCKING from U0: a2 BC-1): no agent-/org-authored active content runs on the front's origin,
+# which holds the owner key in localStorage. Client census (iframes sandboxed or EXEMPT with a reason, no allow-same-origin,
+# no raw HTML sink, every dangerouslySetInnerHTML DOMPurify'd) + canvas's file serving. Mutants: tests/mutants_active_content.py.
+run "active content: nothing an agent authored runs on the front's origin (plan-11859 D6)" "$PY" tests/test_active_content.py
+# plan-11859 U0 (D5): every door the host opens to a network is classed (front | federation | bridge intake | host) or
+# ACCUSED; tunnel targets are the front, the gateway or a declared surface; the declaration agrees with the socket table.
+# Hermetic (fixtures): the LIVE run is host state and gates nothing. Mutants: tests/mutants_exposure_census.py.
+run "exposure census: every listener classed or accused, every tunnel target the front (plan-11859 D5)" "$PY" tests/test_exposure_census.py
+run "observatory cog UI: the building and its room chips, the key only to safe bases, one org as before" "$PY" tests/test_observatory_cog_ui.py
+run "observatory sign-in UI: one flag, on in production builds, one answer for any failed sign-in (F8), your orgs not every room" "$PY" tests/test_observatory_auth_ui.py
+run "observatory influence across orgs: owner only, crossing traffic aggregated per pair, no body or thread leaves" "$PY" tests/test_observatory_influence_cross.py
+run "observatory cog new org: owner only, a legal key and name not already in the cog, one wire message to seed, one open request per key" "$PY" tests/test_observatory_cog_new_org.py
+run "canvas cog: each org's canvas session at its own path under its own name; one org as before" "$PY" tests/test_canvas_cog.py
+# plan-11859 U1+U2: one sign-in for the cog (the front: argon2id, server sessions, a configured origin, one answer for
+# any failed sign-in), a 60 s Ed25519 identity per request naming WHO, and each org deciding WHAT from its own members
+# table (D1 D2 D7 D8 D9, a3 N1). Mutants: tests/mutants_cog_identity.py, mutants_relay_response.py,
+# mutants_cog_signin.py, mutants_backend_identity.py, mutants_cogauth_session.py, mutants_cogauth_cli.py.
+run "cog identity: the signed token verified against its spec, the response-cookie rule, ONE owner predicate (U1+U2)" "$PY" tests/test_cog_identity.py
+run "cog sign-in: the owner signs in and reaches his rooms with no key, the key still works, each org decides (U1+U2)" "$PY" tests/test_cog_signin.py
+run "cog CLI: the one writer of accounts and memberships; the cog store's backup restores (U1+U2 D7 D8 D9)" "$PY" tests/test_cogauth_cli.py
+# plan-11859 U4: the owner sets this org's agent login from the observatory (a subscription token, a metered key only with
+# the billing confirmed, or neither), through the one .env writer, never a value back. Mutants: tests/mutants_org_login.py,
+# tests/mutants_config_unset.py.
+run "org login: the owner sets this org's agent login; metered only with the billing confirmed; no value back (U4)" "$PY" tests/test_org_login.py
+run "sign-in burst: at most 2 password checks at once, 8 waiting, attempts counted from their start (U1U2-F)" "$PY" tests/test_signin_burst.py
+run "org home namespace: each org's residents live on its own tmux server (two orgs, one agent name, two residents); one org is the default socket" "$PY" tests/test_org_home_namespace.py
+run "org census: no org-state read outside the resolvers; the estate and environment partitions are total" "$PY" tests/test_org_home_census.py
+run "org registry parity: orgs.py and home.mjs reach the same written verdict on every registry case (a2 A-1)" "$PY" tests/test_org_registry_parity.py
 
 run "A2A card canonicalisation (JCS)" "$PY" tests/test_card_canon.py
 # the org economy: G = W/(Φ·K), value enters only at the boundary (goals.done_at),
@@ -761,6 +908,7 @@ run "library_compile + compile_lag: SQL in a fixture"  "$PY" tests/test_library_
 run "library passages + BM25 search: tier-clean, derive-at-use, DELETE-not-TRUNCATE, hand-oracle scores" "$PY" tests/test_library_passage.py
 run "library search endpoint: book/wiki mapping, plain-text marks, blank q, unavailable not 500" "$PY" tests/test_library_search_api.py
 run "people_essence: SQL in a fixture"  "$PY" tests/test_people_essence.py
+run "influence_compute: SQL in a fixture"  "$PY" tests/test_influence_compute.py
 # Class-1 of the prove-family oracle (scout, plan-15): drives all seven containment
 # verdicts BOTH ways against synthetic trees via G15_ENVF/G15_SCAN_ROOTS. Its output
 # states its own limit — decision logic only, not the real cell.
@@ -788,6 +936,7 @@ run "brief-silence duty floor"        "$PY" tests/test_brief_silence.py
 # found (0), searched-and-empty (1), NOT SEARCHED (2) — because a bare 0 collapses the last
 # two, and 0 is the most convincing possible answer. Fully hermetic (builds its own corpus).
 run "estate-grep coverage states"     "$PY" tests/test_estate_grep.py
+run "gate() pins the cog registry for a gate run by hand" "$PY" tests/test_gate_registry_pin.py
 # Pure stdlib (rows are injected), but the trigger BODY is gitignored, so it SKIPS loudly
 # on a fresh clone. Carries a counterexample arm: the allowlist polarity is proven to be
 # load-bearing by showing the blocklist version go silent on the same fixture.
@@ -801,6 +950,15 @@ run "spawn-pinned deployment drift"   "$PY" tests/test_spawn_drift.py
 # mtime to now() and would blind an mtime-based guard (false-staleness). RED-first: the oracle
 # recomputes the OLD mtime age for the restore case, so a regression back to mtime fails it.
 run "owner_queue_age content-first-seen age" "$PY" tests/test_owner_queue_age.py
+run "stopped Hands desk, nobody watching"  "$PY" tests/test_desk_stopped.py
+# tmpfs_full (goal 11580, seed #59286: /tmp hit 100% inodes at 51% bytes): inodes AND bytes, percent and
+# hours-above ladders, an unreadable /tmp is a line, attribution names top-level prefixes only. Mutants:
+# tests/mutants_tmpfs_full.py.
+run "tmpfs filling on inodes or bytes is told" "$PY" tests/test_tmpfs_full.py
+# task_nag (plan-11324 S4, a1 #60109 D): workflow.py is the authority on late/blocked; this decides who hears it
+# (late: the task's agent; blocked: the critical-path predecessor holding the chain, never seed), per task per
+# 12h against its own rows, re-armed on recovery. Mutants: tests/mutants_task_nag.py.
+run "workflow task nag reaches whoever can move it" "$PY" tests/test_task_nag.py
 # market_decay O3 (goal 4227 S1b, owner law 2026-09-29: no trigger killing): market_decay was the
 # org's sole economic actuator; its retire verb is now GONE BY CONSTRUCTION and it reports rent.
 # Two arms: _decide over the full input grid never yields 'retire', and the body's executable
@@ -831,6 +989,19 @@ run "econ v2 shadow (4227 S0)"        "$PY" tests/test_econ_v2_shadow.py
 # counts only meta.v-stamped ledger rows, and the [econ] line is the SELF-SCOPED mirror (your own
 # tools' use by others: no rank, no net, no other name; 'not evaluated' when degenerate).
 run "econ v2 mirror + version gate (4227 S2)" "$PY" tests/test_econ_v2_mirror.py
+# goal 11324 S1 (forge): toolreg.CORE_SERVERS calls are a DOMAIN cut, never "resolved" (a3 HARD, a2 #57895), and a
+# LEDGER_V 1 row and a LEDGER_V 2 row of one MOVED tool are one id with one author (a1).
+run "econ tool domain: core servers outside value and coverage, one moved tool is one id across the LEDGER_V bump (11324 S1)" "$PY" tests/test_econ_core_domain.py
+run "tool census: the known-answer fixture reads back as its domain, fixes, instruments and residual say (11324 S1)" "$PY" tests/test_tool_census.py
+# the influence graph (11324 S2): every rule in src/astryx/influence/graph.py, DB-free on a real tempfile git repo and
+# rows of exactly the read tools' columns; ONE fixture arm drives the shell's reads and cache write empty and populated.
+# Mutants: tests/mutants_influence.py.
+run "influence graph: SHA-joined PASSes, BC-D delegation, coverage-gated kinds, PPR known answers, the tool (11324 S2)" "$PY" tests/test_influence.py
+# group scopes (11324 S3d): groups derived from the agents/ tree (charter.groups), their read-time influence views, and
+# reach unchanged (the read tools name no group). DB-free. Mutants: tests/mutants_groups_charter.py, mutants_groups_graph.py.
+run "group scopes: groups from the tree, read-time group views, reach unchanged (11324 S3d)" "$PY" tests/test_groups.py
+run "federation node addressing: one org unchanged, a cog's /o/<org> doors, envelopes held to their org (11324 S3e)" "$PY" tests/test_fed_node.py
+run "the cog's per-org doors on the gateway: /o/<org>, the door org at the root, per-org trust, addressed envelopes (11324 S3e)" "$PY" tests/test_fed_doors.py
 # econ PROVENANCE (steward): a2's trip (#21969) evaluated, not remembered — every v2.1+ econ row's
 # built_from.sha must be an ancestor of main with dirty=false; missing/unknown/foreign/dirty rows are
 # reported with their own remedies (report-only trigger, gitignored body; SKIPs where it is absent).
@@ -893,6 +1064,35 @@ run "canvas preview: real shell, read-only" "$PY" tests/test_canvas_preview.py
 run "observatory: agents as people"     "$PY" tests/test_observatory_people.py
 # Mutants: tests/mutants_observatory_late_replies.py.
 run "observatory: a late desk reply is served once, never stranded" "$PY" tests/test_observatory_late_replies.py
+# Opening a thread's pane marks the agent→owner replies on it read; the feed showing them never does.
+# Mutants: tests/mutants_observatory_thread_read.py, tests/mutants_owner_surfaces.py (a bridge's threads are never marked).
+run "observatory: an opened thread pane marks its replies read" "$PY" tests/test_observatory_thread_read.py
+# The floor's owner routes: who knows whom (influence edges per kind, the coverage floor shown, one compute's ranks) and
+# the cog's rooms (absent registry = one org; a refused one says why). Mutants: tests/mutants_observatory_floor.py.
+run "observatory: the floor's influence and cog routes (goal 11324)" "$PY" tests/test_observatory_floor.py
+# plan-11860 F0: the gate is (METHOD, path) pairs, routes have ONE resolver/validator (bridges, PUT, doctor), host files
+# ONE atomic writer, .env ONE writer with no duplicate keys, the routes PUT needs If-Match and answers the effective
+# diff, and the public glyphs are an allowlisted projection. Mutants: tests/floor_mutants.py (run on a worktree).
+run "floor F0: method-aware gate, one route resolver, one host writer, one .env writer, public glyphs projected" "$PY" tests/test_floor_f0.py
+# plan-11860 S3: a channel connects from the floor. The .env key is the server's, a token is checked by its channel
+# and written by the one writer, never echoed or logged; the state comes from the bridge's own /health; WhatsApp
+# pairing refuses a linked phone or an unknown state. Mutants: tests/floor_mutants.py (S1..S5).
+run "floor S3: connect a channel without a token ever leaving (E5 E6 E7 E8)" "$PY" tests/test_floor_s3.py
+# plan-11884: /chat's server half. Every /api/chat route is owner-only (none a PUBLIC pair, HEAD and OPTIONS too);
+# uploads are allowlisted, capped, sanitized, randomly named; the side panel's file read refuses every escape (.., an
+# outside path, a symlink out, NUL, a home's dot-paths, .env) with the 404 a missing file gets, and serves an agent's
+# page as plain text; projects have one If-Match writer; dictation mints nothing it may not. Hermetic (no pool, no
+# key). Mutants: tests/mutants_chat_api.py.
+run "chat: the server half stays owner-only, and the side panel reads nothing outside its roots" "$PY" tests/test_chat_api.py
+# plan-11884 G2/G3 (a4 #62268, a1/a2 BC-1/BC-2): the OWNER-SURFACE census over ONE derived domain (observatory/**.py
+# plus the service behind each proxy route, read off main.py's catch-all routes and init.sh's units). An owner
+# surface adds routes and readers, never a writer of the wire (its SQL AND its calls that reach a repo-wide writer,
+# one import level, are an exact set; unresolved imports are UNKNOWN; three instruments that fail differently) and
+# never a second server of untrusted bytes
+# (every FileResponse/StreamingResponse/StaticFiles classified; serve_untrusted answers the stranger-byte routes).
+# Mutants: tests/mutants_owner_surface.py, tests/mutants_owner_surface_chat.py (a1's W-H, aliased, via module,
+# UNKNOWN); serve_untrusted's own: tests/mutants_serve_untrusted.py.
+run "owner surface: no new writer of the wire, no second server of untrusted bytes, over the derived domain" "$PY" tests/test_owner_surface.py
 # devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
 # nothing. Mutants: tests/mutants_sqlsite.py.
 run "sqlsite: one oracle's sqlguard view, and the ledger diff, write nothing" "$PY" tests/test_sqlsite.py
@@ -963,6 +1163,6 @@ fi
 # clock, a leaked fixture DB, or an extractor-list mismatch. 77 (UNVERIFIED) when the run can't observe: shim
 # errors, the canary not RESPONSIVE, triggers/ absent. Its controls are tests/test_sqlguard.py, above.
 # It runs LAST so it sees every gate's trace, and its own rc lands in gates.tsv after it has read the file.
-run "sqlguard: every SQL site is observed, or listed debt" "$PY" -m astryx.security.sqlguard.enforce "$ASTRYX_SQLGUARD_DIR"
+ASTRYX_SQLGUARD_WRITE_SEEN=$SQLGUARD_WRITE_SEEN run "sqlguard: every SQL site is observed, or listed debt" "$PY" -m astryx.security.sqlguard.enforce "$ASTRYX_SQLGUARD_DIR"
 
 verdict

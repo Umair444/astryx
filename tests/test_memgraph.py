@@ -38,7 +38,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from astryx.memory import memgraph as mg  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
-WIKI = REPO / "memory" / "wiki"
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+WIKI = ESTATE / "memory" / "wiki"
 
 # The org's trusted link guard, imported by path rather than copied. It is _wiki_links() in
 # memory/lints/drift.py — the reconstructed link_integrity (the standalone
@@ -48,7 +60,7 @@ WIKI = REPO / "memory" / "wiki"
 # than copying its regex kills the copy-rot class that already bit this file once (the
 # frontmatter-strip drift, msg 5186) — there is no longer a copy to drift.
 def _load_drift():
-    src = REPO / "memory" / "lints" / "drift.py"
+    src = ESTATE / "memory" / "lints" / "drift.py"
     if not src.is_file():
         return None
     spec = importlib.util.spec_from_file_location("drift_lint", src)
@@ -311,7 +323,7 @@ def test_log_chain_sorts_by_date_not_file_order():
     invert the compile chain."""
     assert mg._cid_key("12") < mg._cid_key("12b") < mg._cid_key("12c")
     assert mg._cid_key("9") < mg._cid_key("12")
-    if not (REPO / "memory" / "log.md").is_file():
+    if not (ESTATE / "memory" / "log.md").is_file():
         return
     g = mg.compile_graph(with_system1=False)
     chain = [e for e in g["edges"] if e["rel"] == "precedes"]

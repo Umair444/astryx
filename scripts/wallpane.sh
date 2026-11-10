@@ -3,15 +3,16 @@
 # table. No terminal scraping, no attaching, no sizing wars: the wire already
 # records everything, this just renders the last pane-height lines of it.
 # Zoom (C-b z) shows more lines automatically: height is re-read every cycle.
+# On the cog wall (wall.sh --cog) a pane runs this under ITS org's ASTRYX_HOME, so the DSN below is that org's.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DSN=$(grep '^ASTRYX_DSN=' "$ROOT/.env" | cut -d= -f2-)
+DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file)   # the ONE resolver (plan-11324 S3a)
 A="${1:?agent}"
 export PGTZ="$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)"
 
 while :; do
-  H=$(tmux display -p -t "$TMUX_PANE" '#{pane_height}' 2>/dev/null || echo 20)
-  W=$(tmux display -p -t "$TMUX_PANE" '#{pane_width}' 2>/dev/null || echo 80)
+  H=$(tmux display -p -t "$TMUX_PANE" '#{pane_height}' 2>/dev/null || echo 20)   # org-home: runs INSIDE a wall pane: $TMUX is that pane's own (org) server
+  W=$(tmux display -p -t "$TMUX_PANE" '#{pane_width}' 2>/dev/null || echo 80)   # org-home: inside a wall pane, as above
   out=$(psql "$DSN" -At -F'|' -c \
     "SELECT to_char(ts,'HH24:MI'), kind,
             left(regexp_replace(coalesce(content,''), E'[\\n\\r\\t ]+', ' ', 'g'), $((W - 9)))

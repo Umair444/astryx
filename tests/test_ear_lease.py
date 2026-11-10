@@ -8,6 +8,7 @@ Arms, each with a RED control:
             heartbeat then returns None (it lost the ear).
   MUTED     mute wins from any state, has NO TTL (expires_at NULL, still muted hours later), is never claimable, and
             only unmute ends it. The CHECK refuses an EAR with no TTL and a MUTED with one (schema-level).
+  LIVE HOLDER  live_holder() names only a hold that is HELD and unexpired: absent, expired and free rows have none.
 Needs a reachable DSN that can CREATE DATABASE (sqlguard fixture), else 77.
 """
 import sys
@@ -96,6 +97,19 @@ try:
                 except psycopg.errors.CheckViolation:
                     ok = True
                 want(f"RED control: the schema CHECK refuses {why}", ok)
+            # LIVE HOLDER (seed phone-desk, a4 #57458): who holds a resource NOW. A free row, an absent row and a hold
+            # past its expiry all have no holder; get() returns those rows, which is why live_holder exists.
+            P = "android:test-phone"
+            want("LIVE HOLDER: an absent resource has none", L.live_holder(a, P) is None)
+            want("LIVE HOLDER: a live hold names its holder", L.hold(a, P, "agent-x", 300) is not None
+                 and L.live_holder(b, P) == "agent-x")
+            a.execute("UPDATE leases SET expires_at = now() - interval '1 second' WHERE resource=%s", (P,))
+            want("LIVE HOLDER: a hold past its expiry has none (the row still says HELD/agent-x)",
+                 L.live_holder(b, P) is None and L.get(b, P)["state"] == "HELD" and L.get(b, P)["holder"] == "agent-x")
+            L.hold(a, P, "agent-y", 300)
+            L.unhold(a, P, "agent-y")
+            want("LIVE HOLDER: a released (free) row has none", L.live_holder(b, P) is None
+                 and L.get(b, P)["state"] == "free")
 except FixtureUnavailable as e:
     print(f"SKIP: {e}")
     sys.exit(77)

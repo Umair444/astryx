@@ -25,7 +25,7 @@
       "parameters": {
         "type": "object", "additionalProperties": false, "required": ["view"],
         "properties": {
-          "view": {"type": "string", "enum": ["floor", "network", "agents", "wire", "goals", "economy", "tools", "theatre", "memory", "growbot", "monitor"]}
+          "view": {"type": "string", "enum": ["floor", "chat", "network", "agents", "wire", "goals", "economy", "tools", "theatre", "memory", "growbot", "monitor"]}
         }
       }
     },

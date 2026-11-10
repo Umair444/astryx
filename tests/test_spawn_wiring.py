@@ -17,9 +17,12 @@ temp tree, and every fixture agent name is one no real org uses. A broken render
 as a logged side effect, never as a session.
 
   R1 a resident renders exactly CLAUDE.md, .mcp.json and .claude/settings.json, and nothing else
-  R2 .mcp.json: {astryx, tools, hands}, and with a grant spliced in {astryx, tools, hands, gmail},
-     valid JSON
-  R3 settings.json: the nudge in its OWN UserPromptSubmit group at timeout 3, usage.py at 5;
+  R2 .mcp.json: {astryx, tools, hands, influence}, and with a grant spliced in {astryx, tools, hands, influence,
+     gmail}, valid JSON
+  R11 influence (who_should_i_ask, plan-11324, seed #58432) is the tree's mcp/influence/server.py with
+      ASTRYX_AGENT = the agent written into its env (never inherited); `Grants: memory` mounts mcp/memory (ask)
+      and adds ONLY memory to the resident set (the tool left that server; the grant gained nothing)
+  R3 settings.json: the nudge in its OWN UserPromptSubmit group at timeout 3, usage.py at 15;
      Think: off and the provider token splice both land, as in a real spawn
   R4 CLAUDE.md = charter + "## The law (local.md)" + local.md
   R5 NO side effect: zero tmux/psql/claude/pgrep invocations, and the real home path
@@ -30,8 +33,10 @@ as a logged side effect, never as a session.
      `--render seed ~` truncates the owner's own ~/.claude/settings.json)
   R10 ANDROID_ENABLED=1 in .env adds the phone server (plan-8675), named for the agent; without it,
       R2's exact set shows it absent
-  R8 a stationed agent renders nothing (it has no home), exit 0
-  S5 station.py never references the door, the registry, or --mcp-config
+  R12 the ORG's login (plan-10224 ORGAUTH): the .env's CLAUDE_CODE_OAUTH_TOKEN lands in a no-entry agent's settings.json
+      env, never in a base_url entry's, never on the render's stdout/stderr; ASTRYX_ORG_CLI=gemini refuses the render
+  R8 a stationed agent renders nothing (it has no home), exit 0: no influence, no door, no hands
+  S5 station.py never references the door, influence, the registry, or --mcp-config
 """
 import ast
 import json
@@ -47,6 +52,8 @@ REPO = Path(__file__).resolve().parents[1]
 SUBJECT = Path(os.environ.get("SPAWN_SRC") or REPO / "scripts" / "spawn.sh")
 STATION = REPO / "src" / "astryx" / "core" / "station.py"
 TOKEN = "tok-fixture-4227-render"
+# Every RESIDENT's core block: the wire, the door (4227 S4), hands (7862), influence (11324, seed #58432).
+RESIDENT_SET = {"astryx", "tools", "hands", "influence"}
 fails = []
 
 
@@ -75,6 +82,7 @@ def make_tree() -> Path:
         "base_url": "https://example.invalid/anthropic", "token_env": "FIXTURE_TOKEN"}}))
     for name, body in (("zzres", "# zzres\nfixture resident\n"),
                        ("zzgrant", "# zzgrant\nGrants: gmail\nThink: off\n"),
+                       ("zzmem", "# zzmem\nGrants: memory\n"),
                        ("zzstat", "# zzstat\nType: stationed\n")):
         (t / "agents" / name).mkdir(parents=True)
         (t / "agents" / name / f"{name}.md").write_text(body)
@@ -100,7 +108,9 @@ def make_tree() -> Path:
 def render(root: Path, agent: str, out: Path, resident=False):
     log = root / "shim.log"
     env = {"PATH": f"{root / 'shims'}:/usr/bin:/bin", "HOME": str(root), "SHIM_LOG": str(log),
-           "ASTRYX_NODE": "/N/node", "RESIDENT": "1" if resident else ""}
+           "ASTRYX_NODE": "/N/node", "RESIDENT": "1" if resident else "",
+           # host-independent: a registry that names no file (a cog host's /etc/astryx/cog.json is never read)
+           "ASTRYX_COG_REGISTRY": str(root / "no-registry" / "cog.json")}
     r = subprocess.run(["bash", str(root / "scripts" / "spawn.sh"), "--render", agent, str(out)],
                        env=env, capture_output=True, text=True, timeout=60)
     calls = log.read_text().splitlines() if log.exists() else []
@@ -130,12 +140,16 @@ try:
     except Exception as e:  # noqa: BLE001
         servers = {}
         check("R2 .mcp.json is valid JSON", False, str(e))
-    check("R2 resident .mcp.json servers == {astryx, tools, hands}",
-          set(servers) == {"astryx", "tools", "hands"},
+    check("R2 resident .mcp.json servers == {astryx, tools, hands, influence}",
+          set(servers) == RESIDENT_SET,
           str(sorted(servers)))
     check("R2 the door points at the tree's mcp/tools/server.py",
           (servers.get("tools") or {}).get("args") == [f"{root}/mcp/tools/server.py"],
           str(servers.get("tools")))
+    inf = servers.get("influence") or {}
+    check("R11 influence is the tree's mcp/influence/server.py, ASTRYX_AGENT = this agent in its OWN env",
+          inf.get("args") == [f"{root}/mcp/influence/server.py"] and inf.get("env") == {"ASTRYX_AGENT": "zzres"},
+          str(inf))
     try:
         ups = json.loads((out / ".claude" / "settings.json").read_text())["hooks"]["UserPromptSubmit"]
     except Exception as e:  # noqa: BLE001
@@ -147,8 +161,8 @@ try:
     nudge_groups = [g for g in groups if any(c.endswith("hooks/nudge.py") for c in g)]
     check("R3 the nudge is ALONE in its own UserPromptSubmit group",
           len(nudge_groups) == 1 and len(nudge_groups[0]) == 1, str(groups))
-    check("R3 nudge timeout 3 < usage.py's 5",
-          timeouts.get("nudge.py") == 3 and timeouts.get("usage.py") == 5, str(timeouts))
+    check("R3 nudge timeout 3 < usage.py's 15",
+          timeouts.get("nudge.py") == 3 and timeouts.get("usage.py") == 15, str(timeouts))
     law = (out / "CLAUDE.md").read_text() if (out / "CLAUDE.md").exists() else ""
     check("R4 CLAUDE.md = charter + the law",
           law.startswith("# zzres\nfixture resident\n") and "## The law (local.md)" in law
@@ -167,8 +181,8 @@ try:
     except Exception as e:  # noqa: BLE001
         servers, env_ = {}, {}
         check("R2 grant render is valid JSON", False, f"{e}: {r.stderr[-200:]}")
-    check("R2 with a grant spliced: {astryx, tools, hands, gmail}",
-          set(servers) == {"astryx", "tools", "hands", "gmail"}, str(sorted(servers)))
+    check("R2 with a grant spliced: {astryx, tools, hands, influence, gmail}",
+          set(servers) == RESIDENT_SET | {"gmail"}, str(sorted(servers)))
     check("R3 Think: off lands (MAX_THINKING_TOKENS=0)", env_.get("MAX_THINKING_TOKENS") == "0",
           str(env_))
     check("R3 the provider token splice lands, as in a real spawn",
@@ -187,12 +201,26 @@ try:
     except Exception as e:  # noqa: BLE001
         servers = {}
         check("R10 the opted-in render is valid JSON", False, f"{e}: {r.stderr[-200:]}")
-    check("R10 ANDROID_ENABLED=1 → {astryx, tools, hands, phone}",
-          set(servers) == {"astryx", "tools", "hands", "phone"}, str(sorted(servers)))
+    check("R10 ANDROID_ENABLED=1 → {astryx, tools, hands, influence, phone}",
+          set(servers) == RESIDENT_SET | {"phone"}, str(sorted(servers)))
     ph = servers.get("phone") or {}
     check("R10 the phone server is the tree's mcp/phone/server.py, named for this agent",
           ph.get("args") == [f"{root}/mcp/phone/server.py"] and (ph.get("env") or {}).get("ASTRYX_AGENT") == "zzres",
           str(ph))
+
+    # ── R11: `Grants: memory` mounts ask's server and NOTHING else new (who_should_i_ask moved to influence) ──
+    out = outs / "zzmem"
+    r, calls = render(root, "zzmem", out)
+    try:
+        servers = json.loads((out / ".mcp.json").read_text())["mcpServers"]
+    except Exception as e:  # noqa: BLE001
+        servers = {}
+        check("R11 the memory-grant render is valid JSON", False, f"{e}: {r.stderr[-200:]}")
+    check("R11 Grants: memory → the resident set + {memory}, and no other server",
+          set(servers) == RESIDENT_SET | {"memory"}, str(sorted(servers)))
+    check("R11 the memory grant is the tree's mcp/memory/server.py (ask), with no env of its own",
+          servers.get("memory") == {"command": f"{root}/venv/bin/python", "args": [f"{root}/mcp/memory/server.py"]},
+          str(servers.get("memory")))
 
     # ── R5: an agent that is ALREADY resident still renders, with no side effect ────────
     out = outs / "zzres-live"
@@ -219,12 +247,43 @@ try:
           (existing / ".claude" / "settings.json").read_bytes() == sentinel
           and files_under(existing) == {".claude/settings.json"}, str(sorted(files_under(existing))))
 
+    # ── R12: the ORG's login (plan-10224 ORGAUTH) through the real render ─────────────────
+    org_tok = "tok-fixture-orgauth-render"
+    envf.write_text(plain + f"CLAUDE_CODE_OAUTH_TOKEN={org_tok}\n")
+    rr, calls_r = render(root, "zzres", outs / "zzres-org")
+    rg, calls_g = render(root, "zzgrant", outs / "zzgrant-org")
+    envf.write_text(plain + "ASTRYX_ORG_CLI=gemini\n")
+    rx, calls_x = render(root, "zzres", outs / "zzres-gemini")
+    envf.write_text(plain)
+
+    def _env_of(d):
+        try:
+            return json.loads((d / ".claude" / "settings.json").read_text())["env"]
+        except Exception:  # noqa: BLE001
+            return {}
+    er, eg = _env_of(outs / "zzres-org"), _env_of(outs / "zzgrant-org")
+    check("R12 an agent with no entry: the org's CLAUDE_CODE_OAUTH_TOKEN lands in its settings.json env",
+          rr.returncode == 0 and er.get("CLAUDE_CODE_OAUTH_TOKEN") == org_tok, f"rc {rr.returncode} {sorted(er)}")
+    check("R12 ...an agent whose entry sets a base_url: its own token, no org key",
+          rg.returncode == 0 and "CLAUDE_CODE_OAUTH_TOKEN" not in eg and eg.get("ANTHROPIC_AUTH_TOKEN") == TOKEN,
+          f"rc {rg.returncode} {sorted(eg)}")
+    check("R12 ...and the render's stdout/stderr never hold the org token",
+          org_tok not in rr.stdout + rr.stderr + rg.stdout + rg.stderr)
+    check("R12 ASTRYX_ORG_CLI=gemini: the render REFUSES (rc != 0, says why), writes no settings.json, no side effect",
+          rx.returncode != 0 and "cli gemini not yet supported" in rx.stderr
+          and not (outs / "zzres-gemini" / ".claude" / "settings.json").exists() and calls_x == [],
+          f"rc {rx.returncode} {rx.stderr[-200:]} calls {calls_x}")
+
     # ── R8: stationed ────────────────────────────────────────────────────────────────────
     out = outs / "zzstat"
     r, calls = render(root, "zzstat", out)
     check("R8 a stationed agent renders nothing, exit 0",
           r.returncode == 0 and files_under(out) == set() and calls == [],
           f"rc={r.returncode} files={files_under(out)} calls={calls}")
+    check("R8 ...so no .mcp.json, and nothing it rendered names influence (who_should_i_ask is a RESIDENT's tool)",
+          not (out / ".mcp.json").exists()
+          and not any("influence" in p.read_text(errors="replace") for p in out.rglob("*") if p.is_file()),
+          str(sorted(files_under(out))))
 finally:
     shutil.rmtree(root, ignore_errors=True)
     shutil.rmtree(outs, ignore_errors=True)
@@ -236,8 +295,9 @@ docs = {id(n.body[0].value) for n in ast.walk(tree)
         and n.body and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant)}
 code_strings = [n.value for n in ast.walk(tree)
                 if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs]
-leaks = [s for s in code_strings if "mcp/tools" in s or "registry.json" in s or s == "--mcp-config"]
-check("S5 station.py never references the door, the registry, or --mcp-config", not leaks,
+leaks = [s for s in code_strings if "mcp/tools" in s or "mcp/influence" in s or "registry.json" in s
+         or s == "--mcp-config"]
+check("S5 station.py never references the door, influence, the registry, or --mcp-config", not leaks,
       str(leaks))
 check("S5 ...and still passes --strict-mcp-config", "--strict-mcp-config" in code_strings)
 

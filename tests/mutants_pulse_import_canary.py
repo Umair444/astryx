@@ -17,4 +17,8 @@ MUTANTS = {
         ("            coalesce_key=\"astryx import\")", "            coalesce_key=None)"),
     "K4 tick still claims python checks while astryx won't import":
         ('            if not py_ok:  ', '            if False:  '),
+    "K5 a shed heartbeat is shed only after the claim advanced its clock (its day lost, medic #62336)":
+        ("            due = shed(due, conn, hot)             # waiting", "            pass             # waiting"),
+    "K6 process() re-reads the gauge: a crossing mid-tick claims a heartbeat, then drops it (a4 #62398 R1)":
+        ("        process(conn, due, now, hot)\n", "        process(conn, due, now)\n"),
 }

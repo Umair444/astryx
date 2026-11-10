@@ -24,10 +24,12 @@ The database is a throwaway created for this run and dropped after it; the org's
   U   the unlabelled control's send is today's row, column for column, delivery NULL
 Exit 0 pass · 1 fail · 77 skipped (no node, no node_modules, no database, no CREATEDB).
 """
+import atexit
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -37,6 +39,18 @@ from pathlib import Path
 for _k in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_k]
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _stage_channel import stage_server  # noqa: E402
 
@@ -68,14 +82,10 @@ def node_bin() -> str | None:
 
 
 def admin_dsn() -> str | None:
-    if os.environ.get("ASTRYX_DSN"):
-        return os.environ["ASTRYX_DSN"].strip()
-    env = REPO / ".env"
-    if env.exists():
-        for ln in env.read_text().splitlines():
-            if ln.startswith("ASTRYX_DSN="):
-                return ln.split("=", 1)[1].strip().strip('"').strip("'")
-    return None
+    try:                     # the ONE resolver (astryx.config.dsn): the environment first, else the estate's .env
+        return _astryx("config", "dsn", ESTATE / ".env")
+    except LookupError:
+        return None
 
 
 NODE = node_bin()
@@ -98,12 +108,20 @@ except Exception as e:                                          # noqa: BLE001
     skip(f"database unreachable ({type(e).__name__})")
 if not admin.execute("SELECT rolcreatedb OR rolsuper FROM pg_roles WHERE rolname=current_user").fetchone()[0]:
     skip("this role cannot CREATE DATABASE; a throwaway is the only safe substrate")
-PROBE_DB = f"astryx_relserver_{os.getpid()}"
-PROBE_DSN = re.sub(r"/[^/?]+(\?|$)", f"/{PROBE_DB}\\1", ADMIN, count=1)
-if PROBE_DB not in PROBE_DSN:
-    skip("could not derive a throwaway DSN")
+# The throwaway is a fixture_db(): PREFIX-named and owner-stamped, so reap() collects a killed run's. A hand-made
+# astryx_relserver_<pid> had neither, and 7 killed runs' leaked for good on 10-14 (a2 #61827, seed #61829).
+sys.path.insert(0, str(REPO))
+from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
+_fx = fixture_db()                       # schema.sql applied whole, as this oracle used to apply it by hand
+try:
+    FX = _fx.__enter__()
+except FixtureUnavailable as e:
+    skip(f"no fixture database ({e})")
+PROBE_DB, PROBE_DSN = FX["dbname"], FX["url"]   # a URL: node-pg reads it from the fixture .env and ASTRYX_DSN
 
 home = Path(tempfile.mkdtemp(prefix="relserver."))
+atexit.register(shutil.rmtree, home, True)   # it holds the fixture .env with PROBE_DSN; a TERM'd run left it (a2 A-1 #61835)
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))   # a TERM exits through the finally's cleanup() and atexit
 procs: list[subprocess.Popen] = []
 
 
@@ -116,7 +134,7 @@ def cleanup() -> None:
             except Exception:                                   # noqa: BLE001
                 pass
     try:
-        admin.execute(f'DROP DATABASE IF EXISTS "{PROBE_DB}" WITH (FORCE)')
+        _fx.__exit__(None, None, None)                          # fixture_db drops it WITH (FORCE)
     except Exception:                                           # noqa: BLE001
         pass
     admin.close()
@@ -217,14 +235,7 @@ try:
     if failures:
         raise SystemExit(1)
 
-    admin.execute(f'CREATE DATABASE "{PROBE_DB}" ALLOW_CONNECTIONS false')
-    admin.execute(f'REVOKE CONNECT ON DATABASE "{PROBE_DB}" FROM PUBLIC')
-    admin.execute(f'ALTER DATABASE "{PROBE_DB}" ALLOW_CONNECTIONS true')
-    subprocess.run([sys.executable, "-c", "import sys,psycopg;"
-                    "psycopg.connect(sys.argv[1],autocommit=True).execute(open(sys.argv[2]).read())",
-                    PROBE_DSN, str(REPO / "src" / "astryx" / "sql" / "schema.sql")],
-                   check=True, capture_output=True, timeout=120)
-    db = psycopg.connect(PROBE_DSN, autocommit=True, connect_timeout=5)
+    db = psycopg.connect(FX["dsn"], autocommit=True, connect_timeout=5)
 
     def nrows() -> int:
         return db.execute("SELECT count(*) FROM messages").fetchone()[0]

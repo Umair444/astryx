@@ -55,4 +55,42 @@ MUTANTS = {
     "branch_check is imported plainly (under a bare python3 without psycopg the census crashes: pre-push 10-15)":
         ("    names = (\"psycopg\", \"psycopg.conninfo\", \"psycopg.sql\", \"psycopg.errors\", \"psycopg.rows\", \"psycopg.types\")\n",
          "    names = ()\n"),
+    "(r) an unpinned service start is never reported":
+        ("            if _pins((repo / o).read_text(errors=\"replace\")):\n", "            if True:\n"),
+    "(r) any file in the reach pins the oracle (a filename in a comment, a helper it never imports; a2 #61467 P2)":
+        ("            if _pins((repo / o).read_text(errors=\"replace\")):\n",
+         "            if any(_pins(t) for t in side.values()):\n"),
+    "(r) a call to gate() is not a pin (every hand-run gate since seed's estate pin reads as unpinned)":
+        ("            if (isinstance(f, ast.Name) and f.id in gates) or", "            if (isinstance(f, ast.Name) and f.id in ()) or"),
+    "(r) estate.gate() through the module is not a pin":
+        ("and isinstance(f.value, ast.Name) and f.value.id in mods):", "and isinstance(f.value, ast.Name) and f.value.id in ()):"),
+    "(r) ANY function named gate pins (a local stub, not estate's)":
+        ("            if (isinstance(f, ast.Name) and f.id in gates) or", "            if (isinstance(f, ast.Name) and f.id == \"gate\") or"),
+    "(r) a MENTION of the key pins (an unpin, a print; a2 #61467 P1/P3)":
+        ("    for n in ast.walk(tree):\n        if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign)):\n",
+         "    for n in ast.walk(tree):\n        if isinstance(n, ast.Constant) and n.value == REGISTRY:\n            return True\n"
+         "        if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign)):\n"),
+    "(r) the host's live registry under /etc is a pin":
+        ("    live = lambda v: v is not None and any(etc(c) or key(c) for c in ast.walk(v))", "    live = lambda v: False"),
+    "(r) only a top-level /etc constant is live (a concat, a Path(), a forwarded get pin; a2 R-2)":
+        ("    live = lambda v: v is not None and any(etc(c) or key(c) for c in ast.walk(v))", "    live = lambda v: etc(v)"),
+    "(r) reading the key back is no forward (os.environ.get(K, '') pins)":
+        ("any(etc(c) or key(c) for c in ast.walk(v))", "any(etc(c) for c in ast.walk(v))"),
+    "(r) setdefault is not a pin":
+        ('f.attr == "setdefault" and n.args and key(n.args[0])', 'f.attr == "setdefault" and False'),
+    "(r) a keyword write is not a pin":
+        ("            if any(k.arg == REGISTRY and not live(k.value) for k in n.keywords):\n",
+         "            if False:\n"),
+    "(r) a dict literal's key is not a pin":
+        ("            if any(key(k) and not live(v) for k, v in zip(n.keys, n.values)):\n", "            if False:\n"),
+    "(r) uvicorn run in process is no service":
+        ('                and f.attr in ("run", "Server"):\n', '                and f.attr in ():\n'),
+    "(r) a -c body importing uvicorn is no service":
+        (' or "import uvicorn" in t)', ")"),
+    "(r) an ASGI target is no service (only a literal `uvicorn` argv)":
+        ('(t == "uvicorn" or APP_TARGET.match(t) or', '(t == "uvicorn" or'),
+    "(r) a file the oracle NAMES is outside its reach (a helper's spawn is never seen)":
+        ("        for nm in bc._NAMED_RX.findall(t):\n", "        for nm in ():\n"),
+    "(r) `# shared-on-purpose:` does not silence it":
+        ("                    if (f, ln) not in seen and not _allowed(lines, ln):\n", "                    if (f, ln) not in seen:\n"),
 }

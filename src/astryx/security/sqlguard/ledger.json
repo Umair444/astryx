@@ -9,9 +9,6 @@
   "bridges/canvas.py::canvas_share\u001fupdate canvases set shared_with=? where id=?": [
    "canvas: trust lines, claim, shell"
   ],
-  "bridges/canvas.py::crew_remove\u001fupdate canvases set crew = array_remove(crew, ?) where id=? and ? = any(crew) returning id": [
-   "canvas: trust lines, claim, shell"
-  ],
   "bridges/canvas.py::logout\u001fdelete from canvas_sessions where token_hash=?": [
    "canvas: trust lines, claim, shell"
   ],
@@ -24,9 +21,6 @@
   ],
   "bridges/canvas.py::viewer\u001fupdate canvas_users set last_seen=now() where name=?": [
    "canvas: trust lines, claim, shell"
-  ],
-  "bridges/canvas_voice.py::voice_session\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": [
-   "canvas voice: cap, tier fence, owner"
   ],
   "bridges/ear.py::Hearing.record\u001fselect count(*) from hearings where agent = ? and woke and ts > now() - interval '1 hour'": [
    "hearing: hear() workers, pointer, span-fetch, fence"
@@ -54,6 +48,12 @@
    "branch_check prep: hardening precondition, template, repo, estate, env",
    "branch_check: differential verdict, prod witness, clean refusal"
   ],
+  "devtools/org_apply.py::_one\u001finsert into schema_applied (id, sha) values (1, ?) on conflict (id) do update set sha = excluded.sha, applied_at = now()": [
+   "tests/test_trigger_tool.py"
+  ],
+  "devtools/org_apply.py::_one\u001fselect sha from schema_applied where id = 1": [
+   "tests/test_trigger_tool.py"
+  ],
   "devtools/privilege_census.py::live\u001fselect r.rolname, r.rolsuper, count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_roles r on r.oid=c.relowner where c.relkind in ('r','p','v','m','s') and n.nspname='public' group by 1,2 order by 3 desc": [
    "privilege census: classes discriminate, surfaces and DSN sources assigned"
   ],
@@ -69,17 +69,11 @@
   "hooks/step.py::handle_stop\u001fupdate messages set turn_id=? where from_agent=? and from_org='local' and turn_id is null and ts >= ?::timestamptz": [
    "doctor units-drift: a live orphan is not told to self-delete"
   ],
-  "hooks/step.py::main\u001finsert into steps (agent, kind, content, turn_id, tokens_in, tokens_out) values (?,'response',?,?,?,?)": [
-   "doctor units-drift: a live orphan is not told to self-delete"
-  ],
   "mcp/memory/resolvers.py::_run_cypher\u001f*": [
    "memory ask() hides tier-private data"
   ],
   "observatory/api/main.py::agent_profile\u001fselect mode() within group (order by model) from turns where agent=? and model is not null and ended_at > now() - interval '2 days'": [
    "observatory: agents as people"
-  ],
-  "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note) values (?, ?, 'proposed', ?) returning id": [
-   "goal budgets frozen, writers retired (4227 S3)"
   ],
   "observatory/api/main.py::people_answer\u001finsert into social_relation (org, pid, kind, closeness, confidence, updated_at) values (coalesce((select org from social_person where id=? limit 1), 'local'), ?, ?, ?, 'owner', now()) on conflict (org, pid) do update set kind=excluded.kind, closeness=excluded.closeness, confidence='owner', updated_at=now()": [
    "observatory: agents as people"
@@ -174,13 +168,6 @@
   "src/astryx/core/canvas.py::publish\u001fupdate canvases set version=version+1, updated_at=now() where id=? returning version": [
    "canvas: trust lines, claim, shell"
   ],
-  "src/astryx/core/toolreg.py::authorship\u001fselect agent, split_part(content, ':', 1), meta->>'edits', content from steps where kind = 'tool' and (meta ? 'edits' or content ~ '^(write|edit|multiedit|notebookedit): ') order by id": [
-   "econ v2 mirror + version gate (4227 S2)",
-   "econ v2 shadow (4227 S0)",
-   "tool ledger: ids only, ledger authorship",
-   "wash detector invariants",
-   "wash detector: v2 rings (live, report-only)"
-  ],
   "src/astryx/core/wake_audit.py::consecutive_drops\u001fselect to_agent, id from messages m join (select distinct agent from turns) a on a.agent = m.to_agent where m.status='delivered' and m.ts > now() - make_interval(hours => ?) and m.ts < now() - make_interval(hours => 2) and (?::text is null or m.to_agent = ?) order by m.to_agent, m.id desc": [
    "wake-audit classifier"
   ],
@@ -261,9 +248,6 @@
   ],
   "src/astryx/hearing/ear_store.py::ttl_findings\u001fselect to_regclass('public.utterances')": [
    "hearing store"
-  ],
-  "src/astryx/hearing/voice_mint.py::record\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": [
-   "observatory pilot voice: owner-only routes, one ledger and one cap across canvas and the observatory (plan-9000 S2, C4)"
   ],
   "src/astryx/memory/agelib.py::prepare\u001fselect rolsuper from pg_roles where rolname = current_user": [
    "branch_check prep: hardening precondition, template, repo, estate, env"
@@ -431,6 +415,12 @@
   "src/astryx/pg/schema_parity.py::shape\u001fselect n.nspname, c.relname, a.attname, format_type(a.atttypid, a.atttypmod) from pg_class c join pg_namespace n on n.oid = c.relnamespace join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped where c.relkind in ('r', 'p') and n.nspname <> all(?) and n.nspname not like 'pg_toast%%' and n.nspname not like 'pg_temp%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e') order by 1, 2, 3": [
    "schema parity: the live catalog has every table and column the schema files define"
   ],
+  "src/astryx/pulse/pulse.py::tick\u001fupdate triggers set last_eval=? where id=?": [
+   "tests/test_trigger_tool.py"
+  ],
+  "src/astryx/pulse/pulse.py::tick\u001fupdate triggers set off_reason='bad_schedule', enabled=false where id=?": [
+   "tests/test_trigger_tool.py"
+  ],
   "src/astryx/pulse/shipped_triggers/ear_retention.py::tick\u001fselect to_regclass('public.utterances')": [
    "hearing store"
   ],
@@ -498,7 +488,7 @@
    "the org economy is honest",
    "tool ledger: ids only, ledger authorship",
    "trigger names: the pulse's registration model (closure, blind \u2192 defer, retired per target, legacy, parity)",
-   "trigger tombstone: trigger_rm retires a python trigger for good, per agent and name",
+   "trigger tombstone: the trigger tool's retire retires a python trigger for good, per agent and name",
    "turns retention: old images stripped, words kept, recent untouched, idempotent",
    "windows on demand: claim before start, refuse naming the holder, idle stop only of its own starts"
   ],
@@ -551,7 +541,7 @@
    "the org economy is honest",
    "tool ledger: ids only, ledger authorship",
    "trigger names: the pulse's registration model (closure, blind \u2192 defer, retired per target, legacy, parity)",
-   "trigger tombstone: trigger_rm retires a python trigger for good, per agent and name",
+   "trigger tombstone: the trigger tool's retire retires a python trigger for good, per agent and name",
    "turns retention: old images stripped, words kept, recent untouched, idempotent",
    "windows on demand: claim before start, refuse naming the holder, idle stop only of its own starts"
   ]
@@ -611,6 +601,17 @@
     "goal": 4243,
     "state": "done"
    }
+  },
+  "tests/test_trigger_tool.py": {
+   "gates": [
+    "trigger: the expand, normalize, guarded read, one-shots, the tool's naive path (a4 plan-12214)"
+   ],
+   "listed_since": "2026-11-08",
+   "reason": "plan-12214 slice 1 (seed #65397): the expand arms (X1-X6, N1-N4) and org_apply's S1-S5 rebuild triggers in the shape origin/main had before the expand (OLD_TABLE), because the old shape IS their subject: the additive expand over it, and a lagging org. Each runs in a fixture_db() of its own (086e1aa9), so no credited arm shares the unstamped DB. The expand window closes at the contract land, which deletes the old shape and these arms with it",
+   "trip": {
+    "goal": 12238,
+    "state": "done"
+   }
   }
  },
  "header": {
@@ -622,10 +623,10 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 297,
+  "debt_rows": 294,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
-  "extractors_listed": 5,
+  "extractors_listed": 6,
   "generated_at": "2026-09-29T15:30:34+00:00",
   "run": "r1790695741x404760",
   "sites_total": 321,
@@ -657,12 +658,6 @@
    "reason": "seed 10-09 canvas: runs only after _canvas_for() found the canvas (404 otherwise), so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:f6069fe213608d246e73445b404a3a73c37ea70cb2f5aaba47b6cd276836274c"
   },
-  "bridges/canvas.py::crew_remove\u001fupdate canvases set crew = array_remove(crew, ?) where id=? and ? = any(crew) returning id": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED",
-   "reason": "seed 10-09 canvas crew removal: executed in a stamped fixture by tests/test_canvas.py with BOTH arms (a crew member removed \u2192 1 row, the same removal again \u2192 0 rows), but asyncpg exposes no table OID so the stamp can't be credited (declared FIXTURE-DDL cap, as goal_create).",
-   "tk": "sha256t:0fd2880df649df0f5a9ba53bd994ca35e771653c83a5727adfa0f557bd8ce413"
-  },
   "bridges/canvas.py::logout\u001fdelete from canvas_sessions where token_hash=?": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
@@ -686,12 +681,6 @@
    "debt": "EXECUTED",
    "reason": "seed 10-09 canvas: runs only for a session whose JOIN just found the non-revoked user, so 0 rows is unreachable; \u22651 observed",
    "tk": "sha256t:ba79ef9cf28c18ca2b3e0c53def19db9bff0525f912560d4fb5ee5c73cd44b1b"
-  },
-  "bridges/canvas_voice.py::voice_session\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED",
-   "reason": "seed 10-09: INSERT \u2026 RETURNING always affects exactly one row; the 0-row arm does not exist",
-   "tk": "sha256t:3c7a03b454af33ce666876001b7bc99b1b7b81b62d76d74efbec95002e3b38de"
   },
   "bridges/common.py::listen\u001f*": {
    "debt": "UNEXECUTED",
@@ -782,11 +771,6 @@
    "reason": "seed",
    "tk": "sha256t:ce1341bac7735ad204261bf132cd2a50ced43a7302bc6e25db8ce7e62a16176e"
   },
-  "bridges/gateway.py::pickup_task\u001finsert into messages (from_agent, from_org, to_agent, to_org, thread, intent, body, sig) values (?, ?, ?, 'local', ?, ?, ?, ?)": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:a029539220696570e452cc3152da7c2fc1d9715e06a6c8b905103bd753b4a2a1"
-  },
   "bridges/gateway.py::push\u001fupdate messages set status='dead' where id=?": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -862,6 +846,18 @@
    "reason": "seed",
    "tk": "sha256t:e2324b06479c6f439aea3135f78feb018c5e45b75405463b79444d925fa78369"
   },
+  "devtools/org_apply.py::_one\u001finsert into schema_applied (id, sha) values (1, ?) on conflict (id) do update set sha = excluded.sha, applied_at = now()": {
+   "admitted": "2026-11-08",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "org_apply.py::_one: schema_applied is created by org_apply itself, never by schema.sql, so no fixture stamp covers it and no statement on it can reach RESPONSIVE; its no-table / lagging / current behaviour is driven by test_trigger_tool S1-S5 against real fixture databases (plan-12214, a4)",
+   "tk": "sha256t:bcf70619c18276816b7b7ae95d42bc92d0a18e596acbe6d96260c870d2180ab1"
+  },
+  "devtools/org_apply.py::_one\u001fselect sha from schema_applied where id = 1": {
+   "admitted": "2026-11-08",
+   "debt": "EXECUTED/FIXTURE-DDL",
+   "reason": "org_apply.py::_one: schema_applied is created by org_apply itself, never by schema.sql, so no fixture stamp covers it and no statement on it can reach RESPONSIVE; its no-table / lagging / current behaviour is driven by test_trigger_tool S1-S5 against real fixture databases (plan-12214, a4)",
+   "tk": "sha256t:6752a511b74c74f8d7342ca32bbe5e216315460c9ad4f17138d1bd6d2e0324c9"
+  },
   "devtools/privilege_census.py::live\u001fselect r.rolname, r.rolsuper, count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_roles r on r.oid=c.relowner where c.relkind in ('r','p','v','m','s') and n.nspname='public' group by 1,2 order by 3 desc": {
    "admitted": "2026-10-09",
    "debt": "EXECUTED",
@@ -874,11 +870,47 @@
    "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
    "tk": "sha256t:046b20c0dabd11548bae9814467a482cc75a8bc3ba33df01baa1bf6468820550"
   },
+  "hooks/nudge.py::log_error\u001finsert into steps (agent, kind, content) values (?,'error',?)": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "test_nudge runs its logic arms on a copy of nudge.py with HARD_S raised to RELAXED_S, and the shim credits only a byte-identical copy, so this site runs but is never observed. It can climb once the deadline is relaxable without editing the subject (a goal, via steward; medic 10-18)",
+   "tk": "sha256t:fe74fe92ee9f91ad008d0408484fff1ba9e304920cf25983be89ad562470eb3e"
+  },
+  "hooks/nudge.py::log_error\u001fselect 1 from steps where agent=? and kind='error' and content like ? and ts > now() - interval '1 hour' limit 1": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "test_nudge runs its logic arms on a copy of nudge.py with HARD_S raised to RELAXED_S, and the shim credits only a byte-identical copy, so this site runs but is never observed. It can climb once the deadline is relaxable without editing the subject (a goal, via steward; medic 10-18)",
+   "tk": "sha256t:566b1b753678df569c8dfd509767e33340d86d8e6ef5fb2d421d17146c96e24d"
+  },
+  "hooks/nudge.py::record\u001finsert into classifications (agent, session_id, family, tier, classifier, nudged) values (?,?,?,?,?,?)": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "test_nudge runs its logic arms on a copy of nudge.py with HARD_S raised to RELAXED_S, and the shim credits only a byte-identical copy, so this site runs but is never observed. It can climb once the deadline is relaxable without editing the subject (a goal, via steward; medic 10-18)",
+   "tk": "sha256t:c133c4853305a713ad5e6dbf3205fd08c6260552f2f4f6dec660862d8bdfa4a3"
+  },
+  "hooks/nudge.py::record\u001fselect 1 from classifications where agent=? and family=? and nudged and ts > now() - make_interval(days => ?) limit 1": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "test_nudge runs its logic arms on a copy of nudge.py with HARD_S raised to RELAXED_S, and the shim credits only a byte-identical copy, so this site runs but is never observed. It can climb once the deadline is relaxable without editing the subject (a goal, via steward; medic 10-18)",
+   "tk": "sha256t:f1d412c4871813062e244ebcb299dcf3d67a5b7be952536e4a9ba81fd14d09d7"
+  },
+  "hooks/nudge.py::record\u001fselect count(*) from classifications where family=? and ts > now() - make_interval(days => ?)": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "test_nudge runs its logic arms on a copy of nudge.py with HARD_S raised to RELAXED_S, and the shim credits only a byte-identical copy, so this site runs but is never observed. It can climb once the deadline is relaxable without editing the subject (a goal, via steward; medic 10-18)",
+   "tk": "sha256t:aa4428fafcc8a3683ee268a0264af725b06e426daffdd307a7e68f578d9837ec"
+  },
   "hooks/step.py::_labelled_auto_deliver\u001fupdate messages set turn_id=? where id=?": {
    "admitted": "2026-10-11",
    "debt": "EXECUTED",
    "reason": "plan-9139 S1b: stamps turn_id on the row send_row just inserted (its RETURNING id, same savepoint), so exactly 1 row by construction; driven in a stamped fixture by tests/test_release_seats.py",
    "tk": "sha256t:49ee6a665c1289aa4d72b3ff31f8ed59208e53f00a28a67731e17be21dee12ff"
+  },
+  "hooks/step.py::handle_stop\u001finsert into steps (agent, kind, content) values (?,'error',?)": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "fault path: written only when the secret cleaner is unavailable (clean_ok false, plan-5497 S1a); no traced gate makes redaction unavailable inside the hook (medic 10-18)",
+   "tk": "sha256t:dcbb15d14a78c48ddaeb6a0c8c94f21395d9ba1050c10e325801178dc7693c83"
   },
   "hooks/step.py::handle_stop\u001fselect (regexp_match(thread, '^(?:plan|goal)-(\\d+)$'))[1]::bigint from messages where id=?": {
    "debt": "NOT-SEARCHED-AT-SEED",
@@ -900,30 +932,21 @@
    "reason": "seed",
    "tk": "sha256t:f09629621bb079493a9acd454057f9546e912b7a3e064a5752838f16ab02f466"
   },
+  "hooks/step.py::main\u001finsert into steps (agent, kind, content) values (?,'error',?)": {
+   "admitted": "2026-10-18",
+   "debt": "UNEXECUTED",
+   "reason": "fault path: written only when a PreToolUse guard (secret_guard or grep_guard) reports an error (guard_err); no traced gate makes a guard error inside the hook (medic 10-18)",
+   "tk": "sha256t:dcbb15d14a78c48ddaeb6a0c8c94f21395d9ba1050c10e325801178dc7693c83"
+  },
   "hooks/step.py::main\u001finsert into steps (agent, kind, content) values (?,'response',?)": {
    "debt": "NOT-SEARCHED-AT-SEED",
    "reason": "seed",
    "tk": "sha256t:64b95efe9e7fac5530e14ef4547b8e361f5adfcc40a8fdb3b90114fb5e08887c"
   },
-  "hooks/step.py::main\u001finsert into steps (agent, kind, content, meta) values (?,'error',?,?)": {
-   "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed",
-   "tk": "sha256t:515cd3731d2387ea77418ac2d990ecaa7b17952fc725a79e6c3e856a380f7800"
-  },
-  "hooks/step.py::main\u001finsert into steps (agent, kind, content, meta) values (?,'tool',?,?)": {
-   "debt": "NOT-SEARCHED-AT-SEED",
-   "reason": "seed",
-   "tk": "sha256t:2e981781463eee623a047ffc0b8a965ec404e1bcb0fa80519c8d9d7b7d23e2ac"
-  },
   "hooks/step.py::main\u001finsert into steps (agent, kind, content, meta) values (?,'tool_done',?,?)": {
    "debt": "NOT-SEARCHED-AT-SEED",
    "reason": "seed",
    "tk": "sha256t:1407d4c855a59c28a74f5c0dc16ac9a2a87fba7cf47195094b5faa167e119f47"
-  },
-  "hooks/step.py::main\u001finsert into steps (agent, kind, content, turn_id, tokens_in, tokens_out) values (?,'response',?,?,?,?)": {
-   "debt": "EXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:ef9b4d50690bc80791e620f4d09f359fce22df06f02956d370adc376790d5db9"
   },
   "hooks/usage.py::<module>\u001fselect coalesce(max((raw_payload->'usage'->>'context')::bigint),0) from (select raw_payload from turns where agent=? order by id desc limit 200) t": {
    "admitted": "2026-10-11",
@@ -1117,12 +1140,6 @@
    "reason": "seed",
    "tk": "sha256t:6f7a871eae56bf224f0c59c044d99601bc41da5560294a628f58564f5bb8e1e0"
   },
-  "observatory/api/main.py::goal_create\u001finsert into goals (title, owner, state, scope_note) values (?, ?, 'proposed', ?) returning id": {
-   "admitted": "2026-09-29",
-   "debt": "EXECUTED/FIXTURE-DDL",
-   "reason": "goal 4227 S3: executed in a stamped fixture by tests/test_goal_budget_frozen.py, but asyncpg exposes no table OID, so the stamp cannot be credited (declared FIXTURE-DDL cap). Shrinks when the observatory moves to psycopg or the cap lifts.",
-   "tk": "sha256t:a916f9172621e07e7e52863a720b467bf01af22f3a147f138735410fc8fcb24e"
-  },
   "observatory/api/main.py::goals\u001fselect * from goals order by id desc limit 200": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -1154,11 +1171,6 @@
    "reason": "seed",
    "tk": "sha256t:24abb0c20f141324326f6e95dee8867bab2764f12aa36f715d7106f01a8b4b18"
   },
-  "observatory/api/main.py::messages\u001f*": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:51aee8803385dca2630884b747ab7565d4a2b8b2bd20de88ed3d2593a3d4ca74"
-  },
   "observatory/api/main.py::network_cypher\u001f*": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -1174,16 +1186,6 @@
    "debt": "UNEXECUTED",
    "reason": "people library 1a cutover: the owner-gated endpoint LEFT JOINs social_relation for the details; no oracle drives the FastAPI app, so this re-texted read stays UNEXECUTED",
    "tk": "sha256t:b001e563955803e31de2c9016b585fa3193106f45184777d38c8fc9e882d17da"
-  },
-  "observatory/api/main.py::overview\u001f*": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:51aee8803385dca2630884b747ab7565d4a2b8b2bd20de88ed3d2593a3d4ca74"
-  },
-  "observatory/api/main.py::overview\u001fselect distinct agent from steps": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:f64ef54f6cd44cbdea881d24ac76addfd46855af54b1a6ea6705c0b94ae087e3"
   },
   "observatory/api/main.py::owner_send\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('owner', ?, ?, 'chat', ?) returning *": {
    "debt": "UNEXECUTED",
@@ -1320,6 +1322,12 @@
    "reason": "seed",
    "tk": "sha256t:29869134e6a5f52c208e58203e7d6ee799b80d58bd28a31696a32400b14ccd07"
   },
+  "sha256:240dd9541c4ebeb89a67dd9b720fa233ef4940dfcacce1297194d3f569280813": {
+   "admitted": "2026-10-23",
+   "debt": "UNEXECUTED",
+   "reason": "estate site (gitignored, hashed): a sensor run by a live service on its own cadence, never by a check.sh gate; no fixture reaches it (seed, goal 4243, medic #62524)",
+   "tk": "sha256t:3f47bf7f804a3e2dae7c12fb9dc471f8b606b83fde4f60ede7771dc8612701b8"
+  },
   "sha256:270094954664f77ba34a84f8f8f0e08cf49f5ba4c30de70af1822a699c5eeef2": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -1426,11 +1434,6 @@
    "reason": "seed",
    "tk": "sha256t:a8aeafa283f69fcbe645137ee26610994ff37a2542640b9faad41a1fe82984de"
   },
-  "sha256:65d63860f72c863d4827a88c9955f4f8970ad3ad8860d88ebc46c950b5722572": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:37b582827aa319a2434213f29a1a56af361a7c99e593850d32dd7e6ca9940733"
-  },
   "sha256:6a44313ce751b3f3c07ad5b7eaa31263e177746662b2db8f2cf03d9e7e14f8af": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -1460,6 +1463,12 @@
    "debt": "EXECUTED",
    "reason": "seed",
    "tk": "sha256t:429ddbe8ccd55c711077227da105616314338aee72939a172c78697338d82fdb"
+  },
+  "sha256:7ecf118494871a5f3a034373c15ea3d64d0164f5d07ed5445a936a44ede18d80": {
+   "admitted": "2026-10-23",
+   "debt": "UNEXECUTED",
+   "reason": "estate site (gitignored, hashed, personal tier): a by-hand import against the org's own tables, executed for real 10-22/10-23 by its owner; no fixture exists or should (seed, goal 4243)",
+   "tk": "sha256t:bbe4b9de7ea470e84145d960f89bb65020dccdb7192859bf2005672cb855cc68"
   },
   "sha256:8144027438a5006aad7309f2489dc4f77cc956984b8d90b24a9fc6c78775c72f": {
    "debt": "UNEXECUTED",
@@ -1564,6 +1573,12 @@
    "reason": "seed",
    "tk": "sha256t:b3132cda47e153d1b2e23f22624d6e4af393123766dc1c3236dcfe12af406d8d"
   },
+  "sha256:b8aacab0a1b22d2bcb1dac9fb129c005a87b1ccee3d51789d6a79e5072a00734": {
+   "admitted": "2026-10-23",
+   "debt": "UNEXECUTED",
+   "reason": "estate site (gitignored, hashed): a sensor run by a live service on its own cadence, never by a check.sh gate; no fixture reaches it (seed, goal 4243, medic #62524)",
+   "tk": "sha256t:386d36b3cedb069e5f3a93860056e36c7e47c656eef728af307de43d13058172"
+  },
   "sha256:bb7bd6e0d676c7cacd903adfb44e21e01bfef638d016fc6e901e9eb330fd5591": {
    "debt": "EXECUTED",
    "reason": "seed",
@@ -1625,10 +1640,22 @@
    "reason": "seed",
    "tk": "sha256t:2631c5dd4c53cdd3b131b5378483f8cfe50ce88200521ec50c79da042263b36c"
   },
+  "sha256:dabd08786f5f0b3110d6537fc3f2805295109c63a3d915088cf7641eea52747e": {
+   "admitted": "2026-10-23",
+   "debt": "UNEXECUTED",
+   "reason": "estate site (gitignored, hashed, personal tier): a by-hand import against the org's own tables, executed for real 10-22/10-23 by its owner; no fixture exists or should (seed, goal 4243)",
+   "tk": "sha256t:a26374dbe89982fb68014f3919e6618c6858cd253f0dd49a411fce7a0f3ef04a"
+  },
   "sha256:e15d9f816eff10a84831892fba320c06f5b176ce84f02c03c43140df970dcfcb": {
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:e209300e10a51cfaf6be9cd121375b3fc047fe25ab22d0c78ce501a32b34813b"
+  },
+  "sha256:e1d17b791ec175c866b6e0781b9aeaa0d95b0107c8a540d182bfd01d76597d19": {
+   "admitted": "2026-10-23",
+   "debt": "UNEXECUTED",
+   "reason": "estate site (gitignored, hashed, personal tier): a by-hand import against the org's own tables, executed for real 10-22/10-23 by its owner; no fixture exists or should (seed, goal 4243)",
+   "tk": "sha256t:9f4c58aa8ceca9568f11c310a63ccaa92d032bbd337f3eacfe54f15794d38bd0"
   },
   "sha256:e96daa49e862f04c51f1933f1ba90a2108f7ba7694c41bcd6ae570d7657c33ec": {
    "debt": "EXECUTED/FIXTURE-DDL",
@@ -1659,6 +1686,12 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:dab1b557ebc2885ed0aa257afae2e96a5cad76f6aa1915c10db81050ae655902"
+  },
+  "sha256:f94a02ea94057598400eda141ee2ba803b68dcb25fe46c8f1dde2639130bb342": {
+   "admitted": "2026-10-23",
+   "debt": "UNEXECUTED",
+   "reason": "estate site (gitignored, hashed, personal tier): a by-hand import against the org's own tables, executed for real 10-22/10-23 by its owner; no fixture exists or should (seed, goal 4243)",
+   "tk": "sha256t:2ba5b07309fdc4921ad611ecf3fe4afe321048b7d3028dc6142f59b0502710d2"
   },
   "sha256:fa6fa3d04421bbfec0588059d7b9b7a00300a565e250c4c134d6f8a9a5dd6575": {
    "debt": "UNEXECUTED",
@@ -1701,11 +1734,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:8090f2d2a20a175c03efeed8a9d425baac3e994a4da83ab7a96d38f4cfbb178c"
-  },
-  "src/astryx/core/toolreg.py::authorship\u001fselect agent, split_part(content, ':', 1), meta->>'edits', content from steps where kind = 'tool' and (meta ? 'edits' or content ~ '^(write|edit|multiedit|notebookedit): ') order by id": {
-   "debt": "EXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:cfc2f1cbf2857508b24f1c5aca1304e5d875ae4d6f11d2e264f5299493a93a61"
   },
   "src/astryx/core/toolreg.py::authorship\u001fselect distinct meta->>'registry_id' from steps where meta ? 'registry_id'": {
    "debt": "UNEXECUTED",
@@ -1761,12 +1789,6 @@
    "debt": "EXECUTED/FIXTURE-DDL",
    "reason": "hearing S1 (plan-8674): a catalog-only read (pg_catalog / to_regclass / now()); it reads no org relation, so no schema.sql stamp can credit it. Exercised with RED controls on fixture DBs by tests/test_ear_store.py.",
    "tk": "sha256t:1afb0b418d96c7b4fbd894921b32f343281d6f2329c16dcac7a7ffc227c4dab9"
-  },
-  "src/astryx/hearing/voice_mint.py::record\u001finsert into canvas_voice_usage (user_name, model) values (?,?) returning id": {
-   "admitted": "2026-10-11",
-   "debt": "EXECUTED",
-   "reason": "the one voice-spend ledger write (plan-9000 C4): an INSERT ... RETURNING with no predicate, so no fixture can make it RESPONSIVE; EXECUTED on a fixture schema by tests/test_pilot_voice_server.py (e), which reads its row back through minutes_today (floor, sum, monotonic and foreign-row arms)",
-   "tk": "sha256t:690713ec2935d00da75ece03b48953a643a812706601c3980e33a301ce7163d6"
   },
   "src/astryx/memory/agelib.py::aprepare\u001fselect rolsuper from pg_roles where rolname = current_user": {
    "admitted": "2026-09-30",
@@ -2083,35 +2105,27 @@
    "reason": "schema parity (a1 #38264): the catalog shape read, run on the fixture AND live by tests/test_schema_parity.py; a pg_catalog read (pg_class/pg_attribute/pg_depend), so RESPONSIVE is unreachable by the judge's relation rule",
    "tk": "sha256t:138d06a73e80673bead0b3ba476e3779662a618592cba9f650ce484ff0646b36"
   },
-  "src/astryx/pulse/pulse.py::reconcile\u001fselect agent, name from triggers where kind='python' and enabled": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:11fa21ad388a221a397d68c1838eb000434135bc285bc83ccdc7cbba15d86e76"
-  },
   "src/astryx/pulse/pulse.py::reconcile\u001fselect name from triggers where kind='python' and enabled and check_src like ? order by name": {
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:6a83c638786c1932508fb11d23c86034b48df938ffa31985fa7d5dea3452c5fc"
   },
-  "src/astryx/pulse/pulse.py::reconcile\u001fupdate triggers set enabled=false where agent=? and name=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:fcf65f5436cd95de6a98d1a0b89086147e59c4dcab1a1f014083e09759ddcacf"
-  },
-  "src/astryx/pulse/pulse.py::tick\u001fselect id, agent, name, schedule, kind, check_src, state, note, premium from triggers where enabled and next_fire <= now() order by next_fire for update skip locked": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:e332f11b2d5052cd2d35be545c7db5537bc49aa0d49bd8f4253ad47f3eb54fd4"
-  },
-  "src/astryx/pulse/pulse.py::tick\u001fupdate triggers set enabled=false where id=?": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:eed8856d179911ff9d9708512a26e51954fbd1e5293b5573200debfbb503d645"
+  "src/astryx/pulse/pulse.py::tick\u001fupdate triggers set last_eval=? where id=?": {
+   "admitted": "2026-11-08",
+   "debt": "EXECUTED",
+   "reason": "pulse.py::tick: the write is by the id of a row this same transaction claimed with SELECT ... FOR UPDATE SKIP LOCKED, so no other session can delete it before commit and 0 rows is unreachable; the >=1 side runs in test_trigger_tool A3/E2 (plan-12214, a4)",
+   "tk": "sha256t:5faf0b16e62dc9dff4c5634f7d04dbfa2a7ebfc03800351bac3e2c03ec72dac4"
   },
   "src/astryx/pulse/pulse.py::tick\u001fupdate triggers set next_fire=?, last_eval=? where id=?": {
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:aca2cbe30c6f7b2d5fb7497de96e37ccd8c19d36c92f0312aae33a84180c53e1"
+  },
+  "src/astryx/pulse/pulse.py::tick\u001fupdate triggers set off_reason='bad_schedule', enabled=false where id=?": {
+   "admitted": "2026-11-08",
+   "debt": "EXECUTED",
+   "reason": "pulse.py::tick: the write is by the id of a row this same transaction claimed with SELECT ... FOR UPDATE SKIP LOCKED, so no other session can delete it before commit and 0 rows is unreachable; the >=1 side runs in test_trigger_tool A3/E2 (plan-12214, a4)",
+   "tk": "sha256t:2ce8bbdfafc59878946f8cd2aecb4bdaa0b080406c770ba47a4390c9f90302f2"
   },
   "src/astryx/pulse/senses.py::_log_call\u001finsert into steps (agent, kind, content) values (?,'sense',?)": {
    "debt": "UNEXECUTED",
@@ -2170,16 +2184,6 @@
    "reason": "plan-5497 S2 at-rest redaction write: replaces only the secret spellings in one turn. Executed on a fixture_db by tests/test_secret_sweep.py (W5, re-scan to 0 with structure and usage intact); live only on --redact after a2 PASS + seed go.",
    "tk": "sha256t:c07af76af722bbef60efb4a73629d6dcd97e5311d9efee01c52e00093a384f26"
   },
-  "src/astryx/security/sqlguard/enforce.py::_clock\u001fdelete from sqlguard_seen where kind=? and not (key = any(?))": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:b1e4618a11b0450decdf7b1d6bfe5d2dcb781ba8e241160718f42cae642fd7ed"
-  },
-  "src/astryx/security/sqlguard/enforce.py::_clock\u001finsert into sqlguard_seen (kind, key) values (?,?) on conflict (kind, key) do update set last_seen=now(), runs=sqlguard_seen.runs+1 returning first_seen, runs": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:b1cb18f92d917454856be2a999c7c123075f1a0b5558ca82fb855fec577a8298"
-  },
   "src/astryx/security/sqlguard/enforce.py::enforce\u001fselect 1 from goals where id=? and state=?": {
    "debt": "UNEXECUTED",
    "reason": "seed",
@@ -2189,11 +2193,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:79978b153539351884fcb4a8b49996e18cf12ba81fc663c86ba7e9b94eeca3b0"
-  },
-  "src/astryx/security/sqlguard/enforce.py::enforce\u001fselect to_regclass('sqlguard_seen')": {
-   "debt": "UNEXECUTED",
-   "reason": "seed (restored 10-09, steward #38027): shrunk in c3aab02 on ONE run's RESPONSIVE grade, but to_regclass returns one row either way (NULL or the oid), so the grade rides whether the run created sqlguard_seen and flaps red on other trees. Listed until a fixture pins table-absent and table-present arms.",
-   "tk": "sha256t:24a70fcf340ff1f032302692bdfe9fe64190e009374dd87482dcde8779a883b3"
   },
   "src/astryx/security/sqlguard/fixture.py::_stamp_rels\u001fselect c.oid, quote_ident(n.nspname)||'.'||quote_ident(c.relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind in ('r','p','v','m') and n.nspname not in ('pg_catalog','information_schema','ag_catalog','topology') and n.nspname not like 'pg_toast%%' and not exists (select 1 from pg_depend d where d.classid = 'pg_class'::regclass and d.objid = c.oid and d.deptype = 'e')": {
    "admitted": "2026-09-30",

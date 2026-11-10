@@ -17,22 +17,34 @@ ENV = "BRANCH_CHECK_SRC"
 # DECLARED, not authored: the rerun's sqlguard intersection in run() (a branch-only finding must reproduce).
 # run() is exercised end to end only by a real run, never by this oracle; its arm is the next e2e run's report.
 MUTANTS = {
+    # a3 #61231 / seed #61236: a missing or unvouched trace dir is UNWITNESSED, never a clean zero
+    "U1 a trace dir without run_id (or no dir at all) reads as a clean zero":
+        ('    if not trace_dir.is_dir() or not (trace_dir / "run_id").is_file():\n        return None\n', ""),
+    "U2 a clean differential over an unwitnessed side PASSes (rc 0)":
+        ("    return 77 if unwitnessed else 0", "    return 0"),
+    "U4 an unwitnessed rerun erases the first run's known prod write (a4 #61241)":
+        ("    return sum(known) if any(known) or len(known) == 2 else None",
+         "    return None if w1 is None or w2 is None else w1 + w2"),
+    "U5 an unwitnessed part with no known write reads as a clean 0":
+        ("    return sum(known) if any(known) or len(known) == 2 else None", "    return sum(known)"),
+    "U6 run() bypasses combine_witness at the call site (07ab603's inline sum back: a4 #61241 advisory)":
+        ('            witness["branch"] = combine_witness(witness["branch"], w2)',
+         '            witness["branch"] = None if witness["branch"] is None or w2 is None else witness["branch"] + w2'),
+    "U3 an unwitnessed side is never named":
+        ("    gone = [side for side, n in witness.items() if n is None]", "    gone = []"),
     "O1 a statement reaching PROD doesn't fail the run":
         ("    return any(witness.values())", "    return False"),
     "O2 FLAKY is counted as REGRESSED":
         ("    regressed = sorted(set(b[\"failed\"]) - set(m[\"failed\"]))",
          "    regressed = sorted((set(b[\"failed\"]) | set(b.get(\"flaky\", []))) - set(m[\"failed\"]))"),
-    "O3 check.sh's ANSI colour isn't stripped (a red ✗ line is missed)":
-        ("    lines = re.sub(r\"\\x1b\\[[0-9;]*m\", \"\", log).splitlines()", "    lines = log.splitlines()"),
+    # O3 (ANSI strip) and O5 (the walk stops at a non-header line) moved with summary() to devtools/check_verdict.py
+    # (a4 10-25, a1 #62905): see tests/mutants_check_verdict.py, which declares both EQUIVALENT on check.sh's printer
     "O4 the witness counts every statement, not just the prod database's":
-        ("                if json.loads(line).get(\"db\") == prod_db:", "                if json.loads(line).get(\"db\"):"),
-    "O5 summary reads any 'FAILED (' line (a gate's own output injects names)":
-        ("        kind = next((k for k, rx in _HEAD.items() if rx.match(ln)), None)\n        if kind is None:\n            break",
-         "        kind = next((k for k, rx in _HEAD.items() if rx.match(ln)), None)\n        if kind is None:\n            continue"),
+        ("    return sum(1 for r in witness_traces(str(trace_dir)) if r.get(\"db\") == prod_db)",
+         "    return sum(1 for r in witness_traces(str(trace_dir)) if r.get(\"db\"))"),
     "O6 gates failing on BOTH sides aren't reported":
         ('    dead = sorted((set(m["failed"]) & set(b["failed"])) - ({SQLGUARD_GATE} if judged else set()))', '    dead = []'),
-    "O7 the walk has no TOP edge (skips verdict()'s leading blank and reads the last gate's output)":
-        ("            if out[\"failed\"] or out[\"unverified\"]:\n                break", "            if False:\n                break"),
+    # O7 (the walk has no top edge) moved to tests/mutants_check_verdict.py as V4, with summary()
     "O8 sqlguard's branch-only findings are ignored (a new R-NEW on the branch reads clean)":
         ("        sg_new = sorted(l for i, l in br.items() if i not in mr)", "        sg_new = []"),
     "O9 sqlguard is still listed dead when it WAS judged differentially":
@@ -130,4 +142,10 @@ MUTANTS = {
         ('                stdout, stderr, rc = run_suite(a + ["bash", "devtools/check.sh"], env)',
          '                stdout, stderr, rc = (lambda p: (p.stdout, p.stderr, p.returncode))(subprocess.run(a + ["bash", '
          '"devtools/check.sh"], env=env, capture_output=True, text=True, timeout=SUITE_TIMEOUT))'),
+    "O48 a run line with run()'s --cap=<s> flag is no gate again (test_relay.py dark to every dark list and the census)":
+        ('_GATE_RX = re.compile(r\'^[ \\t]*run (?:--cap=\\S+\\s+)?"((?:[^"\\\\]|\\\\.)+)"\\s+(.*)$\', re.M)', '_GATE_RX = re.compile(r\'^[ \\t]*run "((?:[^"\\\\]|\\\\.)+)"\\s+(.*)$\', re.M)'),
+    "O49 an INDENTED run line is no gate again (a gate inside an `if`: check.sh's media decode)":
+        ('_GATE_RX = re.compile(r\'^[ \\t]*run (?:--cap=\\S+\\s+)?"((?:[^"\\\\]|\\\\.)+)"\\s+(.*)$\', re.M)', '_GATE_RX = re.compile(r\'^run (?:--cap=\\S+\\s+)?"((?:[^"\\\\]|\\\\.)+)"\\s+(.*)$\', re.M)'),
+    "O50 run_calls finds a call only at LINE START again (a chained `&& run` or `then run` gate goes dark silently)":
+        ('_RUN_CALL_RX = re.compile(r"(?:^|[;&|(]|\\b(?:then|do|else|elif))\\s*run\\s")', '_RUN_CALL_RX = re.compile(r"^[ \\t]*run\\s")'),
 }

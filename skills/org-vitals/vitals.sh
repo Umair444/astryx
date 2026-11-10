@@ -23,8 +23,12 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# org-home guard (plan-11324 S3a, a2 #58917 R-2; S3f S4b): one org reads this checkout's estate (.env, backups/); a cog of
+# several orgs reads THE org ASTRYX_HOME or the marker names (org_here.sh: $ORGH), and with none refuses (exit 3: the one
+# exception to "exit 0 always", a panel it cannot read honestly).
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then _g=0; "$ROOT"/venv/bin/python "$ROOT"/src/astryx/orgs.py multi || _g=$?; case "$_g" in 1) ;; 0) . "$ROOT/scripts/org_here.sh" || { echo "vitals.sh: refusing" >&2; exit 3; } ;; *) echo "vitals.sh: this host's org registry refuses: refusing" >&2; exit 3 ;; esac; fi
 cd "$ROOT" || { echo "cannot cd to repo root $ROOT"; exit 2; }
-DSN="$(grep -E '^ASTRYX_DSN=' .env | cut -d= -f2- | tr -d '"'\''')"
+DSN="$(grep -E '^ASTRYX_DSN=' "${ORGH:-$ROOT}/.env" | cut -d= -f2- | tr -d '"'\''')"   # a cog: THIS org's (org_here.sh)
 q() { psql "$DSN" -tAc "$1" 2>&1; }
 hr() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 
@@ -60,9 +64,9 @@ _gap="$(q "WITH g AS (SELECT prev, ts FROM (SELECT ts, coalesce(lag(ts) OVER (OR
  SELECT CASE WHEN sil > interval '6 hours' THEN 'HOST/PULSE DARK          ' ELSE 'PULSE UP, NO AGENT TURNED' END||'  '||to_char(prev AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI\"Z\"')||' → '||to_char(ts AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI\"Z\"')||'  no steps '||round(EXTRACT(EPOCH FROM ts-prev)/3600.0,1)||'h, longest message silence '||round(EXTRACT(EPOCH FROM sil)/3600.0,1)||'h  (resumed '||round(EXTRACT(EPOCH FROM now()-ts)/3600.0,1)||'h ago)' FROM c ORDER BY ts DESC")"
 if [ -n "$_gap" ]; then
   printf '%s\n' "$_gap"
-  printf '%s\n' "$_gap" | grep -q '^HOST/PULSE DARK' && \
+  grep -q '^HOST/PULSE DARK' <<<"$_gap" && \
     echo "  ⚠ HOST/PULSE DARK: expect boot backlog and vacuous live-window gates; still reproduce each red before calling it an artifact"
-  printf '%s\n' "$_gap" | grep -q '^PULSE UP, NO AGENT TURNED' && \
+  grep -q '^PULSE UP, NO AGENT TURNED' <<<"$_gap" && \
     echo "  ⚠ PULSE UP, NO AGENT TURNED: the pulse ran and nobody turned (wedged sessions, quota shed?). That is a FINDING to investigate, not boot noise"
   true
 else
@@ -84,7 +88,7 @@ hr "gate suite — steward's run_check STAMP (not a re-run; read CONTENT, not th
 # stamp for a glance so the heartbeat covers the gate axis without re-running the suite. Read the
 # VERDICT line, not the mtime — a FAILED run writes a fresh stamp, so age never means health. The
 # >26h note is a soft glance-prompt (is run_check alive?), NOT a competing gate.
-_stamp="${CHECK_WATCH_STAMP:-backups/.last-check}"
+_stamp="${CHECK_WATCH_STAMP:-${ORGH:-.}/backups/.last-check}"   # a cog: THIS org's (a2 #60858 R-1)
 if [ -f "$_stamp" ]; then
   _age_h=$(( ( $(date +%s) - $(stat -c %Y "$_stamp") ) / 3600 ))
   head -1 "$_stamp"
@@ -123,18 +127,26 @@ else
   echo "  (no stamp at $_stamp — steward's run_check may never have run on this host)"
 fi
 
-hr "triggers — genuinely DARK only (next_fire overdue, NOT last_eval age)"
+hr "triggers — overdue: DARK, or WAITING when a shed heartbeat (next_fire past, NOT last_eval age)"
 # last_eval advances only when a trigger is DUE, so it looks 'stale' for every weekly/monthly
 # one by design. A trigger is dark only when its NEXT fire is already past; next_fire is an
 # absolute instant, so this is tz-safe. 15min grace absorbs pulse lag. Empty = healthy.
-_dark="$(q "SELECT agent||'/'||name||'  next_fire='||next_fire FROM triggers WHERE enabled AND next_fire < now()-interval '15 min' ORDER BY next_fire")"
+# Except a premium=0 heartbeat while the 5h gauge is at/above pulse's PRESSURE_PCT: it is shed and WAITS, its
+# clock unadvanced, and fires on the first tick below the rung (b4b8f0d). That's overdue by design, not dark.
+# The rung is read from pulse.py, the one authority; unreadable or no gauge -> every overdue row reads DARK.
+_rung="$(command grep -oE '^PRESSURE_PCT = [0-9]+' src/astryx/pulse/pulse.py | command grep -oE '[0-9]+$')"
+_dark="$(q "SELECT CASE WHEN kind='heartbeat' AND coalesce(premium,0)<=0 AND ${_rung:-NULL}::numeric IS NOT NULL
+                    AND (SELECT five_hour_pct FROM current_usage) >= ${_rung:-NULL}::numeric
+               THEN 'WAITING (shed: 5h >=${_rung}%, fires below it)  ' ELSE 'DARK  ' END
+            ||agent||'/'||name||'  next_fire='||next_fire
+            FROM triggers WHERE enabled AND next_fire < now()-interval '15 min' ORDER BY next_fire")"
 [ -n "$_dark" ] && printf '%s\n' "$_dark" || echo "  (none overdue — scheduler healthy)"
 
 hr "messages — stuck outbound (pending/dead), meta only"
 _stuck="$(q "SELECT id||'  '||status||'  age='||round(EXTRACT(EPOCH FROM (now()-ts))/3600.0,1)||'h' FROM messages WHERE status NOT IN ('delivered','abandoned') ORDER BY ts")"
 [ -n "$_stuck" ] && printf '%s\n' "$_stuck" || echo "  (none — nothing stuck)"
 
-hr "services — astryx-* coughing (last 60 lines)"
+hr "services — astryx-* coughing (last 60 lines${COGH:+; in a cog, the units of EVERY org})"
 journalctl -u 'astryx-*' -n 60 --no-pager 2>&1 | grep -iE 'error|traceback|exception|crash|fatal' | tail -12 || true
 echo "  (above empty = no errors in window)"
 
@@ -144,7 +156,7 @@ hr "backup axis — proven-restorable & fresh (restore_verify owns the 9-day ala
 # trips at 9 days. But a guard cannot watch its OWN silence, so this is the independent glance:
 # read the stamp's CONTENT (its own ISO ts, not mtime) for the age, and glance the
 # newest dump's freshness (is run_backup still producing daily?). Read-only — never re-runs a restore.
-_newest_dump="$(ls -t backups/*.dump 2>/dev/null | head -1)"
+_newest_dump="$(ls -t "${ORGH:-.}"/backups/*.dump 2>/dev/null | head -1)"
 if [ -n "$_newest_dump" ]; then
   _dump_age_h=$(( ( $(date +%s) - $(stat -c %Y "$_newest_dump") ) / 3600 ))
   printf 'newest dump: %s  (%sh old%s)\n' "$(basename "$_newest_dump")" "$_dump_age_h" \
@@ -152,7 +164,7 @@ if [ -n "$_newest_dump" ]; then
 else
   echo "  ⚠ NO .dump in backups/ — run_backup has produced nothing"
 fi
-_rok="backups/.last-restore-ok"
+_rok="${ORGH:-.}/backups/.last-restore-ok"
 if [ -f "$_rok" ]; then
   _rok_body="$(cat "$_rok")"
   _rok_ts="$(printf '%s' "$_rok_body" | awk '{print $2}')"

@@ -5,6 +5,7 @@ import { api, displayName, fmtAgo } from '../api'
 import type { Goal, Msg, Step } from '../types'
 import AgentFace from './AgentFace'
 import Md from './Md'
+import WorkflowView from './WorkflowView'
 import { IntentChip } from './Message'
 import { Empty, LiveDot, Panel, SectionHead, Skeleton } from '../ui/kit'
 
@@ -30,6 +31,7 @@ const ago = (t: string | null) => (t ? `${fmtAgo(t)} ago` : '—')
 export default function GoalDetail({ id, onClose, onOpen }: { id: number; onClose: () => void; onOpen: (id: number) => void }) {
   const [d, setD] = useState<Detail | null>(null)
   const [err, setErr] = useState('')
+  const [tab, setTab] = useState<'overview' | 'workflow'>('overview')
   useEffect(() => {
     setD(null); setErr('')
     api<Detail>(`/goals/${id}`).then(setD).catch((e) => setErr(String(e)))
@@ -61,6 +63,15 @@ export default function GoalDetail({ id, onClose, onOpen }: { id: number; onClos
           {err && <div className="text-[13px] text-bad">{err}</div>}
           {!d && !err && <div className="flex flex-col gap-3"><Skeleton className="h-8 w-4/5" /><Skeleton className="h-4 w-2/5" /><Skeleton className="h-32 rounded-2xl" /></div>}
           {g && d && (
+            <div className="inline-flex self-start rounded-lg border border-line overflow-hidden text-[12px]" role="tablist">
+              {(['overview', 'workflow'] as const).map((t) => (
+                <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
+                  className={`px-3 py-1 capitalize ${tab === t ? 'bg-deck-2 text-ink' : 'text-ink-mute hover:text-ink-dim'}`}>{t}</button>
+              ))}
+            </div>
+          )}
+          {g && d && tab === 'workflow' && <WorkflowView goal={id} />}
+          {g && d && tab === 'overview' && (
             <>
               <div>
                 <h2 className="text-[22px] font-semibold leading-snug tracking-[-0.01em] text-ink">{g.title}</h2>

@@ -13,6 +13,16 @@ everything those import, transitively):
   (d') a WRITE to a root that is provably SHARED: an absolute literal, Path.home()/`~`, or HOME/XDG_* (also as the
        fallback of an env lookup), by open-for-write, write_text/write_bytes, mkdir/makedirs/touch, or a
        --user-data-dir=/--cache-dir= argument. OWNED means derived from tempfile, TMPDIR or __file__ (the run's root).
+  (r)  a SERVICE started on the HOST's registry: a gate whose test-side reach (its tests/ files) spawns uvicorn or an
+       ASGI target (`gateway:app`), or runs uvicorn in process, and the ORACLE ITSELF writes no pin: no call to
+       sqlguard.estate's gate() (its setdefault pin, seed 10-19) and no write of ASTRYX_COG_REGISTRY (a subscript
+       set, a dict key, setdefault, a keyword); a mention, a pop and a file in the reach pin nothing. check.sh pins it for its own runs, but a gate run BY
+       HAND on a cog host (/etc/astryx/cog.json, a host file) starts that service on the LIVE orgs and their live
+       databases (10-19 17:02: test_relay's gateways wrote orga.test into the live peers). The two halves of one guard:
+       child_env_gate holds that a spawn's env never DROPS the parent's pin (and greens an inheriting env because the
+       parent carries it); this holds that the parent carries it. Residual, named: a runner the test writes to a file
+       and then executes, a pin written AFTER the spawn (order is not read), and a value through a name bound
+       elsewhere (LIVE = "/etc/…"; env[K] = LIVE): the value is judged by a denylist, not a positive OWNED class.
 
 It reads what EXECUTES (python by AST; js/sh with comments stripped, sh heredoc bodies dropped), and a root it can't
 classify is quiet: the census under-reports by construction, it never guesses. The ONLY allowlist is an explicit
@@ -288,6 +298,107 @@ JS_WRITE = re.compile(r"""\b(?:writeFileSync|appendFileSync|mkdirSync|createWrit
 JS_DIRFLAG = re.compile(r"""--(?:user-data-dir|cache-dir)=(?:/[^'"`\s$]+|\$\{(?:homedir\(\)|process\.env\.(?:HOME|XDG_\w+)))""")
 
 
+APP_TARGET = re.compile(r"^[\w.]+:app$")        # the ASGI target a server is told to serve: gateway:app, main:app
+REGISTRY = "ASTRYX_COG_REGISTRY"
+
+
+def _parse(text: str):
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _services(text: str) -> list[int]:
+    """(r) The lines that START A SERVICE: a spawn whose argv names uvicorn (`-m uvicorn`, a `-c` body importing it) or
+    an ASGI target, or uvicorn.run / uvicorn.Server in process."""
+    tree, out = _parse(text), []
+    for n in ast.walk(tree) if tree else ():
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "uvicorn" \
+                and f.attr in ("run", "Server"):
+            out.append(n.lineno)
+        elif _callee(n) in SPAWNERS:
+            argv = n.args[0] if n.args and isinstance(n.args[0], (ast.List, ast.Tuple)) else None
+            for e in list(argv.elts) if argv is not None else list(n.args):
+                t = _str_text(e)
+                if t is not None and (t == "uvicorn" or APP_TARGET.match(t) or "import uvicorn" in t):
+                    out.append(n.lineno)
+                    break
+    return out
+
+
+def _pins(text: str) -> bool:
+    """(r) Does this file WRITE the registry pin (a2 #61467 R-1: a mention is no pin, and neither is an unpin): the key
+    ASTRYX_COG_REGISTRY as a subscript-assignment target (os.environ[K] = …, env[K] = …), a dict literal's key, the
+    first argument of .setdefault, or a keyword (env.update(K=…), dict(…, K=…)), with a value that names no /etc
+    literal ANYWHERE in it (the host's live registry, concatenated or wrapped in Path) and never reads the key itself
+    (`os.environ.get(K, …)` forwards what the host has: a2 #61467 R-2); or a call to the gate imported from sqlguard.estate (its setdefault pin).
+    pop/del/get, a comment and any other constant equal to the key pin nothing."""
+    tree = _parse(text)
+    if tree is None:
+        return False
+    key = lambda e: isinstance(e, ast.Constant) and e.value == REGISTRY
+    etc = lambda c: isinstance(c, ast.Constant) and isinstance(c.value, str) and c.value.startswith("/etc/")
+    live = lambda v: v is not None and any(etc(c) or key(c) for c in ast.walk(v))   # anywhere in the value (a2 R-2)
+    gates, mods = set(), set()                  # local names of estate's gate, and of the estate module itself
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and (n.module or "").endswith("sqlguard.estate"):
+            gates |= {a.asname or a.name for a in n.names if a.name == "gate"}
+        elif isinstance(n, ast.ImportFrom) and (n.module or "").endswith("sqlguard"):
+            mods |= {a.asname or a.name for a in n.names if a.name == "estate"}
+        elif isinstance(n, ast.Import):
+            mods |= {a.asname for a in n.names if a.name.endswith("sqlguard.estate") and a.asname}
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            if any(isinstance(g, ast.Subscript) and key(g.slice) for g in targets) and not live(n.value):
+                return True
+        elif isinstance(n, ast.Dict):
+            if any(key(k) and not live(v) for k, v in zip(n.keys, n.values)):
+                return True
+        elif isinstance(n, ast.Call):
+            f = n.func
+            if isinstance(f, ast.Attribute) and f.attr == "setdefault" and n.args and key(n.args[0]) \
+                    and not (len(n.args) > 1 and live(n.args[1])):
+                return True
+            if any(k.arg == REGISTRY and not live(k.value) for k in n.keywords):
+                return True
+            if (isinstance(f, ast.Name) and f.id in gates) or (isinstance(f, ast.Attribute) and f.attr == "gate"
+                                                               and isinstance(f.value, ast.Name) and f.value.id in mods):
+                return True
+    return False
+
+
+def unpinned(repo: Path, bc=None) -> list:
+    """(r), per GATE: the service starts in each oracle's test-side reach when the ORACLE ITSELF writes no pin. The pin
+    is the oracle's own, never a file in its reach (a2 #61467 R-1): a file named only in a comment joins the reach, and
+    its gate() runs in no process of this oracle's. Test-side only: the subject's own modules name the registry to READ
+    it (orgs.py), which pins nothing."""
+    if bc is None:
+        bc = load_branch_check(repo)
+    mine, idx, out, seen = tracked(repo), bc._file_index(repo), [], set()
+    for files in bc.gate_files(repo).values():
+        for o in files:
+            side = {f: (repo / f).read_text(errors="replace") for f in _reach(repo, bc, mine, idx, [o])
+                    if f.startswith("tests/") and f.endswith(".py")}
+            if _pins((repo / o).read_text(errors="replace")):
+                continue
+            for f, t in sorted(side.items()):
+                lines = t.splitlines()
+                for ln in _services(t):
+                    if (f, ln) not in seen and not _allowed(lines, ln):
+                        seen.add((f, ln))
+                        out.append(_finding(f, ln, "r", f"{o} starts a service and never writes the registry pin itself "
+                                            f"(estate's gate(), or {REGISTRY} set): run by hand on a cog host it serves "
+                                            "the LIVE orgs"))
+    return out
+
+
 def _keep_lines(text: str, stripped: str) -> list:
     return stripped.split("\n") if stripped.count("\n") == text.count("\n") else text.split("\n")
 
@@ -385,14 +496,18 @@ def domain(repo: Path, bc=None) -> set:
     Residual, named: gitignored code a gate EXECUTES (triggers/) is outside this census."""
     if bc is None:
         bc = load_branch_check(repo)
-    mine = tracked(repo)
-    idx, reach, todo = bc._file_index(repo), set(), []
-    for files in bc.gate_files(repo).values():
-        for o in files:
-            todo.append(o)
-            t = (repo / o).read_text(errors="replace")
-            for nm in bc._NAMED_RX.findall(t):
-                todo.extend(idx.get(nm, ()))
+    mine, idx = tracked(repo), bc._file_index(repo)
+    return _reach(repo, bc, mine, idx, [o for files in bc.gate_files(repo).values() for o in files])
+
+
+def _reach(repo: Path, bc, mine, idx, oracles) -> set:
+    """The TRACKED files these oracles reach: themselves, the files they name, and everything those import."""
+    reach, todo = set(), []
+    for o in oracles:
+        todo.append(o)
+        t = (repo / o).read_text(errors="replace")
+        for nm in bc._NAMED_RX.findall(t):
+            todo.extend(idx.get(nm, ()))
     while todo:
         f = todo.pop()
         if f in reach or not (repo / f).is_file() or (mine is not None and f not in mine):
@@ -425,7 +540,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     repo = Path(a.root).resolve()
     files = a.files or domain(repo)
-    found = scan(repo, files)
+    found = scan(repo, files) + ([] if a.files else unpinned(repo))
     for f in found:
         print(f"  ✗ ({f['class']}) {f['file']}:{f['line']}: {f['what']}")
     print(f"gate census: {len(files)} file(s), {len(found)} finding(s)"

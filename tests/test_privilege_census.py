@@ -13,6 +13,18 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 fails = []
 
 
@@ -61,7 +73,7 @@ with tempfile.TemporaryDirectory() as td:
     t = Path(td)
     files = {
         "channel/server.mjs": "const DSN = readFileSync(new URL('../.env', import.meta.url))\nSELECT 1 FROM x\n",
-        "mcp/org/server.py": 'import os\nDSN = os.environ.get("ASTRYX_DSN")\nq = "DELETE FROM goals WHERE id=%s"\n',
+        "mcp/org/server.py": 'import os\nDSN = os.environ.get("ASTRYX_DSN")\nq = "DELETE FROM goals WHERE id=%s"\n',  # org-home: fixture tree data: the census's input, a fake file's text
         "tests/test_x.py": "CREATE ROLE astryx_t_1 LOGIN\nCREATE DATABASE d\n",
         "triggers/seed/t.py": "CREATE EXTENSION age\n",
         "nucleus/lib.py": "LOAD 'age'\n",
@@ -100,8 +112,10 @@ with tempfile.TemporaryDirectory() as td:
          and "triggers/seed/t.py" not in out.split("RESIDENT files", 1)[-1], out[-900:])
 
 # --live, only where a database is reachable (the static half above never needs one).
-dsn = os.environ.get("ASTRYX_DSN") or next((l.split("=", 1)[1].strip() for l in (
-    (REPO / ".env").read_text().splitlines() if (REPO / ".env").is_file() else ()) if l.startswith("ASTRYX_DSN=")), None)
+try:                         # the ONE resolver (astryx.config.dsn): the environment first, else the estate's .env
+    dsn = _astryx("config", "dsn", ESTATE / ".env")
+except LookupError:
+    dsn = None
 if dsn:
     try:
         lv = C.live(dsn)

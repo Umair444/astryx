@@ -18,7 +18,7 @@ MUTANTS = {
         ('  [ "$s" != absent ]\n}',
          '  [ "$s" = installed ] || [ "$s" = retired ]\n}'),
     "--reinstall keeps seed's tombstone (a3 BC-2)":
-        ('  rm -f "triggers/seed/.retired/$n"\n',
+        ('  for e in "${TRIGGER_NODES[@]}"; do [ "${e##*|}" = "$node" ] && rm -f "triggers/seed/.retired/${e%%|*}"; done\n',
          ''),
     "--reinstall doesn't override a deferral (the owner's exit is a no-op)":
         ('  [ "${_REINSTALL:-}" = "$1" ] && [ "$s" = deferred ] && return 1     # the owner chose: install it\n',
@@ -30,6 +30,13 @@ MUTANTS = {
         ('        deferred)  warn "trigger $_tn DEFERRED, so init.sh won\'t install it: ${_ts#deferred }" ;;\n',
          '        deferred)  : ;;\n'),
     "doctor calls an absent name with its gate off a failure":
-        ('        absent)    if _chk_"$_tnode" >/dev/null 2>&1; then ok "trigger $_tn: not used on this host"\n',
-         '        absent)    if false; then ok "trigger $_tn: not used on this host"\n'),
+        ('        absent)    if _chk_"$_tnode" >/dev/null 2>&1; then\n',
+         '        absent)    if false; then\n'),
+    "a sibling-owned absent name reads green \"not used on this host\" (a2 #61535 A-1: a detector's wrong direction)":
+        ('                     if _ts2=$(_trigger_sibling "$_tn" "$_tnode"); then', '                     if false; then'),
+    "the pair's reinstall clears only the named tombstone (the sibling's keeps the pair retired: two reinstalls)":
+        ('  for e in "${TRIGGER_NODES[@]}"; do [ "${e##*|}" = "$node" ] && rm -f "triggers/seed/.retired/${e%%|*}"; done',
+         '  rm -f "triggers/seed/.retired/$n"'),
+    "an INSTALLED sibling is told to --reinstall (which would register a second copy of it)":
+        ('                         installed*) warn', '                         installedX*) warn'),
 }

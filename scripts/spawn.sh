@@ -5,6 +5,46 @@
 # exception, and only until the CLI ships non-interactive acceptance.)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# THE HARNESS BINARY (steward 10-21; seed #61942). On the 10-21 boot six residents died in their panes on
+# `bash: claude: command not found`: the first claude on the tmux PATH was ~/.local/bin/claude, omarchy's bootstrap
+# WRAPPER (`mise use -g claude && exec mise x claude …`), which fails before mise is ready, and the launch line typed
+# the bare name. Resolve it the way NODE is resolved below: ASTRYX_CLI as given (the harness is swappable), else
+# `mise which claude`, else mise's install path, else the first claude on PATH that is not the wrapper. Never the
+# wrapper: it is also what put MISE_MINIMUM_RELEASE_AGE into every pane's environment.
+resolve_cli() {
+  if [ -n "${ASTRYX_CLI:-}" ]; then CLI=$ASTRYX_CLI; return 0; fi
+  local m c wrap
+  wrap=$(realpath -m "$HOME/.local/bin/claude")
+  for m in mise "$HOME/.local/bin/mise"; do
+    command -v "$m" >/dev/null 2>&1 && c=$(cd "$ROOT" && "$m" which claude 2>/dev/null) && [ -x "$c" ] \
+      && [ "$(realpath -m "$c")" != "$wrap" ] && { CLI=$c; return 0; }
+  done
+  c="$HOME/.local/share/mise/installs/claude/latest/claude"
+  [ -x "$c" ] && { CLI=$c; return 0; }
+  for c in $(type -ap claude); do
+    [ "$(realpath -m "$c")" != "$wrap" ] && { CLI=$c; return 0; }
+  done
+  return 1
+}
+CLI_REFUSED="spawn: no claude binary via ASTRYX_CLI, mise, its install path or PATH (never the ~/.local/bin bootstrap wrapper): set ASTRYX_CLI"
+# `spawn.sh --which-cli`: print the binary a spawn would launch, then exit before ANY side effect (tests/test_spawn_cli.py)
+if [ "${1:-}" = "--which-cli" ]; then
+  resolve_cli && { echo "$CLI"; exit 0; }
+  echo "$CLI_REFUSED" >&2; exit 1
+fi
+# ROOT is the CODE; ORGH is the ORG (its HOME: .env, local.md, agents/, homes/, tier/), plan-11324 S3a #58435 item 5.
+# One org (no host registry, src/astryx/orgs.py): ORGH is ROOT and every line below is what it was. Several orgs: the
+# HOME comes from the ONE resolver (astryx.paths: ASTRYX_HOME naming a REGISTERED home, or its marker; never the
+# checkout), the agent is found in THAT org's agents/, and the pane's environment is BUILT (astryx.orgenv, BC-S3).
+MULTI=""
+PY="$ROOT/venv/bin/python"
+"$PY" "$ROOT/src/astryx/orgs.py" multi && MULTI=1 || { rc=$?; [ "$rc" = 1 ] || exit 1; }
+ORGH="$ROOT"
+if [ -n "$MULTI" ]; then
+  ORGH=$("$PY" -c 'import sys; sys.path.insert(0, sys.argv[1] + "/src")
+from astryx import paths; print(paths.home())' "$ROOT") || { echo "spawn: no registered org HOME (set ASTRYX_HOME)"; exit 1; }
+fi
+. "$ROOT/scripts/org_tmux.sh"   # `tmux` is THIS org's server (S3b): the default socket on one org, -L ax-<org> on several
 # RENDER MODE: `spawn.sh --render <agent> <outdir>` writes the home files a spawn would write
 # (CLAUDE.md, .mcp.json, .claude/settings.json) into <outdir>, then exits BEFORE any side
 # effect: no DB write, no tmux, no claude, no residency refusal. It is THIS script, one code
@@ -24,7 +64,7 @@ if [ "${1:-}" = "--render" ]; then
   umask 077
   OUT="$(realpath -m "$OUT")"                  # canonical BEFORE anything is created
   case "$OUT/" in
-    "$(realpath -m "$ROOT")"/*) echo "spawn --render: <outdir> must be outside the repo ($OUT)"; exit 1;;
+    "$(realpath -m "$ROOT")"/*|"$(realpath -m "$ORGH")"/*) echo "spawn --render: <outdir> must be outside the repo and the org's HOME ($OUT)"; exit 1;;
   esac
   [ -e "$OUT" ] && { echo "spawn --render: <outdir> must not exist; render creates it fresh ($OUT)"; exit 1; }
   mkdir "$OUT"
@@ -43,7 +83,7 @@ fi
 # observatory and init.sh resolve through the same module, so the rule can never
 # drift between a shell copy and a python copy — it had (the observatory silently
 # took the first match on a dup stem while this refused).
-CHARTER=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/core/charter.py" "$AGENT") || exit 1
+CHARTER=$(ASTRYX_HOME="$ORGH" "$ROOT/venv/bin/python" "$ROOT/src/astryx/core/charter.py" "$AGENT") || exit 1
 grep -q '^## Tombstone' "$CHARTER" && { echo "'$AGENT' is tombstoned — the name rests"; exit 1; }
 # AGENT TYPE (charter `Type:` line, resolved through the ONE resolver so shell and python
 # never disagree; default resident). A STATIONED agent has no body: it is a stateless
@@ -55,7 +95,7 @@ grep -q '^## Tombstone' "$CHARTER" && { echo "'$AGENT' is tombstoned — the nam
 # denying it a lifecycle just meant re-implementing one ad hoc (the vega conjure was that).
 # The type is the honest place for the distinction; containment still lives in station.py's
 # fail-closed flags (--tools "" + --strict-mcp-config), never in withholding a body.
-ATYPE=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/core/charter.py" "$AGENT" --type 2>/dev/null || echo resident)
+ATYPE=$(ASTRYX_HOME="$ORGH" "$ROOT/venv/bin/python" "$ROOT/src/astryx/core/charter.py" "$AGENT" --type 2>/dev/null || echo resident)
 if [ "$ATYPE" = "stationed" ]; then
   echo "'$AGENT' is stationed — a stateless claude -p API, not a resident. Invoke it with src/astryx/core/station.py; there is no body to spawn."
   exit 0
@@ -76,16 +116,21 @@ fi
 # (ASTRYX_AGENT is ENV, invisible to pgrep -f — read /proc/<pid>/environ)
 if [ -z "$RENDER" ] && ! tmux has-session -t "=ax-$AGENT" 2>/dev/null; then
   for pid in $(pgrep -f 'channel/server.mjs' 2>/dev/null); do
-    if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qx "ASTRYX_AGENT=$AGENT"; then
+    # several orgs: an agent NAME is per org (S3b), so only a body of THIS org's agent (its HOME carried) counts
+    envl=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null || true)
+    if grep -qx "ASTRYX_AGENT=$AGENT" <<<"$envl" \
+       && { [ -z "$MULTI" ] || grep -qxF "ASTRYX_HOME=$ORGH" <<<"$envl"; }; then
       echo "'$AGENT' already has a live body outside tmux (channel server pid $pid) — refusing a second one"
       exit 1
     fi
   done
 fi
 SESS="ax-$AGENT"
-HOME_D="$ROOT/homes/$AGENT"
+HOME_D="$ORGH/homes/$AGENT"
 [ -n "$RENDER" ] && HOME_D="$OUT"
-NODE=${ASTRYX_NODE:-$(command -v node || true)}
+if [ -n "$MULTI" ]; then NODE=$("$PY" "$ROOT/src/astryx/config.py" get ASTRYX_NODE); NODE=${NODE:-$(command -v node || true)}
+else NODE=${ASTRYX_NODE:-$(command -v node || true)}   # org-home: one org only, exactly as before (several orgs: the line above)
+fi
 # A version manager (mise, nvm) puts node in the user's interactive PATH only: systemd units (astryx-residents at
 # boot) and sudo see a bare PATH. 10-12: a reboot spawned 1 of 17 residents for exactly this. Ask the manager.
 if [ -z "$NODE" ]; then
@@ -99,10 +144,10 @@ fi
 [ -n "$NODE" ] || { echo "spawn: node not found on PATH or via mise/nvm (set ASTRYX_NODE)"; exit 1; }
 
 # Default heartbeat: every agent wakes on its own rhythm (charter line
-# "Heartbeat: <cron>", default daily 09:00) and retunes it with trigger_set.
+# "Heartbeat: <cron>", default daily 09:00) and retunes it with the trigger tool.
 # Runs before the residency check so existing residents gain it too.
 HB=$(grep -m1 '^Heartbeat:' "$CHARTER" | cut -d: -f2- | xargs || true)
-DSN=$(grep '^ASTRYX_DSN=' "$ROOT/.env" | cut -d= -f2-)
+DSN=$("$PY" "$ROOT/src/astryx/config.py" dsn --file)
 [ -z "$RENDER" ] && psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind)
   VALUES ('$AGENT', 'heartbeat', '${HB:-0 9 * * *}', 'heartbeat')
   ON CONFLICT (agent, name) DO NOTHING" 2>/dev/null || true
@@ -119,16 +164,19 @@ if [ -z "$RENDER" ] && tmux has-session -t "=$SESS" 2>/dev/null; then echo "$AGE
 
 mkdir -p "$HOME_D/.claude"
 # genome → body: charter + law are the auto-loaded context (no boot prompt needed)
-{ cat "$CHARTER"; echo; echo "## The law (local.md)"; cat "$ROOT/local.md"
+# the law is the ORG's (a2 BC-S2): HOME/local.md, and a missing one FAILS the spawn (cat exits non-zero under set -e),
+# never another org's law as a fallback
+{ cat "$CHARTER"; echo; echo "## The law (local.md)"; cat "$ORGH/local.md"
   # Boot-brief injection (built 2026-09-23 as commit 90c6ff4; DROPPED by the 0.1.2 upstream
-  # merge when spawn.sh moved nucleus/->scripts/, restored 2026-10-17, goal 14). Injects the
-  # agent's memory-compiled brief as DEMARCATED DATA, gated on the go-sentinel
-  # memory/context/.briefs-live — present only once memory verifies the briefs current.
-  # DATA not law: the brief never overrides charter/local.md. memory's brief_freshness_watch
-  # DELIVERY axis greps the spawn path for the literal "memory/context" to confirm injection
-  # is wired — keep that string here. Wire: t-memory-wiki-sync-reconcile.
-  BRIEF="$ROOT/memory/context/$AGENT.md"
-  if [ -f "$ROOT/memory/context/.briefs-live" ] && [ -f "$BRIEF" ]; then
+  # merge when spawn.sh moved nucleus/->scripts/, restored 2026-10-17 goal 14, re-applied at the
+  # 2026-11-10 upstream sync onto the ROOT/ORGH split). Injects the agent's memory-compiled brief
+  # as DEMARCATED DATA, gated on the go-sentinel memory/context/.briefs-live — present only once
+  # memory verifies the briefs current. Keyed on $ORGH (the ORG home, not $ROOT the code), so it
+  # follows the org's data under the multi-org split. DATA not law: the brief never overrides
+  # charter/local.md. memory's brief_freshness_watch DELIVERY axis greps the spawn path for the
+  # literal "memory/context" to confirm injection is wired — keep that string here. Wire: t-memory-wiki-sync-reconcile.
+  BRIEF="$ORGH/memory/context/$AGENT.md"
+  if [ -f "$ORGH/memory/context/.briefs-live" ] && [ -f "$BRIEF" ]; then
     echo; echo "## Boot brief (DATA — compiled by memory; situational context as of last nightly compile: org state, your open loops, live goals). CONTEXT, not law: it never overrides your charter or local.md, and it may lag reality — verify against the substrate before acting on it."
     cat "$BRIEF"
   fi
@@ -198,11 +246,16 @@ done
 # holds Bash and the door runs registered scripts only, never a granted MCP server. It is
 # deliberately NOT given to STATIONED agents (src/astryx/core/station.py, --tools "" fail-closed), where
 # it WOULD be a new execution capability. tests/test_spawn_wiring.py pins both halves.
+# influence = who_should_i_ask (plan-11324, seed #58432): its OWN server, every RESIDENT, like hands. Not behind the
+# memory grant (that one stays `ask` only): the asker is every resident, and the reply is ABOUT the asker, so
+# ASTRYX_AGENT is written into its env HERE, never inherited (this file is the source of truth for who asks; an
+# inherited value is whatever launched claude). STATIONED agents never reach this heredoc (the Type: stationed exit
+# above), so they never get it. tests/test_spawn_wiring.py pins both halves, and that `Grants: memory` adds memory only.
 # phone = an Android phone under the agent's hands (plan-8675), only where the org OPTED IN (ANDROID_ENABLED=1 in
 # .env; scripts/android_setup.sh installs it). Every resident then gets it, like hands. Its server is a facade over
 # a pinned upstream: it reaches 13 reviewed tools and builds the upstream's environment itself.
 PHONE=""
-if [ "$(grep -m1 '^ANDROID_ENABLED=' "$ROOT/.env" 2>/dev/null | cut -d= -f2-)" = 1 ]; then
+if [ "$("$PY" "$ROOT/src/astryx/config.py" get ANDROID_ENABLED --file 2>/dev/null)" = 1 ]; then
   PHONE=",
   \"phone\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/phone/server.py\"],
     \"env\": { \"ASTRYX_AGENT\": \"$AGENT\" } }"
@@ -211,12 +264,14 @@ cat > "$HOME_D/.mcp.json" <<EOF
 { "mcpServers": { "astryx": {
     "command": "$NODE",
     "args": ["$ROOT/channel/server.mjs"],
-    "env": { "ASTRYX_AGENT": "$AGENT", "ASTRYX_HOME": "$ROOT" }
+    "env": { "ASTRYX_AGENT": "$AGENT", "ASTRYX_HOME": "$ORGH" }
 },
   "tools": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/tools/server.py"] },
   "hands": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/hands/server.py"],
     "env": { "ASTRYX_AGENT": "$AGENT", "XDG_RUNTIME_DIR": "/run/user/$(id -u)",
-      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/$(id -u)/bus" } }$PHONE$EXTRA } }
+      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/$(id -u)/bus" } },
+  "influence": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/influence/server.py"],
+    "env": { "ASTRYX_AGENT": "$AGENT" } }$PHONE$EXTRA } }
 EOF
 
 # think: charter line "Think: off" zeroes extended thinking for reflex-class
@@ -232,7 +287,15 @@ TENV=""
 # then falls through to the org's ambient default: "default = settings.json"). settings.json's
 # env WINS over process env, so this per-home file is the ONE correct seam; a shell export
 # before launch would be silently ignored. Token stays in .env; only its NAME is in runtime.json.
-RENV=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/core/runtime_env.py" "$AGENT") || RENV=""
+# Beneath the entry, the ORG's login (plan-10224 ORGAUTH): its .env's CLAUDE_CODE_OAUTH_TOKEN (a subscription, used
+# when present), and ANTHROPIC_API_KEY ONLY when that .env opts in (ASTRYX_ORG_LOGIN=ANTHROPIC_API_KEY: metered).
+# Exit 3 = the org's .env names a CLI with no launcher yet: refuse, never run claude in its place.
+RENV=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/core/runtime_env.py" "$AGENT") && RRC=0 || RRC=$?
+if [ "$RRC" -eq 3 ]; then
+  echo "spawn: $AGENT not spawned: its org's CLI has no launcher here (runtime_env said why above)" >&2
+  exit 1
+fi
+[ "$RRC" -eq 0 ] || RENV=""
 
 # plan-9139 S1d (S0 D4, seed #45086): a TIER member's auto-memory goes to its own dir under tier/, never the shared
 # one, set in THIS template because every spawn rewrites settings.json (so --resume reads it too). The label comes from
@@ -240,18 +303,18 @@ RENV=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/core/runtime_env.py" "$AGENT") 
 # is private here as well. Nothing goes in env: CLAUDE_CODE_DISABLE_AUTO_MEMORY=0 there would force memory back ON.
 LBL=$("$ROOT/venv/bin/python" -c 'import json, sys; from pathlib import Path; sys.path.insert(0, sys.argv[1] + "/src")
 from astryx.security.release import label_of
-print(json.dumps(sorted(label_of(sys.argv[2], Path(sys.argv[1]) / "agents"))))' "$ROOT" "$AGENT" 2>/dev/null) \
+print(json.dumps(sorted(label_of(sys.argv[2], Path(sys.argv[3]) / "agents"))))' "$ROOT" "$AGENT" "$ORGH" 2>/dev/null) \
   && LRC=0 || LRC=$?
 MEMDIR=""
 if [ "$LRC" -ne 0 ] || [ "$LBL" != "[]" ]; then
   MEMDIR=",
-  \"autoMemoryDirectory\": \"$ROOT/tier/memory/$AGENT\""
-  [ -z "$RENDER" ] && install -d -m 700 "$ROOT/tier/memory/$AGENT"
+  \"autoMemoryDirectory\": \"$ORGH/tier/memory/$AGENT\""
+  [ -z "$RENDER" ] && install -d -m 700 "$ORGH/tier/memory/$AGENT"
 fi
 
 cat > "$HOME_D/.claude/settings.json" <<EOF
 {
-  "env": { "ASTRYX_AGENT": "$AGENT", "ASTRYX_HOME": "$ROOT"$TENV$RENV },
+  "env": { "ASTRYX_AGENT": "$AGENT", "ASTRYX_HOME": "$ORGH"$TENV$RENV },
   "hooks": {
     "PreToolUse": [ { "matcher": "", "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 5 } ] } ],
@@ -260,7 +323,7 @@ cat > "$HOME_D/.claude/settings.json" <<EOF
     "Stop": [ { "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 10 } ] } ],
     "UserPromptSubmit": [ { "hooks": [
-      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/usage.py", "timeout": 5 } ] },
+      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/usage.py", "timeout": 15 } ] },
       { "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/nudge.py", "timeout": 3 } ] } ]
   }$MEMDIR
@@ -304,7 +367,7 @@ fi
 # never dies — it compacts and goes on (owner ruling 2026-10-09; a 10MB gate booted the
 # seed fresh over a 48MB life after a 9-day outage). Size is compaction's problem, not
 # a reason to forget.
-if [ -n "$latest" ]; then RESUME="--resume $(basename "$latest" .jsonl) "; fi
+if [ -n "$latest" ]; then RESUME=$(basename "$latest" .jsonl); fi
 
 # model: charter line "Model: haiku|sonnet|opus" (default opus — owner's call;
 # philosophers pin haiku in their charters, idle residents cost nothing anyway)
@@ -317,32 +380,45 @@ MODEL=${MODEL:-opus}
 # claude/channel/permission in server.mjs). Default remains bypassPermissions:
 # the full-trust fleet is the owner's ratified baseline, relay is per-charter.
 PERM=$(grep -m1 '^Permissions:' "$CHARTER" | cut -d: -f2- | xargs || true)
-PERMFLAG="--permission-mode bypassPermissions"
+PERMMODE=bypassPermissions
 # must be EXPLICIT default, not merely omitted: the owner's user-level settings
 # set defaultMode=bypassPermissions, and an absent flag inherits that
-[ "$PERM" = "relay" ] && PERMFLAG="--permission-mode default"
+[ "$PERM" = "relay" ] && PERMMODE=default
 
-tmux new-session -d -s "$SESS" -c "$HOME_D" -e "ASTRYX_HOME=$ROOT"
+if [ -n "$MULTI" ]; then
+  # BUILT, never inherited (a3 BC-S3): `-e` can only add names, so the pane's command is the builder, which execs a
+  # shell that reads no rc file. The pane's environ = the PASS classes of data/org_env.json + this org's home class.
+  tmux new-session -d -s "$SESS" -c "$HOME_D" -- "$PY" "$ROOT/src/astryx/orgenv.py" exec --home "$ORGH" --agent "$AGENT" -- \
+    bash --norc --noprofile
+else
+  tmux new-session -d -s "$SESS" -c "$HOME_D" -e "ASTRYX_HOME=$ROOT"
+fi
 # --strict-mcp-config + explicit --mcp-config: a resident's world is EXACTLY its
 # own .mcp.json, nothing inherited. (strict alone ignores even the project file —
 # that deafened the whole org once; the explicit flag is load-bearing.)
 # ASTRYX_CLI: the harness is swappable — any CLI that speaks the same flags (claude,
 # a fork, a wrapper that maps them). The org is agents-on-terminals, not a framework.
-CLI=${ASTRYX_CLI:-claude}
+resolve_cli || { echo "$CLI_REFUSED"; exit 1; }
 # --disallowedTools AskUserQuestion: a resident lives in a headless tmux pane no human
 # watches, and AskUserQuestion is elicitation-class — it renders a terminal picker that
 # BLOCKS on stdin and cannot be relayed to a channel, so an agent that calls it LATCHES
 # its own body until someone opens the pane (cost the seed ~6h once). Deny it org-wide;
 # agents ask the owner through the wire (a channel poll), never a local picker.
-tmux send-keys -t "=$SESS:" "$CLI ${RESUME}--model $MODEL $PERMFLAG --disallowedTools AskUserQuestion --strict-mcp-config --mcp-config $HOME_D/.mcp.json --dangerously-load-development-channels server:astryx" Enter
+# THE LINE is the CLI adapter table's (plan-11859 U5, src/astryx/data/cli_adapters.json): its flags (the wire's channel,
+# the permission mode, the strict MCP config, the AskUserQuestion deny) live in ONE row, and every value is shell-quoted,
+# so a charter's Model: with a space, `;` or `$(…)` is one argument, never split or run (a2 #62560). No line, no spawn:
+# a malformed table or a CLI with no launcher refuses here, never a line nobody declared.
+LINE=$("$PY" "$ROOT/src/astryx/core/runtime_env.py" --launch --cli "$CLI" --model "$MODEL" --perm "$PERMMODE" \
+  --mcp "$HOME_D/.mcp.json" ${RESUME:+--resume "$RESUME"}) || { echo "spawn: $AGENT not spawned: no launch line (runtime_env said why above)" >&2; exit 1; }
+tmux send-keys -t "=$SESS:" "$LINE" Enter
 
 # boot-dialog drain (research-preview channel confirmation + any first-run dialogs)
 for i in $(seq 1 30); do
   sleep 2
   pane=$(tmux capture-pane -t "=$SESS:" -p 2>/dev/null || true)
-  if echo "$pane" | grep -qE '❯ 1\.|Do you want|Yes, I accept'; then
+  if grep -qE '❯ 1\.|Do you want|Yes, I accept' <<<"$pane"; then
     tmux send-keys -t "=$SESS:" "1" ; sleep 1; tmux send-keys -t "=$SESS:" Enter
-  elif echo "$pane" | grep -qE '^\s*❯\s*$|bypass permissions'; then
+  elif grep -qE '^\s*❯\s*$|bypass permissions' <<<"$pane"; then
     break
   fi
 done

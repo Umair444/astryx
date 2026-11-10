@@ -22,6 +22,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import json
 import os
 import re
@@ -30,7 +31,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 REPO = repo_root(__file__)
-ENV_FILE = REPO / ".env"
+ENV_FILE = paths.estate(__file__) / ".env"
 PGPASS_FILE = Path(os.environ.get("PGPASSFILE") or Path.home() / ".pgpass")
 MIN_LEN = 8
 
@@ -45,6 +46,9 @@ NOT_SECRET = frozenset({
     # distribution (plan-10224): which repo is upstream and whether this org IS it, the federation relay's
     # public URL, and the docker bridge address; switches and public locations, none grants anything
     "ASTRYX_UPSTREAM", "ASTRYX_UPSTREAM_ROLE", "ASTRYX_RELAY", "ASTRYX_DOCKER_HOST_IP",
+    # android (plan-8675): an opt-in switch, the operator's licence acknowledgement (a plain word), where the SDK
+    # lives and the phone's name; none grants anything. The licence value blocked ordinary prose (painter #57417)
+    "ANDROID_ENABLED", "ANDROID_SDK_LICENSE", "ANDROID_SDK_ROOT", "ANDROID_AVD",
     # a URL query value is secret by default; these name ONE parameter ("<KEY>:<param>") whose
     # value is an ordinary word (it appears in the tree's own code) and grants nothing
     "AUTOREMOTE_GETLOC_URL:message",
@@ -243,7 +247,7 @@ def undeclared(secrets=None, manifest=None, root: Path = REPO) -> dict[str, list
     return out
 
 
-UNIT_DIRS = (REPO / "units", Path("/etc/systemd/system"), Path.home() / ".config/systemd/user")
+UNIT_DIRS = (paths.estate(__file__) / "units", Path("/etc/systemd/system"), Path.home() / ".config/systemd/user")
 
 
 def env_file_units(secrets=None) -> dict[str, list[str]]:

@@ -27,7 +27,19 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-SUBJECT = Path(os.environ.get("DRIFT_SRC", REPO / "memory" / "lints" / "drift.py"))
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+SUBJECT = Path(os.environ.get("DRIFT_SRC", ESTATE / "memory" / "lints" / "drift.py"))
 EXIT_SKIP = 77
 
 
@@ -368,8 +380,45 @@ check("compile-lag: no log, no wiki is silent (clean-clone degrade)",
 
 print()
 
+# ── the real query on a stamped fixture (seed #65541: the smoke below asserts nothing, so the site's grade flapped
+# with the live DSN). The index is a fixture file; the goals rows are real; ctx.sql is a real connection's.
+print("fixture: the real SELECT on goals, both ways")
+sys.path.insert(0, str(REPO / "src"))   # this tree's sqlguard, never the one the subject's path reaches
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db
+    from astryx.security.sqlguard import estate as _estate
+except ImportError as e:
+    failures.append(f"fixture: deps ({e})")
+    print(f"  ✗ fixture: deps ({e})")
+else:
+    try:
+        with fixture_db() as fx, psycopg.connect(fx["dsn"], autocommit=True, row_factory=dict_row) as c, \
+                tempfile.TemporaryDirectory() as d:
+            def real_sql(q, params=None):
+                cur = c.execute(q, params)
+                return cur.fetchall() if cur.description else []
+            idx = Path(d) / "index.md"
+            idx.write_text("- [[goal-424242]] the fixture goal → active\n", encoding="utf-8")
+            c.execute("DELETE FROM goals")
+            check("fixture: no goals rows, the index names one → phantom",
+                  mod._goal_state_findings(real_sql, index_path=idx),
+                  ["[goal-state-phantom] goal-424242: the index restates a goal that is absent from the goals table"])
+            c.execute("INSERT INTO goals (id, title, owner, state) VALUES (424242, 'fixture goal', 'a4', 'hibernated')")
+            check("fixture: goals.state differs from the index → drift",
+                  mod._goal_state_findings(real_sql, index_path=idx),
+                  ["[goal-state-drift] goal-424242: index says 'active' but goals.state='hibernated'"])
+            c.execute("UPDATE goals SET state = 'active' WHERE id = 424242")
+            check("fixture: goals.state matches the index → no finding",
+                  mod._goal_state_findings(real_sql, index_path=idx), [])
+    except FixtureUnavailable as e:
+        _estate.unavailable("test_drift", REPO, e, failures)
+
+print()
+
 # ── live smoke: exercise the real DB path, assert NOTHING (this reports, does not test) ─
-if os.environ.get("ASTRYX_DSN"):
+if os.environ.get("ASTRYX_DSN"):  # org-home: inspection: the live smoke runs only when the caller bound a DSN; drift_findings() resolves its own
     try:
         live = mod.drift_findings()
         print(f"live smoke: drift_findings() ran against the substrate — "

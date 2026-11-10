@@ -18,8 +18,20 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+
 # STALE_GOALS_STAGED: a staged copy of the gitignored body, probed before apply_receipt applies it
-SUBJECT = Path(os.environ.get("STALE_GOALS_STAGED") or REPO / "triggers" / "steward" / "stale_goals.py")
+SUBJECT = Path(os.environ.get("STALE_GOALS_STAGED") or ESTATE / "triggers" / "steward" / "stale_goals.py")
 ORACLE = REPO / "tests" / "test_stale_goals.py"
 ENV = "STALE_GOALS_SRC"
 
@@ -42,8 +54,7 @@ MUTANTS = {
     # The positive allowlist over a free-text column with no CHECK constraint: a typo'd or
     # newly-invented state exits the patrol entirely instead of arriving loud.
     "M3 the state filter becomes a positive allowlist (unknown states vanish)":
-        ('"WHERE g.state <> ALL(%s)", (list(merged), list(merged.values()), list(TERMINAL)))',
-         '"WHERE g.state = ANY(%s)", (list(merged), list(merged.values()), ["active", "proposed"]))'),
+        ('"WHERE g.state <> ALL(%s) "', '"WHERE g.state = ANY(ARRAY[\'active\',\'proposed\']) AND %s IS NOT NULL "'),
 
     # Recovery no longer re-arms: the stored level is the high-water mark rather than the
     # current one, so a goal that heals and relapses is deduped against its own history.
@@ -99,4 +110,19 @@ MUTANTS = {
     "G9 the clamp is least(), which IGNORES NULLs: a goal with no merges reads now(), every goal fresh":
         ('"    SELECT CASE WHEN max(m.t) > now() THEN now() ELSE max(m.t) END AS merged "',
          '"    SELECT least(max(m.t), now()) AS merged "'),
+    "W1 a workflow goal is nagged here too (the same silence told twice, to two recipients; seed #60111)":
+        ('"WHERE g.state <> ALL(%s) "\n        "AND NOT EXISTS', '"WHERE g.state <> ALL(%s) "\n        "AND true OR NOT EXISTS'),
+    "W2 ANY revision decides, not the latest (an old rev's live task keeps a finished workflow silent forever)":
+        ('"                              ORDER BY w.rev DESC LIMIT 1) lw "', '"                              ) lw "'),
+    "W3 a dropped task counts as open (a workflow whose rest is done never returns: shipped-and-unclosed unseen)":
+        ("WHERE coalesce(t->'done' <> 'true'::jsonb, true) AND coalesce(t->'dropped' <> 'true'::jsonb, true)) \"",
+         "WHERE coalesce(t->'done' <> 'true'::jsonb, true)) \""),
+    "W4 a plan-less open task stands the goal down (watched by nobody; a1 #60185 G-1)":
+        ('"  AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements', '"  AND true OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements'),
+    "W5 done is cast ::boolean (a body with done \"x\" raises for EVERY goal; G-2)":
+        ("WHERE coalesce(t->'done' <> 'true'::jsonb, true) AND coalesce(t->'dropped' <> 'true'::jsonb, true)) \"",
+         "WHERE NOT coalesce((t->>'done')::boolean, false) AND coalesce(t->'dropped' <> 'true'::jsonb, true)) \""),
+    "W6 a non-array tasks errors (jsonb_array_elements on an object)":
+        ("jsonb_array_elements(CASE WHEN jsonb_typeof(lw.body->'tasks') = 'array' THEN lw.body->'tasks' ELSE '[]' END) t \"\n        \"                WHERE coalesce(t->'done' <> 'true'::jsonb, true) AND coalesce(t->'dropped' <> 'true'::jsonb, true)) \"",
+         "jsonb_array_elements(lw.body->'tasks') t \"\n        \"                WHERE coalesce(t->'done' <> 'true'::jsonb, true) AND coalesce(t->'dropped' <> 'true'::jsonb, true)) \""),
 }

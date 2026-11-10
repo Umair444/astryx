@@ -37,8 +37,20 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 SUBJECT = Path(os.environ.get("SHIP_WATCH_SRC") or
-               (REPO / "triggers" / "seed" / "tool_ship_watch.py"))
+               (ESTATE / "triggers" / "seed" / "tool_ship_watch.py"))
 EXIT_SKIP = 77
 fails = []
 
@@ -246,6 +258,61 @@ check("S1c: every receipt is SAID as seed → steward on org-news, intent milest
       _c.said_kw and all(k.get("from_agent") == "seed" and k["to_agent"] == "steward"
                          and k.get("thread") == "org-news" and k.get("intent") == "milestone"
                          for k in _c.said_kw), repr(_c.said_kw))
+
+# ── plan-12214 C7: _census writes a capability_census row for a tool with none, and never touches one someone graded.
+# A fake ctx can't say either, so this arm runs the real INSERT in a fixture database (seed #65539: the site read
+# R-NEW UNEXECUTED).
+print("CENSUS (plan-12214 C7) — an ungraded tool gets a row; a graded row is never touched:")
+_census = mod["_census"]
+sys.path.insert(0, str(REPO / "src"))   # this tree's sqlguard, never the one the subject's path reaches
+
+
+class DbCtx:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def sql(self, q, params=None):
+        cur = self.conn.execute(q, params)
+        return cur.fetchall() if cur.description else []
+
+
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db
+    from astryx.security.sqlguard import estate as _estate
+except ImportError as e:
+    check("CENSUS: deps", False, f"{e}")
+else:
+    try:
+        with fixture_db() as fx, psycopg.connect(fx["dsn"], autocommit=True, row_factory=dict_row) as c:
+            c.execute("DELETE FROM capability_census WHERE job LIKE 'tool:zc\\_%'")
+            c.execute("INSERT INTO capability_census (job, surface, state, source, fix) "
+                      "VALUES ('tool:zc_graded', 'tool', 'fixed', 'reported', 'graded by hand')")
+            out = _census(DbCtx(c), ["zc_new", "zc_graded"])
+            rows = {r["job"]: r for r in c.execute("SELECT job, surface, state, source, fix FROM capability_census "
+                                                    "WHERE job LIKE 'tool:zc\\_%'").fetchall()}
+            check("C1 a tool with no row gets one: surface tool, unassessed, derived",
+                  out is None and {k: rows.get("tool:zc_new", {}).get(k) for k in ("surface", "state", "source")}
+                  == {"surface": "tool", "state": "unassessed", "source": "derived"}, f"{out=} {rows=}")
+            check("C2 a graded row is never touched (ON CONFLICT DO NOTHING)",
+                  {k: rows.get("tool:zc_graded", {}).get(k) for k in ("state", "source", "fix")}
+                  == {"state": "fixed", "source": "reported", "fix": "graded by hand"}, repr(rows))
+            out2 = _census(DbCtx(c), ["zc_new"])
+            n = c.execute("SELECT count(*) AS n FROM capability_census WHERE job = 'tool:zc_new'").fetchone()["n"]
+            check("C3 a second tick adds no row and says nothing", out2 is None and n == 1, f"{out2=} {n=}")
+
+            class Broken:
+                def sql(self, q, params=None):
+                    raise RuntimeError("relation does not exist")
+            try:
+                out3 = _census(Broken(), ["zc_new"])
+            except Exception as e:
+                out3 = e
+            check("C4 a failed write is SAID in the return, never raised",
+                  isinstance(out3, str) and "rows not written" in out3 and "RuntimeError" in out3, repr(out3))
+    except FixtureUnavailable as e:
+        _estate.unavailable("test_ship_watch", REPO, e, fails)
 
 # ─────────────────────────────────────────────────────────────────────────────
 if fails:

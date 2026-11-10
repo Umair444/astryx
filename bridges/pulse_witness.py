@@ -80,8 +80,15 @@ RENAG_SEC = 3 * 3600     # re-ring a still-dead clock every 3h (hours-scale, per
 PAUSE_RENAG_SEC = 24 * 3600   # a DECLARED pause re-rings daily: visible, never silent
 CHECK_SEC = 60           # throttle: read the DB at most this often, whatever the loop rate
 
-PAUSE_FILE = Path(__file__).resolve().parents[1] / "var" / "org_pause.json"
-TIMER = "astryx-pulse.timer"
+def pause_file() -> Path:
+    """The org's pause declaration (var/ is org estate: its HOME in a cog of several orgs, plan-11324 S3a). Read at use:
+    importing this module needs no astryx (the bridges put src/ on sys.path first, bridges/common.py)."""
+    from astryx import paths
+    return paths.estate(__file__) / "var" / "org_pause.json"
+def timer_unit() -> str:
+    """THIS org's pulse timer: astryx-pulse.timer on one org, astryx-pulse@<org>.timer on several (plan-11324 S3b)."""
+    from astryx import orgs
+    return orgs.unit("astryx-pulse", "timer")
 
 # decision verbs returned by classify() — a closed set, so an unknown verb is a bug, loud
 ALARM = "alarm"
@@ -153,11 +160,12 @@ def covers(decl: Optional[dict], stop_age: Optional[float], now: float, *,
     return stop_start - slack_sec <= at <= now
 
 
-def read_stop_age(now: float, timer: str = TIMER) -> Optional[float]:
+def read_stop_age(now: float, timer: Optional[str] = None) -> Optional[float]:
     """Seconds since the timer entered inactive, or None. Only while it IS inactive:
     InactiveEnterTimestamp keeps the last stop after a restart, so an active timer has no
     stop age. Bounded (2s) and never raises."""
     try:
+        timer = timer or timer_unit()
         r = subprocess.run(["systemctl", "show", "-p", "ActiveState", "-p",
                             "InactiveEnterTimestamp", "--timestamp=unix", timer],
                            capture_output=True, text=True, timeout=2)
@@ -180,11 +188,11 @@ def _since(stop_age: Optional[float]) -> str:
 
 def _alarm_body(age_sec: float, stop_age: Optional[float] = None) -> str:
     return (f"\U0001F534 ASTRYX pulse looks DOWN. No trigger has been evaluated in "
-            f"{age_sec/60:.0f} min — astryx-pulse.timer has likely stopped, and while it "
+            f"{age_sec/60:.0f} min — {timer_unit()} has likely stopped, and while it "
             f"is down EVERY scheduled guard is silent (health and death look identical from "
             f"inside).{_since(stop_age)} No pause is declared. Check on the server: "
-            f"`systemctl status astryx-pulse.timer` then "
-            f"`systemctl start astryx-pulse.timer`. — pulse-witness (whatsapp bridge)")
+            f"`systemctl status {timer_unit()}` then "
+            f"`systemctl start {timer_unit()}`. — pulse-witness (whatsapp bridge)")
 
 
 def _paused_body(decl: dict, age_sec: float, stop_age: Optional[float] = None) -> str:
@@ -193,7 +201,7 @@ def _paused_body(decl: dict, age_sec: float, stop_age: Optional[float] = None) -
             f"{decl.get('at')}{until} ({str(decl.get('reason')).strip()[:200]}). No trigger "
             f"has been evaluated in {age_sec/60:.0f} min, as expected while paused."
             f"{_since(stop_age)} To resume: `scripts/pause.sh off` (or "
-            f"`sudo systemctl start astryx-pulse.timer`). This reminder repeats daily. "
+            f"`sudo systemctl start {timer_unit()}`). This reminder repeats daily. "
             f"— pulse-witness (whatsapp bridge)")
 
 
@@ -227,7 +235,7 @@ class PulseWitness:
         self._mono = mono
         # the pause and stop-age readers DO have defaults (the declaration file, systemd):
         # an absent reader would only ever mean "no pause", which is today's behaviour
-        self._read_pause = read_pause or (lambda now: read_pause_declaration(PAUSE_FILE, now))
+        self._read_pause = read_pause or (lambda now: read_pause_declaration(pause_file(), now))
         self._read_stop = read_stop or read_stop_age
         self.alarmed = False
         self.last_alarm: Optional[float] = None

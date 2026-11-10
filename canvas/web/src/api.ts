@@ -1,7 +1,8 @@
 // The one door to the canvas bridge. The session is an HttpOnly cookie (never readable here);
 // every write carries x-astryx so a cross-site form can't forge one.
 
-// served at <host>/canvas/ — every call is relative to that base
+// served at <host>/canvas/ (one org) or <host>/o/<org>/canvas/ (a cog): BASE is './', so every call is relative to
+// the page, which the hash router never moves
 export const BASE = import.meta.env.BASE_URL
 
 export class ApiError extends Error {

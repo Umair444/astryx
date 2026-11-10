@@ -18,6 +18,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import json
 import os
@@ -137,7 +138,7 @@ class Worker:
 
 
 class Pool:
-    def __init__(self, sensors: Path = REPO / "sensors", deadline_ms: int = 200):
+    def __init__(self, sensors: Path = paths.estate(__file__) / "sensors", deadline_ms: int = 200):
         self.sensors, self.deadline_s = sensors, deadline_ms / 1000
         self.workers: dict[str, Worker] = {}
         self.sandbox = shutil.which("bwrap") is not None

@@ -45,6 +45,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 
 # SERVICE_DEPLOY_DRIFT_SRC is the mutation probe's channel to this oracle, not a
@@ -52,7 +64,7 @@ sys.path.insert(0, str(REPO))
 # and points this here. Without it the probe would silently drive the REAL trigger and
 # report every mutant caught.
 TRIGGER = Path(os.environ.get("SERVICE_DEPLOY_DRIFT_SRC")
-               or (REPO / "triggers" / "seed" / "service_deploy_drift.py"))
+               or (ESTATE / "triggers" / "seed" / "service_deploy_drift.py"))
 if not TRIGGER.exists():
     # triggers/ is gitignored, so a fresh clone (CI) has no body to test. Skip LOUDLY
     # rather than pass — a green tick for a test that never ran is the lie this whole
@@ -210,6 +222,34 @@ absent, why = MOD["_entry_file"]({"WorkingDirectory": str(TMP),
 check("a module that resolves to no repo file returns a reason — the exact shape of the "
       "false all-clear this guard was born from", absent is None and "resolve" in why,
       f"{absent} {why}")
+
+# plan-11324 S3f (forge #61005): on a cog host a non-primary org's unit runs under init.sh's UEXEC prefix,
+# `<venv>/python <co>/src/astryx/orgenv.py exec --home <org> -- <command>`. The wrapper is a .py file in the repo,
+# so a parser that takes the first resolvable token judges every @<org> service by orgenv.py's closure: a lab
+# observatory holding week-old code reads CURRENT. The entry is the WRAPPED command's, never the wrapper's.
+(TMP / "src" / "astryx").mkdir(parents=True, exist_ok=True)
+(TMP / "src" / "astryx" / "orgenv.py").write_text("import os\n")
+wrapped = dict(real, ExecStart=(
+    "{ path=/home/umair/astryx/venv/bin/python ; argv[]=/home/umair/astryx/venv/bin/python "
+    f"{TMP}/src/astryx/orgenv.py exec --home /srv/lab -- /home/umair/astryx/venv/bin/python -m uvicorn "
+    "alpha:app --host 127.0.0.1 --port 18190 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; "
+    "pid=0 ; code=(null) ; status=0/0 }"))
+entry, why = MOD["_entry_file"](wrapped)
+check("an orgenv-wrapped ExecStart (a cog's non-primary org) resolves the WRAPPED module, never orgenv.py",
+      entry == (TMP / "bridges" / "alpha.py"), f"{entry} {why}")
+# the form init.sh's UEXEC units actually carry: the wrapped command is the `uvicorn` console script (a2 #61009)
+console = dict(real, ExecStart=(
+    "{ path=/home/umair/astryx/venv/bin/python ; argv[]=/home/umair/astryx/venv/bin/python "
+    f"{TMP}/src/astryx/orgenv.py exec --home /srv/lab -- /home/umair/astryx/venv/bin/uvicorn "
+    "alpha:app --host 127.0.0.1 --port 18190 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; "
+    "pid=0 ; code=(null) ; status=0/0 }"))
+entry, why = MOD["_entry_file"](console)
+check("an orgenv-wrapped uvicorn CONSOLE SCRIPT (init.sh's real UEXEC form) resolves the wrapped module",
+      entry == (TMP / "bridges" / "alpha.py"), f"{entry} {why}")
+bare = dict(wrapped, ExecStart=wrapped["ExecStart"].replace(" -- /home/umair/astryx/venv/bin/python -m uvicorn alpha:app", ""))
+entry, why = MOD["_entry_file"](bare)
+check("a wrapper with no `--` command returns a reason, never the wrapper itself",
+      entry is None, f"{entry} {why}")
 
 print("MUST FIRE — a service holding replaced code:")
 

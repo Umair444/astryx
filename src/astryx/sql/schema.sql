@@ -434,7 +434,53 @@ CREATE TABLE IF NOT EXISTS triggers (
   premium    bigint NOT NULL DEFAULT 0,
   UNIQUE (agent, name)
 );
+-- plan-12214 slice 1: every state a row can be in has one named reason, NULL = on. EXPAND only (a2 #65100 B1): the new
+-- columns are added beside `enabled`, which still alone decides firing, so code from before the land runs unchanged on
+-- this shape. Every new writer sets both in one statement; pulse.normalize() repairs an old writer's. The contract land
+-- (goal 12238) makes `enabled` GENERATED from off_reason, with triggers_kind_known. Reasons, setters, clearers: pulse/trigger_tool.py.
+ALTER TABLE triggers ADD COLUMN IF NOT EXISTS off_reason text CONSTRAINT triggers_off_reason_known CHECK (off_reason IN
+  ('held','standdown','retired','fired','vanished','bad_schedule','storm','unknown'));
+ALTER TABLE triggers ADD COLUMN IF NOT EXISTS off_why text;
+ALTER TABLE triggers ADD COLUMN IF NOT EXISTS watch text NOT NULL DEFAULT 'new'
+  CONSTRAINT triggers_watch_known CHECK (watch IN ('new','while'));
+ALTER TABLE triggers ADD COLUMN IF NOT EXISTS renag interval;
+ALTER TABLE triggers ADD COLUMN IF NOT EXISTS after_for interval;
+ALTER TABLE triggers ADD COLUMN IF NOT EXISTS once boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS triggers_due ON triggers (next_fire) WHERE enabled;
+
+-- plan-12214 part 2: every job an agent can't do from a tool's schema alone, one row per problem. The unit is the JOB,
+-- not the tool (a2 #65055): half of these aren't tools. Grade: DETECTION and partial. tool_ship_watch adds a row for a
+-- tool with none (state unassessed); nothing can list what nobody has hit, so `source` says how each row is known.
+CREATE TABLE IF NOT EXISTS capability_census (
+  id         bigserial PRIMARY KEY,
+  job        text NOT NULL UNIQUE,
+  surface    text NOT NULL CHECK (surface IN ('tool','script','table','grant','none')),
+  stage      text CHECK (stage IN ('discovery','contract','refusal','verify')),
+  had_to_read text,
+  first_call_failure text,
+  fix        text,
+  state      text NOT NULL DEFAULT 'unassessed' CHECK (state IN ('unassessed','open','fixed','wontfix')),
+  source     text NOT NULL DEFAULT 'derived' CHECK (source IN ('reported','measured','derived')),
+  created    timestamptz NOT NULL DEFAULT now(),
+  updated    timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO capability_census (job, surface, stage, had_to_read, first_call_failure, fix, state, source) VALUES
+ ('wake me later or when something changes', 'tool', 'contract', 'cog_backup.py, pulse_run.py, astryx/__init__.py, pulse.py',
+  'the old set amended destructively; kind typos, bad cron and sql re-onset failed silently', 'the trigger tool, plan-12214 slice 1', 'fixed', 'reported'),
+ ('watch something that is not sql, or wake another agent', 'tool', 'contract', 'the same four files',
+  'the file format, return protocol and ctx were in no schema', 'the template in the tool''s refusal; measure with a fresh agent', 'open', 'reported'),
+ ('watch my mail', 'grant', 'discovery', 'mcp/gmail/server.py, importing it by path',
+  'the tool needs a grant seed lacks; domain_reply still needs python', 'plan-12214 slice 2, with credentials and the personal tier', 'open', 'reported'),
+ ('land a change', 'script', 'contract', 'land.sh''s 40-line header', 'unknown flags and rules until refused', NULL, 'open', 'reported'),
+ ('write a merge-ready marker', 'script', 'contract', 'merge_ready''s docstring', 'the grammar is in a docstring', NULL, 'open', 'reported'),
+ ('query the org''s tables', 'table', 'discovery', NULL, 'guessed columns failed 3 times (triggers.owner, messages.created_at, goals.status); mcp__org__goals existed unreached', NULL, 'open', 'reported'),
+ ('is this secret set?', 'none', 'discovery', NULL, 'grep on .env is refused even for variable names, and no tool answers this', NULL, 'open', 'reported'),
+ ('run a check that needs node outside mise''s shell', 'script', 'contract', NULL, 'pushed_tree_check went red in a non-interactive shell: node is only on mise''s PATH, on base and tip alike', NULL, 'open', 'reported'),
+ ('tell me a python trigger''s wake was swallowed', 'tool', 'verify', 'pulse.py process()', 'a python check''s returned wake can be dropped by an unread one while its own state moves on (F1h, fixed for declarative watches only)', NULL, 'open', 'measured'),
+ ('know whether a trigger is on, from one column', 'table', 'contract', 'pulse.normalize(), trigger_tool._seen()',
+  'until the contract land, enabled and off_reason are two writers: an unrespawned resident''s old tools write enabled alone, and the reason lags a tick',
+  'goal 12238: enabled generated from off_reason, the kind CHECK, normalize() and the slice-1 shims deleted', 'open', 'derived')
+ON CONFLICT (job) DO NOTHING;
 
 -- polls: every WhatsApp poll seen on a routed surface — agent-embedded
 -- ([[poll: q | a | b | multi=N]] in any outbound body), CLI-sent, or
@@ -921,3 +967,71 @@ LANGUAGE sql STABLE AS $fn$
   ORDER BY s.score DESC, s.node_id
   LIMIT greatest(coalesce(k, 10), 0)
 $fn$;
+
+-- ── the influence graph (plan-11324 S2; src/astryx/influence/) ─────────────────────────────────────────────────────
+-- ONE writer each: shell.compute() materializes the EDGE CACHE (every derived edge, replaced per compute) and appends
+-- the GLOBAL view's values; the "who should I ask" tool appends its own query log (the loop discount's one authority).
+-- An edge cites AUTHORITY REFS only (a merge sha, message ids, a tool id), never a body. `coverage` is its kind's
+-- coverage at compute: under 50% the kind weighs 0 in every view. S3 adds VALUES (scope, view), never a migration.
+CREATE TABLE IF NOT EXISTS influence_edge (
+  scope       text NOT NULL DEFAULT 'local',
+  kind        text NOT NULL,                  -- graph.KINDS
+  src         text NOT NULL,                  -- credit flows src -> dst
+  dst         text NOT NULL,
+  ts          timestamptz NOT NULL,           -- the authority event's time
+  ask_ts      timestamptz NOT NULL,           -- when the ask was made (task / PASS row); the backtest's event time
+  ref         text NOT NULL,                  -- authority refs, never a body
+  topic       text,                           -- the authority row's thread
+  coverage    double precision NOT NULL,
+  computed_at timestamptz NOT NULL,
+  CHECK (src <> dst)
+);
+CREATE INDEX IF NOT EXISTS influence_edge_scope ON influence_edge (scope, kind, ts);
+CREATE TABLE IF NOT EXISTS influence_value (
+  scope       text NOT NULL DEFAULT 'local',
+  view        text NOT NULL,
+  agent       text NOT NULL,
+  value       double precision NOT NULL,
+  unmapped    double precision NOT NULL,      -- the agent's share of activity mapping to no weighted edge kind
+  computed_at timestamptz NOT NULL,
+  PRIMARY KEY (scope, view, agent, computed_at)
+);
+CREATE TABLE IF NOT EXISTS influence_query (
+  id        bigserial PRIMARY KEY,
+  ts        timestamptz NOT NULL DEFAULT now(),
+  asker     text NOT NULL,
+  returned  text[] NOT NULL,
+  view      text NOT NULL,
+  liveness  text NOT NULL                     -- which filter ran, as the reply printed it
+);
+CREATE INDEX IF NOT EXISTS influence_query_ts ON influence_query (ts);
+
+-- plan-11324 S4 · WORKFLOWS: a goal's planned coordination (a DAG of tasks converging on one agent), append-only
+-- revisions. The body's rules live in src/astryx/workflow.py (validate); actuals are MEASURED from origin/main there,
+-- never stored here. A revision never deletes a task with history: it marks it dropped (a1 #60109 C).
+CREATE TABLE IF NOT EXISTS goal_workflow (
+  goal_id  integer NOT NULL,
+  rev      integer NOT NULL,
+  body     jsonb NOT NULL,
+  author   text NOT NULL,
+  ts       timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (goal_id, rev)
+);
+
+-- THE STORE (owner 10-21): every agent's own durable data, by DOMAIN, in one schema and one directory with one name.
+-- A domain's tables are `store.<domain>_<noun>` (finance_payslip, finance_txn, finance_account …): the prefix IS the
+-- owner, so `\dt store.finance_*` lists one domain whole. Its files live under the org HOME's `store/<domain>/`
+-- (gitignored, captured by scripts/backup.sh). The ledger and dump capture the tables like any other. A domain creates
+-- its own tables (CREATE TABLE IF NOT EXISTS store.<domain>_…); this file only declares the namespace. docs/store.md.
+CREATE SCHEMA IF NOT EXISTS store;
+
+-- plan-11859 U1U2 (D2, D8; a2 I1, I8): who may do what IN THIS ORG. uid is the cog front's signed identity
+-- (src/astryx/security/identity.py: "<user id>@<cog id>"); role is decided HERE, never carried in the token. An empty
+-- table opens this org to nobody (only the owner key, OBS_KEY, until U7 retires it). ONE writer of a row:
+-- astryx.cogauth.grant (the host CLI, and devtools/cog_add_org.py --owner when it makes an org). Today only `owner`
+-- opens the observatory's owner gate; member and viewer are recorded and shown, and unlock nothing more yet.
+CREATE TABLE IF NOT EXISTS members (
+  uid    text PRIMARY KEY CHECK (uid LIKE '%@%'),
+  role   text NOT NULL CHECK (role IN ('owner', 'member', 'viewer')),
+  added  timestamptz NOT NULL DEFAULT now()
+);

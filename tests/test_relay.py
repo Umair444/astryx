@@ -10,6 +10,7 @@ the mailbox past the relay), a duplicate is dropped, the directory is opt-in, re
 the target's key, and the wizard's .env edits hold for each choice (temp .env files).
 Every wait is on a condition with a named deadline. The live database is never touched.
 """
+import ast
 import asyncio
 import contextlib
 import io
@@ -25,9 +26,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+# ONE-ORG gateways, never the host's cog: on a cog host (/etc/astryx/cog.json) each child would serve the LIVE registry's
+# orgs on their live databases (10-19: a direct run registered orga.test in the live relay and peers). Set before any
+# astryx import, never inherited; every child takes it with os.environ. Never created: no registry, whatever the host.
+os.environ["ASTRYX_COG_REGISTRY"] = str(Path(tempfile.gettempdir()) / f"test-relay-{os.getpid()}-no-registry" / "cog.json")
 
 from astryx.security.sqlguard.estate import gate  # noqa: E402
-gate('test_relay', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'nacl', 'httpx', 'uvicorn'))
+gate('test_relay', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'nacl', 'httpx', 'uvicorn'), env=False)   # no .env needed: the admin DSN may come by env (fixture.live_dsn)
 import httpx  # noqa: E402
 import psycopg  # noqa: E402
 from nacl.encoding import HexEncoder  # noqa: E402
@@ -35,7 +40,28 @@ from nacl.signing import SigningKey  # noqa: E402
 
 from bridges import relay  # noqa: E402
 from astryx.federation import federate, introduce as intro  # noqa: E402
-from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.security.sqlguard.estate import unavailable  # noqa: E402
+from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db  # noqa: E402
+
+
+def env_keys(src):
+    """(keys, bad) of the gateway's _env reads, from its AST, never its spelling (a2 #61438 A-1): every call to the
+    name _env whose first argument is a str literal is a key; a call with any other first argument (a variable, an
+    f-string, a starred list) and any use of _env that isn't a call (passed on, aliased) is bad, by line. Bad is a
+    FAIL, never a skip: a key the test can't name is one no fixture can set."""
+    keys, bad, called, tree = set(), [], set(), ast.parse(src)
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_env":
+            called.add(id(n.func))
+            a = n.args[0] if n.args else None
+            if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                keys.add(a.value)
+            else:
+                bad.append(n.lineno)
+    bad += [n.lineno for n in ast.walk(tree)
+            if isinstance(n, ast.Name) and n.id == "_env" and id(n) not in called]
+    return keys, sorted(bad)
+
 
 PY = sys.executable
 B_RATE = 5                                   # B's inbox cap per window (ASTRYX_INBOX_RATE)
@@ -63,10 +89,19 @@ def wait(cond, deadline_s, what):
     return None
 
 
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+HELD: list[socket.socket] = []      # every fixture port, held for the whole run (closed in run's finally)
+
+
+def held(listening: bool) -> socket.socket:
+    """A loopback port this run HOLDS, never probed and released for a concurrent gate to take (the gate census,
+    plan-10108 D4 (b)): bound and LISTENING for a gateway to inherit (--fd, across its restart too), or bound and
+    never listening, a port nothing answers on (a connect is refused)."""
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    if listening:
+        s.listen(64)
+    HELD.append(s)
+    return s
 
 
 def q(dsn, sql, *args):
@@ -75,8 +110,9 @@ def q(dsn, sql, *args):
 
 
 class Org:
-    def __init__(self, name, fx, port, logdir, url="", relay_url="", listed=False, host=False, extra=None):
-        self.name, self.dsn, self.port = name, fx["dsn"], port
+    def __init__(self, name, fx, sock, logdir, url="", relay_url="", listed=False, host=False, extra=None):
+        self.name, self.dsn, self.sock = name, fx["dsn"], sock
+        port = sock.getsockname()[1]
         self.base = f"http://127.0.0.1:{port}"
         self.key = SigningKey.generate()
         self.pub = self.key.verify_key.encode(HexEncoder).decode()
@@ -85,14 +121,18 @@ class Org:
                     "ASTRYX_DSN": fx["url"], "ASTRYX_URL": url, "ASTRYX_RELAY": relay_url,
                     "ASTRYX_RELAY_LISTED": "1" if listed else "0",
                     "ASTRYX_RELAY_HOST": "1" if host else "0",
-                    "ASTRYX_RELAY_REACH_PRIVATE": "1" if host else "0", **(extra or {})}
+                    "ASTRYX_RELAY_REACH_PRIVATE": "1" if host else "0",
+                    # the gateway's tunables at its defaults, set: an unset key falls back to the checkout's .env (one
+                    # org), so in the MAIN checkout it would be the LIVE org's value (10-19, test_fed_doors R0)
+                    "ASTRYX_INBOX_RATE": "60", "ASTRYX_RATE_WINDOW": "3600", "ASTRYX_RELAY_BACKOFF": "60",
+                    **(extra or {})}
         self.log = Path(logdir) / f"{name}.log"
         self.start()
 
     def start(self):
         with open(self.log, "a") as log:
             self.proc = subprocess.Popen(
-                [PY, "-m", "uvicorn", "gateway:app", "--host", "127.0.0.1", "--port", str(self.port)],
+                [PY, "-m", "uvicorn", "gateway:app", "--fd", str(self.sock.fileno())], pass_fds=(self.sock.fileno(),),
                 cwd=REPO / "bridges", env={**os.environ, **self.env},
                 stdout=log, stderr=subprocess.STDOUT)
 
@@ -121,17 +161,21 @@ def landed(org, frm, body):
 
 
 def run(fr, fa, fb, tmp):
-    port = free_port()                           # the relay host is the one org WITH a public URL
-    R = Org("relayhost.test", fr, port, tmp, url=f"http://127.0.0.1:{port}", host=True)
+    sock = held(True)                            # the relay host is the one org WITH a public URL
+    R = Org("relayhost.test", fr, sock, tmp, url=f"http://127.0.0.1:{sock.getsockname()[1]}", host=True)
     orgs = [R]
     try:
         rel = R.base
-        A = Org("orga.test", fa, free_port(), tmp, relay_url=rel, listed=True)
+        A = Org("orga.test", fa, held(True), tmp, relay_url=rel, listed=True)
         orgs.append(A)
         # B's own door is capped small and fast, so the over-the-cap arm runs in seconds
-        B = Org("orgb.test", fb, free_port(), tmp, relay_url=rel, listed=False,
+        B = Org("orgb.test", fb, held(True), tmp, relay_url=rel, listed=False,
                 extra={"ASTRYX_INBOX_RATE": str(B_RATE), "ASTRYX_RATE_WINDOW": "4", "ASTRYX_RELAY_BACKOFF": "1"})
         orgs.append(B)
+        read, bad = env_keys((REPO / "bridges" / "gateway.py").read_text())
+        arm("every key the gateway reads through _env is set for each gateway (an unset one falls back to the "
+            "checkout's .env: in the main checkout, the LIVE org's)", bool(read) and not bad
+            and all(read <= set(o.env) for o in orgs), {**{o.name: sorted(read - set(o.env)) for o in orgs}, "bad": bad})
         for o in orgs:
             if not o.up():
                 arm(f"{o.name} gateway starts", False, o.tail())
@@ -234,9 +278,11 @@ def run(fr, fa, fb, tmp):
         arm(f"R1: {len(burst)} envelopes against an inbox cap of {B_RATE} all land, eventually (429 = keep, back off)",
             codes == [200] * len(burst) and bool(allin),
             (codes, [landed(B, "orga.test", b) for b in burst], B.tail()))
-        # R2: an item that RAISES (a dict thread breaks the INSERT) must not jam the mailbox
-        bad = A.envelope("seed@orgb.test", f"raises {uuid.uuid4().hex[:6]}")
-        bad["thread"] = {"not": "text"}
+        # R2: an item that RAISES must not jam the mailbox. A NUL in the body breaks B's INSERT (postgres text holds no
+        # NUL); the relay keeps it, escaped, in its JSON text. (A dict thread no longer raises: inbox coerces it to
+        # text since a2 #60449 A-1, so it would land, and this arm would test nothing.)
+        tag = f"raises {uuid.uuid4().hex[:6]}"
+        bad = A.envelope("seed@orgb.test", tag + "\x00")
         bad = relay.signed(bad, A.key)
         good = f"after the raiser {uuid.uuid4().hex[:6]}"
         c1 = httpx.post(f"{rel}/relay/send", json={"to": "orgb.test", "kind": "msg", "envelope": bad}).status_code
@@ -244,7 +290,8 @@ def run(fr, fa, fb, tmp):
                                               "envelope": A.envelope("seed@orgb.test", good)})
         through = wait(lambda: landed(B, "orga.test", good), 40, "the good envelope behind the raiser lands")
         arm("R2: a validly signed item that raises is retried, then skipped; the one behind it lands",
-            c1 == 200 and bool(through) and landed(B, "orga.test", bad["body"]) == 0
+            c1 == 200 and bool(through)
+            and q(B.dsn, "SELECT count(*) FROM messages WHERE body LIKE %s", tag + "%")[0][0] == 0
             and f"(attempt {3}/3)" in B.log.read_text(), (c1, B.tail()))
         left = q(R.dsn, "SELECT count(*) FROM relay_mail WHERE to_org='orgb.test'")[0][0]
         arm("collected mail is acked off the relay", bool(wait(
@@ -316,7 +363,7 @@ def run(fr, fa, fb, tmp):
         # --- reach
         rr = httpx.get(f"{rel}/relay/reach", params={"url": A.base}).json()
         arm("reach answers with the target gateway's identity", rr.get("reachable") and rr.get("pubkey") == A.pub, rr)
-        closed = f"http://127.0.0.1:{free_port()}"
+        closed = f"http://127.0.0.1:{held(False).getsockname()[1]}"   # held, never listening: refused
         rr = httpx.get(f"{rel}/relay/reach", params={"url": closed}).json()
         arm("reach reports a closed port as unreachable", rr.get("reachable") is False, rr)
         arm("reach refuses private and loopback targets by default",
@@ -394,6 +441,8 @@ def run(fr, fa, fb, tmp):
     finally:
         for o in orgs:
             o.stop()
+        for so in HELD:                          # released only once no gateway serves on them
+            so.close()
 
 
 async def proxy_arms():
@@ -427,9 +476,12 @@ async def proxy_arms():
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory(prefix="test-relay-") as tmp, \
-            fixture_db() as fr, fixture_db() as fa, fixture_db() as fb:
-        run(fr, fa, fb, Path(tmp))
+    try:
+        with tempfile.TemporaryDirectory(prefix="test-relay-") as tmp, \
+                fixture_db() as fr, fixture_db() as fa, fixture_db() as fb:
+            run(fr, fa, fb, Path(tmp))
+    except FixtureUnavailable as e:              # no admin DSN (env=False: no .env needed): 77 committed-only, 1 live
+        unavailable("test_relay", REPO, e)       # no arm is graded before the fixture opens
     asyncio.run(proxy_arms())
     print(f"{'ALL PASS' if not fails else 'FAIL'}: relay federation ({fails} failing)")
     sys.exit(1 if fails else 0)

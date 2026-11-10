@@ -331,7 +331,7 @@ os.environ.update(_planted)
 try:
     de = getattr(srv.droid, "_daemon_env", lambda: dict(os.environ))()      # absent → the inherited env, so RED
     want("DAEMON ENV: no ASTRYX_* variable survives, a name nobody listed included (ASTRYX_AGENT is set here too)",
-         not [k for k in de if k.startswith("ASTRYX_")] and os.environ.get("ASTRYX_AGENT"), sorted(k for k in de if k.startswith("ASTRYX_")))
+         not [k for k in de if k.startswith("ASTRYX_")] and os.environ.get("ASTRYX_AGENT"), sorted(k for k in de if k.startswith("ASTRYX_")))  # org-home: inspection: the facade must not pass ASTRYX_* on
     want("DAEMON ENV: ...and every other variable is kept (PATH, a planted ANDROID_*)",
          de.get("PATH") == os.environ.get("PATH") and de.get("ANDROID_PROBE_KEEP") == "1", "")
     seen = {}

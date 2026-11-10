@@ -12,11 +12,49 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shlex
 from typing import Any
 
 from ..common import env
 from .base import ChannelProvider, Chat, Contact, NotSupported, Poll, SendResult
+
+
+# wacli errors that mean the call never reached WhatsApp, so a retry can't double-send: the store held by another
+# wacli (wacli-sync still starting at boot) and WhatsApp's rate limit on the recipient lookup that precedes a send.
+# On 10-15 the pulse witness's DOWN and RESUMED rings both died this way in the boot window (#54618 store locked,
+# #54624 429 rate-overlimit) and the owner saw neither: the one alarm about a dark org was eaten by the org waking up.
+# That fix lived in the bridge's own wacli(), but a text send goes through THIS provider, so on 10-21 and 10-22 the
+# rings died the same way again (#61908/#61910, #62183/#62186; steward #62329). One implementation now, here; the
+# bridge's wacli() calls it. Measured 10-22: the boot store lock held ~33 s (taken 14:03:21Z, the bridge's own call
+# through it succeeded at 14:03:54Z after 3 retries), so the waits clear it with margin.
+WACLI_TRANSIENT = re.compile(r"store is locked|status 429|rate-overlimit", re.I)
+WACLI_RETRY_WAITS = (2, 5, 15, 30)              # seconds before each retry: bounded, ~52 s of waiting worst case
+
+
+async def run_wacli(cmd: list[str], *args: str) -> str:
+    """Run one wacli call; retry ONLY a transient failure, at most len(WACLI_RETRY_WAITS) times (read per call, so a
+    test can zero the waits). Raises on any other failure."""
+    for attempt, wait in enumerate((*WACLI_RETRY_WAITS, None)):
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, *args,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=60)
+        if proc.returncode == 0:
+            if attempt:
+                print(f"whatsapp: wacli {' '.join(args[:2])} succeeded after {attempt} transient retr"
+                      f"{'y' if attempt == 1 else 'ies'}", flush=True)
+            return out.decode(errors="replace")
+        # Classify the LAST stderr line only: that is the error wacli exits with. A 429 also appears EARLIER as a
+        # warning ("warn: send warmup for <jid> failed (send will proceed): ...status 429...") before every send in
+        # a rate-limited window, and searching all of stderr let a following "send timed out after 45s" (the message
+        # node may already be accepted, only the ack lost) be retried: a double send (a3 #54634, reproduced).
+        msg = (err.decode(errors="replace").strip().splitlines() or [""])[-1][:200]
+        if wait is None or not WACLI_TRANSIENT.search(msg):
+            # a failed call must fail loudly; a silent non-zero exit hides a lost send
+            raise RuntimeError(f"wacli {' '.join(args[:2])}: {msg}"
+                               + (f" (after {attempt} transient retries)" if attempt else ""))
+        await asyncio.sleep(wait)
 
 
 def _find_id(obj: Any) -> str | None:
@@ -51,14 +89,7 @@ class WhatsAppProvider(ChannelProvider):
         self._cmd = shlex.split(env("WA_CLI", "wacli"))
 
     async def _wacli(self, *args: str) -> str:
-        proc = await asyncio.create_subprocess_exec(
-            *self._cmd, *args,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=60)
-        if proc.returncode != 0:
-            raise RuntimeError(f"wacli {' '.join(args[:2])}: "
-                               f"{err.decode(errors='replace').strip()[:200]}")
-        return out.decode(errors="replace")
+        return await run_wacli(self._cmd, *args)
 
     async def _wacli_json(self, *args: str) -> Any:
         return json.loads(await self._wacli("--json", *args))

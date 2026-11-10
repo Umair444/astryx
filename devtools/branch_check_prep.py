@@ -37,6 +37,7 @@ from psycopg import sql
 
 LIVE = Path(os.environ.get("ASTRYX_LIVE_REPO", "/home/umair/astryx"))
 from astryx.security import secretset                                  # noqa: E402 (the ONE secret authority)
+from astryx import config                                              # noqa: E402 (the ONE .env reader)
 
 # ENV_ALLOW is EMPTY by measurement (plan-4918 BC-2, #34686): a main-vs-main run with every then-allowlisted key
 # withheld gave IDENTICAL failed/unverified sets, so no gate that verifies under branch_check reads any of them. A key
@@ -56,13 +57,8 @@ class Refuse(Exception):
 
 
 def read_env(path: Path) -> dict:
-    out = {}
-    if path.is_file():
-        for line in path.read_text().splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                k, v = line.split("=", 1)
-                out[k.strip()] = v.strip().strip('"').strip("'")
-    return out
+    """The .env's pairs through the ONE reader (config.read_env: per line, plan-10224 ENVREAD), quotes stripped."""
+    return {k: v.strip('"').strip("'") for k, v in config.read_env(path).items()}
 
 
 def secret_set(live: Path = LIVE) -> list:

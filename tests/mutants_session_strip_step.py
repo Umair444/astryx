@@ -30,7 +30,7 @@ MUTANTS = {
     "S10 a path to the binary isn't recognised (no basename)":
         ("        words = {os.path.basename(w) for w in", "        words = {w for w in"),
     "S11 the label is read from the door module's tree, not the hook's (a fixture's agents/ ignored)":
-        ("        return MARK if release.label_of(agent, Path(REPO) / \"agents\") else None",
+        ("        return MARK if release.label_of(agent, paths.estate(__file__) / \"agents\") else None",
          "        return MARK if release.label_of(agent) else None"),
     "S12 the spawn refusal is decided after the DB (a dead DSN opens it)":
         ("        if not denied:\n            denied = spawn_guard(h.get(\"tool_name\", \"?\"), h.get(\"tool_input\") or {}, strip)",

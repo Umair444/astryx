@@ -29,6 +29,8 @@ MUTANTS = {
         ("if privacy.ERRORS:", "if False:"),
     "S11 a stub report replaces judge silently":
         ("[ -z \"${SQLSITE_REPORT:-}\" ] || echo", "[ -n \"${SQLSITE_REPORT:-}\" ] || echo"),
+    "S12 the registration consumer is `grep -q` again (SIGPIPE under pipefail: a registered oracle is warned about)":
+        ("command grep -F \" $TR\" >/dev/null; then", "command grep -qF \" $TR\"; then"),
     "S9 the registration check matches a comment mention":
         ("command grep -E '^[[:space:]]*run ' devtools/check.sh |", "cat devtools/check.sh |"),
 }

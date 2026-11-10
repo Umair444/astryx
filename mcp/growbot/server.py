@@ -22,26 +22,27 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+import sys
 from pathlib import Path
 from typing import List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
+from astryx import config, orgs, paths  # noqa: E402
 
 
 def _body_url() -> str:
     # astryx extends the GrowBot protocol, it never forks the body: the URL may
     # name Brit's own Wi-Fi firmware on a Pico W, or the local USB body host.
-    if os.environ.get("GROWBOT_BODY_URL"):
-        return os.environ["GROWBOT_BODY_URL"].rstrip("/")
-    try:
-        for line in (REPO / ".env").read_text().splitlines():
-            if line.startswith("GROWBOT_BODY_URL="):
-                return line.split("=", 1)[1].strip().rstrip("/")
-    except OSError:
-        pass
-    return "http://127.0.0.1:8470"
+    v = config.org_env("GROWBOT_BODY_URL")       # the environment on one org, exactly; the HOME's .env on several
+    if v:
+        return v.rstrip("/")
+    v = config.read_env(paths.estate(__file__) / ".env").get("GROWBOT_BODY_URL")   # the ONE .env reader (plan-10224)
+    if v is not None:
+        return v.rstrip("/")
+    return f"http://127.0.0.1:{orgs.port('astryx-growbot') or 8470}"     # the org's own body host (S3b 5/n)
 
 
 # no module-level pin: the Wi-Fi body's IP is a DHCP lease; resolve per call

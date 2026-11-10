@@ -43,29 +43,23 @@ DIST = ROOT / "web" / "dist"
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 from astryx.core import charter as _charter  # noqa: E402 — the one roster rule
+from bridges.owner_surfaces import OWNER_ROW_BRIDGED_SQL  # noqa: E402 — the rows a bridge delivers, not the pane
+from astryx import config, orgs, paths  # noqa: E402 — the ONE resolver (plan-11324 S3a; S3b: its tmux server)
+# The org's estate (.env, agents/, triggers/, units/, …): this checkout on one org, the HOME on several. The observatory
+# is in the declared cog-scoped set (#58435 S3c); until S3c it serves ONE org, the HOME it was started for.
+ESTATE = paths.estate(__file__)
 
 def _dsn() -> str:
-    if os.environ.get("ASTRYX_DSN"):
-        return os.environ["ASTRYX_DSN"]
-    env = REPO / ".env"
-    if env.is_file():
-        for line in env.read_text().splitlines():
-            if line.startswith("ASTRYX_DSN="):
-                return line.split("=", 1)[1].strip()
-    raise SystemExit("no ASTRYX_DSN in environment or .env")
+    try:
+        return config.dsn(ESTATE / ".env")
+    except LookupError:
+        raise SystemExit("no ASTRYX_DSN in environment or .env") from None
 
 DSN = _dsn()
-ORG = os.environ.get("ASTRYX_ORG", "local")
+ORG = config.org_env("ASTRYX_ORG", "local")      # the environment on one org, exactly; the HOME's .env on several
 
 def _env(key: str) -> str:
-    if os.environ.get(key):
-        return os.environ[key]
-    env = REPO / ".env"
-    if env.is_file():
-        for line in env.read_text().splitlines():
-            if line.startswith(key + "="):
-                return line.split("=", 1)[1].strip()
-    return ""
+    return config.get(key, "", ESTATE / ".env")      # this reader's semantics exactly (env first, then the first line)
 
 OBS_KEY = _env("OBS_KEY")          # owner key: unlocks the composer (POST /api/messages)
 # vega's charter is resolved at any depth via _charter_path("vega") — it lives in
@@ -91,9 +85,16 @@ VEGA_HOME = Path(tempfile.gettempdir()) / "astryx-vega-conjure"
 # An agent's FACE is metadata (it exists, it looks like this), public like its name in /api/agents;
 # an <img> cannot send the owner header, so the avatar route is the one parameterised public path.
 _PUBLIC_AVATAR = re.compile(r"^/api/agents/[a-z][a-z0-9_-]{0,40}/avatar$")
-PUBLIC_PATHS = {"/api/overview", "/api/peers", "/api/vega", "/api/whoami",
-                "/api/events", "/api/messages", "/api/agents",
-                "/favicon.svg"}
+# The anonymous allowlist is (METHOD, path) PAIRS (plan-11860 E1): a path being public for GET never opens its POST.
+# A public non-GET is declared here by name, with its reason: today only POST /api/vega (the public concierge, which
+# reaches no actuator by construction; see its handler). HEAD is judged as GET. Everything else is owner-only.
+PUBLIC = {("GET", "/api/overview"), ("GET", "/api/peers"), ("GET", "/api/whoami"),
+          ("GET", "/api/events"), ("GET", "/api/messages"), ("GET", "/api/agents"),
+          ("GET", "/api/floor/glyphs"),     # the wiring's allowlisted projection (owner ruling, poll #61982)
+          ("POST", "/api/vega"),            # the public concierge: a visitor must be able to talk to it
+          ("GET", "/api/auth/role"),        # the signed-in viewer's role HERE, for the front's /auth/me (U1+U2)
+          ("GET", "/favicon.svg")}
+PUBLIC_PATHS = {p for _, p in PUBLIC}    # the paths alone, for readers that only name a path (the census, comments)
 # /api/steps REMOVED from the anonymous allowlist 2026-08-13, on Umair's explicit
 # instruction ("gate it for now; we will discuss why it is public tomorrow").
 # WHY, so the decision is legible rather than silent: step CONTENT is the verbatim body
@@ -218,10 +219,62 @@ def anonymous_can_see(from_org, to_org, peers: frozenset) -> bool:
     return any(row[c] in peers for c in ANON_PEER_COLUMNS)
 
 
+# ---------------------------------------------------------------- who is asking (plan-11859 U1+U2, D2)
+# THE owner predicate, ONE definition (tests/test_backend_identity.py's census: no handler compares the key itself).
+# The owner is either the holder of the owner key (OBS_KEY, kept by owner ruling 10-21 until U7), or, in a cog with
+# sign-in, an account this org's OWN members table names `owner`, carried by the front's signed identity. The token
+# says only WHO (the front's fact); the role is read here (this org's fact, a2 I1). Verification is MANDATORY: no
+# valid token for THIS org means the public face, whatever path the request took (D2). Today `member` and `viewer`
+# open nothing beyond the public face (recorded, shown by /auth/me; a later slice gives them a meaning).
+from astryx.security import identity as _identity  # noqa: E402
+_COGAUTH = orgs.cog() if orgs.multi() else None    # the cog's sign-in: {id, home}, or None (one org; no `cog` block)
+_AUD = orgs.name() if _COGAUTH else None           # this org's registry name: the only aud this backend accepts
+_verifiers: dict = {}
+_verifiers_at = 0.0
+
+
+def _keys(kid_missing: bool = False) -> dict:
+    """The cog's public keys (keys/<kid>.pub), re-read at most once a minute when a token names an unknown kid."""
+    global _verifiers, _verifiers_at
+    if _COGAUTH and (not _verifiers_at or (kid_missing and time.monotonic() - _verifiers_at > 60)):
+        _verifiers, _verifiers_at = _identity.load_verifiers(_COGAUTH["home"]), time.monotonic()
+    return _verifiers
+
+
+async def _who(request: Request) -> tuple[str | None, str | None]:
+    """(uid, role here) of the signed-in viewer the front vouched for, else (None, None). Read only from the front
+    (127.0.0.1): every org backend is loopback-bound (the D5 census), and the token is checked whatever the peer."""
+    tok = request.headers.get(_identity.HEADER)
+    peer = request.client.host if request.client else ""
+    if not (_COGAUTH and tok and peer == "127.0.0.1"):
+        return None, None
+    uid = _identity.verify(tok, _keys(), _AUD)
+    if uid is None:
+        before = _verifiers
+        if _keys(kid_missing=True) is not before:       # a rotated key, read once
+            uid = _identity.verify(tok, _verifiers, _AUD)
+    if uid is None or pool is None:
+        return None, None
+    try:
+        return uid, await pool.fetchval("SELECT role FROM members WHERE uid = $1", uid)
+    except (asyncpg.PostgresError, OSError) as e:   # no members table yet (schema.sql not re-applied), a DB blip:
+        print(f"observatory: a signed-in viewer reads as public: {type(e).__name__}", file=sys.stderr)
+        return uid, None                              # the public face (D2), never a 500 on it
+
+
+def _signed_owner(request: Request) -> bool:
+    return getattr(request.state, "role", None) == "owner"
+
+
+def owner_call(request: Request) -> bool:
+    """A fetch() from the owner: the x-obs-key header, or a signed-in owner of THIS org."""
+    return (bool(OBS_KEY) and request.headers.get("x-obs-key", "") == OBS_KEY) or _signed_owner(request)
+
+
 def is_owner(request: Request) -> bool:
-    # header for fetch(); ?key= for elements that cannot send headers (img, EventSource)
+    # header for fetch(); ?key= for elements that cannot send headers (img, EventSource); or a signed-in owner
     supplied = request.headers.get("x-obs-key", "") or request.query_params.get("key", "")
-    return bool(OBS_KEY) and supplied == OBS_KEY
+    return (bool(OBS_KEY) and supplied == OBS_KEY) or _signed_owner(request)
 
 pool: asyncpg.Pool | None = None
 sse_clients: set[asyncio.Queue] = set()
@@ -298,8 +351,16 @@ app = FastAPI(lifespan=lifespan)
 # imported through the repo package (REPO is on sys.path), so main.py loads the same way under uvicorn and when an
 # oracle loads it by path; the pool is handed over, never re-imported (steward #44464)
 from observatory.api import pilot_voice as _pilot_voice  # noqa: E402
+from observatory.api.hostfile import Conflict, atomic_write, etag  # noqa: E402 — the ONE host-file writer (plan-11860 E3)
+import hashlib  # noqa: E402
+from bridges import routing as _routing  # noqa: E402 — the ONE route resolver/validator (plan-11860 E2)
 _pilot_voice.bind(lambda: pool)
 app.include_router(_pilot_voice.router)
+
+# plan-11884: /chat's server half (uploads, the side panel's file read, projects, dictation); owner-only by omission
+from observatory.api import chat as _chat  # noqa: E402
+_chat.bind(lambda: pool, ESTATE, ESTATE / "media", REPO, roster=lambda: set(agent_meta()))   # media/: every channel's inbound files
+app.include_router(_chat.router)
 
 # the Room's speaker: agents answer the room with send(to='room'); spoken in their voice, or run on the screen
 from observatory.api import room as _room  # noqa: E402
@@ -316,8 +377,10 @@ app.include_router(_room.router)
 
 @app.middleware("http")
 async def privacy_gate(request: Request, call_next):
+    request.state.uid, request.state.role = await _who(request)
     p = request.url.path
-    if (p.startswith("/api/") and p not in PUBLIC_PATHS and not _PUBLIC_AVATAR.match(p)
+    m = "GET" if request.method == "HEAD" else request.method
+    if (p.startswith("/api/") and (m, p) not in PUBLIC and not (m == "GET" and _PUBLIC_AVATAR.match(p))
             and not is_owner(request)):
         return Response(status_code=403)
     return await call_next(request)
@@ -357,7 +420,7 @@ def goal(r) -> dict:
 def tmux_alive() -> set[str]:
     """Which ax-* sessions exist right now. Empty set if tmux is absent."""
     try:
-        out = subprocess.run(["tmux", "ls", "-F", "#{session_name}"],
+        out = subprocess.run([*orgs.tmux(), "ls", "-F", "#{session_name}"],
                              capture_output=True, text=True, timeout=3).stdout
         return {s[3:] for s in out.split() if s.startswith("ax-")}
     except Exception:
@@ -382,10 +445,13 @@ async def overview():
           (SELECT count(*) FROM goals WHERE state IN {_SQL_DONE})            AS goals_done,
           (SELECT count(*) FROM peers WHERE status <> 'revoked')             AS peers
     """)
-    alive = tmux_alive()
-    # an agent is an agent whether it has logged steps yet or not: union of
-    # everyone who ever stepped and every body alive right now
-    return {"org": ORG, "live": len(alive), "agents": len(stepped | alive), **dict(r)}
+    # an agent is an agent whether it has logged steps yet or not: union of everyone who ever stepped and every body
+    # alive right now, and only names THE TREE holds (charter.roster(), as /api/agents reads it): a name that once
+    # wrote a step without a charter (seed's onboard.md body, 10-09) counted as an 18th agent in the header (owner 10-19)
+    from astryx.core import charter
+    registry = set(charter.roster())
+    alive = {a for a in tmux_alive() if a in registry}
+    return {"org": ORG, "live": len(alive), "agents": len((stepped & registry) | alive), **dict(r)}
 
 
 def agent_meta() -> dict[str, dict]:
@@ -396,17 +462,12 @@ def agent_meta() -> dict[str, dict]:
     the chain of composite labels from the root down to the agent's own folder, and
     rank (charter line 'Rank: <n>') orders members inside their group; peers omit it.
     Examples (*.example.md files and *.example/ directories) are skipped."""
-    root = REPO / "agents"
+    root = ESTATE / "agents"
     out: dict[str, dict] = {}
     for f in root.rglob("*.md"):
-        parts = f.relative_to(root).parts
         if not _charter.is_charter(f, root):
             continue                    # the ONE rule (src/astryx/core/charter.py): examples, structural
                                         # files, and documents beside a self-folder charter
-        # self-folder form: agents/<name>/<name>.md — the folder is the agent's own
-        # home, not a composite level, so it drops out of the group path
-        if len(parts) >= 2 and parts[-2] == f.stem:
-            parts = parts[:-1]
         rank = None
         model_pin = None
         for line in f.read_text().splitlines():
@@ -415,7 +476,7 @@ def agent_meta() -> dict[str, dict]:
                 rank = int(v) if v.lstrip("-").isdigit() else None
             elif line.startswith("Model:") and model_pin is None:
                 model_pin = line.split(":", 1)[1].split()[0].strip() or None
-        out[f.stem] = {"group_path": list(parts[:-1]), "rank": rank,
+        out[f.stem] = {"group_path": _charter.group_path(f, root), "rank": rank,   # S3d: the one group rule
                        "model_pin": model_pin}
     return out
 
@@ -588,6 +649,27 @@ async def goal_detail(gid: int):
             "thread": thread, "thread_total": total, "messages": [msg(m) for m in msgs],
             "votes": [{"agent": v["from_agent"], "intent": v["intent"], "ts": v["ts"].isoformat()} for v in votes],
             "steps": [step(x) for x in steps]}
+
+
+@app.get("/api/goals/{gid}/workflow")
+async def goal_workflow(gid: int):
+    """plan-11324 S4: the goal's workflow (latest revision) with its MEASURED reading: each task's planned span beside
+    its measured one (commits reachable from origin/main, attributed by trailer or the backlog normaliser), status,
+    the critical path, the UNATTRIBUTED commits, and the planned-vs-measured influence overlay on plan-<goal>. All rules
+    live in astryx.workflow. Owner-only by the privacy gate (not a PUBLIC_PATH)."""
+    import asyncio
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz
+    from astryx import workflow as wf
+    r = await pool.fetchrow("SELECT rev, body FROM goal_workflow WHERE goal_id=$1 ORDER BY rev DESC LIMIT 1", gid)
+    if not r:
+        return Response(status_code=404)
+    body = r["body"] if isinstance(r["body"], dict) else _json.loads(r["body"])
+    commits = await asyncio.to_thread(wf.main_commits, REPO, gid)
+    edges = await pool.fetch(
+        "SELECT src, dst, count(*) AS n FROM influence_edge WHERE topic=$1 GROUP BY src, dst", f"plan-{gid}")
+    return {"rev": r["rev"], **wf.status(body, commits, _dt.now(_tz.utc)),
+            "overlay": wf.overlay(body, [(e["src"], e["dst"], e["n"]) for e in edges])}
 
 
 #  BILLABLE, NOT RAW. steps.tokens_in / turns.tokens_in count cache reads at face value and
@@ -954,14 +1036,14 @@ async def charter_put(name: str, edit: CharterEdit, request: Request):
     the file; a running body only inherits the change when it RESPAWNS (spawn.sh
     rebuilds homes/<name>/CLAUDE.md from charter + law at boot), so the response says
     whether it's live now. Owner-only; charters stay gitignored, never leave here."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     f = _charter_path(name)
     if not f:
         return Response("no such charter", status_code=404)
     if not edit.content.strip():
         return Response("an empty charter would erase the agent — refused", status_code=400)
-    f.write_text(edit.content)
+    atomic_write(f, edit.content)
     live = f.stem in tmux_alive()
     return {"ok": True, "name": f.stem, "live": live,
             "note": ("saved — respawn the agent to apply" if live
@@ -975,7 +1057,7 @@ async def charter_put(name: str, edit: CharterEdit, request: Request):
 # block on the next respawn (see src/astryx/core/runtime_env.py). SECRETS NEVER TRANSIT THIS API:
 # runtime.json stores the NAME of the .env key holding the token, never the value — read
 # redacts, write refuses a token value. No entry for an agent → it uses the org's default.
-RUNTIME_PATH = REPO / "runtime.json"
+RUNTIME_PATH = ESTATE / "runtime.json"
 
 
 def _load_runtime() -> dict:
@@ -990,15 +1072,7 @@ def _load_runtime() -> dict:
 
 def _env_key_names() -> list[str]:
     """NAMES only of .env keys (never values) — lets the UI pick which key holds the token."""
-    f = REPO / ".env"
-    if not f.exists():
-        return []
-    out: list[str] = []
-    for ln in f.read_text().splitlines():
-        ln = ln.strip()
-        if ln and not ln.startswith("#") and "=" in ln:
-            out.append(ln.split("=", 1)[0].strip())
-    return out
+    return list(config.read_env(ESTATE / ".env"))    # the ONE .env reader, per line (plan-10224 ENVREAD)
 
 
 class RuntimeEdit(BaseModel):
@@ -1027,7 +1101,21 @@ async def agent_runtime(name: str):
             "effort": entry.get("effort") or "",
             "env_keys": env_names,
             "configured": bool(entry),
+            "org_login": _org_login(),
             "live": f.stem in tmux_alive()}
+
+
+def _org_login() -> dict:
+    """The ORG's login beneath every agent's entry (plan-10224 ORGAUTH), NAMES only: {cli, key, billing, supported,
+    note, source}. key = the .env key spliced into an agent with no base_url of its own, or None (the ambient login);
+    source says the billing in words. runtime_env.org_login is the one rule; never a value."""
+    from astryx.core import runtime_env
+    try:
+        d = runtime_env.org_login(config.read_env(ESTATE / ".env"))
+    except OSError:
+        return {"cli": "claude", "key": None, "billing": "ambient", "supported": True, "note": None,
+                "source": "unreadable"}
+    return {**d, "source": runtime_env.BILLING_WORDS[d["billing"]]}
 
 
 @app.put("/api/agents/{name}/runtime")
@@ -1035,7 +1123,7 @@ async def agent_runtime_put(name: str, edit: RuntimeEdit, request: Request):
     """Owner sets an agent's provider/key/model map from the UI. Writes runtime.json
     (gitignored); the token stays in .env, we store only token_env's NAME. An all-empty edit
     REMOVES the entry (revert to the org default). Applies on the agent's next respawn."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     f = _charter_path(name)
     if not f:
@@ -1061,7 +1149,7 @@ async def agent_runtime_put(name: str, edit: RuntimeEdit, request: Request):
         data[f.stem] = entry
     else:
         data.pop(f.stem, None)          # all-empty → this agent reverts to the org default
-    RUNTIME_PATH.write_text(json.dumps(data, indent=2) + "\n")
+    atomic_write(RUNTIME_PATH, json.dumps(data, indent=2) + "\n")
     live = f.stem in tmux_alive()
     return {"ok": True, "name": f.stem, "configured": bool(entry), "live": live,
             "note": ("saved — respawn the agent to apply" if live
@@ -1111,7 +1199,7 @@ async def agent_create(body: AgentCreate, request: Request):
     """Bring a new agent into the world: write its charter into the agents/ tree, then
     spawn its body. Owner-only. The stem is the GLOBAL key — validated hard (no traversal,
     no collision) because the tree IS the registry."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     name = (body.name or "").strip().lower()
     if not _valid_name(name):
@@ -1120,7 +1208,7 @@ async def agent_create(body: AgentCreate, request: Request):
         return Response("a charter is the agent — it cannot be empty", status_code=400)
     if _charter_path(name):
         return Response(f"'{name}' already exists — names are unique in the tree", status_code=409)
-    agents_dir = REPO / "agents"
+    agents_dir = ESTATE / "agents"
     if body.group:
         g = body.group.strip().lower()
         if not _valid_name(g) or not (agents_dir / g).is_dir():
@@ -1129,7 +1217,7 @@ async def agent_create(body: AgentCreate, request: Request):
     else:
         target = agents_dir / f"{name}.md"
     try:
-        target.write_text(body.charter)
+        atomic_write(target, body.charter)
     except Exception as e:
         return Response(f"could not write charter: {e}", status_code=500)
     r = subprocess.run(["bash", str(REPO / "scripts" / "spawn.sh"), name],
@@ -1146,7 +1234,7 @@ async def agent_retire(name: str, request: Request):
     stop its body. REVERSIBLE — the name rests, the history stays; remove the tombstone to
     bring it back. Owner-only. (The org never hard-deletes a charter; identity is not
     trash.)"""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     f = _charter_path(name)
     if not f:
@@ -1154,13 +1242,13 @@ async def agent_retire(name: str, request: Request):
     text = f.read_text()
     if not re.search(r"^## Tombstone", text, re.M):
         stamp = datetime.now(timezone.utc).date().isoformat()
-        f.write_text(text.rstrip() + f"\n\n## Tombstone\nRetired via the observatory "
+        atomic_write(f, text.rstrip() + f"\n\n## Tombstone\nRetired via the observatory "
                      f"{stamp}. The name rests; remove this section to revive.\n")
     killed = False
     if name in tmux_alive():
         # "=ax-<name>" is an EXACT match: a bare target falls back to a prefix match, and kill-session then kills
         # ax-<name>x if ax-<name> died between the tmux_alive() check and here (a3 #44075, measured)
-        k = subprocess.run(["tmux", "kill-session", "-t", f"=ax-{name}"],
+        k = subprocess.run([*orgs.tmux(), "kill-session", "-t", f"=ax-{name}"],
                            capture_output=True, text=True, timeout=10)
         killed = k.returncode == 0
     return {"ok": True, "name": name, "retired": True, "body_stopped": killed}
@@ -1170,7 +1258,7 @@ async def agent_retire(name: str, request: Request):
 async def agent_spawn(name: str, request: Request):
     """(Re)spawn a body — apply a charter edit, or revive a dormant agent. Refuses a
     tombstoned charter (remove the tombstone first). Owner-only."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     f = _charter_path(name)
     if not f:
@@ -1182,7 +1270,7 @@ async def agent_spawn(name: str, request: Request):
 
 
 # ------------------------------------------------------------ services
-UNITS_DIR = REPO / "units"
+UNITS_DIR = ESTATE / "units"
 SERVICE_ACTIONS = {"start", "stop", "restart"}
 
 
@@ -1327,11 +1415,11 @@ async def trigger_detail(agent: str, name: str):
         "AND left(body, length($2)) = $2 ORDER BY id DESC LIMIT 8", agent, head)
     fires = [f for f in fires if f["body"][len(head):len(head) + 1] in ("]", " ")]
     # a python trigger's check_src names its file; show the code itself (confined to triggers/, capped)
-    root = (REPO / "triggers").resolve()
+    root = (ESTATE / "triggers").resolve()
     cand = t["check_src"] if t["kind"] == "python" and (t["check_src"] or "").endswith(".py") else f"triggers/{agent}/{name}.py"
-    path = (REPO / cand).resolve()
+    path = (ESTATE / cand).resolve()           # check_src is org-relative (triggers/<agent>/<name>.py)
     if root not in path.parents:
-        path = REPO / "triggers" / agent / f"{name}.py"
+        path = ESTATE / "triggers" / agent / f"{name}.py"
     code = None
     if path.is_file():
         try:
@@ -1378,7 +1466,7 @@ async def services():
 
 @app.post("/api/services/{unit}/{action}")
 async def service_action(unit: str, action: str, request: Request):
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     if unit not in service_units() or action not in SERVICE_ACTIONS:
         return Response(status_code=400)
@@ -1416,7 +1504,7 @@ async def network_people(request: Request, min_shared: int = 1):
     anonymized shape public is a separate decision that goes through steward's tier
     assert, not a default.
     """
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     # The details come from social_relation (people library 1a); this endpoint is OWNER-GATED above.
     people = await pool.fetch(
@@ -1450,7 +1538,7 @@ async def network_people(request: Request, min_shared: int = 1):
 # never on the wire (local.md: family data is personal tier) and never in a DB table every superuser
 # agent can read until the people_cleared role lands (plan-4918 1a). The owner answers HERE: the name is
 # resolved owner-side from the graph, the answer appended beside the asks, and memory is told only a COUNT.
-_PEOPLE_DIR = Path(os.environ.get("ASTRYX_PEOPLE_DIR") or REPO / "homes" / "memory" / ".people")  # override: oracles
+_PEOPLE_DIR = Path(os.environ.get("ASTRYX_PEOPLE_DIR") or ESTATE / "homes" / "memory" / ".people")  # override: oracles
 PEOPLE_KINDS = ["family", "partner", "close friend", "friend", "colleague", "collaborator",
                 "classmate", "acquaintance", "community", "other"]
 PEOPLE_CLOSENESS = ["inner", "close", "regular", "distant"]
@@ -1567,7 +1655,7 @@ async def network_cypher(q: CypherQ, request: Request):
     SEPARATE database (astryx_social) so the org's own dump never depends on a
     source-compiled extension. Degrades honestly: without AGE this says so instead of
     pretending an empty graph."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     text = (q.query or "").strip().rstrip(";")
     if not text or len(text) > 2000:
@@ -1635,7 +1723,7 @@ class NewGoal(BaseModel):
 
 @app.post("/api/goals")
 async def goal_create(g: NewGoal, request: Request):
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     if not g.title.strip() or not g.assignee.strip():
         return Response(status_code=400)
@@ -1662,16 +1750,24 @@ class OwnerMsg(BaseModel):
     thread: str | None = None
 
 
+@app.get("/api/auth/role")
+async def auth_role(request: Request):
+    """The role this org's members table gives the signed-in viewer the front vouched for: {"role"}, or a 401 with no
+    word on why (no token, a bad one, or no membership read the same)."""
+    if request.state.role is None:
+        return JSONResponse({"error": "no role here"}, status_code=401)
+    return {"role": request.state.role}
+
+
 @app.get("/api/whoami")
 async def whoami(request: Request):
-    key = request.headers.get("x-obs-key", "")
-    return {"owner": bool(OBS_KEY) and key == OBS_KEY,
+    return {"owner": owner_call(request),
             "vega": _charter_path("vega") is not None}
 
 
 @app.post("/api/messages")
 async def owner_send(m: OwnerMsg, request: Request):
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     if not m.body.strip() or not m.to.strip():
         return Response(status_code=400)
@@ -1700,6 +1796,17 @@ class VegaMsg(BaseModel):
     history: list[dict] = []       # [{role: 'visitor'|'vega', text}], client-kept
 
 vega_hits: dict[str, list[float]] = {}
+_COG = orgs.multi()          # resolved once at start, as ESTATE is
+
+
+def _client(request: Request) -> str:
+    """The visitor a per-visitor cap counts. One org: the peer address, exactly as before. In a cog this observatory
+    sits behind the cog's front (observatory/front.py), so its peer is always 127.0.0.1: the front's own
+    x-astryx-front-client (the address IT saw; it overwrites any a caller sends) is read, and only from 127.0.0.1."""
+    peer = request.client.host if request.client else "?"
+    if _COG and peer == "127.0.0.1":
+        return request.headers.get("x-astryx-front-client") or peer
+    return peer
 
 
 from astryx.core.claude_bin import claude_bin  # noqa: E402
@@ -1710,7 +1817,7 @@ async def vega(m: VegaMsg, request: Request):
     vega_md = _charter_path("vega")
     if vega_md is None:
         return Response(status_code=404)
-    ip = request.client.host if request.client else "?"
+    ip = _client(request)
     now = time.time()
     hits = [t for t in vega_hits.get(ip, []) if now - t < 3600]
     if len(hits) >= 30:
@@ -1876,9 +1983,9 @@ async def agent_profile(name: str):
     meta = agent_meta()
     if name not in meta:
         return Response(status_code=404)
-    hits = [p for p in (REPO / "agents").rglob(f"{name}.md")
+    hits = [p for p in (ESTATE / "agents").rglob(f"{name}.md")
             if not p.name.endswith(".example.md")
-            and not any(x.endswith(".example") for x in p.relative_to(REPO / "agents").parts)]
+            and not any(x.endswith(".example") for x in p.relative_to(ESTATE / "agents").parts)]
     if not hits:
         return Response(status_code=404)
     charter = hits[0]
@@ -1934,12 +2041,12 @@ async def agent_profile(name: str):
     live = name in tmux_alive()
     retired = bool(re.search(r"^## Tombstone", text, re.M))
     # identity history: this self's commits in the private log
-    log_path = str(charter.parent.relative_to(REPO / "agents")) \
-        if charter.parent.name == name else str(charter.relative_to(REPO / "agents"))
+    log_path = str(charter.parent.relative_to(ESTATE / "agents")) \
+        if charter.parent.name == name else str(charter.relative_to(ESTATE / "agents"))
     hist = subprocess.run(
         ["git", "log", "--format=%h|%an|%ad|%s", "--date=format:%Y-%m-%d %H:%M", "-15",
          "--", log_path],
-        cwd=REPO / "agents", capture_output=True, text=True).stdout.strip()
+        cwd=ESTATE / "agents", capture_output=True, text=True).stdout.strip()
     history = [dict(zip(("hash", "author", "date", "subject"), l.split("|", 3)))
                for l in hist.splitlines() if l]
     return {"agent": name, "name": name, "bio": bio,
@@ -2313,7 +2420,7 @@ async def sqlfile_get(path: str):
 async def sqlfile_put(f: SqlFile):
     p = _safe_asset(f.path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(f.content)
+    atomic_write(p, f.content)
     return {"ok": True, "path": f.path}
 
 
@@ -2325,7 +2432,7 @@ async def sqlfile_new(f: SqlFile):
     else:
         p.parent.mkdir(parents=True, exist_ok=True)
         if not p.exists():
-            p.write_text(f.content or "-- new query\n")
+            atomic_write(p, f.content or "-- new query\n")
     return {"ok": True, "path": f.path}
 
 
@@ -2345,7 +2452,7 @@ async def sqlfile_del(path: str):
 # owner SEE the wiring and change it — including binding an agent to a contact,
 # resolved through the same provider layer the agents use so a name never
 # silently fuzzy-matches the wrong person (the "Ali Owner" class). Owner-only.
-BRIDGES = REPO / "bridges"
+BRIDGES = ESTATE / "bridges"           # the routes-*.json files are org estate (data/estate_partition.json)
 
 
 def _wire_channels() -> list[str]:
@@ -2388,7 +2495,8 @@ class RouteSet(BaseModel):
 # would need a service restart for every lease change (2026-08-24: .7 became .2
 # overnight and the tab read "host down").
 def growbot_body() -> str:
-    return (_env("GROWBOT_BODY_URL") or "http://127.0.0.1:8470").rstrip("/")
+    # the org's own body host: its registry port in a cog of several orgs (S3b 5/n), the fixed one on one org
+    return (_env("GROWBOT_BODY_URL") or f"http://127.0.0.1:{orgs.port('astryx-growbot') or 8470}").rstrip("/")
 GROWBOT_PATHS = {"stats", "act", "stop", "pose", "set", "routine", "servo", "seq"}
 
 
@@ -2605,33 +2713,66 @@ async def growbot_proxy(path: str, request: Request):
 async def wire_routes():
     """Every channel's full route table (enabled AND disabled — the owner manages
     both). trusted_key names the per-channel sender-trust field (jids vs numeric
-    ids) so the editor renders the right control."""
+    ids) so the editor renders the right control. `etag` is the file's sha256: the PUT's If-Match (plan-11860 E4);
+    `problems` is the one validator's verdict on the table as it stands (E2), so a hand edit shows here."""
     out = []
     for ch in _wire_channels():
         routes = _read_routes(ch)
         key = "trusted_jids" if (ch == "whatsapp"
                                  or any("trusted_jids" in r for r in routes)) else "trusted_ids"
-        out.append({"channel": ch, "routes": routes, "trusted_key": key})
+        out.append({"channel": ch, "routes": routes, "trusted_key": key, "etag": etag(_routes_file(ch)),
+                    "problems": _routing.validate(routes, set(agent_meta()))})
     return out
 
 
 @app.put("/api/wire/routes/{channel}")
 async def wire_routes_put(channel: str, body: RouteSet, request: Request):
-    """Replace a channel's route table. Validates every route names a chat and a
-    real agent; unknown keys (a discord webhook, a note) are preserved verbatim."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    """Replace a channel's route table: THE one write path for routing (the Wiring tab and the floor both call it).
+    plan-11860 E4: the caller names the version it read (If-Match: the GET's etag; absent is 428, stale is 409), the
+    table passes the ONE validator every bridge resolves by (bridges/routing.py: a chat routes once, an agent with
+    several routes names its home), it is written atomically (E3), and the answer is the change AS THE BRIDGES WILL
+    SEE IT (added / removed / moved / doorbell), read from the same resolver. Unknown keys (a discord webhook, a note)
+    are preserved verbatim."""
+    if not owner_call(request):
         return Response(status_code=403)
     f = _routes_file(channel)
     if not f or channel not in _wire_channels():
         return Response("unknown channel", status_code=404)
-    meta = agent_meta()
-    for r in body.routes:
-        if not isinstance(r, dict) or not str(r.get("chat", "")).strip() or not r.get("agent"):
-            return Response("every route needs a chat and an agent", status_code=400)
-        if r["agent"] not in meta:
-            return Response(f"no such agent: {r['agent']}", status_code=400)
-    f.write_text(json.dumps(body.routes, indent=2, ensure_ascii=False) + "\n")
-    return {"ok": True, "channel": channel, "count": len(body.routes)}
+    want = request.headers.get("if-match", "").strip().strip('"')
+    if not want:
+        return JSONResponse({"error": "If-Match is required: send the etag the routes GET gave you"}, status_code=428)
+    problems = _routing.validate(body.routes, set(agent_meta()))
+    if problems:
+        return JSONResponse({"error": problems[0], "problems": problems}, status_code=400)
+    before = _read_routes(channel)
+    try:
+        tag = atomic_write(f, json.dumps(body.routes, indent=2, ensure_ascii=False) + "\n", if_match=want)
+    except Conflict:
+        return JSONResponse({"error": "the routes changed since you loaded them; reload and try again",
+                             "etag": etag(f)}, status_code=409)
+    return {"ok": True, "channel": channel, "count": len(body.routes), "etag": tag,
+            "diff": _routing.diff(before, body.routes)}
+
+
+# The PUBLIC projection of the wiring (plan-11860 E9, owner ruling poll #61982: the channel icons show publicly).
+# ALLOWLISTED: each output row is built from four named fields and nothing else, so a chat id, a jid, a number, a
+# name, a note or a webhook in the route table can never reach it. Counted per (agent, channel, kind) over ENABLED
+# routes. /api/wire/routes itself stays owner-only.
+def glyphs_of(tables: dict[str, list]) -> list[dict]:
+    counts: dict[tuple[str, str, str], int] = {}
+    for ch, rows in tables.items():
+        for r in _routing.resolve(rows):
+            agent = str(r.get("agent") or "")
+            if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,40}", agent):
+                continue
+            k = (agent, ch, _routing.kind_of(ch, str(r.get("chat", ""))))
+            counts[k] = counts.get(k, 0) + 1
+    return [{"agent": a, "channel": c, "kind": k, "count": n} for (a, c, k), n in sorted(counts.items())]
+
+
+@app.get("/api/floor/glyphs")
+async def floor_glyphs():
+    return glyphs_of({ch: _read_routes(ch) for ch in _wire_channels() if re.fullmatch(r"[a-z]{2,20}", ch)})
 
 
 @app.get("/api/wire/contacts")
@@ -2672,7 +2813,7 @@ async def wire_contacts(q: str, channel: str = ""):
 #  - src/astryx/core/tier.py keys AGENT content and does not reach the wiki at all. A page body is
 #    memory's compiled content, and goal TITLES (goal-16 is "low-latency recruiter-reply
 #    signal") are owner-career-adjacent. No wiki body or goal title is public at any tier.
-MEMORY_WIKI = REPO / "memory" / "wiki"
+MEMORY_WIKI = ESTATE / "memory" / "wiki"
 
 
 async def _memgraph_read() -> dict:
@@ -2837,7 +2978,7 @@ async def memory_ontology():
 # local.md's RAG clause); career specifics stay meta-only at write time, and cv:/wa:/owner chat rows
 # never enter. Served ONLY from under
 # LIBRARY: shelf and slug must be plain names, and the resolved path must stay inside the root.
-LIBRARY = Path(os.environ.get("ASTRYX_LIBRARY_DIR") or REPO / "memory" / "library")
+LIBRARY = Path(os.environ.get("ASTRYX_LIBRARY_DIR") or ESTATE / "memory" / "library")
 _LIB_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
 
 
@@ -2999,7 +3140,7 @@ async def memory_chat(ask: MemoryAsk, request: Request):
     finds nothing the question still goes to memory — the agent may know the estate
     better than the ranking function does.
     """
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     text = str(ask.message or "").strip()
     if not text:
@@ -3031,7 +3172,7 @@ async def memory_chat_replies(thread: str, after: int = 0, request: Request = No
     """Poll for memory's replies on an estate-chat thread. The wire is async — a resident
     answers on its own clock — so the UI polls rather than the API holding a connection
     open against an agent's think time."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     if not thread.startswith(("obs:estate", "obs:person-", "obs:library-")):
         return Response(status_code=400)          # estate, "ask memory about this person" (pid-keyed), the Library's desk
@@ -3062,7 +3203,7 @@ async def memory_late_replies(prefix: str, request: Request = None):
     only (to_org='local', as outbound_stuck's DESK_ROW: an owner@peer row is the gateway's, not this screen's). memory is the
     only one that answers on them today, but a person or library desk may be answered by another.
     At most 20 per visit, oldest first; only the rows served are marked, so the rest wait for the next."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     if prefix not in ("obs:estate", "obs:person-", "obs:library-"):
         return Response(status_code=400)
@@ -3083,6 +3224,211 @@ async def memory_late_replies(prefix: str, request: Request = None):
     return {"replies": out}
 
 
+class ThreadRead(BaseModel):
+    thread: str
+    upto: int
+
+
+@app.post("/api/thread/read")
+async def thread_read(r: ThreadRead, request: Request):
+    """The owner OPENED this thread's pane: the agent→owner replies it shows are read (seed #57412, steward
+    #57407). A named thread like 'owner' has no bridge to deliver them (WhatsApp skips it), so without this
+    mark they sat pending and outbound_stuck called them stranded. The feed merely SHOWING a row never marks
+    it: only this explicit act on one thread does, like the desks. Scoped by thread, not sender; to the LOCAL
+    owner only (an owner@peer row is the gateway's); only rows up to the newest one the pane has rendered
+    (upto), so a reply that lands between render and this call is not marked unseen. NEVER a row a bridge
+    delivers (t-, wa:, threadless, tg:, dc:, cv:, tier releases, ear-; bridges/owner_surfaces.py, a4 #57418):
+    marking it here would stop the bridge from ever sending it to his phone."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    if not r.thread.strip():
+        return Response(status_code=400)
+    rows = await pool.fetch(
+        "UPDATE messages SET status='delivered', delivered_at=now(), "
+        "delivery=jsonb_build_object('ok', true, 'handle', 'observatory:thread') "
+        "WHERE thread=$1 AND id <= $2 AND to_agent='owner' AND to_org='local' AND from_agent<>'owner' "
+        f"AND status='pending' AND NOT {OWNER_ROW_BRIDGED_SQL} RETURNING id", r.thread, r.upto)
+    return {"marked": sorted(x["id"] for x in rows)}
+
+
+# ------------------------------------------------------------ the floor: who knows whom, and the cog's rooms
+from astryx.influence import graph as _influence  # noqa: E402 — the ONE weighting rule (plan-11324 S2)
+
+# a kind's coverage is the COMPUTE's (one value per kind per compute; the cache holds one compute), never the window's:
+# a kind with no edge in the last 7 days is still measured, and the GLOBAL ranks weigh it (a4 #60129 A-1)
+INFLUENCE_COVERAGE_SQL = "SELECT DISTINCT kind, coverage FROM influence_edge WHERE scope = 'local'"
+INFLUENCE_EDGES_SQL = ("SELECT kind, src, dst, ts, topic, coverage FROM influence_edge "
+                       "WHERE scope = 'local' AND ts >= now() - make_interval(days => $1)")
+# ONE compute's snapshot, never each agent's own latest: two runs' values are not one ranking
+INFLUENCE_VALUES_SQL = ("SELECT agent, value FROM influence_value WHERE scope = 'local' AND view = 'global' "
+                        "AND computed_at = (SELECT max(computed_at) FROM influence_value "
+                        "WHERE scope = 'local' AND view = 'global') ORDER BY value DESC, agent")
+INFLUENCE_WINDOWS = {"7d": 7, "14d": 14}     # the cache IS the compute's window (influence.shell.DAYS): no 30d
+
+
+@app.get("/api/influence")
+async def influence(request: Request, window: str = "14d"):
+    """Who knows whom, for the floor (seed #60078, design #60089; goal 11324 S2), read from the two influence tables
+    only, never a message body. Per (src, dst, kind): n edges, the last one's time and its top threads (<= 3, by
+    count). Per kind: its coverage and whether the GLOBAL view measures it (graph.kind_weights: under the coverage
+    floor, or hard-UNMEASURED, it weighs 0 and the floor must say so, never hide it). Per agent: the LATEST compute's
+    GLOBAL value and rank. A → B means A relied on B: credit flows to B. Owner-only, by omission from PUBLIC_PATHS
+    and checked here as well."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    if window not in INFLUENCE_WINDOWS:
+        return Response(status_code=400)
+    rows = await pool.fetch(INFLUENCE_EDGES_SQL, INFLUENCE_WINDOWS[window])
+    cov = {r["kind"]: r["coverage"] for r in await pool.fetch(INFLUENCE_COVERAGE_SQL)}
+    agg: dict = {}
+    for r in rows:
+        e = agg.setdefault((r["src"], r["dst"], r["kind"]), {"n": 0, "last": r["ts"], "threads": {}})
+        e["n"] += 1
+        e["last"] = max(e["last"], r["ts"])
+        if r["topic"]:
+            e["threads"][r["topic"]] = e["threads"].get(r["topic"], 0) + 1
+    w = _influence.kind_weights(cov)
+    vals = await pool.fetch(INFLUENCE_VALUES_SQL)
+    at = await pool.fetchval("SELECT max(computed_at) FROM influence_edge WHERE scope = 'local'")
+    return {
+        "computed_at": at.isoformat() if at else None, "window": window, "cache_days": max(INFLUENCE_WINDOWS.values()),
+        "kinds": [{"kind": k, "coverage": cov.get(k), "measured": w[k] > 0,
+                   "why": _influence.HARD_UNMEASURED.get(k)} for k in _influence.KINDS],
+        "nodes": [{"agent": v["agent"], "value": v["value"], "rank": i + 1} for i, v in enumerate(vals)],
+        "edges": [{"src": s, "dst": d, "kind": k, "n": e["n"], "last_ts": e["last"].isoformat(),
+                   "top_threads": [t for t, _ in sorted(e["threads"].items(), key=lambda x: (-x[1], x[0]))[:3]]}
+                  for (s, d, k), e in sorted(agg.items())],
+    }
+
+
+# ACROSS ORGS (the owner, 10-19: "in cogs orgs can also communicate with each other … connect those too via influence
+# graph"). The influence compute keeps this org's own agents only (graph.is_node: a remote party is no node), so the
+# traffic that crosses the org's boundary is read here, aggregated: who here talked with which org's agent, how often,
+# and when last. Never a body or a thread. `local` is this org (both columns are NOT NULL); any other value is the
+# remote org's federation name, a cog's sibling or a federation peer alike, and the floor/network keep the cog's own.
+INFLUENCE_CROSS_SQL = (
+    "SELECT from_agent, from_org, to_agent, to_org, count(*) AS n, max(ts) AS last FROM messages "
+    "WHERE ts >= now() - make_interval(days => $1) AND (from_org <> 'local' OR to_org <> 'local') "
+    "GROUP BY 1, 2, 3, 4 ORDER BY 5 DESC, 1, 3 LIMIT 500")
+
+
+@app.get("/api/influence/cross")
+async def influence_cross(request: Request, window: str = "14d"):
+    """Messages across this org's boundary, aggregated per (from agent, from org, to agent, to org): {org, window,
+    edges: [{from, from_org, to, to_org, n, last_ts}]}, `local` read as this org's federation name. Owner-only (by
+    omission from PUBLIC_PATHS, and checked here), read-only, aggregate-only: no body, thread or id leaves."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    if window not in INFLUENCE_WINDOWS:          # the same two windows as /api/influence
+        return Response(status_code=400)
+    me = _env("ASTRYX_ORG") or ORG
+    rows = await pool.fetch(INFLUENCE_CROSS_SQL, INFLUENCE_WINDOWS[window])
+    here = lambda o: me if o == "local" else o   # noqa: E731
+    return {"org": me, "window": window,
+            "edges": [{"from": r["from_agent"], "from_org": here(r["from_org"]), "to": r["to_agent"],
+                       "to_org": here(r["to_org"]), "n": r["n"], "last_ts": r["last"].isoformat()} for r in rows]}
+
+
+_identity_cache: dict = {}
+
+
+async def _gateway_identity() -> dict:
+    """The org's PUBLIC identity as its gateway publishes it (/astryx/identity: name and Ed25519 pubkey), fetched once
+    and kept; {} while the gateway is down. The observatory never loads the org's secret key to derive it."""
+    if "v" in _identity_cache:
+        return _identity_cache["v"]
+    url = f"http://127.0.0.1:{_env('ASTRYX_GATEWAY_PORT') or 8845}/astryx/identity"
+    try:
+        async with httpx.AsyncClient(timeout=2) as c:
+            j = (await c.get(url)).json()
+        v = {"org": j.get("org"), "pubkey": j.get("pubkey")} if isinstance(j, dict) else {}
+    except Exception:  # noqa: BLE001 — a down gateway is a missing badge, not a broken floor
+        return {}
+    _identity_cache["v"] = v
+    return v
+
+
+@app.get("/api/cog")
+async def cog(request: Request):
+    """This org as one room of its cog (owner ruling #60083; the API forge fixed for the floor, #60437/#60439). A backend
+    answers for its OWN org only: in a cog the front lists the cog (cog: true, every org with its /o/<org>/ base), and
+    this route is what the front pipes through under each room's base, so the floor reads each room's badge here.
+    {"cog": false, "home": <registry name | null>, "orgs": [{"org", "name", "base": "/", "badge"}]}: `org` is the
+    registry name (null with no registry: one org, the root is this observatory), `name` the federation name that
+    to_org/from_org carry. orgs.load() still decides which registry name is ours, and a registry that refuses is a 500
+    that says why, never a quiet one-room answer (orgs.py fails closed). Homes and databases never leave.
+    Owner-only, by omission from PUBLIC_PATHS and checked here as well."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    try:
+        reg = orgs.load()
+    except orgs.RegistryError as e:              # fails closed, and SAYS so: the floor names it (seed #60095)
+        return JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)
+    except Exception as e:  # noqa: BLE001 — orgs.py's own CLI refuses on ANY failure (a registry nested past the
+        # parser's recursion limit raised RecursionError): unjudgeable is refused too, and named
+        return JSONResponse({"error": f"cog registry could not be judged ({type(e).__name__})"}, status_code=500)
+    ident = await _gateway_identity()
+    me_name = _env("ASTRYX_ORG") or ident.get("org") or ORG
+    badge = (ident.get("pubkey") or "")[:8] or None
+    me = None if reg is None else orgs.org_of(ESTATE)   # the HOME this observatory serves (paths.estate, resolved once)
+    if reg is not None and me is None:           # a registry that doesn't name our home: which room this is can't be said
+        return JSONResponse({"error": "cog registry refused: this observatory's home is not a registered org"}, status_code=500)
+    return {"cog": False, "home": me, "orgs": [{"org": me, "name": me_name, "base": "/", "badge": badge}]}
+
+
+class NewOrg(BaseModel):
+    key: str
+    name: str | None = None
+    purpose: str | None = None
+
+
+NEW_ORG_KEY = re.compile(r"[a-z][a-z0-9-]{1,30}")
+NEW_ORG_THREAD = "cog-new-org-"
+
+
+@app.post("/api/cog/orgs")
+async def cog_new_org(m: NewOrg, request: Request):
+    """The owner asks for a new org in this install's cog (the owner's ask 10-19: "in agents view make sure we can also
+    create a new org in cog too"). This route BUILDS NOTHING: no sudo, no init.sh, no devtools/cog_add_org.py. It
+    judges the request and puts ONE wire message to seed (from owner, intent task, thread cog-new-org-<key>), the way
+    the composer does; seed runs the org's setup path (devtools/cog_add_org.md) and the owner's sudo steps from there.
+      key       [a-z][a-z0-9-]{1,30}, a legal registry name (orgs.NAME), not already an org of this cog
+      name      the federation name, default <key>.<our ASTRYX_ORG>; core.orgname.org_ok, and never ours
+      purpose   optional, one line (whitespace folded, 200 characters)
+    One open request per key: a row on its thread younger than a day refuses (409), under an advisory lock so two
+    taps can't both pass. Owner-only. Reads the registry's NAMES only (orgs.load), like /api/cog."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    from astryx.core.orgname import org_ok
+    key = (m.key or "").strip()
+    if not NEW_ORG_KEY.fullmatch(key) or not orgs.NAME.fullmatch(key):
+        return JSONResponse({"error": "a key is lowercase: a letter, then 1-30 letters, digits or dashes"}, status_code=400)
+    try:
+        reg = orgs.load() or {}
+    except orgs.RegistryError as e:              # fails closed, and says so (before anything else reads the registry)
+        return JSONResponse({"error": f"cog registry refused: {e}"}, status_code=500)
+    if key in reg:
+        return JSONResponse({"error": f"{key} is already an org of this cog"}, status_code=409)
+    me_name = _env("ASTRYX_ORG") or ORG
+    name = (m.name or "").strip() or f"{key}.{me_name}"
+    if not org_ok(name) or name == me_name:
+        return JSONResponse({"error": f"{name!r} is not a federation name a new org can take"}, status_code=400)
+    purpose = " ".join((m.purpose or "").split())[:200]
+    thread = NEW_ORG_THREAD + key
+    body = f"COG NEW ORG key={key} name={name} purpose={purpose or '-'}"
+    async with pool.acquire() as c, c.transaction():
+        await c.execute("SELECT pg_advisory_xact_lock(hashtext($1))", thread)
+        # fetchrow, not fetchval: sqlguard's shim counts a fetchrow's rows, so this WHERE can show both sides and climb to
+        # RESPONSIVE; a fetchval reads rows=-1 and is capped at EXECUTED (a3 #61777). A row is truthy, None isn't.
+        if await c.fetchrow("SELECT id FROM messages WHERE thread = $1 AND ts > now() - interval '1 day' "
+                            "ORDER BY id DESC LIMIT 1", thread):
+            return JSONResponse({"error": f"a request for {key} is already open", "thread": thread}, status_code=409)
+        row = await c.fetchrow(
+            "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
+            "VALUES ('owner', 'seed', $1, 'task', $2) RETURNING id", thread, body)
+    return {"queued": True, "thread": thread, "id": row["id"]}
+
+
 class MemoryProposal(BaseModel):
     # deleted with the memory chat rework (0c3c450, 08-14) while this route kept it; on Python 3.14 annotations are
     # lazy, so the live observatory never noticed, but on 3.12 (CI, many installs) main.py failed to import at all
@@ -3098,7 +3444,7 @@ class MemoryProposal(BaseModel):
 @app.post("/api/memory/propose")
 async def memory_propose(p: MemoryProposal, request: Request):
     """Route a proposal to the memory agent OVER THE WIRE. Never writes memory/."""
-    if not OBS_KEY or request.headers.get("x-obs-key", "") != OBS_KEY:
+    if not owner_call(request):
         return Response(status_code=403)
     body = ("proposal from the owner via the Memory tab chat — yours to judge, file or "
             "refuse under your own SCHEMA law; nothing was written to the estate.\n\n"
@@ -3137,7 +3483,7 @@ async def events(request: Request):
     # EventSource cannot send headers, so owner mode rides ?key=. Anonymous
     # streams carry ONLY boundary-crossing message events; steps/dags are the
     # agents' insides and stay owner-only.
-    owner = bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY
+    owner = (bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY) or _signed_owner(request)
 
     async def visible(data: dict) -> bool:
         if owner:
@@ -3179,21 +3525,35 @@ async def events(request: Request):
 # own session); x-forwarded-* tell canvas the URL the viewer actually used.
 import http.cookiejar  # noqa: E402
 import httpx  # noqa: E402
+from astryx.security import relay as _relay  # noqa: E402   the ONE relay header policy (plan-11859 D3)
 from fastapi import BackgroundTasks  # noqa: E402
 
-CANVAS_UP = "http://127.0.0.1:8091"
-_HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade",
-        "proxy-authorization", "proxy-authenticate", "host"}
+def _upstream(stem: str, fixed: int) -> str | None:
+    """This org's own `stem` service on loopback: its fixed port on one org, its registry port in a cog. None when this
+    org, in a cog, runs no such unit (its registry entry declares no port for it: lab has no ear), so its proxy answers
+    503 instead of the import raising and the whole observatory crash-looping (step 4 live, 10-19)."""
+    o = orgs.name()
+    if o is not None and stem not in orgs.load()[o]["ports"]:
+        return None
+    return f"http://127.0.0.1:{orgs.port(stem) or fixed}"
+
+
+CANVAS_UP = _upstream("astryx-canvas", 8091)   # this org's canvas (its registry port in a cog)
+# In a cog the viewer reaches this observatory under the front's /o/<org>/ (S3c canvas): the prefix is THIS org's
+# registry name, computed, never read from a request (nothing a caller sends can move a redirect). One org: "".
+CANVAS_PRE = f"/o/{orgs.name()}" if _COG else ""
 _canvas_http: httpx.AsyncClient | None = None
 
 
 @app.api_route("/canvas", methods=["GET", "HEAD"])
 async def canvas_root():
-    return Response(status_code=308, headers={"location": "/canvas/"})
+    return Response(status_code=308, headers={"location": f"{CANVAS_PRE}/canvas/"})
 
 
 @app.api_route("/canvas/{path:path}", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])
 async def canvas_proxy(path: str, request: Request):
+    if CANVAS_UP is None:
+        return Response("this org runs no canvas", status_code=503, media_type="text/plain")
     return await _pipe(f"{CANVAS_UP}/canvas/{path}", request, owner_key=False,
                        down="canvas is not running (astryx-canvas.service)")
 
@@ -3202,11 +3562,13 @@ async def canvas_proxy(path: str, request: Request):
 # this same origin (the secure context getUserMedia needs, no new hostname). Unlike canvas, the ear has no session of
 # its own: its gate IS the observatory owner key, so x-obs-key is forwarded, and the ear service checks it itself
 # (401 without it). This proxy adds no authority: an unauthenticated request reaches the ear and is refused there.
-EAR_UP = "http://127.0.0.1:8092"
+EAR_UP = _upstream("astryx-ear", 8092)   # this org's ear (its registry port in a cog, S3c)
 
 
 @app.api_route("/ear/{path:path}", methods=["GET", "POST"])
 async def ear_proxy(path: str, request: Request):
+    if EAR_UP is None:
+        return Response("this org runs no ear", status_code=503, media_type="text/plain")
     return await _pipe(f"{EAR_UP}/ear/{path}", request, owner_key=True,
                        down="ear offline (astryx-ear.service is not running)")
 
@@ -3222,10 +3584,16 @@ async def _pipe(url: str, request: Request, owner_key: bool, down: str):
         _canvas_http = httpx.AsyncClient(
             timeout=httpx.Timeout(30, read=None),
             cookies=http.cookiejar.CookieJar(policy=http.cookiejar.DefaultCookiePolicy(allowed_domains=[])))
-    headers = [(k, v) for k, v in request.headers.items()
-               if k.lower() not in _HOP and (owner_key or k.lower() != "x-obs-key")]
-    headers += [("x-forwarded-host", request.headers.get("x-forwarded-host") or request.headers.get("host", "")),
-                ("x-forwarded-proto", request.headers.get("x-forwarded-proto") or request.url.scheme)]
+    # ONE allowlist (src/astryx/security/relay.py, plan-11859 D3). The view passed on is what THIS hop observed: in a
+    # cog the front's x-forwarded-host, read only from the front itself (127.0.0.1); on one org the Host it was
+    # reached at. The scheme is uvicorn's, resolved from its pinned trusted peer. Canvas gets only its own session
+    # cookie, never the observatory's owner key (it has its own session); the ear gets the key and no cookie.
+    front = _COG and (request.client.host if request.client else "") == "127.0.0.1"
+    host = (request.headers.get("x-forwarded-host") if front else None) or request.headers.get("host", "")
+    headers = [(k, v) for k, v in _relay.headers(
+        request.headers.items(), host=host, proto=request.url.scheme,
+        cookies=() if owner_key else {_relay.canvas_cookie(orgs.name())})
+        if owner_key or k.lower() != "x-obs-key"]
     upstream = _canvas_http.build_request(
         request.method, url, params=request.query_params,
         headers=headers, content=await request.body())
@@ -3236,7 +3604,7 @@ async def _pipe(url: str, request: Request, owner_key: bool, down: str):
     done = BackgroundTasks()
     done.add_task(r.aclose)
     resp = StreamingResponse(r.aiter_raw(), status_code=r.status_code, background=done)
-    resp.raw_headers = [(k, v) for k, v in r.headers.raw if k.decode().lower() not in _HOP]
+    resp.raw_headers = _relay.response_headers(r.headers.raw, orgs.name())   # its own canvas cookie only (N1)
     return resp
 
 
@@ -3357,6 +3725,308 @@ async def hands_vnc(ws: WebSocket, agent: str):
         await ws.close()
     except RuntimeError:
         pass
+
+
+# ---------------------------------------------------------------- channels: connect one from the floor (plan-11860 S3)
+# The floor's channel dock asks: is each channel connected, and (a bot channel) here is its token. Owner-only (the gate
+# and an explicit check). The design (a4 #61976) binds it:
+#   E5  the .env KEY comes from CHANNEL_TOKEN_KEY, never the body; the value is shape-checked, then validated with the
+#       channel itself, then written by config.set_env (the one writer: atomic, 0600, one line, the key once). A key
+#       already set is replaced only with an explicit confirm (replace=true); is_set is a bool, never the value.
+#   E6  a token-bearing URL is called ONLY through _channel_probe, whose outcome is one of ok / invalid / unreachable /
+#       rate-limited and whose log line names the outcome, never the URL; logredact scrubs bot<id>: tokens and
+#       discord webhook URLs from every log it filters (httpx's request log included). No token in any answer.
+#   E7  the state is read from the effect's owner: WRITTEN (saved), ACTIVATION NEEDED (the bridge started before the
+#       token was written, or isn't running: the exact privileged command is shown, the human runs it), CONNECTED (only
+#       when the bridge's own /health answers, and for discord says connected).
+#   E8  WhatsApp has no token: wacli pairs by QR. The link state is read first (a constant, read-only argv); unknown
+#       means refuse; a linked phone is never replaced from here. Pairing streams over a fetch carrying x-obs-key.
+ENV_FILE = ESTATE / ".env"                     # the org's .env (a seam: the oracle points it at a fixture file)
+CHANNEL_TOKEN_KEY = {"telegram": "TG_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
+_TOKEN_SHAPE = {"telegram": re.compile(r"^\d{5,16}:[A-Za-z0-9_-]{30,64}$"),
+                "discord": re.compile(r"^[A-Za-z0-9_-]{20,40}\.[A-Za-z0-9_-]{4,10}\.[A-Za-z0-9_-]{20,60}$")}
+_PROBE_TRANSPORT = None                         # a seam: the oracle hands httpx a MockTransport
+_account_cache: dict[str, tuple[float, str, dict | None]] = {}
+ACCOUNT_TTL = 300
+WA_LINK_ARGV = ("docker", "exec", "wacli-sync", "wacli", "doctor", "--json", "--read-only")
+WA_PAIR_ARGV = ("docker", "exec", "wacli-sync", "wacli", "auth", "--qr-format", "terminal", "--idle-exit", "120s")
+_chlog = __import__("logging").getLogger("astryx.channels")
+
+
+async def _channel_probe(channel: str, token: str) -> tuple[str, dict | None]:
+    """THE one caller of a token-bearing URL. (outcome, account): outcome is ok | invalid | unreachable | rate-limited.
+    No exception text, URL or token leaves: Telegram's URL carries the token, and an httpx error's text carries the URL."""
+    outcome, acct = "unreachable", None
+    try:
+        async with httpx.AsyncClient(timeout=8, transport=_PROBE_TRANSPORT) as c:
+            if channel == "telegram":
+                r = await c.get(f"https://api.telegram.org/bot{token}/getMe")
+            else:
+                r = await c.get("https://discord.com/api/v10/users/@me", headers={"Authorization": f"Bot {token}"})
+        if r.status_code == 429:
+            outcome = "rate-limited"
+        elif r.status_code in (401, 403, 404):
+            outcome = "invalid"
+        elif r.status_code == 200:
+            j = r.json()
+            u = j.get("result") if channel == "telegram" else j
+            if isinstance(u, dict) and (channel != "telegram" or j.get("ok")):
+                outcome = "ok"
+                acct = {"name": ("@" if channel == "telegram" else "") + str(u.get("username") or ""), "id": str(u.get("id") or "")}
+            else:
+                outcome = "invalid"
+    except Exception:  # noqa: BLE001 — never its text
+        outcome = "unreachable"
+    _chlog.info("channels: %s token probe -> %s", channel, outcome)
+    return outcome, acct
+
+
+def _discord_invite(app_id: str) -> str | None:
+    # View Channels + Send Messages + Read Message History + Attach Files: what bridges/discord.py uses
+    return f"https://discord.com/oauth2/authorize?client_id={app_id}&scope=bot&permissions=101376" if app_id.isdigit() else None
+
+
+async def _account(channel: str, token: str) -> dict | None:
+    fp = hashlib.sha256(token.encode()).hexdigest()[:12]      # the cache keys on a fingerprint, never the token
+    hit = _account_cache.get(channel)
+    if hit and hit[1] == fp and time.time() - hit[0] < ACCOUNT_TTL:
+        return hit[2]
+    outcome, acct = await _channel_probe(channel, token)
+    if outcome in ("ok", "invalid"):
+        _account_cache[channel] = (time.time(), fp, acct)
+    return acct
+
+
+def _bridge(channel: str) -> dict:
+    """The bridge as systemd and its own /health report it: {unit, active, started (unix), health}. A seam for the oracle."""
+    unit = f"astryx-{channel}.service"
+    out = {"unit": unit, "active": False, "started": 0.0, "health": None}
+    try:
+        r = subprocess.run(["systemctl", "show", unit, "-p", "ActiveState", "-p", "ExecMainStartTimestamp",
+                            "-p", "ExecStart", "--timestamp=unix"], capture_output=True, text=True, timeout=5)
+        props = dict(l.split("=", 1) for l in r.stdout.splitlines() if "=" in l)
+        out["active"] = props.get("ActiveState") == "active"
+        ts = props.get("ExecMainStartTimestamp", "")
+        out["started"] = float(ts[1:]) if ts.startswith("@") else 0.0
+        m = re.search(r"--host (\S+) --port (\d+)", props.get("ExecStart", ""))
+        if out["active"] and m:
+            import urllib.request
+            with urllib.request.urlopen(f"http://{m.group(1)}:{m.group(2)}/health", timeout=2) as h:
+                out["health"] = json.loads(h.read() or b"{}")
+    except Exception:  # noqa: BLE001 — unknown health is "not connected", never an error page
+        pass
+    return out
+
+
+def _activate_cmd(channel: str, bridge: dict) -> str:
+    unit = bridge["unit"]
+    return f"sudo systemctl restart {unit}" if bridge["started"] else \
+        f"sudo ./scripts/deploy.sh units && sudo systemctl enable --now {unit}"
+
+
+def _wa_link() -> dict:
+    """WhatsApp's link state, from wacli itself (a constant, read-only argv): linked | unlinked | unknown."""
+    try:
+        r = subprocess.run(list(WA_LINK_ARGV), capture_output=True, text=True, timeout=15)
+        d = (json.loads(r.stdout) or {}).get("data") or {}
+        if d.get("authenticated") is True:
+            jid = str(d.get("linked_jid") or "")
+            num = jid.split("@")[0]
+            return {"state": "linked", "account": f"…{num[-4:]}" if num[-4:].isdigit() else None}
+        if d.get("authenticated") is False:
+            return {"state": "unlinked", "account": None}
+    except Exception:  # noqa: BLE001
+        pass
+    return {"state": "unknown", "account": None}
+
+
+@app.get("/api/channels")
+async def channels_status(request: Request):
+    """Each channel the dock shows: its state (E7), the account behind it, and the command that activates it."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    env = config.read_env(ENV_FILE)
+    try:
+        env_mtime = ENV_FILE.stat().st_mtime
+    except OSError:
+        env_mtime = 0.0
+    out = []
+    for ch in ("whatsapp", "telegram", "discord"):
+        b = await asyncio.to_thread(_bridge, ch)
+        row = {"channel": ch, "routes": ch in _wire_channels()}
+        if ch == "whatsapp":
+            link = await asyncio.to_thread(_wa_link)
+            state = ("connected" if link["state"] == "linked" and b["health"] else
+                     "activation-needed" if link["state"] == "linked" else
+                     "not-linked" if link["state"] == "unlinked" else "unknown")
+            row.update(state=state, account=link["account"], link=link["state"],
+                       activate=_activate_cmd(ch, b) if state == "activation-needed" else None)
+        else:
+            tok = env.get(CHANNEL_TOKEN_KEY[ch], "")
+            acct = await _account(ch, tok) if tok else None
+            healthy = bool(b["health"]) and (ch != "discord" or bool((b["health"] or {}).get("connected")))
+            state = ("not-set" if not tok else
+                     "activation-needed" if not b["active"] or b["started"] < env_mtime else
+                     "connected" if healthy else "written")
+            row.update(state=state, account=acct["name"] if acct else None,
+                       activate=_activate_cmd(ch, b) if state in ("activation-needed", "written") else None,
+                       invite=_discord_invite(acct["id"]) if (ch == "discord" and acct) else None)
+        out.append(row)
+    return out
+
+
+class ChannelToken(BaseModel):
+    token: str
+    replace: bool = False
+
+
+_PROBE_WORDS = {"invalid": "{t} didn't accept that token. Check you copied the current one (resetting a token replaces the old one).",
+                "unreachable": "Couldn't reach {t} to check the token. Nothing was saved; try again in a minute.",
+                "rate-limited": "{t} asked us to slow down. Nothing was saved; try again in a minute."}
+
+
+@app.post("/api/channels/{channel}/token")
+async def channel_token(channel: str, body: ChannelToken, request: Request):
+    """Connect a bot channel: shape, then the channel's own word on the token, then the one .env writer (E5)."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    key = CHANNEL_TOKEN_KEY.get(channel)
+    if not key:
+        return JSONResponse({"ok": False, "error": "This channel connects without a token."}, status_code=404)
+    title, token = channel.capitalize(), body.token.strip()
+    if not _TOKEN_SHAPE[channel].match(token):
+        return JSONResponse({"ok": False, "error": f"That doesn't look like a {title} bot token. Copy the whole token and paste it again."},
+                            status_code=400)
+    if config.is_set(key, ENV_FILE) and not body.replace:
+        return JSONResponse({"ok": False, "needs_confirm": True,
+                             "error": f"{title} already has a token. Confirm to replace it."}, status_code=409)
+    outcome, acct = await _channel_probe(channel, token)
+    if outcome != "ok":
+        return JSONResponse({"ok": False, "error": _PROBE_WORDS[outcome].format(t=title), "outcome": outcome},
+                            status_code=400 if outcome == "invalid" else 503)
+    config.set_env(key, token, ENV_FILE)
+    del token
+    _account_cache.pop(channel, None)
+    b = await asyncio.to_thread(_bridge, channel)
+    return {"ok": True, "channel": channel, "state": "written", "account": acct["name"], "activate": _activate_cmd(channel, b),
+            "invite": _discord_invite(acct["id"]) if channel == "discord" else None}
+
+
+# ---------------------------------------------------------------- the org's agent login (plan-11859 U4)
+# The ONE place the owner sets the login this org's agents run on, the org-level half of ORGAUTH (goal 10224):
+# runtime_env.CLIS names the keys, runtime_env.org_login reads them back, spawn splices them. This backend serves ONE
+# org, so it writes ITS org's .env (ESTATE): per-org by construction, no org parameter to get wrong. Every body reads
+# it at its next spawn; running bodies keep the login they started with. A metered key bills per token, and local.md
+# makes any spend above zero the owner's signed act: it needs confirm_billing, and is the only path that writes the
+# opt-in. No live probe: an OAuth token can't be tried against the API plainly, and a probe is a call out of the org.
+_LOGIN_SHAPE = {"subscription": re.compile(r"sk-ant-oat\d{2}-[A-Za-z0-9_-]{20,}"),    # judged by fullmatch: the WHOLE
+                "metered": re.compile(r"sk-ant-api\d{2}-[A-Za-z0-9_-]{20,}")}         # token, one guard, no anchors
+_LOGIN_WORDS = {"subscription": "a Claude subscription token (from `claude setup-token`)",
+                "metered": "an Anthropic API key (from the console)"}
+
+
+class OrgLogin(BaseModel):
+    choice: str                     # subscription | metered | ambient
+    token: str = ""
+    replace: bool = False           # the org already holds a key of this class: say so to overwrite it
+    confirm_billing: bool = False   # metered only: the owner's signature on per-token spend (local.md)
+
+
+def _org_login_view() -> dict:
+    from astryx.core import runtime_env
+    d = runtime_env.org_login(config.read_env(ENV_FILE))
+    return {**d, "source": runtime_env.BILLING_WORDS[d["billing"]]}
+
+
+@app.get("/api/org/login")
+async def org_login_get(request: Request):
+    if not owner_call(request):
+        return Response(status_code=403)
+    return _org_login_view()
+
+
+@app.post("/api/org/login")
+async def org_login_set(body: OrgLogin, request: Request):
+    """Set this org's agent login: a subscription token, a metered API key (opted in, with the billing confirmed), or
+    neither (the ambient login). The answer names keys and the billing, never a value."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    from astryx.core import runtime_env
+    cli = config.read_env(ENV_FILE).get("ASTRYX_ORG_CLI") or "claude"
+    if cli not in runtime_env.LAUNCHERS:
+        return JSONResponse({"ok": False, "error": f"This org runs {cli}, which has no launcher here yet: spawn refuses "
+                             "it. Its login can be set once its launcher exists."}, status_code=409)
+    row = runtime_env.CLIS[cli]
+    if body.choice == "ambient":
+        for k in (*row["subscription"], *row["metered"], runtime_env.OPT_IN):
+            config.unset_env(k, ENV_FILE)
+        return {"ok": True, "login": _org_login_view(), "applies": "at each agent's next spawn"}
+    if body.choice not in ("subscription", "metered"):
+        return JSONResponse({"ok": False, "error": "Choose a subscription token, a metered API key, or neither."},
+                            status_code=400)
+    token = "".join(body.token.split())      # a terminal wraps the token it prints: a pasted line break is no part of it
+    if not _LOGIN_SHAPE[body.choice].fullmatch(token):    # the WHOLE token: nothing after it reaches the .env
+        return JSONResponse({"ok": False, "error": f"That doesn't look like {_LOGIN_WORDS[body.choice]}. Copy the whole "
+                             "token and paste it again."}, status_code=400)
+    key = row[body.choice][0]
+    if body.choice == "metered" and not body.confirm_billing:
+        return JSONResponse({"ok": False, "needs_billing": True, "error": "A metered API key bills every agent's work "
+                             "per token. Confirm the billing to use it."}, status_code=409)
+    if config.is_set(key, ENV_FILE) and not body.replace:
+        return JSONResponse({"ok": False, "needs_confirm": True,
+                             "error": f"This org already has {_LOGIN_WORDS[body.choice]}. Confirm to replace it."},
+                            status_code=409)
+    # FAIL-SAFE ORDER (a2 #62549 F-2): every crash point between the two writes leaves a login no more metered than
+    # what the owner chose. A subscription withdraws the old opt-in BEFORE its token lands; a metered key lands
+    # BEFORE its opt-in
+    if body.choice == "subscription":
+        config.unset_env(runtime_env.OPT_IN, ENV_FILE)          # a subscription: any old opt-in is withdrawn
+    config.set_env(key, token, ENV_FILE)
+    del token
+    if body.choice == "metered":
+        config.set_env(runtime_env.OPT_IN, key, ENV_FILE)       # the opt-in, written ONLY with the billing confirmed
+    return {"ok": True, "login": _org_login_view(), "applies": "at each agent's next spawn"}
+
+
+@app.get("/api/channels/whatsapp/link")
+async def whatsapp_link(request: Request):
+    if not owner_call(request):
+        return Response(status_code=403)
+    return await asyncio.to_thread(_wa_link)
+
+
+@app.post("/api/channels/whatsapp/pair")
+async def whatsapp_pair(request: Request):
+    """Stream wacli's pairing QR (terminal blocks) to the owner. Only when wacli says UNLINKED: a linked phone is never
+    replaced from here (unlink it on the phone, or with wacli auth logout, by hand), and an unknown state refuses."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    link = await asyncio.to_thread(_wa_link)
+    if link["state"] != "unlinked":
+        why = ("WhatsApp is already linked ({a}). To link a different phone, unlink this one first, on the phone "
+               "(Linked devices) or with: docker exec -it wacli-sync wacli auth logout").format(a=link["account"] or "a phone") \
+            if link["state"] == "linked" else "Couldn't read WhatsApp's link state, so nothing was started. Is the wacli-sync container running?"
+        return JSONResponse({"ok": False, "state": link["state"], "error": why}, status_code=409)
+
+    async def lines():
+        p = await asyncio.create_subprocess_exec(*WA_PAIR_ARGV, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        try:
+            deadline = time.time() + 180
+            while time.time() < deadline:
+                if await request.is_disconnected():
+                    break
+                try:
+                    ln = await asyncio.wait_for(p.stdout.readline(), timeout=2)
+                except asyncio.TimeoutError:
+                    continue
+                if not ln:
+                    break
+                yield ln
+        finally:
+            if p.returncode is None:
+                p.kill()
+                await p.wait()
+    return StreamingResponse(lines(), media_type="text/plain; charset=utf-8", headers={"cache-control": "no-store"})
 
 
 # ---------------------------------------------------------------- static SPA

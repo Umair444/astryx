@@ -45,7 +45,8 @@ from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_sign
 
 DSN = env("ASTRYX_DSN")
 TOKEN = env("DISCORD_BOT_TOKEN")
-ROUTES_FILE = HERE / "routes-discord.json"
+from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
+ROUTES_FILE = ESTATE / "bridges" / "routes-discord.json"
 
 pool: asyncpg.Pool | None = None
 jobs: dict[str, dict] = {}            # agent -> live progress job
@@ -127,7 +128,7 @@ async def deliver(row):
     out = Outcome()
     try:
         ch = client.get_channel(int(cid)) or await client.fetch_channel(int(cid))
-        route = next((r for r in routes() if str(r.get("chat")) == cid), None)
+        route = routes().chat(cid)
         hook = route.get("webhook") if route else None
         job = jobs.pop(agent, None)
         sent = False
@@ -229,7 +230,7 @@ async def on_step(ev: dict):
         return
     job["sent"] = line
     try:
-        route = next((r for r in routes() if str(r.get("chat")) == job["chat"]), None)
+        route = routes().chat(job["chat"])
         hook = route.get("webhook") if route else None
         ch = client.get_channel(int(job["chat"]))
         if job.get("ph") is None:
@@ -252,7 +253,7 @@ async def on_message(msg: discord.Message):
     if msg.author.id == client.user.id or msg.webhook_id:
         return           # self-echo skip (bot AND our own webhook identities)
     cid = str(msg.channel.id)
-    route = next((r for r in routes() if str(r.get("chat")) == cid), None)
+    route = routes().chat(cid)
     if route is None:
         print(f"discord: no route for channel {cid} "
               f"(#{getattr(msg.channel, 'name', 'DM')}, from {msg.author.id} "
@@ -334,7 +335,7 @@ async def _poll_event(payload):
     if not changes:
         return
     cid = str(payload.channel_id)
-    route = next((r for r in routes() if str(r.get("chat")) == cid), None)
+    route = routes().chat(cid)
     trusted = route and payload.user_id in route.get("trusted_ids", [])
     await wire_insert(
         pool, "owner" if trusted else f"dc-{payload.user_id}", "discord",
@@ -360,7 +361,7 @@ async def on_raw_reaction_add(payload):
     if payload.user_id == client.user.id:
         return
     cid = str(payload.channel_id)
-    route = next((r for r in routes() if str(r.get("chat")) == cid), None)
+    route = routes().chat(cid)
     if route is None:
         return
     trusted = payload.user_id in route.get("trusted_ids", [])

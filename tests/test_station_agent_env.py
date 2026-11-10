@@ -48,10 +48,10 @@ with tempfile.TemporaryDirectory() as td:
     check("S1 the station's claude runs as the STATION, not the caller",
           seen.is_file() and seen.read_text().strip() == "stationfx", seen.read_text().strip() if seen.is_file() else "")
     check("S1 ...and the reply comes back", out.get("ok") and out.get("reply") == "the station answered", str(out))
-    check("S2 the caller's own name is untouched", os.environ.get("ASTRYX_AGENT") == "caller-x")
+    check("S2 the caller's own name is untouched", os.environ.get("ASTRYX_AGENT") == "caller-x")  # org-home: inspection: the caller's own name, set by the test
 
     seen.unlink(missing_ok=True)
-    del os.environ["ASTRYX_AGENT"]
+    del os.environ["ASTRYX_AGENT"]  # org-home: fixture-bound: the test unsets the name it set
     st.station("stationfx", "hello")
     check("S3 a nameless caller (the gateway): the call is still the station's",
           seen.is_file() and seen.read_text().strip() == "stationfx", seen.read_text().strip() if seen.is_file() else "")

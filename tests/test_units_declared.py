@@ -47,7 +47,8 @@ def gen(files: dict, env_text: str = "OBS_KEY=x\n") -> dict:
         (t / ".env").write_text(env_text)
         (t / "units.sh").write_text(block.group(0) + '\nUNITS_DIR=out units\necho "EXPECT=[${UNITS_EXPECT_DISABLED:-}]"\n')
         r = subprocess.run(["bash", "-euo", "pipefail", "units.sh"], cwd=t, capture_output=True, text=True,
-                           env={"HOME": str(home), "USER": "tester", "PATH": "/usr/bin:/bin"})
+                           env={"HOME": str(home), "USER": "tester", "PATH": "/usr/bin:/bin",
+                                "ASTRYX_COG_REGISTRY": str(Path(td) / "no-registry" / "cog.json")})   # never the host's
         out = t / "out"
         m = re.search(r"EXPECT=\[(.*)\]", r.stdout)
         norm = lambda x: x.replace(str(t), "<ORG>").replace(str(home), "<HOME>")   # noqa: E731 (per-tree paths)
@@ -115,6 +116,7 @@ def state(table: dict, expect_off: str):
         (t / "bin" / "systemctl").chmod(0o755)
         (t / "s.sh").write_text(helpers + f'\nUNITS_EXPECT_DISABLED="{expect_off}"\n_units_state {" ".join(table)}\n'
                                 'echo "NE=[$notenabled] WO=[$wrongly_on] OM=[$off_missing] OK=[$off_ok]"\n')
+        # own-env: runs a script this oracle wrote (t/s.sh) against stub binaries only
         r = subprocess.run(["bash", "-euo", "pipefail", str(t / "s.sh")], capture_output=True, text=True,
                            env={"PATH": f"{t / 'bin'}:/usr/bin:/bin"})
         m = re.search(r"NE=\[(.*?)\] WO=\[(.*?)\] OM=\[(.*?)\] OK=\[(.*?)\]", r.stdout)

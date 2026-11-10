@@ -30,7 +30,8 @@ mirror rule is the BODY's geometry, not ours to invert: l + r = 180 moves the
 legs the same way.
 
 Runs as astryx-growbot.service (FastAPI + systemd, the stack's one shape).
-Env: GROWBOT_SERIAL (default /dev/growbot), GROWBOT_PORT (default 8470).
+Env: GROWBOT_SERIAL (default /dev/growbot), GROWBOT_PORT (default 8470). In a cog of several orgs the port is the
+org's registry port (astryx.orgs.port, plan-11324 S3b 5/n), and a GROWBOT_PORT that names another one refuses.
 No serial device = a virtual body: the engine still runs, /stats says
 "serial": false — the observatory shows the body offline but the protocol
 surface stays testable.
@@ -493,4 +494,8 @@ function go(p){st.textContent='moving...';
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
+    from astryx import orgs                   # at SERVE time, never at import (the tests import this module)
+    reg = orgs.port("astryx-growbot")
+    if reg is not None and os.environ.get("GROWBOT_PORT") and int(os.environ["GROWBOT_PORT"]) != reg:
+        raise SystemExit(f"growbot_body: GROWBOT_PORT {os.environ['GROWBOT_PORT']} is not this org's registry port {reg}")
+    uvicorn.run(app, host="0.0.0.0", port=reg or PORT, log_level="warning")

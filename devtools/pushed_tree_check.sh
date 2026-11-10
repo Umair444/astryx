@@ -55,7 +55,7 @@ for v in $(compgen -e | grep "^GIT_"); do unset "$v"; done
 # (a4 #45773: with ASTRYX_DSN exported, oracles saw a DSN, skipped their 77 path and crashed on psycopg). Unset every
 # ASTRYX_*, PG* and *_DSN, and every NAME the live .env declares (names only; no value is read). The set is derived.
 # Oracle: tests/test_pushed_tree_env.py.
-for v in $(compgen -e | grep -E '^(ASTRYX_|PG)|_DSN$'; [ -f "$REPO/.env" ] && sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$REPO/.env"); do unset "$v" 2>/dev/null || true; done  # env-scrub
+for v in $(compgen -e | grep -E '^(ASTRYX_|PG)|_DSN$'; [ -f "$REPO/.env" ] && sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$REPO/.env"); do unset "$v" 2>/dev/null || true; done  # org-home: audit, NAMES only from the pushing checkout, to scrub the caller's environment before the pushed tree runs  # env-scrub
 cd "$REPO" || exit 77
 
 REF="${1:-HEAD}"
@@ -115,16 +115,42 @@ if [ "$rc" -ne 0 ]; then
   #
   # Deliberately no regex over the label: labels carry spaces, quotes and apostrophes, and
   # a sed expression built from one is a quoting bug waiting for the first gate named with
-  # a `/`. grep -F on the literal, then pick the nucleus/ word out of the line.
-  fails=$(sed -n '/^FAILED (/,/^UNVERIFIED (/p' "$LOG" | sed -n 's/^  ✗ //p')
+  # a `/`. grep -F on the label's own `run "<label>"` line, then take its first path word.
+  # The labels come from check.sh's OWN trailing block, through the one parser (devtools/check_verdict.py): a sed
+  # range from the first `FAILED (` read gate output, which prints both shapes itself (a1 #62905). Script paths are
+  # whatever the run line names (tests/, src/, devtools/; `-m a.b` is src/a/b.py). Until 10-25 this took only a
+  # `nucleus/` word, and since goal 10224 moved every script no run line names one: the list said "could not map"
+  # for every gate. Oracle: tests/test_ptc_who.py.
+  # stderr goes to a file read only on a non-zero rc: folded into $fails, a warning on rc 0 became a "gate".
+  fails=$(python3 -I "$REPO/devtools/check_verdict.py" --failed "$LOG" 2>"$TMP/verdict.err"); frc=$?
+  if [ "$frc" -ne 0 ]; then                # a parser that can't answer is said, never a vanished list (a1 #62937)
+    err=$(cat "$TMP/verdict.err" 2>/dev/null); err=${err:-$fails}
+    echo
+    echo "WHO LAST TOUCHED: could not read the FAILED block (check_verdict.py rc $frc): ${err##*$'\n'}"
+    fails=""
+  fi
   if [ -n "$fails" ]; then
     echo
     echo "WHO LAST TOUCHED EACH FAILING GATE (usually the only person who can fix it):"
     printf '%s\n' "$fails" | while IFS= read -r label; do
       [ -n "$label" ] || continue
       echo "  ✗ $label"
-      script=$(grep -F -- "$label" "$TREE/devtools/check.sh" | head -1 | tr ' "' '\n\n' \
-               | grep -m1 '^nucleus/')
+      # A FAILED entry is not always a label: check.sh appends its own " (TIMED OUT after Ns)", " (bad cap …)",
+      # " (no gate dir under …)" (a1 #62937). The entry is tried AS IS first (a label may itself end in "(…)"), then
+      # with one trailing " (…)" group stripped at a time, outermost first. Only a miss is retried, so a hit never
+      # changes, and a fourth suffix shape needs no list to keep mapping.
+      key=$label; line=""
+      for _ in 1 2 3; do
+        line=$(grep -F -- "run \"${key//\"/\\\"}\"" "$TREE/devtools/check.sh" | head -1)
+        [ -n "$line" ] && break
+        [[ $key == *" ("*")" ]] || break
+        key=${key% (*}
+      done
+      script=$(tr ' "' '\n\n' <<<"${line#*\" }" | grep -m1 -E '^(tests|src|devtools|scripts|nucleus|bridges|observatory)/')
+      if [ -z "$script" ]; then
+        mod=$(sed -nE 's/.* -m ([A-Za-z0-9_.]+).*/\1/p' <<<"$line")
+        [ -n "$mod" ] && script="src/${mod//.//}.py"
+      fi
       if [ -z "$script" ]; then
         echo "      (could not map this label to a script — read devtools/check.sh)"
         continue

@@ -154,7 +154,7 @@ def environment_absent() -> str | None:
     try:
         from astryx.security.sqlguard.fixture import live_dsn
         dsn = live_dsn()
-    except (OSError, StopIteration):
+    except (OSError, StopIteration, LookupError):   # LookupError: config.dsn's absence since plan-11324 S3a
         return "no ASTRYX_DSN in .env"
     try:
         with psycopg.connect(dsn, connect_timeout=5) as c:

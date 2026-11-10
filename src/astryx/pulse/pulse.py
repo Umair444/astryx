@@ -22,12 +22,14 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
+from astryx.pulse import watch  # noqa: E402
 
-import hashlib
 import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -38,10 +40,20 @@ REPO = repo_root(__file__)
 PY = str(REPO / "venv" / "bin" / "python")
 # ASTRYX_DSN from the environment first (goal 4227 S1c: an oracle binds the pulse, and the pulse_run
 # subprocesses that inherit its env, to a throwaway fixture database), else .env as before.
-DSN = os.environ.get("ASTRYX_DSN") or next(
-    l.split("=", 1)[1].strip()
-    for l in (REPO / ".env").read_text().splitlines()
-    if l.startswith("ASTRYX_DSN="))
+ESTATE = paths.estate(__file__)       # the org's .env and triggers/ (its HOME in a cog of several orgs, plan-11324 S3a)
+
+
+def _dsn() -> str:
+    # read when used, never at import: a tree with no DSN (CI, a fresh clone) must still import the pulse (seed #61038)
+    return config.dsn(ESTATE / ".env")
+
+
+def __getattr__(name):            # `pulse.DSN` and `from astryx.pulse.pulse import DSN` still read it, lazily
+    if name == "DSN":
+        return _dsn()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 CHECK_TIMEOUT = 30
 PRESSURE_PCT = 85        # 5h gauge at/above this: non-survival wakes are held, not sent
 HOLD_K = 5               # per held key, the newest K are delivered; older ones are elided (kept, marked)
@@ -79,7 +91,7 @@ def discover(path: Path) -> list[dict] | str:
 def retired_notice(conn, agent: str, name: str, fname: str, tomb: Path):
     """Say ONCE per tombstone that a name its file defines is held off by it (a4 #49496): a re-create that failed to
     clear it is then visible, never a silent no-op. Once = no such message to the agent since the tombstone was
-    written (its mtime), so the 60 s timer never repeats it and a fresh trigger_rm earns a fresh notice."""
+    written (its mtime), so the 60 s timer never repeats it and a fresh the trigger tool's retire earns a fresh notice."""
     key = f"retired {name}"
     try:
         since = datetime.fromtimestamp(tomb.stat().st_mtime).astimezone()
@@ -88,9 +100,9 @@ def retired_notice(conn, agent: str, name: str, fname: str, tomb: Path):
             return
     except Exception:
         return                                          # never let the notice break reconcile
-    say(agent, f"[trigger {key}] {name} is defined in triggers/{agent}/{fname} but RETIRED by trigger_rm "
-               f"(triggers/{agent}/.retired/{name}), so the pulse keeps it off. To revive it, trigger_set the file "
-               f"again.", conn, coalesce_key=key)
+    say(agent, f"[trigger {key}] {name} is defined in triggers/{agent}/{fname} but RETIRED by `trigger action=retire` "
+               f"(triggers/{agent}/.retired/{name}), so the pulse keeps it off. To revive it, `trigger action=enable` "
+               f"or set the file again.", conn, coalesce_key=key)
 
 
 CANARY_TO = "seed"
@@ -108,6 +120,25 @@ def astryx_canary() -> str | None:
     return None if r.returncode == 0 else (r.stderr.strip()[-500:] or f"exit {r.returncode}")
 
 
+# A python row's reason after its file loads and defines it: what the file's return clears, and what it doesn't.
+_PY_REASON = """CASE WHEN triggers.off_reason IN ('vanished', 'retired') THEN NULL
+                           WHEN triggers.off_reason = 'bad_schedule' AND triggers.schedule <> %(s)s THEN NULL
+                           ELSE triggers.off_reason END"""
+
+
+def normalize(conn):
+    """plan-12214 slice 1 (a2 #65100 B4/B5): `enabled` alone decides firing, and writers from before the land (an
+    unrespawned resident's old set and rm tools, an old pulse) write it without off_reason. Each tick brings the
+    reason back to agree: on clears it; off with none gets the backfill's class. Polarity: this never turns a row on.
+    Goes at the contract land, goal 12238, when `enabled` is generated from off_reason."""
+    conn.execute("UPDATE triggers SET off_reason=NULL, off_why=NULL WHERE enabled AND off_reason IS NOT NULL")
+    conn.execute(f"UPDATE triggers SET off_reason={BACKFILL} WHERE NOT enabled AND off_reason IS NULL")
+
+
+BACKFILL = """CASE WHEN kind = 'python' THEN 'vanished' WHEN note ILIKE '%stand%down%' THEN 'standdown'
+                    ELSE 'unknown' END"""
+
+
 def reconcile(conn) -> bool:
     """Upsert every trigger file's registry; False (and nothing touched) when astryx itself can't be imported."""
     # THE CANARY. When `import astryx` fails, EVERY file below fails to load, and the loop would read each one as
@@ -120,7 +151,7 @@ def reconcile(conn) -> bool:
             coalesce_key="astryx import")
         return False
     seen: set[tuple[str, str]] = set()
-    for f in sorted((REPO / "triggers").glob("*/*.py")):
+    for f in sorted((ESTATE / "triggers").glob("*/*.py")):
         agent = f.parent.name
         try:
             found = discover(f)
@@ -151,11 +182,14 @@ def reconcile(conn) -> bool:
                 coalesce_key=f"file {f.name}")
             continue
         for t in found:
-            # RETIRED (plan-9853 D2): trigger_rm's tombstone, per (agent, name). The file still defines it, so without
-            # this the upsert below re-enables it within a minute. Not in `seen` either, so the loop after disables it.
-            tomb = REPO / "triggers" / agent / ".retired" / t["name"]
+            # RETIRED (plan-9853 D2): the tool's tombstone, per (agent, name), the durable authority for a python row.
+            tomb = ESTATE / "triggers" / agent / ".retired" / t["name"]
             if tomb.exists():
+                conn.execute("UPDATE triggers SET off_reason='retired', enabled=false WHERE agent=%s AND name=%s "
+                             "AND kind='python'",
+                             (agent, t["name"]))
                 retired_notice(conn, agent, t["name"], f.name, tomb)
+                seen.add((agent, t["name"]))
                 continue
             seen.add((agent, t["name"]))
             conn.execute(
@@ -163,14 +197,14 @@ def reconcile(conn) -> bool:
                    VALUES (%(a)s, %(n)s, %(s)s, 'python', %(src)s, %(note)s, now())
                    ON CONFLICT (agent, name) DO UPDATE
                      SET schedule = %(s)s, check_src = %(src)s, note = %(note)s,
-                         enabled = true""",
+                         off_reason = {_ON}, enabled = ({_ON}) IS NULL""".format(_ON=_PY_REASON),
                 {"a": agent, "n": t["name"], "s": t["schedule"],
                  "src": f"triggers/{agent}/{f.name}::{t['name']}", "note": t["note"]})
-    # a python trigger whose function vanished from its file is retired
+    # a python trigger whose function vanished from its file, or whose file won't load, is off until it loads
     for a, n in conn.execute(
             "SELECT agent, name FROM triggers WHERE kind='python' AND enabled").fetchall():
         if (a, n) not in seen:
-            conn.execute("UPDATE triggers SET enabled=false WHERE agent=%s AND name=%s",
+            conn.execute("UPDATE triggers SET off_reason='vanished', enabled=false WHERE agent=%s AND name=%s",
                          (a, n))
     return True
 
@@ -205,20 +239,53 @@ def _durable(stdout: str) -> list[dict]:
     return out
 
 
+WATCH_TIMEOUT_MS = 5000
+
+
+def guarded_rows(conn, src: str, cap: int = watch.CAP, timeout_ms: int = WATCH_TIMEOUT_MS) -> tuple[list, bool]:
+    """One sql watch's rows and whether it went over `cap`. A named cursor bounds what is held in this process, which a
+    client cursor's fetchmany does not (2M rows: 241 MB against 39, #65062 C4) and takes one SELECT, VALUES or TABLE:
+    a second statement or DDL is a SyntaxError. READ ONLY and the timeout are per transaction, so one slow check can't
+    hold the serial tick. A guardrail against accidents, not a boundary: pg_notify still runs, and same-uid can write
+    anything anyway."""
+    return guarded_read(conn, src, cap, timeout_ms)[1:]
+
+
+def guarded_read(conn, src: str, cap: int = watch.CAP, timeout_ms: int = WATCH_TIMEOUT_MS) -> tuple[list, list, bool]:
+    """guarded_rows with the column names first (the tool's churn probe names the column that changes)."""
+    with conn.transaction():
+        conn.execute("SET TRANSACTION READ ONLY")
+        conn.execute(f"SET LOCAL statement_timeout = {int(timeout_ms)}")
+        with conn.cursor(name="trigger_watch") as cur:
+            cur.execute(src)
+            rows = cur.fetchmany(cap + 1)
+            names = [d.name for d in cur.description or []]
+    return names, rows[:cap], len(rows) > cap
+
+
+def _lateness(t: dict) -> str:
+    """A one-shot deadline names its due time when it arrives late: under quota pressure shed() holds it (a1 #65068)."""
+    due = t.get("next_fire") if t.get("once") else None
+    if due is None:
+        return ""
+    late = datetime.now().astimezone() - due
+    return f"\n(due {due.isoformat(timespec='minutes')}, {int(late.total_seconds() // 60)} min late)" \
+        if late.total_seconds() >= 120 else ""
+
+
 def evaluate(t: dict, conn) -> tuple[str | None, dict, list[dict]]:
     kind, src, state = t["kind"], t["check_src"], dict(t["state"] or {})
     if kind == "heartbeat":
-        return (t["note"] or f"heartbeat: you chose to wake on '{t['schedule']}'. "
-                "Look around; act only if something needs you. Silence is free."), state, []
+        body = (t["note"] or f"heartbeat: you chose to wake on '{t['schedule']}'. "
+                "Look around; act only if something needs you. Silence is free.")
+        return body + _lateness(t), state, []
     if kind == "sql":
-        rows = conn.execute(src).fetchall()
-        if not rows:
-            return None, state, []
-        digest = hashlib.sha256(repr(rows).encode()).hexdigest()
-        if digest == state.get("last_digest"):
-            return None, state, []                # same standing condition: quiet
-        state["last_digest"] = digest
-        return f"condition met ({len(rows)} rows): {repr(rows)[:800]}", state, []
+        started = time.monotonic()
+        rows, over = guarded_rows(conn, src)
+        s = watch.step(rows, over, t.get("watch") or "new", state, after=t.get("after_for"), renag=t.get("renag"),
+                       now=datetime.now().astimezone(), ms=int((time.monotonic() - started) * 1000))
+        t["_swallowed"], t["_off"] = s.swallowed, s.off
+        return s.body, s.accepted, []
     if kind == "python":
         out = run_python(src, state)
         if "error" in out:        # a crashed evaluation delivers only its DURABLE wakes (S1c)
@@ -227,7 +294,7 @@ def evaluate(t: dict, conn) -> tuple[str | None, dict, list[dict]]:
         fire = out.get("fire")
         return ((fire if isinstance(fire, str) and fire.strip() else None), out["state"],
                 list(out.get("wakes") or []))
-    return None, state, []
+    raise ValueError(f"unknown kind {kind!r}")   # a row this can't evaluate is said, never a guard that silently can't fire
 
 
 def pressure(conn) -> bool | None:
@@ -242,7 +309,10 @@ def pressure(conn) -> bool | None:
         return None
 
 
-def shed(due: list[dict], conn) -> list[dict]:
+_UNREAD = object()   # "no caller read the gauge": distinct from pressure()'s None (no gauge), which is itself a reading
+
+
+def shed(due: list[dict], conn, hot=_UNREAD) -> list[dict]:
     """LOAD SHEDDING under quota pressure (plan-4227 S1c: R1 + R3).
 
     Quota is spent by WAKES, not by evaluation. So under pressure a python/sql check is ALWAYS
@@ -250,9 +320,16 @@ def shed(due: list[dict], conn) -> list[dict]:
     trigger's wakes in held_wakes instead of sending them. A detection under pressure is delayed
     and visible, never skipped. That's derived from `kind` — no list, no flag, nothing to forget
     (it also closes 17080: run_check/run_backup/econ_rollup act inside evaluation).
-    A heartbeat's evaluation IS its wake, so a premium=0 heartbeat waits, as before (R3).
+    A heartbeat's evaluation IS its wake, so a premium=0 heartbeat waits, as before (R3): tick() sheds it inside the
+    claim, before any clock moves, so it stays due and fires on the first tick below the rung (medic #62336). The
+    "shed" line below is its trace, once per tick while it waits. `hot` is the tick's ONE gauge read, passed to both
+    this claim-time shed and process(): two reads let the gauge cross the rung between them, so a heartbeat kept (and
+    clock-advanced) by the claim was then dropped by process(), the same lost day (a4 #62398 R1). Read here only
+    when no caller passes it (tests driving shed() or process() directly).
     Reads NO value number (S1a). Fail-open: no gauge = no shedding."""
-    if not pressure(conn):
+    if hot is _UNREAD:
+        hot = pressure(conn)
+    if not hot:
         return due
     kept = [t for t in due
             if t.get("kind") != "heartbeat" or int(t.get("premium") or 0) > 0]
@@ -370,7 +447,7 @@ def release(conn):
         conn.execute("DELETE FROM held_wakes WHERE elided AND released_at < now() - interval '7 days'")
 
 
-def process(conn, due: list[dict], now):
+def process(conn, due: list[dict], now, hot=_UNREAD):
     """Evaluate the claimed triggers and route their wakes: the one path every trigger wake takes.
 
     Held = the 5h gauge reads >=PRESSURE_PCT, the trigger has no survival flag (premium=0), AND the
@@ -379,20 +456,29 @@ def process(conn, due: list[dict], now):
     check re-detects next tick (at-least-once, the duplicate direction). A held wake is persisted,
     never rewound, so no side effect of the evaluation re-runs. Returned fire strings take the same
     path, keeping say()'s header and its pending-coalesce when they are sent."""
-    hot = pressure(conn)
+    if hot is _UNREAD:
+        hot = pressure(conn)
     if not hot:
         try:
             release(conn)
         except Exception as e:
             print(f"release failed (held wakes kept): {e}", file=sys.stderr)
-    for t in shed(due, conn):                      # evaluate outside the claim's lock
+    for t in shed(due, conn, hot):                 # evaluate outside the claim's lock
         try:
             fired, state, wakes = evaluate(t, conn)
+            failed = False
         except Exception as e:
             fired, state, wakes = f"[trigger {t['name']}] evaluator error: {e}", t["state"], []
+            failed = True
+        once = bool(t.get("once")) and bool(fired) and not failed
         held_here = bool(hot) and int(t.get("premium") or 0) <= 0
         try:
             with conn.transaction():
+                # Retired FIRST, in this transaction: no row back means another claim already fired it. A one-shot's
+                # clock doesn't move at the claim (tick()), so a crash before here leaves it due, never a year away.
+                if once and not conn.execute("UPDATE triggers SET off_reason='fired', enabled=false WHERE id=%s "
+                                             "AND enabled RETURNING id", (t["id"],)).fetchone():
+                    continue
                 conn.execute("UPDATE triggers SET state=%s WHERE id=%s",
                              (json.dumps(state or {}), t["id"]))
                 sent = False
@@ -401,8 +487,15 @@ def process(conn, due: list[dict], now):
                     if held_here and t["agent"] in residents():
                         hold(conn, t, {"from_agent": "pulse", "to_agent": t["agent"],
                                        "intent": "trigger", "body": body[:3000]})
+                    elif once:                     # a one-shot is never swallowed by an unread wake
+                        sent = say(t["agent"], body, conn) or sent
                     else:
                         sent = say(t["agent"], body, conn, coalesce_key=t["name"]) or sent
+                        if not sent and "_swallowed" in t:       # F1h: unread, so the rows stay untold and still due
+                            conn.execute("UPDATE triggers SET state=%s WHERE id=%s",
+                                         (json.dumps(t["_swallowed"]), t["id"]))
+                    if t.get("_off") and "_swallowed" in t:
+                        conn.execute("UPDATE triggers SET off_reason=%s, enabled=false WHERE id=%s", (t["_off"], t["id"]))
                 for w in wakes:
                     if held_here and costs_quota(w):
                         hold(conn, t, w)
@@ -419,59 +512,52 @@ def process(conn, due: list[dict], now):
                   file=sys.stderr)
 
 
-def _next_fire(schedule, now, prev_next_fire):
-    """The slot STRICTLY AFTER the one just claimed. Floor the base at prev_next_fire so a tick that
-    STRADDLES a cron boundary can't re-arm to the slot it just fired (goal 18 double-fire): `now` is the
-    python wall clock captured at tick() start, BEFORE reconcile() widens the gap to the DB clock that the
-    `next_fire <= now()` claim uses — so at a boundary `now` can sit just BEFORE the slot the DB-now claimed
-    as due, and croniter(now) would hand back that same slot. max(now, prev_next_fire) makes the base at
-    least the claimed slot; get_next then always moves strictly past it. Normal ticks (now >= next_fire)
-    are unchanged.
-
-    prev_next_fire is normalized to server-local tz (.astimezone()) to match `now` = datetime.now().
-    astimezone(): croniter reads cron fields in the BASE datetime's own tz, and next_fire comes back from
-    the timestamptz column as UTC — so without this, a boundary-straddle re-arm on a non-UTC host would
-    shift a local-time cron by the UTC offset (the exact "3am wherever this org lives" promise tick()
-    makes), intermittently. Both paths now feed croniter a server-local base."""
-    base = max(now, prev_next_fire.astimezone()) if prev_next_fire else now
-    return croniter(schedule, base).get_next(datetime)
-
-
 def tick():
     # LOCAL time, tz-aware: cron fields mean the server's own wall clock, so a
     # "3am review" is 3am wherever this org lives — never UTC (owner decree
     # 2026-07-25; the night-review fired at 7-9am PKT for two days).
     now = datetime.now().astimezone()
-    with psycopg.connect(DSN, autocommit=True) as conn:
+    with psycopg.connect(_dsn(), autocommit=True) as conn:
+        normalize(conn)
         py_ok = reconcile(conn)
+        hot = pressure(conn)           # ONE gauge read per tick: the claim's shed and process() must agree (a4 #62398)
         with conn.transaction():
             due = conn.execute(
-                """SELECT id, agent, name, schedule, kind, check_src, state, note, premium, next_fire
+                """SELECT id, agent, name, schedule, kind, check_src, state, note, premium, watch, renag, after_for, once,
+                          next_fire
                    FROM triggers WHERE enabled AND next_fire <= now()
                    ORDER BY next_fire FOR UPDATE SKIP LOCKED""").fetchall()
             cols = ["id", "agent", "name", "schedule", "kind", "check_src", "state",
-                    "note", "premium", "next_fire"]
+                    "note", "premium", "watch", "renag", "after_for", "once", "next_fire"]
             due = [dict(zip(cols, r)) for r in due]
             if not py_ok:              # astryx won't import: python checks stay unclaimed, clocks unadvanced (each
                 due = [t for t in due if t["kind"] != "python"]   # would crash on the same ImportError); they fire
                                                                    # on the first tick it imports again
+            # A shed heartbeat stays unclaimed the same way, BEFORE its clock moves (medic #62336): shed() ran only in
+            # process(), after this loop had advanced it to its next cron instant, so a daily heartbeat shed under
+            # pressure lost its whole day, with no held row and no message. Now it waits, as R3 says.
+            due = shed(due, conn, hot)             # waiting rows lead ORDER BY next_fire: a LIMIT on this claim would
+                                                   # let them starve every other trigger (a4 #62398 b)
             for t in due:                          # advance clocks inside the claim
+                if t["once"] and t["kind"] == "heartbeat":     # its evaluation IS its wake: stays due until process()
+                    conn.execute("UPDATE triggers SET last_eval=%s WHERE id=%s", (now, t["id"]))   # retires it
+                    continue
                 try:
-                    nxt = _next_fire(t["schedule"], now, t["next_fire"])
+                    nxt = croniter(t["schedule"], now).get_next(datetime)
                 except Exception:
-                    conn.execute("UPDATE triggers SET enabled=false WHERE id=%s", (t["id"],))
+                    conn.execute("UPDATE triggers SET off_reason='bad_schedule', enabled=false WHERE id=%s", (t["id"],))
                     say(t["agent"], f"[trigger {t['name']}] bad schedule "
                                     f"'{t['schedule']}', disabled", conn)
                     continue
                 conn.execute("UPDATE triggers SET next_fire=%s, last_eval=%s WHERE id=%s",
                              (nxt, now, t["id"]))
-        process(conn, due, now)
+        process(conn, due, now, hot)
 
 
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--names"] and len(sys.argv) == 3:
         # The names reconcile would register from ONE file (discover: its import closure, multi-line decorators,
-        # shims), as a JSON list; rc 1 with the reason if it doesn't load. trigger_set clears exactly these
+        # shims), as a JSON list; rc 1 with the reason if it doesn't load. the trigger tool clears exactly these
         # tombstones (a4 #49496). Run by the caller's interpreter, as the tick's own children are.
         PY = sys.executable
         found = discover(Path(sys.argv[2]).resolve())

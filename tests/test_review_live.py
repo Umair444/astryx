@@ -47,7 +47,7 @@ import json, os
 import astryx.paths as P
 import astryx.core.deps as D                   # imported AFTER the patch, as any measured module is
 out = {{"deps_repo": str(D.REPO), "deps_file": D.__file__, "fixture_root": str(P.repo_root({str(FX / 'src/astryx/x.py')!r})),
-       "agent": os.environ.get("ASTRYX_AGENT"), "write": None}}
+       "agent": os.environ.get("ASTRYX_AGENT"), "write": None}}  # org-home: inspection: the probe reports the env it was given
 if os.environ.get("PROBE_RAW_DSN"):
     import asyncio, asyncpg, psycopg
     def pg(dsn):
@@ -66,8 +66,8 @@ if os.environ.get("PROBE_RAW_DSN"):
             return type(e).__name__
         finally:
             await c.close()
-    out["write"] = {{"raw_psycopg": pg(os.environ["PROBE_RAW_DSN"]), "asyncpg": asyncio.run(apg(os.environ["ASTRYX_DSN"])),
-                    "psycopg": pg(os.environ["ASTRYX_DSN"])}}
+    out["write"] = {{"raw_psycopg": pg(os.environ["PROBE_RAW_DSN"]), "asyncpg": asyncio.run(apg(os.environ["ASTRYX_DSN"])),  # org-home: fixture-bound: the probe's env is the DSN the test hands it
+                    "psycopg": pg(os.environ["ASTRYX_DSN"])}}  # org-home: fixture-bound: the probe's env is the DSN the test hands it
 print("PROBE " + json.dumps(out))
 """)
 

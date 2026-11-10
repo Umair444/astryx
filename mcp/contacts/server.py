@@ -29,16 +29,18 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-ENV = Path(__file__).resolve().parents[2] / ".env"
-_cfg = dict(
-    line.split("=", 1)
-    for line in ENV.read_text().splitlines()
-    if "=" in line and not line.startswith("#")
-)
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
+from astryx import config, paths  # noqa: E402
+ENV = paths.estate(__file__) / ".env"
+if not ENV.is_file():           # an absent .env still fails at import, as the read it replaces did
+    raise FileNotFoundError(f"{ENV}: no .env")
+_cfg = config.read_env(ENV)     # the ONE .env reader, per line (plan-10224 ENVREAD)
 WA = shlex.split(_cfg.get("WA_CLI", "wacli"))
 CTR = WA[WA.index("exec") + 1] if "exec" in WA else "wacli-sync"
 SESSION_DB = f"{_cfg.get('WA_DATA_CTR', '/data')}/store/session.db"

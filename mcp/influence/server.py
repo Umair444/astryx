@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""astryx · influence MCP server — who_should_i_ask, and nothing else (plan-11324; seed #58432).
+
+Its OWN server, not a tool on mcp/memory: memory's `ask` sits behind the `memory` grant, but WHO SHOULD I ASK is for
+every RESIDENT, so spawn.sh's CORE block mounts this beside "tools" and "hands", with ASTRYX_AGENT set EXPLICITLY in
+its env (the asker is who the reply is about and who the query log names; spawn.sh is the source of truth for it,
+never env inheritance). A STATIONED agent gets no home and no .mcp.json at all, so it never sees this
+(tests/test_spawn_wiring.py pins both halves). Logic lives in src/astryx/influence/ (graph.py the rules, shell.ask
+the IO); this wrapper only calls it. Author memory (mcp/registry.json): a call of it is a tool call crediting memory.
+"""
+from __future__ import annotations
+import os
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+
+from mcp.server.fastmcp import FastMCP                  # noqa: E402
+
+mcp = FastMCP("astryx-influence")
+
+
+def _dsn() -> str | None:
+    """ASTRYX_DSN through the ONE resolver (plan-11324 S3a): the environment, else the org's .env; None if neither."""
+    sys.path.insert(0, str(REPO / "src"))
+    from astryx import config, paths                     # noqa: E402
+    try:
+        return config.dsn(paths.estate(__file__) / ".env")
+    except LookupError:
+        return None
+
+
+@mcp.tool()
+def who_should_i_ask(topic: str = "", k: int = 5) -> str:
+    """WHO SHOULD I ASK (plan-11324 S2), ADVISORY: the top-k agents by the influence graph's ROUTING view, personalized
+    PageRank with teleport on YOU (plus, given a topic, the agents linked to it), over edges the org's own
+    authorities derived (landed review PASSes, answered delegations). Never returns you; neighbours beside each.
+    LIVENESS is a proxy, printed in the reply: last step within W=36h, not wedge_watch. Both its errors: a WEDGED
+    agent reads live for up to W after its last step; a smaller W would drop healthy agents that wake once a day.
+    Your query is logged (asker, returned, time, view): a task you then send to a returned agent counts as ROUTED and
+    is discounted from the graph, so the tool never credits its own advice. Kinds under 50% coverage weigh 0 and print
+    UNMEASURED. Logic: src/astryx/influence/ (graph.py rules, shell.ask the IO); this wrapper only calls it."""
+    sys.path.insert(0, str(REPO / "src"))
+    from astryx.influence import shell                   # noqa: E402
+    asker = os.environ.get("ASTRYX_AGENT")
+    if not asker:
+        return "who_should_i_ask needs ASTRYX_AGENT (the asker): run it as a resident."
+    # k is clamped to 1..17, and a clamp SAYS so (the naive walk: k=0 came back as one agent and k=100 as 13, with no
+    # word that the asked k was not the k that ran).
+    kk = max(1, min(int(k), 17))
+    with shell.connect(_dsn(), readonly=False) as conn:
+        lines = shell.ask(conn, asker, topic or None, kk)["lines"]
+    if kk != int(k):
+        lines.append(f"  (k={int(k)} clamped to {kk}: k runs 1..17)")
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    mcp.run()

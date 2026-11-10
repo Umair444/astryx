@@ -24,7 +24,7 @@
 # Writes nothing outside its temp dir: no admit, no shrink, no sqlguard_seen (judge only, never enforce).
 # Records are attributed to sites by judge's own frame rule (judge.attribute), never by text substring.
 #
-# rc: 0 clean · 1 a finding (--ledger) or the oracle failed · 2 usage · 77 SKIP (no .env: fixture_db can't run)
+# rc: 0 clean · 1 a finding (--ledger) or the oracle failed · 2 usage · 77 SKIP (no .env and no ASTRYX_FIXTURE_ADMIN_DSN)
 # SQLSITE_ROOT picks the checkout (default: this script's); SQLGUARD_LEDGER overrides the ledger file and
 # SQLSITE_REPORT a judge report (JSON) in place of judge's own, so the verdict table can be driven (tests only).
 set -euo pipefail
@@ -35,7 +35,13 @@ T="${1:-}"
 shift
 cd "${SQLSITE_ROOT:-$(dirname "$0")/..}"
 ROOT=$PWD
-[ -e .env ] || { echo "SKIP: no .env in $ROOT (fixture_db reads the DSN from it; in a worktree, link it for the run)"; exit 77; }
+# A worktree holds no .env, and the live one is never linked into it (seed #59548): pass fixture_db's admin DSN by env
+# instead. That reaches only an oracle whose estate gate doesn't need the .env (estate.gate env=False); one gated on it
+# still says NOT SEARCHED (.env absent) in its tail. Run that one from the main checkout.
+[ -e .env ] || [ -n "${ASTRYX_FIXTURE_ADMIN_DSN:-}" ] || {
+  echo "SKIP: no .env in $ROOT (fixture_db's admin DSN). In a worktree pass it by env, ASTRYX_FIXTURE_ADMIN_DSN=<dsn>"
+  echo "  (an oracle whose estate gate needs the .env still won't run there: use the main checkout; never link the live .env)"
+  exit 77; }
 PY=${PY:-$ROOT/venv/bin/python}
 if [ ! -x "$PY" ]; then                                  # a worktree has no venv: use the main checkout's
   C=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
@@ -48,7 +54,9 @@ export PYTHONPATH="$ROOT/src/astryx/security/sqlguard/shim${PYTHONPATH:+:$PYTHON
 echo "$ASTRYX_SQLGUARD_RUN" > "$D/run_id"
 [ -z "${SQLSITE_REPORT:-}" ] || echo "! SQLSITE_REPORT=$SQLSITE_REPORT: verdicts are graded from this file, not this run"
 TR=$(realpath -m --relative-to=. "$T")                   # ./tests/x.py and /abs/…/tests/x.py are tests/x.py
-if [ "$LEDGER_MODE" = 1 ] && ! command grep -E '^[[:space:]]*run ' devtools/check.sh | command grep -qF " $TR"; then
+# The consumer reads to EOF, never `grep -q`: -q exits at its first match, the producer then takes SIGPIPE (141), and
+# pipefail fails the whole pipeline, so a registered oracle drew this warning ~23% of runs (466/2000; the 10-21 timer red).
+if [ "$LEDGER_MODE" = 1 ] && ! command grep -E '^[[:space:]]*run ' devtools/check.sh | command grep -F " $TR" >/dev/null; then
   echo "! $TR has no run line in devtools/check.sh (the coverage gate goes red, and nothing drives its sites)"
 fi
 rc=0; env -u ASTRYX_AGENT "$PY" "$T" >"$D/test.out" 2>&1 || rc=$?
@@ -63,7 +71,15 @@ d, ledger_mode, ledger_path, test_rc, args = sys.argv[1], sys.argv[2] == "1", sy
 inv = inventory.build()
 rep = json.load(open(os.environ["SQLSITE_REPORT"])) if os.environ.get("SQLSITE_REPORT") else judge.judge(d, inv=inv)
 seen = collections.defaultdict(list)                     # site key -> its records, by judge's own attribution
-for r in judge.load_traces(d)[0]:
+# The records come from the SEAL the verdicts were graded from (plan-11908 D3), never a second read of the dir: a
+# re-read after the verdict sees appends the grades never did (a3 H1 #62644, the AmjN2L shape).
+if "seal" not in rep:
+    print("NOT SEARCHED: the report carries no seal (written before plan-11908 D2), so its records can't be re-read")
+    sys.exit(1)
+recs, _, changed, _ = judge.load_traces(d, rep["seal"])
+if changed:                                              # a3 N-1: the grades name records this read can no longer show
+    print(f"NOT SEARCHED: sealed evidence changed since the verdict: {changed}; the rows/stamped/p columns below omit them")
+for r in recs:
     if not judge.is_site(r["t"], form="statement"):
         continue
     key, text, kind = judge.attribute(r, inv["functions"], inv.get("oracle"))

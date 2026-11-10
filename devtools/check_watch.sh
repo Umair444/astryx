@@ -39,8 +39,14 @@
 # against a stub suite without touching the live stamp.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-STAMP=${CHECK_WATCH_STAMP:-backups/.last-check}
-LOG=${CHECK_WATCH_LOG:-backups/.last-check.log}
+# the stamp and log are the ORG's (its backups/): one org (no host registry) this checkout's, exactly as before;
+# several orgs the HOME's, through the ONE resolver (plan-11324 S3a), or the run refuses
+BK=backups   # org-home: one org, this checkout IS the HOME (several: the HOME, below)
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then
+  BK="$(venv/bin/python src/astryx/config.py estate)/backups" || { echo "check-watch: no org HOME" >&2; exit 1; }
+fi
+STAMP=${CHECK_WATCH_STAMP:-$BK/.last-check}
+LOG=${CHECK_WATCH_LOG:-$BK/.last-check.log}
 CGROUP=${CHECK_WATCH_CGROUP:-/proc/self/cgroup}
 mkdir -p "$(dirname "$STAMP")" "$(dirname "$LOG")"
 
@@ -64,7 +70,7 @@ if [ -n "${CHECK_WATCH_SUITE:-}${CHECK_WATCH_CGROUP:-}" ]; then
     b=$(readlink -f -- "$2" 2>/dev/null || echo "$2")
     [ "$a" = "$b" ]
   }
-  if _same "$STAMP" backups/.last-check || _same "$LOG" backups/.last-check.log; then
+  if _same "$STAMP" "$BK/.last-check" || _same "$LOG" "$BK/.last-check.log"; then
     echo "check-watch: REFUSING TO RUN — a test seam is set (CHECK_WATCH_SUITE and/or" >&2
     echo "  CHECK_WATCH_CGROUP) while CHECK_WATCH_STAMP/CHECK_WATCH_LOG still resolve to" >&2
     echo "  the production stamp or log. A stubbed run must never write the files the" >&2
@@ -79,6 +85,9 @@ now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # STRICT: no CHECK_ALLOW_SKIP here. This is the live tree — a gate that observes nothing
 # on the host where every prerequisite exists is a real finding, and the whole reason this
 # runner exists is that the two blind invokers have to allow skips.
+# plan-11908 D5: the timer is the ONE run that advances sqlguard's seen-set clocks (R-CLOCK, R-LEAK); every other
+# check.sh (merge checks, hand runs, pushed-tree checks) is read-only on them by construction.
+export ASTRYX_SQLGUARD_WRITE_SEEN=1
 if [ -n "${CHECK_WATCH_SUITE:-}" ]; then
   sh -c "$CHECK_WATCH_SUITE" > "$LOG" 2>&1
 else

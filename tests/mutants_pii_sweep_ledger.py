@@ -18,12 +18,35 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+
 # PII_SWEEP_STAGED names a staged copy to probe before it is applied (the body is gitignored)
-SUBJECT = Path(os.environ.get("PII_SWEEP_STAGED") or REPO / "triggers" / "steward" / "pii_sweep.py")
+SUBJECT = Path(os.environ.get("PII_SWEEP_STAGED") or ESTATE / "triggers" / "steward" / "pii_sweep.py")
 ORACLE = REPO / "tests" / "test_pii_sweep_ledger.py"
 ENV = "PII_SWEEP_SRC"
 
 MUTANTS = {
+    # The unit-suffix exemption widened to a delegated TLD. `.target` is a real brand TLD, so an address there could
+    # be the owner's: the over-broad, under-detection direction (steward 10-19, the cog-era unit-instance class).
+    "M_unit1 the systemd-unit exemption also swallows .target (a real TLD)":
+        ('_SYSTEMD_UNIT_SUFFIXES = frozenset(("service", "timer",',
+         '_SYSTEMD_UNIT_SUFFIXES = frozenset(("target", "service", "timer",'),
+
+    # The exemption dropped from the scan. Every cog unit instance cries owner-email again.
+    "M_unit2 the systemd-unit exemption is not consulted":
+        ("                                     or _is_systemd_unit(m.group(1))\n",
+         ""),
+
     # The pre-fix rendering. `messages.thread` is a routing address, so the alarm text and
     # the durable ledger carry a group JID or a phone number — the detector emitting the
     # shape it hunts. Live instance: msg#344.

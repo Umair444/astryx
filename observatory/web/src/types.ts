@@ -500,6 +500,16 @@ export interface ChannelRoutes {
   channel: string
   routes: WireRoute[]
   trusted_key: 'trusted_jids' | 'trusted_ids'
+  etag: string          // the file's sha256: the PUT's If-Match (plan-11860 E4)
+  problems: string[]    // the one validator's verdict on the table as it stands (E2)
+}
+
+/* PUT /api/wire/routes/<channel> — the change as the bridges will see it */
+export interface RouteDiff {
+  added: { chat: string; agent: string }[]
+  removed: { chat: string; agent: string }[]
+  moved: { chat: string; from: string; to: string }[]
+  doorbell: { agent: string; old: string | null; new: string | null }[]
 }
 
 /* GET /api/wire/contacts — every match for a name, so the owner resolves conflicts */

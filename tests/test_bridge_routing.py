@@ -46,6 +46,18 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 SUBJECT = Path(os.environ.get("ROUTE_SRC") or REPO / "bridges" / "common.py")
 fails = []
 
@@ -68,9 +80,10 @@ try:
     import psycopg
 except ModuleNotFoundError as e:
     skip(f"{e.name} not importable")
-env = REPO / ".env"
-ADMIN = next((l.split("=", 1)[1].strip().strip('"').strip("'") for l in env.read_text().splitlines()
-              if l.startswith("ASTRYX_DSN=")), None) if env.exists() else None
+try:                         # the ONE resolver (astryx.config.dsn), the .env only as before
+    ADMIN = _astryx("config", "dsn", ESTATE / ".env", None, False)
+except LookupError:
+    ADMIN = None
 if not ADMIN:
     skip("no ASTRYX_DSN")
 
@@ -89,7 +102,7 @@ try:
     (stage / "bridges").mkdir()
     (stage / "bridges" / "__init__.py").write_text("")
     shutil.copy2(SUBJECT, stage / "bridges" / "common.py")
-    for sib in ("transcribe.py",):
+    for sib in ("transcribe.py", "routing.py"):   # common.py imports its sibling resolver (plan-11860 E2)
         if (REPO / "bridges" / sib).exists():
             (stage / "bridges" / sib).symlink_to(REPO / "bridges" / sib)
     for a in ("canopus", "seed", "forge", "insurance", "readycash"):            # the fixture roster; 'pulse' has no charter
@@ -177,8 +190,8 @@ try:
           who["r2"])
     check("R3 control: a fresh thread → the surface default (seed)", who["r3"] == "seed", who["r3"])
     check("R4 an @mention wins over the thread", who["r4"] == "forge", who["r4"])
-    check("R5 a past @mention does NOT stick: plain reply → canopus (the last agent he saw)",
-          who["r5"] == "canopus", who["r5"])
+    check("R5 a newer @mention sticks: canopus spoke, then @forge → plain reply → forge (owner 10-27)",
+          who["r5"] == "forge", who["r5"])
     check("R6 a newest non-agent sender is skipped → the next real agent", who["r6"] == "canopus",
           who["r6"])
     check("R7 another thread's speaker never leaks in", who["r7"] == "canopus", who["r7"])
@@ -186,8 +199,8 @@ try:
           who["r15"] == "readycash", who["r15"])
     check("R13 seed's case: @forge, forge silent, canopus posts to the owner → bare reply → canopus",
           who["r13"] == "canopus", who["r13"])
-    check("R14 only the human's own chats on the thread → the default (a mention doesn't stick)",
-          who["r14"] == "seed", who["r14"])
+    check("R14 only the human's own chat (@forge) on the thread → forge (whom he last addressed)",
+          who["r14"] == "forge", who["r14"])
     check("R9 an agent-to-agent handoff (seed → canopus) doesn't steal the reply → canopus",
           who["r9"] == "canopus", who["r9"])
     check("R10 a receipt to the human counts as the agent speaking → canopus", who["r10"] == "canopus",
@@ -211,8 +224,8 @@ try:
             await conn.close()
 
     r8b = asyncio.run(follow_up())[0]
-    check("R8 an UNADDRESSED follow-up after the mention goes to readycash, the last agent the "
-          "owner SAW (a mention routes only its own message)", r8b == "readycash", r8b)
+    check("R8 an UNADDRESSED follow-up after @insurance, before insurance answers, goes to insurance, "
+          "not readycash who spoke earlier (owner 10-27: '@b …' then '…' went back to a)", r8b == "insurance", r8b)
     db.close()
 finally:
     _fx.__exit__(None, None, None)

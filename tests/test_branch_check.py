@@ -3,10 +3,13 @@
 the tool's own), FLAKY is not REGRESSED, a prod-reaching statement fails the run, and on an UNHARDENED host the run
 REFUSES (rc 77, naming seed's P0-a) and leaves nothing behind. Exits 77 without a DSN.
 """
+import atexit
 import contextlib
 import io
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -28,6 +31,14 @@ LOG = ("\x1b[36m▶\x1b[0m gate a\n  ✓ gate a\n"
        "FAILED (2):\n  \x1b[31m✗\x1b[0m gate b\n  ✗ gate c\n"
        "UNVERIFIED (1) — this run did NOT check these; they are not evidence of anything:\n  ○ gate d\n"
        "\ncheck: 40 verified, 2 FAILED, 1 UNVERIFIED\n")
+
+
+
+def _tmpdir(prefix):
+    """A scratch dir removed at exit: six bare mkdtemps here leaked 24 bc-* dirs a day into tmpfs /tmp (goal 11580)."""
+    d = Path(tempfile.mkdtemp(prefix=prefix))
+    atexit.register(shutil.rmtree, d, True)
+    return d
 
 
 def main():
@@ -103,6 +114,32 @@ def main():
     rc, out = rep(base, dict(dead), {"main": 0, "branch": 3})
     check("a dead side that WROTE TO PROD is still RED → rc 1, NO VERDICT and WITNESS both printed",
           rc == 1 and "NO VERDICT from the branch suite" in out and "WITNESS: 3 statement(s)" in out, out)
+    # a3 #61231 / seed #61236: an UNWITNESSED side (prod_statements None) is not "nothing seen"
+    rc, out = rep(base, dict(base), {"main": 0, "branch": None})
+    check("identical sides but the branch UNWITNESSED → rc 77 and named, never rc 0",
+          rc == 77 and "UNWITNESSED: the branch run" in out, out)
+    rc, out = rep(base, {"failed": ["x", "y"], "unverified": ["u"], "line": "check: b"}, {"main": None, "branch": 0})
+    check("…a regression over an unwitnessed side is still RED → rc 1", rc == 1 and "UNWITNESSED: the main run" in out
+          and "REGRESSED" in out, out)
+    rc, out = rep(base, dict(base), {"main": None, "branch": 3})
+    check("…a real PROD write on one side is RED → rc 1 whatever the other side's witness",
+          rc == 1 and "WITNESS: 3 statement(s)" in out and "UNWITNESSED: the main run" in out, out)
+    rc, out = rep(base, dict(dead), {"main": 0, "branch": None})
+    check("…a dead AND unwitnessed side is NO VERDICT → rc 77, both named",
+          rc == 77 and "NO VERDICT from the branch suite" in out and "UNWITNESSED: the branch run" in out, out)
+    rc, out = rep(base, dict(base))
+    check("…and two witnessed zero sides still PASS (rc 0, no UNWITNESSED line)", rc == 0 and "UNWITNESSED" not in out, out)
+    # a4 #61241: the rerun's sum. A KNOWN prod write dominates an unwitnessed part; otherwise None is contagious.
+    cw = {(a, b): bc.combine_witness(a, b) for a, b in ((3, None), (None, 2), (None, 0), (0, None), (None, None),
+                                                         (0, 0), (0, 2), (1, 2))}
+    check("combine_witness: a known prod write survives an unwitnessed rerun (3+None → 3, None+2 → 2)",
+          cw[(3, None)] == 3 and cw[(None, 2)] == 2, cw)
+    check("…an unwitnessed part with no known write is None (never a clean 0); two zeros are 0; counts add",
+          cw[(None, 0)] is None and cw[(0, None)] is None and cw[(None, None)] is None and cw[(0, 0)] == 0
+          and cw[(0, 2)] == 2 and cw[(1, 2)] == 3, cw)
+    rc, out = rep(base, dict(base), {"main": 0, "branch": bc.combine_witness(3, None)})
+    check("…so a first run's 3 prod statements over a dead rerun is still RED → rc 1 with the WITNESS line",
+          rc == 1 and "WITNESS: 3 statement(s) reached the PROD database from the branch run" in out, out)
     import time
     t0 = time.monotonic()
     so, se, src = bc.run_suite(["bash", "-c", "echo partial-out; echo partial-err >&2; sleep 30"], dict(os.environ),
@@ -162,7 +199,18 @@ def main():
           len(reps) == 1 and any(k.arg == "touched" and "touched_files" in ast.dump(k.value)
                                  and "'branch'" in ast.unparse(k.value) for k in reps[0].keywords),
           ast.dump(reps[0]) if reps else "no report call in run()")
-    tsc = Path(tempfile.mkdtemp(prefix="bc-scope-"))
+    # a4 #61241 advisory: the rerun sum's CALL SITE. The oracle can't reach run()'s rerun, and 07ab603's defect lived
+    # exactly there, so pin it statically: run() writes witness["branch"] only through combine_witness(...)
+    def _wb(t):
+        return isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and t.value.id == "witness" \
+            and isinstance(t.slice, ast.Constant) and t.slice.value == "branch"
+    wb_set = [n for n in ast.walk(runfn) if isinstance(n, ast.Assign) and any(_wb(t) for t in n.targets)]
+    wb_aug = [n for n in ast.walk(runfn) if isinstance(n, ast.AugAssign) and _wb(n.target)]
+    check("run() assigns witness['branch'] once, from combine_witness(...), and never with += (a4 #61241)",
+          len(wb_set) == 1 and not wb_aug and isinstance(wb_set[0].value, ast.Call)
+          and isinstance(wb_set[0].value.func, ast.Name) and wb_set[0].value.func.id == "combine_witness",
+          f"{[ast.unparse(n) for n in wb_set + wb_aug]}")
+    tsc = _tmpdir("bc-scope-")
     (tsc / "tests").mkdir()
     (tsc / "tests" / "test_x.py").write_text("from astryx.hearing import voice_mint as V\nimport nucleus.other\n")
     real = subprocess.run
@@ -187,7 +235,7 @@ def main():
           "still RED in the branch's scope (files it changes, modules they import): 2" in out, out)
     # a2 night-review 10-12: a DARK gate whose oracle references a file the branch changes is named, to be run directly
     # (10-11: seed/trigger-name-guard PASSed while the ear/wake/doorbell oracles, which stage channel/server.mjs, were dark)
-    dk = Path(tempfile.mkdtemp(prefix="bc-dark-"))
+    dk = _tmpdir("bc-dark-")
     for d in ("nucleus", "tests", "channel", "devtools"):
         (dk / d).mkdir()
     (dk / "devtools" / "check.sh").write_text(
@@ -196,7 +244,9 @@ def main():
         'run "bash gate" bash tests/t_sh.sh\n'
         'run "word gate" "$PY" tests/test_word.py\n'
         'run "own gate" "$PY" -m tests.test_own\n'
-        'run "quoted \\"=ax\\" gate" "$PY" tests/test_word.py\n')
+        'run "quoted \\"=ax\\" gate" "$PY" tests/test_word.py\n'
+        'run --cap=300 "capped gate" "$PY" tests/test_capped.py\n'
+        'if true; then\n  run "indented gate" "$PY" tests/test_ind.py\nfi\n')
     (dk / "tests" / "test_ear.py").write_text("from nucleus import subj\n")
     (dk / "nucleus" / "subj.py").write_text("from nucleus import deep\n")
     (dk / "nucleus" / "deep.py").write_text("x = 1\n")
@@ -207,10 +257,28 @@ def main():
     (dk / "tests" / "t_sh.sh").write_text("grep -c ^run devtools/check.sh\n")   # names check.sh, as many oracles do
     (dk / "tests" / "test_word.py").write_text("# the server answers; reserver.mjs is another file\n")
     (dk / "tests" / "test_own.py").write_text("x = 1\n")
+    (dk / "tests" / "test_capped.py").write_text("x = 1\n")
+    (dk / "tests" / "test_ind.py").write_text("x = 1\n")
     of = bc.gate_files(dk)
     check("gate_files: every run line maps to its oracle file(s), any language, -m included, a \\\" label unescaped",
           of.get("ear gate") == {"tests/test_ear.py"} and of.get("node gate") == {"tests/t_node.mjs"}
           and of.get("own gate") == {"tests/test_own.py"} and 'quoted "=ax" gate' in of, of)
+    check("…a run line with run()'s --cap=<s> flag, and an INDENTED one (a gate inside an `if`), are gates too",
+          of.get("capped gate") == {"tests/test_capped.py"} and of.get("indented gate") == {"tests/test_ind.py"}, of)
+    # the LIVE grammar: every invocation of run() in the real check.sh, found by COMMAND POSITION (run_calls: line
+    # start, after ; & | ( or then/do/else/elif), is a gate gate_files parses. A new form can't go dark silently.
+    rc_text = ('true && run "chained" "$PY" tests/x.py\nif a; then run "same-line" "$PY" tests/x.py; fi\n'
+               '  run --cap=9 "capped" "$PY" tests/x.py\n# run "a comment" x\necho "we run tests"\nrun() {\n')
+    rc = [ln.strip()[:24] for ln in bc.run_calls(rc_text)]
+    check("run_calls: a chained (&&) and a same-line (then) call are calls; a comment, an echo and run()'s definition "
+          "aren't", rc == ['true && run "chained" "$', 'if a; then run "same-lin', 'run --cap=9 "capped" "$P'], rc)
+    check("…and _GATE_RX doesn't parse the chained form, so the live arm below FAILS on one (never skips it)",
+          not bc._GATE_RX.match(bc.run_calls(rc_text)[0]), bc.run_calls(rc_text)[0])
+    live = (REPO / "devtools" / "check.sh").read_text()
+    calls = bc.run_calls(live)
+    unparsed = [ln.strip()[:80] for ln in calls if not bc._GATE_RX.match(ln)]
+    check(f"the live check.sh: each of its {len(calls)} run() invocations parses as a gate", calls and not unparsed,
+          unparsed)
     gates = ["ear gate", "node gate", "bash gate", "word gate", "own gate"]
     ds = {g: f for g, f, _ in bc.dark_scope(gates, of, {"nucleus/subj.py", "channel/server.mjs", "tests/test_own.py"}, dk)}
     check("dark_scope: a python oracle IMPORTING a changed module, a node oracle NAMING a changed file, and a changed "
@@ -230,14 +298,14 @@ def main():
     # a2 night-review 10-14: a CENSUS oracle reaches files by ENUMERATING (git ls-files, a dir glob), not by name;
     # only a MEMBERSHIP change (add/delete/rename) changes its set. 10-12: reachability was dark when review_range.sh
     # was ADDED invoked-by-nothing.
-    cz = Path(tempfile.mkdtemp(prefix="bc-census-"))
+    cz = _tmpdir("bc-census-")
     for d in ("nucleus", "tests", "units", "devtools"):
         (cz / d).mkdir()
     (cz / "devtools" / "check.sh").write_text('run "repo census" "$PY" tests/test_rw.py\n'
                                              'run "units census" "$PY" tests/test_units.py\n'
                                              'run "plain gate" "$PY" tests/test_plain.py\n')
     (cz / "tests" / "test_rw.py").write_text('import subprocess\nfiles = subprocess.run(["git", "ls-files"]).stdout\n')
-    (cz / "tests" / "test_units.py").write_text('for f in (REPO / "units").glob("*.service"):\n    pass\n')
+    (cz / "tests" / "test_units.py").write_text('for f in (REPO / "units").glob("*.service"):\n    pass\n')  # org-home: fixture tree data: a fake test file's text
     (cz / "tests" / "test_plain.py").write_text("x = 1\n")
     cof = bc.gate_files(cz)
     cg = ["repo census", "units census", "plain gate"]
@@ -313,7 +381,7 @@ def main():
     check("a gate NEWLY unverified on the branch (a2 #37112: CREATEROLE missing) counts as dark → UNVERIFIABLE, rc 0",
           rc == 0 and "← dark gate: prep gate" in out and "REGRESSED" not in out, out)
     # the relation, read statically from a repo's check.sh and oracle files
-    tdr = Path(tempfile.mkdtemp(prefix="bc-refs-"))
+    tdr = _tmpdir("bc-refs-")
     (tdr / "nucleus").mkdir()
     for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
         (tdr / _d).mkdir(parents=True, exist_ok=True)
@@ -362,15 +430,24 @@ def main():
     check("C4: enforce keys an R-BLIND by path/function/text, never its LINE (same id at line 10 and 99)",
           len(a_) == 1 and a_ == b_, f"{a_} {b_}")
     check("…and different SQL at the same place is a different identity", a_ != c_, f"{a_} {c_}")
-    td = Path(tempfile.mkdtemp())
+    td = _tmpdir("bc-red-")
     check("sqlguard_red: no red.json (enforce didn't run) → None, never an empty 'no findings'",
           bc.sqlguard_red(td) is None)
     (td / "red.json").write_text(json.dumps([{"id": "x", "line": "R-NEW …"}]))
     check("sqlguard_red: red.json → {id: line}", bc.sqlguard_red(td) == {"x": "R-NEW …"})
 
-    t = Path(tempfile.mkdtemp())
+    t = _tmpdir("bc-witness-")
     (t / "trace-1.jsonl").write_text("\n".join(json.dumps({"db": d}) for d in ("astryx", "astryx_fx_1", "astryx")) + "\n")
+    check("a trace dir with NO run_id is UNWITNESSED (None), never a clean zero (a3 #61231)",
+          bc.prod_statements(t, "astryx") is None)
+    (t / "run_id").write_text("r1x1\n")
     check("the prod witness counts only statements whose db IS the prod database", bc.prod_statements(t, "astryx") == 2)
+    check("a MISSING trace dir is UNWITNESSED (None): a deleter can't make the witness read clean",
+          bc.prod_statements(t / "gone", "astryx") is None)
+    e = _tmpdir("bc-witness-")
+    (e / "run_id").write_text("r1x1\n")
+    check("…while a vouched dir with no trace files is a real zero (check.sh ran; nothing reached PROD)",
+          bc.prod_statements(e, "astryx") == 0)
 
     # ── real estate: today's host is UNHARDENED (default PUBLIC CONNECT), so the run must refuse cleanly ─────
     from test_branch_check_prep import admin_dsn
@@ -403,4 +480,5 @@ def main():
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))   # a gate cap's TERM exits through atexit too
     sys.exit(main())

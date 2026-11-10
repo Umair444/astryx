@@ -182,7 +182,16 @@
           "description": "Render a local HTML file to PDF with headless Chromium, then verify it."
         }
       ]
+    },
+    {
+      "server": "influence",
+      "tools": [
+        {
+          "name": "who_should_i_ask",
+          "description": "WHO SHOULD I ASK (plan-11324 S2), ADVISORY: the top-k agents by the influence graph's ROUTING view, personalized"
+        }
+      ]
     }
   ],
-  "total_tools": 32
+  "total_tools": 33
 }

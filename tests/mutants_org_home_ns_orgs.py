@@ -1,0 +1,38 @@
+"""Authored mutants for src/astryx/orgs.py (plan-11324 S3b, host-wide namespaces: kind tmux), run by devtools/mutation_probe.py.
+
+    venv/bin/python devtools/mutation_probe.py tests/mutants_org_home_ns_orgs.py
+
+Each puts two orgs' residents back on ONE server: the socket never derived, the argv prefix ignoring it, the shell
+door answering "one org".
+The oracle runs every child from an estate-free fixture checkout; the fixture writes the mutant over this subject
+there (tests/org_home_fixture.py SEAMS), so a mutant is executed where the arms execute, never from a temp path.
+"""
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+
+SUBJECT = REPO / "src/astryx/orgs.py"
+ORACLE = REPO / "tests" / "test_org_home_namespace.py"
+ENV = "ORG_HOME_ORGS_SRC"
+TIMEOUT = 300
+
+MUTANTS = {
+    'X1 socket() is None in a cog of several orgs too (every org on the default socket)':
+        ('    return None if o is None else socket_of(o, env)\n',
+         '    return None\n'),
+    'X2 tmux() ignores the socket (python callers on the default socket)':
+        ('    return ["tmux"] if s is None else ["tmux", "-L", s]\n',
+         '    return ["tmux"]\n'),
+    'X4 the primary gets a socket of its own too (its residents leave the default server: the double spawn, seed #60780)':
+        ('    return "default" if load(env)[o]["primary"] else f"ax-{o}"\n',
+         '    return f"ax-{o}"\n'),
+    'X6 the primary\'s socket is the BARE default (an inherited $TMUX steers its tools to another org, a2 #60794 R-1)':
+        ('    return None if o is None else socket_of(o, env)\n',
+         '    return None if _plain(o, env) else socket_of(o, env)\n'),
+    'X5 the primary\'s units are instance-named (astryx-pulse@<org>.timer: its live units orphaned)':
+        ('    return f"{stem}.{suffix}" if _plain(o, env) else f"{stem}@{o}.{suffix}"',
+         '    return f"{stem}.{suffix}" if o is None else f"{stem}@{o}.{suffix}"'),
+    'X3 `orgs.py socket` answers one org (exit 1) on several':
+        ('            if s is None:\n                return 1\n',
+         '            if True:\n                return 1\n'),
+}

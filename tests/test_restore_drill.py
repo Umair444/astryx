@@ -105,7 +105,15 @@ from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
 import os  # noqa: E402
 
 FXROLE = f"astryx_fx_drill_{os.getpid()}"   # a throwaway NOLOGIN group: the fixture's GRANT names it, so a restore
-live = psycopg.connect(pg_role_sync._live_dsn(), autocommit=True)   # without the roles file MUST error on it
+try:
+    live = psycopg.connect(pg_role_sync._live_dsn(), autocommit=True)   # without the roles file MUST error on it
+except LookupError as e:        # no DSN at all (a DSN-less tree): NOT SEARCHED, never a crash (seed #62380)
+    estate.unavailable("test_restore_drill", REPO, e, failed=fails)
+sys.path.insert(0, str(REPO / "tests"))
+from _oracle_debris import reap  # noqa: E402  a KILLED run skips the finally and leaves FXROLE (a2 #62900)
+from astryx.security.sqlguard import fixture as _fx  # noqa: E402
+_fx.reap(live)                   # a dead run's fixture DB first: FXROLE's grant inside it would keep the role
+reap(live)
 live.execute(f"CREATE ROLE {FXROLE} NOLOGIN")
 
 

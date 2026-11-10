@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { AppShell, Burger, Group, Popover, Text, TextInput, Tooltip } from '@mantine/core'
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { saveObsKey } from './api'
+import { LOGIN, signInHref } from './auth'
 import { StoreProvider, useStore } from './store'
+import { CogProvider, useCog } from './cog'
+import { CogChooser, CogSwitcher } from './components/CogBuilding'
 import Sidebar from './components/Sidebar'
 import NetworkView from './components/NetworkView'
 import FloorView from './components/FloorView'
@@ -18,6 +21,9 @@ import MemoryView from './components/MemoryView'
 import GrowbotView from './components/GrowbotView'
 import FaceView from './components/FaceView'
 import AgentDrawer from './components/AgentDrawer'
+import ChatApp from './chat/ChatApp'
+import ChatSheet from './components/ChatSheet'
+import { AnimatePresence } from 'motion/react'
 import VegaChat from './components/VegaChat'
 import PulseStrip from './components/PulseStrip'
 import EarControl from './components/EarControl'
@@ -27,6 +33,24 @@ import Palette from './components/Palette'
 import { PilotHost } from './pilot'
 import PilotConfirm from './pilot/Confirm'
 import { Orb } from './ui/kit'
+
+/* SIGN-IN (goal 11859 U3), behind the LOGIN build flag until forge's U1U2 lands: off, none of it is in the build (the
+   imports below are never made, so no /auth request exists), and the key door below is the only way in, as before. */
+const Auth = LOGIN ? {
+  SignIn: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.SignInScreen }))),
+  SignedOut: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.SignedOutScreen }))),
+  Orgs: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.OrgListScreen }))),
+  Account: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.AccountMenu }))),
+  Chooser: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.AuthChooser }))),
+} : null
+
+/* the sign-in pages are whole screens, outside the shell (as the face is) */
+function authPage() {
+  if (!Auth) return null
+  const p = location.hash.replace(/^#\/?/, '').split(/[/?]/)[0]
+  const Page = p === 'sign-in' ? Auth.SignIn : p === 'signed-out' ? Auth.SignedOut : p === 'orgs' ? Auth.Orgs : null
+  return Page ? <Suspense fallback={<div className="min-h-dvh bg-deck" />}><Page /></Suspense> : null
+}
 
 export type Route =
   | { tab: 'network' }
@@ -41,6 +65,7 @@ export type Route =
   | { tab: 'growbot' }
   | { tab: 'face' }
   | { tab: 'floor' }
+  | { tab: 'chat'; thread?: string }
 
 function parseHash(): Route {
   const h = location.hash.replace(/^#\/?/, '')
@@ -56,17 +81,20 @@ function parseHash(): Route {
   if (tab === 'growbot') return { tab: 'growbot' }
   if (tab === 'face') return { tab: 'face' }
   if (tab === 'network') return { tab: 'network' }
+  if (tab === 'chat') return { tab: 'chat', thread: a || undefined }
   return { tab: 'floor' }          // the Floor is home: the org as a place
 }
 
 export function nav(r: Route) {
   if (r.tab === 'floor') location.hash = '#/'
   else if (r.tab === 'wire') location.hash = `#/wire${r.thread ? '/' + encodeURIComponent(r.thread) : ''}`
+  else if (r.tab === 'chat') location.hash = `#/chat${r.thread ? '/' + encodeURIComponent(r.thread) : ''}`
   else location.hash = `#/${r.tab}`
 }
 
 const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'floor', label: 'Floor', icon: '◉' },
+  { key: 'chat', label: 'Chat', icon: '❖' },
   { key: 'network', label: 'Network', icon: '☉' },
   { key: 'agents', label: 'Agents', icon: '◍' },
   { key: 'wire', label: 'Wire', icon: '✦' },
@@ -165,6 +193,12 @@ function LockPanel() {
           This room belongs to the org's owner. The public face of the org — its floor, its network
           and the motion of its wire — is open to everyone.
         </p>
+        {Auth ? (
+          <div className="mt-7">
+            <a href={signInHref()} className="auth-primary w-full">Sign in</a>
+            <p className="mt-3 text-[12px] text-ink-mute">or step back to the <a href="#/" className="auth-link">Floor</a> · <a href="#/network" className="auth-link">Network</a></p>
+          </div>
+        ) : (<>
         <form
           className="mt-7 flex items-center gap-2 ax-panel rounded-2xl p-1.5 pl-4"
           onSubmit={async (e) => {
@@ -193,6 +227,7 @@ function LockPanel() {
           {wrong ? <span className="text-bad">that key didn't open it</span>
             : <span className="text-ink-mute">or step back to the <a href="#/" className="text-cyan-soft hover:underline">Floor</a> · <a href="#/network" className="text-cyan-soft hover:underline">Network</a></span>}
         </div>
+        </>)}
       </div>
     </div>
   )
@@ -201,6 +236,14 @@ function LockPanel() {
 function Shell() {
   const [route, setRoute] = useState<Route>(parseHash())
   const [agentOpen, setAgentOpen] = useState<string | null>(null)
+  // plan-11860 S2: clicking an agent opens a conversation with it in place (?agent=<name>); a visitor gets its profile
+  const [talking, setTalking] = useState<string | null>(() => new URLSearchParams(location.search).get('agent'))
+  useEffect(() => {
+    const u = new URL(location.href)
+    if (talking) u.searchParams.set('agent', talking)
+    else u.searchParams.delete('agent')
+    if (u.href !== location.href) history.replaceState(history.state, '', u.href)
+  }, [talking])
   const [navOpened, { toggle, close }] = useDisclosure()
   const [deskNav, setDeskNav] = useState(() => localStorage.getItem('nav_hidden') !== '1')
   const toggleDeskNav = () =>
@@ -210,9 +253,11 @@ function Shell() {
     })
   const isDesktop = useMediaQuery('(min-width: 48em)', true)
   const { overview, who, whoChecked } = useStore()
+  const cog = useCog()
   // the Floor and the Network are the org's public faces; everything else is the owner's
   const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network' || t.key === 'floor')
   const locked = !who.owner && route.tab !== 'network' && route.tab !== 'floor'
+  const openAgent = (n: string) => (who.owner ? setTalking(n) : setAgentOpen(n))
 
   useEffect(() => {
     const f = () => {
@@ -226,6 +271,10 @@ function Shell() {
   // The creature face is a MODE, not a tab: fullscreen, no chrome — the whole
   // phone becomes the robot's face (it does its own key gate).
   if (route.tab === 'face') return <FaceView />
+  // /chat is a WORKSPACE, not a tab (plan-11884): fullscreen, its own rail, its own keys
+  if (route.tab === 'chat') return <ChatApp thread={route.thread ?? null} go={(t) => nav({ tab: 'chat', thread: t ?? undefined })} />
+  const page = authPage()
+  if (page) return page
 
   return (
     <AppShell
@@ -244,7 +293,9 @@ function Shell() {
           <a href="#/" className="flex items-center gap-2 no-underline sm:hidden"><Orb size={20} /><span className="text-[14px] font-semibold text-ink">astryx</span></a>
           <div className="flex-1 min-w-0 flex justify-center"><PulseStrip /></div>
           <span className="flex items-center gap-2 text-[11px] text-ink-mute shrink-0">
-            {overview && (
+            {/* a cog: every org as a room chip (its own live count, the open one marked) and the building. One org: its
+                name and live count, as always */}
+            {cog.cog ? <CogSwitcher /> : overview && (
               <>
                 <span className="hidden sm:inline font-mono text-ink-dim">{overview.org}</span>
                 <span className="flex items-center gap-1">
@@ -255,13 +306,14 @@ function Shell() {
             )}
             {who.owner && <VoicePilot hidden />}
             {who.owner && <EarControl view={route.tab} />}
+            {Auth && <Suspense fallback={null}><Auth.Account /></Suspense>}
             <KeyBadge />
           </span>
         </Group>
       </AppShell.Header>
 
       <AppShell.Navbar className="!bg-deck-2 !border-line">
-        <Sidebar route={route} onOpenAgent={setAgentOpen} />
+        <Sidebar route={route} onOpenAgent={openAgent} />
       </AppShell.Navbar>
 
       <AppShell.Main className="h-dvh relative" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -273,10 +325,10 @@ function Shell() {
             ) : null
           ) : (
             <>
-              {route.tab === 'floor' && <FloorView onOpenAgent={setAgentOpen} />}
-              {route.tab === 'network' && <NetworkView onOpenAgent={setAgentOpen} />}
+              {route.tab === 'floor' && <FloorView onOpenAgent={openAgent} talking={talking} />}
+              {route.tab === 'network' && <NetworkView onOpenAgent={openAgent} />}
               {route.tab === 'agents' && <PeopleView />}
-              {route.tab === 'wire' && <WireView route={route} onOpenAgent={setAgentOpen} />}
+              {route.tab === 'wire' && <WireView route={route} onOpenAgent={openAgent} />}
               {route.tab === 'goals' && <GoalsView />}
               {route.tab === 'economy' && <EconomyView />}
               {route.tab === 'tools' && <ToolsView />}
@@ -313,7 +365,13 @@ function Shell() {
       <PilotHost route={route} agentOpen={agentOpen} setAgentOpen={setAgentOpen} />
       <Palette />
       {who.owner && <PilotConfirm />}
-      {agentOpen && <AgentDrawer name={agentOpen} onClose={() => setAgentOpen(null)} />}
+      <AnimatePresence>
+        {who.owner && talking && (
+          <ChatSheet key={talking} name={talking} onClose={() => setTalking(null)} onProfile={() => setAgentOpen(talking)} />
+        )}
+      </AnimatePresence>
+      {agentOpen && <AgentDrawer name={agentOpen} onClose={() => setAgentOpen(null)}
+        onTalk={who.owner ? () => { setTalking(agentOpen); setAgentOpen(null) } : undefined} />}
       {who.owner && <DesktopOverlay />}
       {who.owner && <RoomLayer />}
       {/* VEGA is the PUBLIC concierge and floats bottom-right on every view; the Memory
@@ -327,8 +385,12 @@ function Shell() {
 
 export default function App() {
   return (
-    <StoreProvider>
-      <Shell />
-    </StoreProvider>
+    <CogProvider chooser={(cog) => Auth
+      ? <Suspense fallback={null}><Auth.Chooser cog={cog} fallback={<CogChooser cog={cog} />} /></Suspense>
+      : <CogChooser cog={cog} />}>
+      <StoreProvider>
+        <Shell />
+      </StoreProvider>
+    </CogProvider>
   )
 }

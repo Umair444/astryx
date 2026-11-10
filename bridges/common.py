@@ -35,6 +35,7 @@ import json
 import os
 import re
 import secrets
+import sys
 import time
 from pathlib import Path
 
@@ -44,7 +45,11 @@ from .transcribe import transcribe
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
-MEDIA_DIR = REPO / "media"
+sys.path.insert(0, str(REPO / "src"))   # astryx.config/paths: the ONE resolver, this bridge's own tree (plan-11324 S3a)
+from astryx import config, paths  # noqa: E402
+from .routing import Routes, read_table, resolve  # noqa: E402,F401 — the one route resolver (plan-11860 E2)
+ESTATE = paths.estate(__file__)          # the org's estate: this checkout on one org, the HOME on several
+MEDIA_DIR = ESTATE / "media"
 
 MARK = {"tool": "◌", "tool_done": "●", "error": "⚠", "response": "◌"}
 
@@ -78,26 +83,27 @@ AUDIO_KINDS = {"voice", "audio", "ptt"}
 
 # ---------------------------------------------------------------------- config
 def env(key: str, default: str = "") -> str:
-    if os.environ.get(key):
-        return os.environ[key]
-    f = REPO / ".env"
-    if f.is_file():
-        for line in f.read_text().splitlines():
-            if line.startswith(key + "="):
-                return line.split("=", 1)[1].strip()
-    return default
+    """`key` from the environment first, else the org's .env: astryx.config.get, whose semantics are exactly this
+    reader's (plan-11324 S3a routes it; every bridge's config goes through here). ASTRYX_DSN goes through
+    config.dsn, which checks an environment DSN against the HOME in a cog of several orgs."""
+    f = ESTATE / ".env"
+    if key == "ASTRYX_DSN":
+        try:
+            return config.dsn(f)
+        except LookupError:
+            return default
+    return config.get(key, default, f)
 
 
-def load_routes(path: Path) -> list[dict]:
-    """Re-read per use so routes can be edited live, no restart."""
-    try:
-        return [r for r in json.loads(path.read_text()) if r.get("enabled")]
-    except Exception:
-        return []
+def load_routes(path: Path) -> Routes:
+    """Re-read per use so routes can be edited live, no restart. The ENABLED rows, resolved by the one resolver
+    (bridges/routing.py, plan-11860 E2): look a chat up with .chat(id) and a doorbell with .doorbell(agent), never a
+    loop of your own. A file that stops parsing keeps the last good table and alarms (BC-3), never [] silently."""
+    return resolve(read_table(path))
 
 
 # --------------------------------------------------------------------- routing
-AGENTS_DIR = REPO / "agents"
+AGENTS_DIR = ESTATE / "agents"
 _MENTION = re.compile(r"(?:^|\s)@([a-z][a-z0-9_-]*)", re.I)
 
 
@@ -142,11 +148,13 @@ async def route_target(pool, thread: str, text: str, default: str) -> tuple[str,
            - an agent's message TO THE HUMAN (ANY intent: chat, poll, receipt, permission…),
              counted as its from_agent, or
            - the human's ANSWER to an agent (ANSWER_INTENTS: a poll vote), counted as its
-             to_agent. Free-text chat and reactions (which can point at any old message) don't
-             count.
-         A bare reply answers the most recent agent message the human saw: that's how people
-         reply in chat. The human's own free-text chats don't count, so a past @mention can't
-         pull the next plain reply away from whoever spoke to them since;
+             to_agent, or
+           - the human's own CHAT, counted as its to_agent: a bare follow-up goes on to whoever
+             the human last addressed, even before that agent has answered (owner 10-27:
+             "@b …" then "…" while b was still working went back to a).
+         Newest wins, so a past @mention still can't pull the next plain reply away from an
+         agent that spoke to the human since. Reactions (which can point at any old message)
+         don't count;
       3. otherwise `default` (the surface's own agent).
     "To the human" means to a non-agent: the registry of agents is the one authority, so
     'owner' and every wa-/dc-/tg- person qualify with no name typed here. That's also what
@@ -164,10 +172,10 @@ async def route_target(pool, thread: str, text: str, default: str) -> tuple[str,
         "SELECT from_org, from_agent, to_agent, intent FROM messages WHERE thread=$1 "
         "ORDER BY id DESC LIMIT 50", thread)
     for r in rows:                               # 2. newest first
-        if r["from_org"] != "local":             # the human's own message: only an ANSWER counts
-            if r["intent"] not in ANSWER_INTENTS:  # chat (a past @mention) / a reaction: no
+        if r["from_org"] != "local":             # the human's own message: an ANSWER, or a chat
+            if r["intent"] not in ANSWER_INTENTS and r["intent"] != "chat":  # a reaction: no
                 continue
-            who = r["to_agent"]
+            who = r["to_agent"]                  # whoever the human last addressed (owner 10-27)
         elif not agent_exists(r["to_agent"]):    # an agent speaking TO the human
             who = r["from_agent"]
         else:                                    # agent-to-agent: not the conversation
@@ -292,6 +300,7 @@ async def reaction_signal(pool, channel: str, thread: str, reactor: str,
     to. A pure formatter: the bridge resolves who sent the message and what it said
     from its platform (the source of truth), since that differs per channel."""
     quoted = (snippet or "a message").strip().replace("\n", " ")[:100]
+    emoji = emoji[:32]                            # an emoji is a few code points; a client can send any string (a4 A-1)
     await wire_insert(pool, reactor, channel, agent, thread, "reaction",
                       f'reacted {emoji} to: "{quoted}"')
 

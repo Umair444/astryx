@@ -26,7 +26,6 @@ That is attack surface prod doesn't have (prod runs AGE as a superuser already),
 """
 import argparse
 import ast
-import glob
 import json
 import os
 import re
@@ -130,13 +129,15 @@ def covering_gate(site_path: str, gates, refs: dict):
 
 
 def admin_dsn() -> str:
-    dsn = os.environ.get("ASTRYX_DSN") or prep.read_env(LIVE / ".env").get("ASTRYX_DSN")
-    if not dsn:
-        raise prep.Refuse("no admin DSN (ASTRYX_DSN or the live .env)")
-    return dsn
+    from astryx import config        # the ONE resolver (plan-11324 S3a): the environment, else the live .env
+    try:
+        return config.dsn(LIVE / ".env")
+    except LookupError:
+        raise prep.Refuse("no admin DSN (ASTRYX_DSN or the live .env)") from None
 
 
-_HEAD = {"failed": re.compile(r"^FAILED \(\d+\):$"), "unverified": re.compile(r"^UNVERIFIED \(\d+\) — ")}
+# check.sh's verdict parser lives in devtools/check_verdict.py (stdlib only, so marker.sh can call it too)
+from devtools.check_verdict import _HEAD, summary  # noqa: E402,F401
 
 
 def run_suite(argv: list, env: dict, timeout: int = None) -> tuple:
@@ -151,45 +152,25 @@ def run_suite(argv: list, env: dict, timeout: int = None) -> tuple:
         return dec(e.stdout), dec(e.stderr), "timeout"
 
 
-def summary(log: str) -> dict:
-    """check.sh's OWN verdict sets, parsed from the block it prints LAST (check.sh:109-124): {failed, unverified, line}.
-    Only that trailing block counts. A gate's own output can print a "FAILED (3): …" line and "  ✗ …" items (the
-    econ provenance oracle does, first end-to-end run #33638), and reading those would let a gate inject or mask a
-    name. So: the LAST `check: ` line, and walking UP from it, only its headers (their exact shape) and their items."""
-    lines = re.sub(r"\x1b\[[0-9;]*m", "", log).splitlines()
-    out = {"failed": [], "unverified": [], "line": ""}
-    end = max((i for i, ln in enumerate(lines) if ln.startswith("check: ")), default=None)
-    if end is None:
-        return out
-    out["line"] = lines[end]
-    items = []
-    for ln in reversed(lines[:end]):
-        if not ln.strip():
-            if out["failed"] or out["unverified"]:
-                break                                      # verdict()'s leading `echo` (check.sh:104): the TOP edge
-            continue                                       # its trailing `echo` (check.sh:115), below the block
-        if ln.startswith("  ") and ln.strip()[:1] in ("✗", "○"):
-            items.append(ln.strip()[1:].strip())
-            continue
-        kind = next((k for k, rx in _HEAD.items() if rx.match(ln)), None)
-        if kind is None:
-            break                                          # above the summary block: gate output, never read
-        out[kind] = list(reversed(items)) + out[kind]
-        items = []
-    return out
+def prod_statements(trace_dir: Path, prod_db: str):
+    """The psycopg-path witness (a1 #24435): statements the run's sqlguard trace saw against the PROD database. None
+    when the trace can't vouch for the run: no dir, or no run_id (check.sh writes it into the dir it's handed before
+    any gate runs). That is UNWITNESSED, never "nothing seen" (a3 #61231, seed #61236): a deleter, a check.sh that
+    never reached its sqlguard block, or a path that drifted would otherwise read as a clean zero."""
+    if not trace_dir.is_dir() or not (trace_dir / "run_id").is_file():
+        return None
+    # A WITNESS, not a grader (plan-11908 D3): it reads the WHOLE dir, post-seal included, because a guard's own
+    # post-verdict SQL against the live DB is still a prod statement.
+    from astryx.security.sqlguard.evidence import witness_traces
+    return sum(1 for r in witness_traces(str(trace_dir)) if r.get("db") == prod_db)
 
 
-def prod_statements(trace_dir: Path, prod_db: str) -> int:
-    """The psycopg-path witness (a1 #24435): statements the run's sqlguard trace saw against the PROD database."""
-    n = 0
-    for f in glob.glob(str(trace_dir / "trace-*.jsonl")):
-        for line in open(f):
-            try:
-                if json.loads(line).get("db") == prod_db:
-                    n += 1
-            except ValueError:
-                pass
-    return n
+def combine_witness(w1, w2):
+    """The branch side's witness over its first run and its rerun. A KNOWN prod write dominates: an unwitnessed rerun
+    (None) must never erase statements the first run saw (a4 #61241: 3 + None read None, so a known prod write fell
+    to rc 77). Otherwise any unwitnessed part makes the whole None, and two witnessed zeros are 0."""
+    known = [n for n in (w1, w2) if n is not None]
+    return sum(known) if any(known) or len(known) == 2 else None
 
 
 def run(branch: str, main_ref: str = "main") -> int:
@@ -281,7 +262,7 @@ def run(branch: str, main_ref: str = "main") -> int:
         first = set(sums["branch"]["failed"]) - set(sums["main"]["failed"])
         if first:
             again, w2 = suite("branch", 2)
-            witness["branch"] += w2
+            witness["branch"] = combine_witness(witness["branch"], w2)
             sums["branch"]["flaky"] = sorted(first - set(again["failed"]))
             sums["branch"]["failed"] = sorted(set(sums["branch"]["failed"]) - set(sums["branch"]["flaky"]))
             r1, r2 = sums["branch"]["sqlguard_red"], again["sqlguard_red"]
@@ -318,7 +299,19 @@ def changed_files(sha: dict) -> set:
 # a touched python module it imports, or the touched file's path or file name (extension included, never a bare stem)
 # in its text. devtools/check.sh is left out: nearly every branch touches it to add its own gate.
 SCOPE_NOISE = frozenset({"devtools/check.sh"})
-_GATE_RX = re.compile(r'^run "((?:[^"\\]|\\.)+)"\s+(.*)$', re.M)     # a label may carry \" (the tmux gate's does)
+# a label may carry \" (the tmux gate's does). A run line may be INDENTED (a gate inside an `if`, check.sh's media
+# decode) and may carry run()'s one flag, `--cap=<s>` (check.sh's run(): test_relay's): either form missed was a gate
+# no dark list and no census saw (a4, 10-19: the census never reached test_relay.py's probe-then-release)
+_GATE_RX = re.compile(r'^[ \t]*run (?:--cap=\S+\s+)?"((?:[^"\\]|\\.)+)"\s+(.*)$', re.M)
+# every run() INVOCATION, by COMMAND POSITION, not line start (a3 #61173: `x && run …` and `then run …` were dark to
+# _GATE_RX and to a line-start census alike). A line it finds that _GATE_RX doesn't parse is a gate nobody sees: the
+# oracle fails on it, so an unparseable form is rewritten, never silently skipped. A comment line is not a call.
+_RUN_CALL_RX = re.compile(r"(?:^|[;&|(]|\b(?:then|do|else|elif))\s*run\s")
+
+
+def run_calls(text: str) -> list:
+    """Every line of a check.sh text that invokes run() (comments excluded)."""
+    return [ln for ln in text.splitlines() if _RUN_CALL_RX.search(ln) and not ln.lstrip().startswith("#")]
 _ORACLE_SUFFIXES = (".py", ".sh", ".mjs", ".js", ".ts")
 
 
@@ -511,6 +504,7 @@ def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, t
                   f"BRANCH_CHECK_KEEP_LOGS=1 to keep <run>-<side>N.log.")
         # the WITNESS is read from the sqlguard trace, not the verdict line: a suite that wrote to prod and then died
         # is still RED (a4 #53077), and NO VERDICT must never hide it
+        _unwitnessed(witness)
         return 1 if _estate_and_witness(est, witness) else 77
     regressed = sorted(set(b["failed"]) - set(m["failed"]))
     mr, br = m.get("sqlguard_red"), b.get("sqlguard_red")
@@ -577,9 +571,22 @@ def report(sha: dict, sums: dict, witness: dict, est: dict, refs: dict = None, t
                   f"in a worktree before a PASS: {len(ds)}")
             for g, f, via in ds:
                 print(f"    ○ {g}\n      ← {f}" + (f" ({via})" if via and " " in via else f" (via {via})" if via else ""))
+    unwitnessed = _unwitnessed(witness)
     if _estate_and_witness(est, witness):
         return 1
-    return 1 if regressed else 0
+    if regressed:
+        return 1
+    return 77 if unwitnessed else 0                  # a clean differential over an unwitnessed side is not a PASS
+
+
+def _unwitnessed(witness: dict) -> bool:
+    """A side whose prod witness is None (no trace dir, or no run_id in it) proves nothing about PROD. Named, and
+    never read as zero. True if any side is unwitnessed."""
+    gone = [side for side, n in witness.items() if n is None]
+    for side in gone:
+        print(f"  UNWITNESSED: the {side} run's sqlguard trace dir is missing or has no run_id, so whether it reached "
+              f"the PROD database is UNKNOWN (never 'nothing seen'). Not a PASS: rc 77 unless something is RED.")
+    return bool(gone)
 
 
 def _estate_and_witness(est: dict, witness: dict) -> bool:

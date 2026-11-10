@@ -40,7 +40,7 @@ try:
     copies = {f"channel/{p.name}": p for p in (REPO / "channel").glob("*.mjs")}
     copies.update({"package.json": REPO / "channel" / "package.json",
                    "package-lock.json": REPO / "channel" / "package-lock.json",
-                   "LICENSE": REPO / "LICENSE", "skills/onboard/onboard.md": REPO / "agents" / "seed" / "onboard.md"})
+                   "LICENSE": REPO / "LICENSE", "skills/onboard/onboard.md": REPO / "agents" / "seed" / "onboard.md"})  # org-home: audit: the TRACKED seed files this checkout's plugin ships (!agents/seed/)
     bad = [k for k, src in copies.items() if (out / k).read_bytes() != src.read_bytes()]
     arm("copies: every channel module, package file, LICENSE and onboard.md is byte-equal to the repo", not bad,
         ", ".join(bad))
@@ -48,8 +48,8 @@ try:
         set(copies) <= set(written) and "channel/server.mjs" in written and "channel/home.mjs" in written)
     seed = (out / "agents" / "seed.md").read_text()
     arm("seed subagent: carries the tracked seed charter and onboarding runbook verbatim",
-        (REPO / "agents/seed/seed.md").read_text().strip() in seed
-        and (REPO / "agents/seed/onboard.md").read_text().strip() in seed
+        (REPO / "agents/seed/seed.md").read_text().strip() in seed  # org-home: audit: the tracked seed charter the plugin ships
+        and (REPO / "agents/seed/onboard.md").read_text().strip() in seed  # org-home: audit: the tracked onboard.md the plugin ships
         and seed.startswith("---\nname: seed\ndescription: "))
     plugin_src = {p.relative_to(REPO / "plugin").as_posix() for p in (REPO / "plugin").rglob("*")
                   if p.is_file() and "templates" not in p.parts and "__pycache__" not in p.parts}

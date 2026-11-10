@@ -33,6 +33,10 @@ REPO = Path(__file__).resolve().parent.parent
 SUBJECT = REPO / "devtools" / "check.sh"
 ORACLE = REPO / "tests" / "test_check_coverage.py"
 ENV = "CHECK_SH_SRC"
+# One unmutated run is ~14 s at load 3; DEFAULT_TIMEOUT (120 s) is per oracle run, and this family is check.sh's
+# smoke, run at whatever load the push window has. 10-22: one smoke REFUSED at load ~11, cause undetermined between
+# a timeout and a red baseline (a1 #62229, a4 #62230); the headroom removes one of the two.
+TIMEOUT = 300
 
 _CHARTER = 'run "charter resolver invariants"      "$PY" tests/test_charter.py'
 _DOCTOR = 'run "doctor: postgres localhost-only, unverified when ss can\'t answer" bash tests/test_doctor_pg_exposure.sh'

@@ -31,8 +31,8 @@ fi
 # derived from the live bridge layout; the rest is the fixed personal tier.
 # directories carry a trailing slash: `git check-ignore` matches a dir-only pattern (triggers/) against a path that
 # does not EXIST only when the path says it is a directory, and in a clean clone (CI) these never exist
-SURFACES=(.env local.md relations.md owner.md homes/ memory/ triggers/ media/
-          backups/ wacli-data/ bridges/routes-whatsapp.json bridges/routes-telegram.json
+SURFACES=(.env local.md relations.md owner.md homes/ memory/ triggers/ media/   # org-home: audit, paths of the tree it scans
+          backups/ wacli-data/ bridges/routes-whatsapp.json bridges/routes-telegram.json   # org-home: audit, paths of the tree it scans
           bridges/routes-discord.json)
 for s in "${SURFACES[@]}"; do
   if ! git check-ignore --no-index -q "$s" 2>/dev/null; then
@@ -45,8 +45,7 @@ for s in "${SURFACES[@]}"; do
   fi
 done
 # agents/: only seed + shipped examples may be tracked
-bad_agents=$(git ls-files 'agents/*' \
-  | grep -vE '^agents/(seed/|seed\.md|[^/]*\.example(\.md)?$|[^/]*\.example/)' || true)
+bad_agents=$(git ls-files 'agents/*' | grep -vE '^agents/(seed/|seed\.md|[^/]*\.example(\.md)?$|[^/]*\.example/)' || true)   # org-home: audit, the tracked tree's paths
 if [ -n "$bad_agents" ]; then
   echo "FAIL (b): non-example agent charters tracked:"
   echo "$bad_agents" | sed 's/^/  /'

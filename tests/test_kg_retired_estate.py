@@ -37,16 +37,23 @@ SUBTREES = ("memory", "triggers")
 
 
 def scan(root):
-    """(files scanned, hits as rel:line) over the estate's .py files. A symlink is skipped, as in the tracked leg."""
-    files, hits = 0, []
+    """(files scanned, hits as rel:line) over the estate's .py files. A symlink is FOLLOWED, unlike the tracked leg
+    (there a link's target is a tracked file read in its own right): merge_check links the estate in FILE BY FILE,
+    so every estate .py in its scratch tree is a link, and skipping them scanned 0 files (forge #57371, a4 #57373).
+    Each target is read once (de-duplicated by resolve()), reported under the link's own path."""
+    files, hits, seen = 0, [], set()
     for sub in SUBTREES:
         base = root / sub
         if not base.is_dir():
             continue
         for p in sorted(base.rglob("*.py")):
             rel = p.relative_to(root).as_posix()
-            if rel in EXEMPT or p.is_symlink() or not p.is_file():
+            if rel in EXEMPT or not p.is_file():          # is_file() follows a link; a dangling one is not a file
                 continue
+            target = p.resolve()
+            if target in seen:
+                continue
+            seen.add(target)
             files += 1
             try:
                 text = p.read_bytes().decode("utf-8")
@@ -103,6 +110,29 @@ def main():
         rc, out = child(t)
         check("E0 CONTROL the same estate, clean, passes", rc == 0 and "(2 files" in out,
               f"rc={rc}: {out.strip()[-300:]}")
+        # the merge_check shape: every estate file a SYMLINK to a file outside the root (a4 #57373)
+        src = t / "src"
+        src.mkdir()
+        (src / "linked.py").write_text("def check(cur):\n    " + read)
+        planted.unlink()
+        (t / "triggers" / "someone" / "linked.py").symlink_to(src / "linked.py")
+        (t / "memory" / "graph" / "clean.py").unlink()
+        (src / "clean.py").write_text("import pkg.version\n")
+        (t / "memory" / "graph" / "clean.py").symlink_to(src / "clean.py")
+        (t / "memory" / "graph" / "again.py").symlink_to(src / "clean.py")   # a second link to one target
+        rc, out = child(t)
+        check("E0 LINKED RED an estate trigger that is a SYMLINK to a file reading the retired node table fails the "
+              "leg, named by the link's path", rc == 1 and "triggers/someone/linked.py:2" in out,
+              f"rc={rc}: {out.strip()[-300:]}")
+        (src / "linked.py").write_text("def check(cur):\n    return None\n")
+        rc, out = child(t)
+        check("E0 LINKED CONTROL the same linked estate, clean, passes with every target scanned once",
+              rc == 0 and "(2 files" in out, f"rc={rc}: {out.strip()[-300:]}")
+        (t / "triggers" / "someone" / "linked.py").unlink()
+        (t / "memory" / "graph" / "clean.py").unlink()
+        (t / "memory" / "graph" / "again.py").unlink()
+        (t / "memory" / "graph" / "clean.py").write_text("import pkg.version\n")
+        planted.write_text("def check(cur):\n    return None\n")
         (t / "triggers" / "someone" / "planted.py").unlink()
         (t / "triggers" / "someone").rmdir()
         (t / "triggers").rmdir()

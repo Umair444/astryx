@@ -1,0 +1,67 @@
+"""Authored mutants for init.sh (plan-11324 S3b 4/n: a unit NAME is host-wide), run by devtools/mutation_probe.py.
+
+    venv/bin/python devtools/mutation_probe.py tests/mutants_org_home_units_init.py
+
+Each is units() writing another org's name, or a unit no org should write.
+The oracle runs every child from an estate-free fixture checkout; the fixture writes the mutant over this subject
+there (tests/org_home_fixture.py SEAMS), so a mutant is executed where the arms execute, never from a temp path.
+"""
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+
+SUBJECT = REPO / "init.sh"
+ORACLE = REPO / "tests" / "test_org_home_units.py"
+ENV = "ORG_HOME_INIT_SRC"
+TIMEOUT = 300
+
+MUTANTS = {
+    'V1 in a cog of several orgs the file is the plain name (two orgs write one file)':
+        ('    _UF="$UD/$(venv/bin/python src/astryx/orgs.py unit "$1" "$2")" || die "units: orgs.unit can\'t name $1.$2 for org $UORG"',
+         '    _UF="$UD/$1.$2"'),
+    "V2 a COG-scoped unit is written by an org's run":
+        ('    case " $UCOG " in *" $1 "*) echo "  units: $1 is COG-scoped (one per cog',
+         '    case " " in *" $1 "*) echo "  units: $1 is COG-scoped (one per cog'),
+    'V3 a port-binding unit is written with its fixed port in a cog of several orgs (the registry never asked)':
+        ('    case " $UPORT " in *" $1 "*) _UP=',
+         '    case " " in *" $1 "*) _UP='),
+    'V4 a unit write bypasses _uw (the pulse timer, plain name, every org)':
+        ('  _uw astryx-pulse timer && cat > "$_UF" <<EOF\n',
+         '  cat > "$UD/astryx-pulse.timer" <<EOF\n'),
+    'V5 a wanted unit with no registry port is SKIPPED, not refused (the org silently without its whatsapp)':
+        ('      || die "units: $1 is wanted',
+         '      || return 1; : "units: $1 is wanted'),
+    "V6 whatsapp's unit keeps the literal 8477 (the registry port is fetched and dropped)":
+        ('--port ${_UP:-8477}\n', '--port 8477\n'),
+    'V7 a runners.conf comment reaches xargs again (an apostrophe kills units(), rc 1)':
+        ('      [[ $stem =~ ^[[:space:]]*# ]] && continue\n      stem=$(echo "$stem" | xargs); [ -z "$stem" ] && continue\n',
+         '      stem=$(echo "$stem" | xargs); [ -z "$stem" ] && continue\n      case "$stem" in \\#*) continue;; esac\n'),
+    "V8 the remote body's growbot is declared off by its PLAIN name (doctor checks a file this org doesn't have)":
+        ('UNITS_EXPECT_DISABLED="$UNITS_EXPECT_DISABLED ${_UF##*/}"',
+         'UNITS_EXPECT_DISABLED="$UNITS_EXPECT_DISABLED astryx-growbot.service"'),
+    "V9 a runner may take a declared unit's name (a runner `gateway` overwrites astryx-gateway, a2 #60394 A-2)":
+        ('        && die "units: runner \'$stem\' in nucleus/runners.conf is a declared unit\'s name',
+         '        && : "units: runner \'$stem\' in nucleus/runners.conf is a declared unit\'s name'),
+    "V10 the cog's run writes every unit under its plain name (an org's units written by nobody's run)":
+        ('    if [ -n "$UCOGRUN" ]; then\n      case " $UREADY "', '    if false; then\n      case " $UREADY "'),
+    "V11 the cog's gateway carries a HOME (the run's nonexistent marker), not the registry":
+        ('[ -n "$UCOGRUN" ] && UGWENV=', '[ -n "" ] && UGWENV='),
+    "V12 no HOME carried in a cog dies again (the cog has no run that writes its gateway)":
+        ('    0) if [ -z "${ASTRYX_HOME:-}" ]; then', '    0) if false; then'),
+    "V13 the cog's run writes the ORG observatory (main:app, one org's database) as the cog's :8090":
+        ('  if [ -n "$UCOGRUN" ]; then\n    _uw astryx-observatory service', '  if false; then\n    _uw astryx-observatory service'),
+    "V14 an org's backend binds every interface (the front is the one public door)":
+        ('uvicorn main:app --host 127.0.0.1 --port ${_UP}', 'uvicorn main:app --host 0.0.0.0 --port ${_UP}'),
+    "V15 an org's canvas binds the fixed 8091 in a cog (two orgs' canvases on one port; S3c canvas)":
+        ('bridges.canvas:root --host 127.0.0.1 --port ${_UP:-8091}', 'bridges.canvas:root --host 127.0.0.1 --port 8091'),
+    "V16 an org's canvas binds every interface (its observatory is the one way in)":
+        ('bridges.canvas:root --host 127.0.0.1 --port ${_UP:-8091}', 'bridges.canvas:root --host 0.0.0.0 --port ${_UP:-8091}'),
+    "V17 _uw rebuilds the name in bash (<stem>@<org> for every org: the primary's live plain units orphaned, a2 #60794)":
+        ('    _UF="$UD/$(venv/bin/python src/astryx/orgs.py unit "$1" "$2")" || die "units: orgs.unit can\'t name $1.$2 for org $UORG"', '    _UF="$UD/$1@$UORG.$2"'),
+    "V18 the primary's units gain the orgenv prefix (every one of its services rewritten and restarted)":
+        ('then UEXEC=""; fi', 'then :; fi'),
+    "V19 `./init.sh units` refuses in a cog like every other verb (no production way to write a cog's units)":
+        ('if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && [ "${1:-}" != units ]; then', 'if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then'),
+    "V20 every verb runs in a cog (setup re-inits whichever org it guesses)":
+        ('if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ] && [ "${1:-}" != units ]; then', 'if false; then'),
+}

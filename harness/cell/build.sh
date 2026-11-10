@@ -23,7 +23,7 @@ docker network inspect "$NET" >/dev/null 2>&1 || docker network create --interna
 
 # 4. throwaway sandbox postgres on the internal net, loaded with the REAL (non-secret)
 #    schema so send/step writes land in a structurally-identical but disposable db.
-if ! docker ps --format '{{.Names}}' | grep -qx "$PG"; then
+if ! grep -qx "$PG" <<<"$(docker ps --format '{{.Names}}')"; then
   docker rm -f "$PG" 2>/dev/null || true
   docker run -d --name "$PG" --network "$NET" \
     -e POSTGRES_USER=astryx -e POSTGRES_PASSWORD=sandbox -e POSTGRES_DB=astryx \
@@ -41,7 +41,7 @@ EGRESS_NET=astryx-egress-net
 PROXY=astryx-egress-proxy
 docker build -t "$PROXY" proxy/
 docker network inspect "$EGRESS_NET" >/dev/null 2>&1 || docker network create "$EGRESS_NET"
-if ! docker ps --format '{{.Names}}' | grep -qx "$PROXY"; then
+if ! grep -qx "$PROXY" <<<"$(docker ps --format '{{.Names}}')"; then
   docker rm -f "$PROXY" 2>/dev/null || true
   docker run -d --name "$PROXY" --network "$NET" "$PROXY" >/dev/null   # internal leg
   docker network connect "$EGRESS_NET" "$PROXY"                        # egress leg

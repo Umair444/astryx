@@ -44,7 +44,7 @@ from __future__ import annotations
 import subprocess
 import time
 
-from astryx import trigger
+from astryx import orgs, trigger
 
 THRESH_PCT = 80.0
 COOLDOWN_S = 45 * 60
@@ -63,7 +63,7 @@ GROUP BY agent
 
 def _live() -> set[str]:
     try:
-        r = subprocess.run(["tmux", "ls", "-F", "#{session_name}"],
+        r = subprocess.run([*orgs.tmux(), "ls", "-F", "#{session_name}"],
                            capture_output=True, text=True, timeout=10)
         return {s[3:] for s in r.stdout.split() if s.startswith("ax-")}
     except Exception:
@@ -74,7 +74,7 @@ def _send_compact(agent: str) -> bool:
     try:
         # "=ax-<agent>:" is an EXACT session match (spawn.sh's form). A bare "ax-<agent>" falls back to prefix/fnmatch
         # matching when that session is gone, so "/compact" could land in abstractor-1x for abstractor-1 (a3 #44065)
-        subprocess.run(["tmux", "send-keys", "-t", f"=ax-{agent}:", "/compact", "Enter"],
+        subprocess.run([*orgs.tmux(), "send-keys", "-t", f"=ax-{agent}:", "/compact", "Enter"],
                        capture_output=True, timeout=10, check=True)
         return True
     except Exception:

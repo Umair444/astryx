@@ -26,6 +26,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import argparse
 import json
 import os
@@ -97,8 +98,7 @@ def redact_file(f: Path, secrets) -> tuple[int, str]:
 def sweep_turns(secrets, do_redact: bool, dsn: str = None) -> dict:
     import psycopg
     from psycopg.types.json import Jsonb
-    dsn = dsn or next(l.split("=", 1)[1].strip() for l in (REPO / ".env").read_text().splitlines()
-                      if l.startswith("ASTRYX_DSN="))
+    dsn = dsn or config.dsn(paths.estate(__file__) / ".env", env_first=False)
     out = {"rows": 0, "redacted": 0, "by_name": {}}
     with psycopg.connect(dsn) as c:
         forms = sorted({f for s in secrets for f in s.forms})
@@ -124,7 +124,7 @@ def sweep(do_redact: bool = False, secrets=None, files=None, turns: bool = True)
     secrets = ss.secret_set() if secrets is None else secrets
     files = transcript_files() if files is None else files
     live = active(files)
-    rep = {"domains": {"transcripts": [str(PROJECTS / "**"), str(REPO / "homes/*/.transcript-aside/*"),
+    rep = {"domains": {"transcripts": [str(PROJECTS / "**"), str(paths.estate(__file__) / "homes/*/.transcript-aside/*"),
                                        str(SCRATCH / "**/.env*") + " (not links)"],
                        "turns": "raw_payload + input_prompt",
                        "not_searched": ["backups/ (declared holders)", "compressed files"]},

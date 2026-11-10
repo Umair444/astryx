@@ -58,15 +58,17 @@ def read_only_dsn(dsn: str) -> str:
 
 
 def _live_dsn(env: dict, live: Path):
-    if env.get("ASTRYX_DSN"):
-        return env["ASTRYX_DSN"]
+    """env's ASTRYX_DSN, else the live tree's .env line, through the ONE resolver (plan-11324 S3a); None if neither."""
+    if str(_SRC) not in sys.path:
+        sys.path.insert(0, str(_SRC))        # this tree's src/, in THIS (parent) process only; the child boots its own
+    from astryx import config
     try:
-        for ln in (live / ".env").read_text().splitlines():
-            if ln.startswith("ASTRYX_DSN="):
-                return ln.split("=", 1)[1].strip()
-    except OSError:
-        pass
-    return None
+        return config.dsn(live / ".env", environ=env)
+    except (LookupError, OSError):
+        return None
+
+
+_SRC = Path(__file__).resolve().parents[1] / "src"
 
 
 def child_env(env=None, live: Path = LIVE) -> dict:
@@ -117,7 +119,7 @@ def main(argv=None) -> int:
     if extract == LIVE:
         print("review_live: the extract IS the live repo; run the command directly", file=sys.stderr)
         return 2
-    if not (LIVE / "triggers").is_dir():
+    if not (LIVE / "triggers").is_dir():   # org-home: LIVE is the live repo by name (the review's subject)
         print(f"review_live: WARNING {LIVE} holds no triggers/: it is not the live host's tree", file=sys.stderr)
     try:
         env = child_env()

@@ -24,7 +24,7 @@ import urllib.request
 from pathlib import Path
 
 import astryx
-from astryx import config, paths, tree
+from astryx import config, orgs, paths, tree
 from astryx.ui import UI
 
 RUNNER = subprocess.run            # seam: tests replace it
@@ -36,11 +36,11 @@ FULL_CONTROL = ("Agents get full control of this machine: sudo, and Claude Code 
 
 CHANNELS = {
     "telegram": {"key": "TG_BOT_TOKEN", "ask": "Telegram bot token (from @BotFather)",
-                 "routes": "bridges/routes-telegram.json", "unit": "astryx-telegram.service"},
+                 "routes": "bridges/routes-telegram.json", "unit": "astryx-telegram"},
     "discord": {"key": "DISCORD_BOT_TOKEN", "ask": "Discord bot token (Developer Portal → Bot → Reset Token)",
-                "routes": "bridges/routes-discord.json", "unit": "astryx-discord.service"},
+                "routes": "bridges/routes-discord.json", "unit": "astryx-discord"},
     "whatsapp": {"key": "WA_WEBHOOK_SECRET", "ask": "WhatsApp webhook secret (press Enter to generate one)",
-                 "routes": "bridges/routes-whatsapp.json", "unit": "astryx-whatsapp.service", "generate": True},
+                 "routes": "bridges/routes-whatsapp.json", "unit": "astryx-whatsapp", "generate": True},
 }
 
 
@@ -227,7 +227,7 @@ def cmd_init(ctx: Ctx, a) -> int:
     ui.step("ok", "bootstrap complete")
 
     ui.section("5  Handoff")
-    if run(["tmux", "has-session", "-t", "=ax-seed"], capture=True).returncode == 0:
+    if run([*orgs.tmux(), "has-session", "-t", "=ax-seed"], capture=True).returncode == 0:
         ui.step("ok", "the seed is up; it will walk you through the rest")
     else:
         ui.step("skip", "the seed isn't up yet", fix="astryx spawn seed")
@@ -247,11 +247,44 @@ def cmd_doctor(ctx: Ctx, a) -> int:
         ctx.ui.blank()
         ctx.ui.note("  next: astryx init" if ok else "  fix the ✗ lines, then: astryx init")
         return 0 if ok else 1
-    return init_sh(ctx, "doctor")
+    bad = org_checks(ctx)
+    rc = init_sh(ctx, "doctor")
+    return rc or (1 if bad else 0)
+
+
+def org_checks(ctx: Ctx) -> int:
+    """The org's two shared tables, judged by their ONE authorities (plan-11860 E2/E5): every routes file by the
+    validator every bridge resolves through, and the .env for a key held twice (read_env is first-wins, systemd's
+    EnvironmentFile last-wins: a duplicate is a value two readers disagree on). Names and problems only, never a value.
+    Returns how many failed."""
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))      # this tree's repo root: its bridges/ package
+    from bridges import routing                                         # the SAME validator the bridges and the PUT use
+    ui, bad = ctx.ui, 0
+    ui.section("org tables")
+    for name, ch in CHANNELS.items():
+        f = ctx.root / ch["routes"]
+        if not f.is_file():
+            continue
+        try:
+            rows = json.loads(f.read_text())
+            probs = routing.validate(rows, {p.stem for p in (ctx.home / "agents").rglob("*.md")
+                                            if not p.name.endswith(".example.md")} or None)
+        except ValueError as e:
+            probs = [f"does not parse ({type(e).__name__}): the bridges keep their last good table until it does"]
+        bad += bool(probs)
+        ui.step("fail" if probs else "ok", f"routes: {ch['routes']}", detail="; ".join(probs) or None,
+                fix="edit it in the observatory's Wiring tab (it validates), or by hand" if probs else None)
+    dups = config.duplicate_keys(_env_file(ctx))
+    bad += bool(dups)
+    ui.step("fail" if dups else "ok", ".env holds each key once",
+            detail=("held twice: " + ", ".join(dups)) if dups else None,
+            fix="keep one line per key (the bridges read the LAST, everything else the FIRST)" if dups else None)
+    return bad
 
 
 def _residents() -> list[str]:
-    names = out(["tmux", "ls", "-F", "#{session_name}"]).splitlines()
+    names = out([*orgs.tmux(), "ls", "-F", "#{session_name}"]).splitlines()
     return sorted(n[3:] for n in names if n.startswith("ax-"))
 
 
@@ -265,7 +298,7 @@ def _services() -> list[tuple[str, str]]:
 
 
 def _pulse_next() -> str:
-    raw = out(["systemctl", "list-timers", "astryx-pulse.timer", "--all", "-o", "json"])
+    raw = out(["systemctl", "list-timers", orgs.unit("astryx-pulse", "timer"), "--all", "-o", "json"])
     try:
         t = json.loads(raw)[0]
     except (ValueError, IndexError, KeyError):
@@ -311,7 +344,7 @@ def cmd_status(ctx: Ctx, a) -> int:
         except ValueError:
             ui.step("skip", "pulse pause declared", fix="astryx pause status")
     nxt = _pulse_next()
-    timer_on = dict(svcs).get("astryx-pulse.timer", "").startswith("active")
+    timer_on = dict(svcs).get(orgs.unit("astryx-pulse", "timer"), "").startswith("active")
     ui.step("ok" if timer_on and nxt else "skip", f"pulse timer: {nxt or 'not installed'}",
             fix=None if timer_on or not nxt else "astryx up")
     ov = _overview()
@@ -329,10 +362,13 @@ def _can_sudo() -> bool:
 
 
 def _unit_files() -> list[str]:
+    """THIS org's installed units: the plain names on one org (no `@`), its own `<stem>@<org>.*` instances on several
+    (plan-11324 S3b: never another org's)."""
+    o = orgs.name()
     names = []
     for line in out(["systemctl", "list-unit-files", "astryx-*", "--no-legend"]).splitlines():
         n = line.split()[0] if line.split() else ""
-        if n and "@" not in n:
+        if n and ("@" not in n if o is None else n.rsplit(".", 1)[0].endswith(f"@{o}")):
             names.append(n)
     return names
 
@@ -361,14 +397,14 @@ def cmd_up(ctx: Ctx, a) -> int:
     root = ctx.need_root()
     ctx.ui.header("up")
     units = _unit_files()
-    svcs = [u for u in units if u.endswith(".service") and u != "astryx-pulse.service"]
+    svcs = [u for u in units if u.endswith(".service") and u != orgs.unit("astryx-pulse")]
     if not units:
         raise CliError("no astryx units are installed yet", fix="astryx init   (it prints the install lines)")
     lines = [["sudo", "systemctl", "start", *svcs]] if svcs else []
     if (ctx.home / "var" / "org_pause.json").is_file():
         lines.append([str(root / "scripts" / "pause.sh"), "off"])
     else:
-        lines.append(["sudo", "systemctl", "start", "astryx-pulse.timer"])
+        lines.append(["sudo", "systemctl", "start", orgs.unit("astryx-pulse", "timer")])
     return _do(ctx, lines, a)
 
 
@@ -376,7 +412,7 @@ def cmd_down(ctx: Ctx, a) -> int:
     root = ctx.need_root()
     ctx.ui.header("down", "the pulse is paused WITH a declared reason, so the witness reads PAUSED, not DOWN")
     reason = a.reason or f"astryx down by {getpass.getuser()}"
-    svcs = [u for u in _unit_files() if u.endswith(".service") and u != "astryx-pulse.service"]
+    svcs = [u for u in _unit_files() if u.endswith(".service") and u != orgs.unit("astryx-pulse")]
     lines = [[str(root / "scripts" / "pause.sh"), "on", reason]]
     if svcs:
         lines.append(["sudo", "systemctl", "stop", *svcs])
@@ -487,7 +523,7 @@ def cmd_channels(ctx: Ctx, a) -> int:
     env = config.read_env(_env_file(ctx))
     rows = []
     for name, ch in CHANNELS.items():
-        state = out(["systemctl", "is-active", ch["unit"]]) or "inactive"
+        state = out(["systemctl", "is-active", orgs.unit(ch["unit"])]) or "inactive"   # this org's (S3b)
         rows.append((name, "set" if env.get(ch["key"]) else "missing",
                      "yes" if (root / ch["routes"]).is_file() else "no", state))
     ctx.ui.table("", ["channel", "credential", "routes", "bridge"], rows)

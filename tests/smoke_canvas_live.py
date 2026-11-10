@@ -13,7 +13,19 @@ from pathlib import Path
 import httpx
 
 REPO = Path(__file__).resolve().parent.parent
-KEY = next((l.split("=", 1)[1].strip() for l in (REPO / ".env").read_text().splitlines()
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+KEY = next((l.split("=", 1)[1].strip() for l in (ESTATE / ".env").read_text().splitlines()
             if l.startswith("OBS_KEY=")), "")
 BASES = sys.argv[1:] or ["http://127.0.0.1:8090/canvas", "http://127.0.0.1:8091/canvas"]
 fails = 0

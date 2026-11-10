@@ -28,6 +28,18 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 EXIT_SKIP = 77
 
 
@@ -55,14 +67,10 @@ def want(label, cond):
 
 
 def dsn():
-    if os.environ.get("ASTRYX_DSN"):
-        return os.environ["ASTRYX_DSN"].strip()
-    env = REPO / ".env"
-    if env.exists():
-        for line in env.read_text().splitlines():
-            if line.startswith("ASTRYX_DSN="):
-                return line[len("ASTRYX_DSN="):].strip().strip('"').strip("'")
-    return None
+    try:                     # the ONE resolver (astryx.config.dsn): the environment first, else the estate's .env
+        return _astryx("config", "dsn", ESTATE / ".env")
+    except LookupError:
+        return None
 
 
 ADMIN_DSN = dsn()

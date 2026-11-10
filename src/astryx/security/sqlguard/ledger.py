@@ -13,6 +13,8 @@ generated FROM:
                 (triggers/ sensors/ agents/ memory/ local.md). The estate isn't in git, so this is the only thing
                 that lets anyone audit the seed against its inputs later (a3 #22254).
   counts        per rung.
+  (the header is evidence.stamp(), report.json's own shape, plan-11908 D1: + covering_sha, env hashes, the seal)
+admit and shrink act only on a report.json stamped at THIS tree's tuple (commit, estate, env); otherwise NOT SEARCHED.
 B1 turns the rules on:
 - RED on a NEW site below RESPONSIVE; RED on a listed row whose site has since climbed (forces shrink).
 - The generator only ever SHRINKS; growth needs `--admit <site> <reason>`.
@@ -21,12 +23,11 @@ Graded DETECTION: a same-uid actor can hand-edit this file.
 import datetime
 import hashlib
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-from astryx.security.sqlguard import judge
+from astryx.security.sqlguard import evidence, judge
 from astryx.security.sqlguard import privacy
 from astryx.security.sqlguard.privacy import ledger_key, text_key
 
@@ -70,10 +71,28 @@ def estate_hash(root: Path = REPO, source_root: Path = None) -> dict:
         elif p.is_dir():
             files += [f for f in p.rglob("*") if f.is_file() and "__pycache__" not in f.parts
                       and not f.name.endswith(".pyc")]
-    h = hashlib.sha256()
+    h, code, n_code = hashlib.sha256(), hashlib.sha256(), 0
     for f in sorted(files, key=lambda x: str(x.relative_to(root))):
-        h.update(f"{f.relative_to(root)}\0{hashlib.sha256(f.read_bytes()).hexdigest()}\n".encode())
-    return {"estate_hash": h.hexdigest(), "estate_files": len(files)}
+        rel = f.relative_to(root)
+        line = f"{rel}\0{hashlib.sha256(f.read_bytes()).hexdigest()}\n".encode()
+        h.update(line)
+        if _inventoried(rel):
+            code.update(line)
+            n_code += 1
+    # estate_code_hash: only the estate files the INVENTORY reads, the grade's estate inputs. The whole-estate hash moves
+    # with every runner log and store row (a3 R-1 #62830: 13 files in 30 min of a stand-down), so it's informational.
+    return {"estate_hash": h.hexdigest(), "estate_files": len(files),
+            "estate_code_hash": code.hexdigest(), "estate_code_files": n_code}
+
+
+def _inventoried(rel: Path) -> bool:
+    """inventory._py_files' predicate on one estate path, without walking: a .py outside SKIP_DIRS and EXCLUDED_ROOTS.
+    Differs from the walk in two ways (a3 N-5 #62836): estate_hash's rglob doesn't follow a symlinked dir, which the
+    inventory's os.walk(followlinks=True) does (0 under the estate, measured 10-24), and it doesn't prune nested
+    checkouts, which only makes the hash stricter."""
+    from astryx.security.sqlguard import inventory
+    return (rel.suffix == ".py" and not (set(rel.parts[:-1]) & inventory.SKIP_DIRS)
+            and rel.parts[0] not in inventory.EXCLUDED_ROOTS)
 
 
 def seed(trace_dir: str) -> dict:
@@ -85,11 +104,15 @@ def seed(trace_dir: str) -> dict:
         if s["rung"] != "RESPONSIVE":
             rung = "NOT-SEARCHED-AT-SEED" if s["rung"] == "NOT SEARCHED" else s["rung"]
             rows[ledger_key(key)] = {"debt": rung, "reason": "seed", "tk": text_key(key)}     # P1: a gitignored origin → a digest
-    commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True,
-                            text=True).stdout.strip()
-    header = {"commit": commit, "generated_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+    if privacy.ERRORS:                       # a3 D-P, FIRST: the rows above are the keys it couldn't classify
+        raise SystemExit(f"refusing to write the ledger: privacy classification failed "
+                         f"({len(privacy.ERRORS)}): {privacy.ERRORS[:3]}")
+    if "seal" not in rep:                    # never a header with no seal: that is the unsealed grade D2 refuses
+        raise SystemExit("refusing to seed: NOT SEARCHED: report carries no seal")
+    st = evidence.stamp(REPO, sl=rep["seal"])            # the ONE stamp (plan-11908 D1), the report's own shape
+    st["covering_sha"] = rep.get("covering_sha")
+    header = {**st, "generated_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
               "run": (Path(trace_dir) / "run_id").read_text().strip() if (Path(trace_dir) / "run_id").exists() else "",
-              **estate_hash(REPO, Path(os.environ.get("ASTRYX_SQLGUARD_ESTATE_SRC") or REPO)),
               "sites_total": len(rep["sites"]), "debt_rows": len(rows), "counts": rep["counts"],
               "untraced_children": rep["untraced_children"]}
     # EX1/EX2: the extractors DERIVED from this run are listed, each with its gates, a reason, an observable TRIP
@@ -112,6 +135,16 @@ def seed(trace_dir: str) -> dict:
     return header
 
 
+def _report(trace_dir: str) -> dict:
+    """The run's report.json, only if it was judged at THIS tuple (plan-11908 D1): the same commit, estate and env as
+    this process. Otherwise the grades it carries are about another tree, and acting on them is NOT SEARCHED."""
+    rep = json.loads((Path(trace_dir) / "report.json").read_text())
+    diff = evidence.compare(rep.get("stamp"), evidence.stamp(REPO))
+    if diff:
+        raise SystemExit("refusing: NOT SEARCHED: " + "; ".join(diff))
+    return rep
+
+
 def admit(trace_dir: str, site: str, reason: str, path: Path = None) -> str:
     """The ONLY growth path (R4). `site` is the handle an R-NEW line prints: a sha256 digest for a gitignored
     origin, else `path::qualname :: text`. The site must exist in THIS run's report (report.json, written by
@@ -121,7 +154,7 @@ def admit(trace_dir: str, site: str, reason: str, path: Path = None) -> str:
     reason = (reason or "").strip()
     if not reason or reason == "seed":
         raise SystemExit("refusing: an admit needs a real reason (it is printed every run)")
-    rep = json.loads((Path(trace_dir) / "report.json").read_text())
+    rep = _report(trace_dir)
     hits = [k for k in rep["sites"] if site in (k, ledger_key(k), privacy.label(k))]
     if privacy.ERRORS:
         raise SystemExit(f"refusing: privacy classification failed ({len(privacy.ERRORS)})")
@@ -152,7 +185,7 @@ def shrink(trace_dir: str, path: Path = None) -> tuple:
     Never grows the debt. Refuses a run-level NOT SEARCHED run (with triggers/ absent every gitignored site would
     read as vanished) and privacy errors. Returns (removed, moved), shown hashed for gitignored origin."""
     path = path or LEDGER
-    rep = json.loads((Path(trace_dir) / "report.json").read_text())
+    rep = _report(trace_dir)
     if privacy.ERRORS:
         raise SystemExit(f"refusing: privacy classification failed ({len(privacy.ERRORS)})")
     if rep.get("run_not_searched"):

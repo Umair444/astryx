@@ -25,14 +25,13 @@ RUNGS. UNEXECUTED → EXECUTED → RESPONSIVE (CORRECT belongs to the mutant bat
   own trace is the map, and the report says so.
 """
 import collections
-import glob
 import json
 import os
 import re
 import sys
 from pathlib import Path
 
-from astryx.security.sqlguard import drivers, inventory
+from astryx.security.sqlguard import drivers, evidence, inventory
 from astryx.security.sqlguard.normalize import is_site, is_write
 
 REPO = inventory.REPO
@@ -51,10 +50,14 @@ def _live_db():
     return conninfo_to_dict(live_dsn()).get("dbname")
 
 
-def load_traces(d, untraced=None):
+def load_traces(d, sl, untraced=None):
+    """GRADER reader (plan-11908 D3): exactly the sealed prefixes of d's trace files, never a glob of whatever is
+    there now (evidence.py). Returns (records, shim_errors, changed, post_seal_notes); a changed sealed file is the
+    caller's NOT SEARCHED."""
+    texts, changed, notes = evidence.read_sealed(d, sl)
     recs, shim_errors = [], 0
-    for f in sorted(glob.glob(os.path.join(d, "trace-*.jsonl"))):
-        for line in open(f, errors="replace"):
+    for name in sorted(t for t in texts if t.startswith("trace-")):
+        for line in texts[name].splitlines():
             try:
                 r = json.loads(line)
             except ValueError:
@@ -67,17 +70,16 @@ def load_traces(d, untraced=None):
                     untraced.setdefault(r["untraced_child"], set()).add(r.get("gate", ""))
             else:
                 recs.append(r)
-    return recs, shim_errors
+    return recs, shim_errors, changed, notes
 
 
-def load_gates(d):
+def load_gates(d, sl):
+    """gates.tsv's SEALED prefix (a1 BC-1 #62653): a gate rc appended after the verdict, enforce's own, is post-seal."""
     out = {}
-    p = os.path.join(d, "gates.tsv")
-    if os.path.exists(p):
-        for line in open(p):
-            label, _, rc = line.rstrip("\n").rpartition("\t")
-            if label:
-                out[label] = int(rc)
+    for line in evidence.read_sealed(d, sl)[0].get("gates.tsv", "").splitlines():
+        label, _, rc = line.rpartition("\t")
+        if label:
+            out[label] = int(rc)
     return out
 
 
@@ -108,17 +110,20 @@ def attribute(rec, fns, oracle=None):
     return None, t, "blind"
 
 
-def judge(trace_dir, inv=None, covering=None, stored_covering=None):
+def judge(trace_dir, inv=None, covering=None, stored_covering=None, seal=None):
     """covering REPLACES the map (tests); stored_covering (the ledger's, from the last clean run, keyed by
     privacy.ledger_key) is UNIONED with this run's. That's what lets a site whose covering gate crashed before
     reaching it grade NOT SEARCHED instead of a false UNEXECUTED: this run's trace alone never names a gate for
-    a statement it didn't execute."""
+    a statement it didn't execute.
+    seal: grade from exactly this sealed evidence (a report's own, to re-judge it); None seals the dir NOW, before
+    any read, so everything appended after this instant (enforce's own SQL, a gate still running) is post-seal."""
+    sl = seal if seal is not None else evidence.seal(trace_dir)
     inv = inv or inventory.build()
     fns = inv["functions"]
     live = _live_db()
     untraced = {}
-    recs, shim_errors = load_traces(trace_dir, untraced)
-    gates = load_gates(trace_dir)
+    recs, shim_errors, changed, post_seal = load_traces(trace_dir, sl, untraced)
+    gates = load_gates(trace_dir, sl)
     ev = collections.defaultdict(lambda: {"ok": 0, "credited": 0, "fixture_ddl": 0, "zero": False, "pos": False,
                                           "p": {}, "gates": set(), "fallback": False, "write": False,
                                           "fx_zero": False, "fx_pos": False, "fx_p": {}})
@@ -232,6 +237,8 @@ def judge(trace_dir, inv=None, covering=None, stored_covering=None):
         run_not_searched.append(f"nested checkouts walked with no known source (the tree has no .git and ASTRYX_REPO_COMMON "
                                 f"is unset), maybe another branch's copy read as subject code: "
                                 f"{inv['other_checkouts_unclassified']}")
+    if changed:
+        run_not_searched.append(f"sealed evidence changed: {changed}")
     if shim_errors:
         run_not_searched.append(f"shim internal errors: {shim_errors}")
     return {"counts": dict(counts), "sites": sites, "blind": blind, "direct": direct, "oracle_own": oracle_own,
@@ -239,7 +246,8 @@ def judge(trace_dir, inv=None, covering=None, stored_covering=None):
             "run_not_searched": run_not_searched, "covering": covering, "gates": gates,
             "untraced_children": {k: sorted(v) for k, v in untraced.items()},
             "extractors": {k: sorted(v) for k, v in extractors.items()},
-            "extractors_static": inv["extractors"], "exempt": inv["exempt"], "excluded": inv.get("excluded", []), "records": len(recs)}
+            "extractors_static": inv["extractors"], "exempt": inv["exempt"], "excluded": inv.get("excluded", []), "records": len(recs),
+            "seal": sl, "post_seal": post_seal, "covering_sha": evidence.covering_sha(stored_covering)}
 
 
 REMAINDER = ("CEILING: RESPONSIVE = the WHERE and every computed bool responded. It never means CORRECT (that's the "
@@ -254,6 +262,8 @@ def print_report(rep):
           f" · blind={len(rep['blind'])} · direct={len(rep['direct'])} · oracle-own={rep['oracle_own']}")
     for n in rep["run_not_searched"]:
         print(f"  NOT SEARCHED (run): {n}")
+    for n in rep.get("post_seal", []):
+        print(f"  post-seal (not graded): {n}")
     for script, gs in sorted(rep["untraced_children"].items()):
         print(f"  NOT SEARCHED (untraced child): {script} was launched with a cleared env by {gs}")
     from astryx.security.sqlguard.privacy import ignored
@@ -269,8 +279,11 @@ def print_report(rep):
 
 
 def write_report(d, rep):
+    """report.json, STAMPED (plan-11908 D1): the tuple this grade was judged from, for every consumer to compare."""
+    st = evidence.stamp(REPO, sl=rep.get("seal"))
+    st["covering_sha"] = rep.get("covering_sha")          # the covering judge was HANDED, not today's ledger's
     with open(os.path.join(d, "report.json"), "w") as f:
-        json.dump(rep, f, indent=1, default=sorted)
+        json.dump({**rep, "stamp": st}, f, indent=1, default=sorted)
 
 
 if __name__ == "__main__":                            # report-only; check.sh runs enforce, which calls judge()

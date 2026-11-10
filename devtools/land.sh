@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--no-push]
+# land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--known-red <test>]... [--no-push]
 #
 # The merger's half of a merge-ready marker, as one command (seed night-review 10-16). By hand it was six steps, done
 # six times on 10-15 alone, and each one has a failure on record:
@@ -22,25 +22,57 @@
 #   6. the push's rc is READ before the receipt is printed (10-11: "rc 0" reported for a run that was rc 124).
 # Output ends with one RECEIPT line built from what git and the rcs said, never from the arguments' spelling.
 # rc 0 landed (and pushed unless --no-push); 1 refused or red (main unchanged); 2 usage; 3 merged and green but the
-# push failed (main is ahead of origin: the merge_ready watch shows it as MERGED, NOT PUSHED); 4 RED and the rollback
+# push failed (main is ahead of origin: the merge_ready watch shows it as MERGED, NOT PUSHED; the refused push's gate
+# lines are printed as "push gate:"); 4 RED and the rollback
 # FAILED: main is at the red B, unpushed (a4 #56483 R3; reset it by hand, the RECEIPT line says to what).
+# KNOWN-RED (seed night-review 10-18; a4 #56861's LIMIT, hit on 10-16 and again on S3a 10-18, both landed by an unreviewed
+# hand script): `--known-red tests/test_x.py` names a test_*.py already red on MAIN. It is MEASURED, never declared: the
+# base's version runs on main BEFORE the merge (green there = refused: the range would be what made it red), and after
+# the merge B's run passes as KNOWN-RED only if every failing line it prints (FAIL*, ✗, ✘, NOT RUN; trimmed) was also
+# printed by the base run, so a range may NARROW a red test but never add a failure to it. A whitelist of failure
+# spellings fails OPEN on any other shape (a4 #59276), so three more refusals close it: B printed a Traceback main
+# didn't (a crash, at import or mid-run, prints no FAIL line); B printed FEWER verdict lines (PASS/FAIL*/SKIP/✓/✗/✘/
+# NOT RUN) than main (an arm that crashed or was deleted looks exactly like one that was fixed); and B printing NO
+# failing line while still non-zero passes only where main printed none either and the rc is the same (the skip). A
+# mutants file can't be known-red (a NOT PROBED mutant is the range's own debt).
+# LIMIT: verdict LINES are compared, not detail printed under them (a FAIL whose list grew reads unchanged), and a FAIL
+# line carrying run-specific detail (a pid, a tmp path, check()'s [detail] tail) never matches across sides, so that
+# test can't be known-red at all (refused: closed, not open). An honest range that narrows AND retires an arm is
+# refused on the count; that one lands with a reviewer's measurement, not here. Both sides' lines are printed.
+# A new failure in a spelling outside FAIL*/ERROR/SURVIVED/✗/✘/NOT RUN, with the arm count kept, still reads as known
+# (a4 #59280 B1): the whitelist is measured, not assumed. Re-run the census of the helpers' spellings when it matters:
+#   command grep -rhoE "'[A-Z✓✗✘ ]{2,12}' if [a-z_]+ else '[A-Z✓✗✘ ]{2,12}'" tests/test_*.py | sort | uniq -c
+# (10-18: PASS|FAIL x175, FAIL|OK x3, KILLED|SURVIVED x1). Tracebacks are compared by COUNT, so where main's red is
+# itself a crash, B crashing differently is guarded only by the failing lines and the verdict count. A FAIL line that
+# names a rotating artifact (test_backup_inputs names the newest backup) changes if the 04:00 backup lands between the
+# base run and B's: that land is refused (closed), and re-running it is the fix.
 set -uo pipefail
 die() { echo "land: $*"; exit 2; }
 refuse() { echo "land: REFUSED: $*"; exit 1; }
 sha() { git rev-parse --verify -q "$1^{commit}" 2>/dev/null; }
 
-RANGE=""; BODIES=(); EXTRA=(); PUSH=1
+RANGE=""; BODIES=(); EXTRA=(); KNOWN=(); PUSH=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --body) [ $# -ge 2 ] || die "--body needs <path>=<sha256-prefix>"; BODIES+=("$2"); shift 2;;
     --test) [ $# -ge 2 ] || die "--test needs a file"; EXTRA+=("$2"); shift 2;;
+    --known-red) [ $# -ge 2 ] || die "--known-red needs a tests/test_*.py"; KNOWN+=("$2"); shift 2;;
     --no-push) PUSH=0; shift;;
     *..*) [ -z "$RANGE" ] || die "one range only"; RANGE=$1; shift;;
-    *) die "usage: land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--no-push]";;
+    *) die "usage: land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--known-red <test>]... [--no-push]";;
   esac
 done
-[ -n "$RANGE" ] || die "usage: land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--no-push]"
+[ -n "$RANGE" ] || die "usage: land.sh <A>..<B> [--body <path>=<sha256-prefix>]... [--test <file>]... [--known-red <test>]... [--no-push]"
 cd "$(git rev-parse --show-toplevel 2>/dev/null)" || die "not in a git repo"
+# No gate sees the HOST's org registry either (plan-11324 S3f S3, seed #60778 item 4). /etc/astryx/cog.json is a host
+# FILE that no env scrub removes, so in a cog every range test would run under multi. Pinned to a path that names no file, a
+# gate runs as this checkout's own org, which in a cog is the PRIMARY's (its HOME is the checkout), exactly as before the
+# cog; an oracle that needs a cog builds its own registry and names it, as every one does. Before the first estate read.
+export ASTRYX_COG_REGISTRY="${TMPDIR:-/tmp}/astryx-gate-$$-no-registry/cog.json"
+# An AMBIENT fixture admin DSN (a caller's shell exported it) would reach every range test, the land judge's oracles and
+# every child: removed here, before anything runs. The mutation probe gets it back from .env alone (PROBE_ENV below),
+# check.sh's read-and-unset shape (a3 R-10 #62871).
+unset ASTRYX_FIXTURE_ADMIN_DSN
 PY=${PY:-venv/bin/python}; [ -x "$PY" ] || PY=python3
 PROBE=${LAND_PROBE:-devtools/mutation_probe.py}
 TEST_TIMEOUT=${LAND_TEST_TIMEOUT:-900}
@@ -72,28 +104,137 @@ done
 
 TESTS=()
 while IFS= read -r f; do TESTS+=("$f"); done < <(git diff --name-only --diff-filter=AMR "$A_SHA" "$B_SHA" -- 'tests/test_*.py' 'tests/mutants_*.py')
-for t in ${EXTRA[@]+"${EXTRA[@]}"}; do TESTS+=("$t"); done
+for t in ${EXTRA[@]+"${EXTRA[@]}"}; do
+  t=$(realpath -m --relative-to=. "$t")                             # ./tests/x.py and tests/x.py are one test
+  case " ${TESTS[*]-} " in *" $t "*) ;; *) TESTS+=("$t");; esac    # a --test the range already names runs once
+done
+# S2F (seed #61742, goal 10224): a range that changes the REACHABILITY gate's population (adds or deletes a script in its
+# domain; a rename is both) also runs that gate, though it touches no test of it. A range's own tests never judge a new
+# script's reachability, and pushed_tree_check reads the gate as 77 (no triggers/, units/, runners.conf), so main went
+# RED on the live tree twice on 10-21 (add-org-parity's shims, a4's rebase_equiv). The DOMAIN is the gate's own
+# (`--in-domain` filters paths by test_reachability's rule), never a copy here; a query that fails runs the gate anyway.
+# LIMIT: an edit that drops a script's only invoker (check.sh no longer runs it) changes no membership: not caught here.
+REACH=tests/test_reachability.py; REACH_WHY=""
+if [ -f "$REACH" ]; then
+  members=$(git diff --name-only --no-renames --diff-filter=AD "$A_SHA" "$B_SHA" \
+            | env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$REACH" --in-domain 2>/dev/null); mrc=$?
+  if [ $mrc -ne 0 ]; then
+    REACH_WHY="its domain query failed, rc $mrc, so it runs anyway"
+  elif [ -n "$members" ]; then
+    REACH_WHY="the range adds or deletes $(printf '%s\n' "$members" | grep -c .) script(s) in its population: $(echo $members)"
+  fi
+  if [ -n "$REACH_WHY" ]; then
+    case " ${TESTS[*]-} " in *" $REACH "*) ;; *) TESTS+=("$REACH");; esac
+    echo "land: + $REACH: $REACH_WHY"
+  fi
+fi
+# plan-12214 R-2 (a2 msg 65118): a range that changes a schema file also runs tests/test_schema_current.py, so code that
+# needs a column never lands on an org whose database lacks it. Every org's pulse runs this checkout and this script
+# applies no schema, so without it a lagging org fails every tick with only a journal line. Apply first:
+# devtools/org_apply.py --all. A list read into a variable, never `| grep -q` (L17: pipefail).
+SCHEMA_GATE=tests/test_schema_current.py; SCHEMA_WHY=""
+if [ -f "$SCHEMA_GATE" ]; then
+  sch=$(git diff --name-only "$A_SHA" "$B_SHA" -- 'src/astryx/sql/*.sql')
+  if [ -n "$sch" ]; then
+    SCHEMA_WHY="the range changes $(echo $sch)"
+    case " ${TESTS[*]-} " in *" $SCHEMA_GATE "*) ;; *) TESTS+=("$SCHEMA_GATE");; esac
+    echo "land: + $SCHEMA_GATE: $SCHEMA_WHY"
+  fi
+fi
 [ ${#TESTS[@]} -gt 0 ] || refuse "the range touches no tests/test_*.py or tests/mutants_*.py and no --test was given"
 
+failset() { printf '%s\n' "$1" | grep -E '^[[:space:]]*(FAIL[A-Za-z]*|ERROR|SURVIVED|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sort -u; }
+verdicts() { printf '%s\n' "$1" | grep -cE '^[[:space:]]*(PASS|OK|KILLED|FAIL[A-Za-z]*|ERROR|SURVIVED|SKIP|✓|✗|✘|NOT RUN)([[:space:]:(]|$)'; }
+crashes() { printf '%s\n' "$1" | grep -c '^Traceback (most recent call last)'; }
+declare -A BASE_RC=() BASE_FAILS=() BASE_N=() BASE_TB=()
+for k in ${KNOWN[@]+"${KNOWN[@]}"}; do
+  k=$(realpath -m --relative-to=. "$k")                             # spelled as TESTS are
+  case "$(basename "$k")" in test_*.py) ;; *) die "--known-red $k: only a tests/test_*.py can be known-red (a mutant NOT PROBED is the range's own debt)";; esac
+  case " ${TESTS[*]} " in *" $k "*) ;; *) die "--known-red $k is not a test this land runs (not in the range, no --test)";; esac
+  [ -f "$k" ] || refuse "--known-red $k has no version on main: red on main can't be measured"
+  out=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$k" 2>&1); rc=$?
+  [ $rc -ne 0 ] || refuse "--known-red $k is GREEN on main ${OLD:0:12}: if it is red at B, the range made it red"
+  BASE_RC[$k]=$rc; BASE_FAILS[$k]=$(failset "$out"); BASE_N[$k]=$(verdicts "$out"); BASE_TB[$k]=$(crashes "$out")
+  echo "land: known-red $k on main ${OLD:0:12}: rc $rc, $(printf '%s' "${BASE_FAILS[$k]}" | grep -c .) failing line(s) of ${BASE_N[$k]} verdict line(s)"
+done
+
+# WORKFLOW ATTRIBUTION (plan-11324 S4, steward #60232): a commit naming a goal that carries a workflow must name one of
+# its tasks ("plan-<goal> <task>:" or a `Task: <goal>/<id>` trailer), or the task's Gantt bar never sees the work.
+# Refused BEFORE the merge, so the author re-words it while it is still a branch. No database: said, not passed.
+wl=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" src/astryx/workflow.py lint "$A_SHA..$B_SHA" 2>&1); wrc=$?
+# Refused only when the two instruments agree: rc 3 (findings) AND at least one UNATTRIBUTED line. A crash (1), no
+# database (2), a timeout (124), or rc 3 with no line all read NOT CHECKED, said, never a refusal (a1 #60239).
+if [ $wrc -eq 3 ] && grep -q '^UNATTRIBUTED ' <<<"$wl"; then   # a here-string, never `printf | grep -q` (pipefail + SIGPIPE: S2F, seed #61794)
+  printf '%s\n' "$wl" | grep '^UNATTRIBUTED ' | sed 's/^/land: /'
+  refuse "the range has commits naming a workflow goal but none of its tasks (re-word them: plan-<goal> <task>: …)"
+elif [ $wrc -ne 0 ]; then
+  echo "land: workflow attribution NOT CHECKED (rc $wrc): $(printf '%s' "$wl" | tail -1)"
+fi
 git merge -q --ff-only "$B_SHA" || refuse "git merge --ff-only failed"
 echo "land: main ${OLD:0:12} -> ${B_SHA:0:12}"
 RED=0; RESULTS=()
+# A DB-needing mutants file probes a fresh COPY of the tree, which has no .env, so its oracle read 77 and the probe
+# refused (plan-11908 D5's first land). The fixture admin DSN is derived from this checkout's .env, never printed, and
+# handed to the PROBE INVOCATION ALONE as a prefix (a3 #62868): never exported, so no range test, gate or child of
+# land.sh sees a superuser DSN, and no report written here carries it in its stamp. tests/test_land.py L18 holds it.
+PROBE_ENV=()
+[ -f .env ] && PROBE_ENV=("ASTRYX_FIXTURE_ADMIN_DSN=$("$PY" src/astryx/config.py dsn --file 2>/dev/null)")   # the ONE resolver
 for t in "${TESTS[@]}"; do
   [ -f "$t" ] || { echo "  ✗ $t: no such file at B"; RESULTS+=("$t missing"); RED=1; continue; }
   case "$(basename "$t")" in
-    mutants_*.py) out=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$PROBE" "$t" 2>&1); rc=$?;;
+    mutants_*.py) out=$(env -u ASTRYX_AGENT ${PROBE_ENV[@]+"${PROBE_ENV[@]}"} timeout "$TEST_TIMEOUT" "$PY" "$PROBE" "$t" 2>&1); rc=$?;;
     *)            out=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$t" 2>&1); rc=$?;;
   esac
   case "$(basename "$t")" in
     mutants_*.py) summary="$(printf '%s\n' "$out" | grep -c '^\s*CAUGHT') CAUGHT by the probe";;
     *)            summary=$(printf '%s\n' "$out" | grep -v '^\s*$' | tail -1 | cut -c1-80);;
   esac
+  if [ $rc -ne 0 ] && [ -n "${BASE_RC[$t]+x}" ]; then
+    now=$(failset "$out"); new=$(comm -23 <(printf '%s\n' "$now" | grep .) <(printf '%s\n' "${BASE_FAILS[$t]}" | grep .))
+    nv=$(verdicts "$out"); tb=$(crashes "$out"); why=""
+    if [ -n "$new" ]; then why="failing lines main did not print:"$'\n'"$new"
+    elif [ "$tb" -gt "${BASE_TB[$t]}" ]; then why="B crashed: a Traceback main did not print"
+    elif [ "$nv" -lt "${BASE_N[$t]}" ]; then why="B ran $nv verdict line(s), main ran ${BASE_N[$t]}: an arm crashed or was deleted, not fixed"
+    elif [ -z "$now" ] && { [ -n "${BASE_FAILS[$t]}" ] || [ "$rc" -ne "${BASE_RC[$t]}" ]; }; then
+      why="no failing line at B, yet rc $rc (main: rc ${BASE_RC[$t]}, $(printf '%s' "${BASE_FAILS[$t]}" | grep -c .) failing line(s))"
+    fi
+    if [ -z "$why" ]; then
+      echo "  ⚠ $t: rc $rc KNOWN-RED (main ${OLD:0:12}: rc ${BASE_RC[$t]}; every failing line was red there too):"
+      printf '%s\n' "$now" | grep . | sed 's/^/      /'
+      RESULTS+=("$(basename "$t") rc $rc KNOWN-RED (main rc ${BASE_RC[$t]})"); continue
+    fi
+    echo "  ✗ $t: rc $rc, KNOWN-RED refused:"
+    printf '%s\n' "$why" | sed 's/^/      /'; printf '%s\n' "$out" | tail -8 | sed 's/^/      | /'; RED=1
+    RESULTS+=("$(basename "$t") rc $rc"); continue
+  fi
   if [ $rc -eq 0 ]; then echo "  ✓ $t: rc 0 ($summary)"
   else echo "  ✗ $t: rc $rc"; printf '%s\n' "$out" | tail -15 | sed 's/^/      /'; RED=1; fi
   RESULTS+=("$(basename "$t") rc $rc")
 done
 dirtied=$( { git diff --name-only HEAD --; git status --porcelain --untracked-files=all -- tests devtools src | grep '^??' | cut -c4-; } | sort -u | head -10)
 if [ -n "$dirtied" ]; then echo "  ✗ the tests DIRTIED the tracked tree (a test that writes what git carries is a finding): $(echo $dirtied)"; RED=1; fi
+# THE LAND JUDGE (plan-11908 D6): a range that adds SQL sites is graded before it pushes: the range's test_*.py re-run
+# under the sqlguard shim here, at B, and every site the range introduced must be RESPONSIVE or listed. Not triggered
+# (no inventory built) when no .py outside tests/ changed. rc 77 (couldn't judge) is red, like every skip here.
+# The judge is MAIN's (OLD, before the merge), never the range's (a3 R-9 #62871): run from the tree after the ff it
+# would be B's own decide/judge/inventory/shim grading B, so a range editing the judge, or deleting it, graded itself.
+# OLD's src/astryx is extracted to a dir of its own and its landjudge runs over this tree at B; its children run with
+# -P, so A's sqlguard grades both sides. OLD without one (the land that ships it) says so: bootstrap.
+JUDGE_LINE=""
+LJ=src/astryx/security/sqlguard/landjudge.py
+if [ $RED -eq 0 ]; then
+  if git cat-file -e "$OLD:$LJ" 2>/dev/null; then
+    JT=$(mktemp -d "${TMPDIR:-/tmp}/land-judge.XXXXXX"); trap 'rm -rf "$JT"' EXIT
+    git archive "$OLD" src/astryx | tar -x -C "$JT"
+    ORACLES=(); for t in "${TESTS[@]}"; do case "$(basename "$t")" in test_*.py) ORACLES+=(--oracle "$t");; esac; done
+    jout=$(env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$JT/$LJ" "$A_SHA" "$B_SHA" --tree . ${ORACLES[@]+"${ORACLES[@]}"} 2>&1); jrc=$?
+    printf '%s\n' "$jout" | sed 's/^/  /'
+    JUDGE_LINE=$(printf '%s\n' "$jout" | grep '^land judge:' | tail -1 | cut -c1-160)
+    [ $jrc -eq 0 ] || { echo "  ✗ land judge rc $jrc"; RED=1; }
+  else
+    JUDGE_LINE="land judge: absent at A (bootstrap)"; echo "  $JUDGE_LINE"
+  fi
+fi
 if [ $RED -ne 0 ]; then
   if git reset -q --keep "$OLD" 2>/dev/null; then
     echo "land: RED: main rolled back to ${OLD:0:12}; nothing pushed"; exit 1
@@ -103,6 +244,9 @@ if [ $RED -ne 0 ]; then
 fi
 
 TAIL="range tests (not check.sh): $(IFS=';'; echo "${RESULTS[*]}")"
+[ -n "$REACH_WHY" ] && TAIL="$TAIL; $(basename "$REACH") ran because $REACH_WHY"
+[ -n "$SCHEMA_WHY" ] && TAIL="$TAIL; $(basename "$SCHEMA_GATE") ran because $SCHEMA_WHY"
+[ -n "$JUDGE_LINE" ] && TAIL="$TAIL; $JUDGE_LINE"
 [ ${#BODY_LINES[@]} -gt 0 ] && TAIL="$TAIL; live body sha256: $(IFS=','; echo "${BODY_LINES[*]}")"
 if [ $PUSH -eq 0 ]; then
   echo "RECEIPT: LANDED (not pushed, --no-push): ${A_SHA:0:12}..${B_SHA:0:12} fast-forwarded main ${OLD:0:12}..${B_SHA:0:12}; $TAIL"
@@ -111,6 +255,9 @@ fi
 pout=$(git push origin main 2>&1); prc=$?
 printf '%s\n' "$pout" | tail -2 | sed 's/^/  push: /'
 if [ $prc -ne 0 ]; then
+  # the pre-push gates' own verdict lines, so a refused push names its gate (10-16: e4dbbb3's label was lost to tail -2)
+  # tail, not head: check.sh's verdict block is the LAST thing pre-push prints, after every gate's own ✗ arms (a4 #57476)
+  printf '%s\n' "$pout" | grep -E '^FAILED \(|^[[:space:]]*✗' | tail -12 | sed 's/^/  push gate: /'
   echo "RECEIPT: LANDED, NOT PUSHED (push rc $prc): ${A_SHA:0:12}..${B_SHA:0:12} fast-forwarded main ${OLD:0:12}..${B_SHA:0:12}; $TAIL"
   exit 3
 fi

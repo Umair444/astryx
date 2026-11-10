@@ -32,6 +32,8 @@ import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
+from astryx import config, paths  # noqa: E402
 # resolvers.py is VENDORED beside this server (memory's admitted-only resolvers) so the
 # public tool survives a fresh clone — memory/graph/ is gitignored and absent in a clone.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -125,14 +127,16 @@ def window(text: str, query: str, width: int = 2400) -> str:
 
 # ── config ───────────────────────────────────────────────────────────────────────────
 def _env(key: str) -> str | None:
-    if os.environ.get(key):
-        return os.environ[key].strip()
-    env = REPO / ".env"
-    if env.exists():
-        for line in env.read_text().splitlines():
-            if line.startswith(key + "="):
-                return line[len(key) + 1:].strip().strip('"').strip("'")
-    return None
+    if key == "ASTRYX_DSN":          # the ONE resolver (plan-11324 S3a): the pair checked in a cog of several orgs
+        try:
+            return config.dsn(paths.estate(__file__) / ".env")
+        except LookupError:
+            return None
+    v = config.org_env(key)          # the environment on one org, exactly; the HOME's .env on several (plan-11324 S3a)
+    if v:
+        return v.strip()
+    v = config.read_env(paths.estate(__file__) / ".env").get(key)   # the ONE .env reader, per line (plan-10224 ENVREAD)
+    return None if v is None else v.strip('"').strip("'")
 
 
 # ── retrieval (page + one-hop = the exp-001 round-trip unit) ───────────────────────────

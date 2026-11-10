@@ -88,7 +88,7 @@ getent() { printf 'fe80::1  host.docker.internal\n'; }
 arm "(C8) an IPv6-only answer is not used → 172.17.0.1" "$(_docker_host_ip "$T/env")" 172.17.0.1
 unset -f ip getent
 arm "(C9) init.sh's generated whatsapp unit binds the resolved address, not a literal" \
-  "$(grep -c 'bridges.whatsapp:app --host $(_docker_host_ip) --port 8477' init.sh)" 1
+  "$(grep -cF 'bridges.whatsapp:app --host $(_docker_host_ip) --port ${_UP:-8477}' init.sh)" 1   # S3b 5/n: the org's port
 # every remaining mention is inside a comment (the text after a '#')
 arm "(C10) no hardcoded 172.17.0.1 left in init.sh's or deploy.sh's commands" \
   "$(grep -h '172\.17\.0\.1' init.sh scripts/deploy.sh | grep -vc '#.*172\.17\.0\.1')" 0
@@ -111,7 +111,7 @@ printf '{"info":{"project_urls":{"Source":"https://github.com/Umair444/astryx"}}
 out=$(PATH="$T/trap:$PATH" ASTRYX_PYPI_URL="file://$T/absent.json" ./install.sh --dry-run --dir "$T/home/astryx" </dev/null 2>&1); rc=$?
 arm   "(D2) dry-run on this box exits 0" "$rc" 0
 has   "(D2) says it is a dry run" "$out" "DRY RUN: printing every command, running none"
-has   "(D2) the dedicated-machine paragraph comes first" "$out" "agents get full control of this machine"
+has   "(D2) the dedicated-machine paragraph comes first" "$out" "agents get full control of this machine"  # org-home: message text, not a path
 has   "(D2) installs from git while PyPI has no astryx" "$out" "git clone https://github.com/Umair444/astryx $T/home/astryx"
 has   "(D2) hands over to ./init.sh (no CLI yet)" "$out" '$ ./init.sh'
 arm   "(D2) nothing ran: no sudo/pipx call, no clone on disk" "$( [ -e "$T/RAN" ] || [ -e "$T/home" ]; echo $?)" 1
@@ -226,5 +226,23 @@ has   "(D11) ...and says to re-run the same line" "$out" "run the same install l
 blk=$(sed -n '/^if \[ "${1:-}" = "whatsapp" \]/,/^fi/p' init.sh)
 leak=$(printf '%s\n' "$blk" | command grep -nE '^\s*(say|echo|printf)\b' | command grep -E '\$\{?[A-Z_]*SECRET' || true)
 arm   "(D12) no say/echo in the whatsapp block expands a \$..SECRET variable" "$leak" ""
+
+# D13 (plan-11324 S3b, a2 #59696 R-1): a host with an org registry runs several orgs, each on its own tmux server, so
+# the installer's "an org is running here" check is blind there. A REAL run (not --dry-run) must refuse before any
+# write: no clone, no pull, no pipx, no sudo. Positive control: the same run without the registry gets past the guard.
+# git and curl are trapped too: a mutant that drops the guard runs the REAL install path, and must write nothing
+for c in git curl; do printf '#!/bin/sh\necho "%s $*" >> "%s/RAN13"\n' "$c" "$T" > "$T/trap/$c"; chmod +x "$T/trap/$c"; done
+printf '{"orgs": {}}\n' > "$T/orgs.json"
+# INSTALL_SRC: a mutant installer (tests/mutants_install_registry.py); this arm and its control run it, the rest ./install.sh
+out=$(PATH="$T/trap:$PATH" ASTRYX_COG_REGISTRY="$T/orgs.json" ASTRYX_PYPI_URL="file://$T/absent.json" \
+      bash "${INSTALL_SRC:-./install.sh}" --yes --no-init --dir "$T/h13/astryx" </dev/null 2>&1); rc=$?
+arm   "(D13) a host with an org registry: a real run is refused (rc != 0)" "$( [ "$rc" != 0 ] && echo refused)" refused
+has   "(D13) ...naming the registry" "$out" "this install is a cog"
+arm   "(D13) ...before ANY write: no git, no pipx, no sudo, no clone" "$( [ -e "$T/RAN13" ] || [ -e "$T/RAN" ] || [ -e "$T/h13" ]; echo $?)" 1
+out=$(PATH="$T/trap:$PATH" ASTRYX_COG_REGISTRY="$T/no-registry.json" ASTRYX_PYPI_URL="file://$T/absent.json" \
+      bash "${INSTALL_SRC:-./install.sh}" --dry-run --dir "$T/h13b/astryx" </dev/null 2>&1)
+hasnt "(D13) positive control: no registry file, the guard stays out of the way" "$out" "this install is a cog"
+has   "(D13) ...and the run reaches its install step" "$out" "git clone https://github.com/Umair444/astryx $T/h13b/astryx"
+rm -f "$T/trap/git" "$T/trap/curl"
 
 [ "$fails" = 0 ] && echo PASS || { echo "FAIL ($fails)"; exit 1; }

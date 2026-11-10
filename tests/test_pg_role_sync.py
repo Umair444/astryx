@@ -79,6 +79,9 @@ except Exception as e:  # noqa: BLE001
     print(f"\n{'FAIL' if fails else 'SKIP (partial)'}: pure arms {'failed' if fails else 'passed'}")
     sys.exit(1 if fails else 77)
 
+sys.path.insert(0, str(REPO / "tests"))
+from _oracle_debris import reap  # noqa: E402  a KILLED run skips the finally: its LOGIN role is a harden-cut dependent
+reap(live)                       # (a2 #62900)
 role = f"astryx_fx_rot_sync_{os.getpid()}"
 placeholder = "placeholder-" + secrets.token_hex(4)      # not a secret: a throwaway role's initdb stand-in
 value = secrets.token_urlsafe(24)                         # the "restored ~/.pgpass" value, never printed

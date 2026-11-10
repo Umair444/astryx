@@ -22,7 +22,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # A setting from the process environment first (so a test run overrides it without WRITING a .env: a copied .env is a
 # second holder of the org's secrets), else from .env.
-envv() { if [ -n "${!1:-}" ]; then printf '%s\n' "${!1}"; else grep -m1 "^$1=" "$ROOT/.env" 2>/dev/null | cut -d= -f2- || true; fi; }
+# Through the ONE resolver (plan-11324 S3a): astryx.config's get is exactly this order on one org, and on a host that runs
+# several orgs it reads the org's HOME .env only (never an environment another org's process may have left).
+envv() { "$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" get "$1" 2>/dev/null || true; }
 ENABLED=$(envv ANDROID_ENABLED)
 LICENSE=$(envv ANDROID_SDK_LICENSE)
 SDK=$(envv ANDROID_SDK_ROOT); SDK=${SDK:-$HOME/Android/Sdk}; SDK=${SDK/#\~/$HOME}
@@ -60,9 +62,9 @@ installed() {
 }
 
 check() {
-  [ "$ENABLED" = 1 ] || { echo "off (ANDROID_ENABLED=1 in .env opts in)"; return 0; }
+  [ "$ENABLED" = 1 ] || { echo "off (ANDROID_ENABLED=1 in .env opts in)"; return 0; }   # org-home: a message
   kvm_ok || { echo "SKIP: /dev/kvm is missing or not usable by $(id -un): the emulator needs hardware virtualisation"; return 77; }
-  [ "$LICENSE" = accepted ] || { echo "the Android SDK licence isn't accepted: read https://developer.android.com/studio/terms, then put ANDROID_SDK_LICENSE=accepted in .env (the operator's act)"; return 3; }
+  [ "$LICENSE" = accepted ] || { echo "the Android SDK licence isn't accepted: read https://developer.android.com/studio/terms, then put ANDROID_SDK_LICENSE=accepted in .env (the operator's act)"; return 3; }   # org-home: a message
   installed && { echo "ready: $AVD at $SDK"; return 0; }
   echo "not installed (scripts/android_setup.sh install)"; return 1
 }
@@ -139,7 +141,7 @@ EOF
 }
 
 install() {
-  [ "$ENABLED" = 1 ] || { echo "off: ANDROID_ENABLED=1 in .env opts in"; return 0; }
+  [ "$ENABLED" = 1 ] || { echo "off: ANDROID_ENABLED=1 in .env opts in"; return 0; }   # org-home: a message
   kvm_ok || { echo "SKIP: no usable /dev/kvm"; return 77; }
   [ "$LICENSE" = accepted ] || { check || true; return 3; }
   local e name path sha sha1 dest top

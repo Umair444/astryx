@@ -49,8 +49,20 @@ from decimal import Decimal
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 SUBJECT = Path(os.environ.get("STALE_GOALS_SRC") or
-               (REPO / "triggers" / "steward" / "stale_goals.py"))
+               (ESTATE / "triggers" / "steward" / "stale_goals.py"))
 EXIT_SKIP = 77
 fails = []
 
@@ -277,6 +289,7 @@ import tempfile as _tf
 _real_git_log = mod["git_log"]
 _gr = Path(_tf.mkdtemp(prefix="t_sg_git_"))
 def _g(*a):
+    # own-env: git only, in this oracle's temp repo (a scratch author/committer env)
     return subprocess.run(["git", "-C", str(_gr), *a], capture_output=True, text=True,
                           env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(_gr),
                                "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t",
@@ -295,7 +308,7 @@ check("git_log on a directory that is no repo is None (loud), never an empty str
       _real_git_log(_nr) is None, repr(_real_git_log(_nr)))
 (_gr / "triggers" / "steward").mkdir(parents=True)
 _sh.copy(str(SUBJECT), str(_gr / "triggers" / "steward" / "stale_goals.py"))
-for _b in (REPO / "triggers" / "steward" / "bands.py", Path(SUBJECT).parent / "bands.py"):
+for _b in (ESTATE / "triggers" / "steward" / "bands.py", Path(SUBJECT).parent / "bands.py"):
     if _b.exists():                    # the body's one triggers import; else it resolves through REPO on sys.path
         _sh.copy(str(_b), str(_gr / "triggers" / "steward" / "bands.py"))
         break
@@ -410,6 +423,47 @@ if fx is not None:
               a_f is not None and -0.05 < a_f < 0.1, f"age_h={a_f}")
         check("REAL SQL: with no merges, the same goal reads its full age (the term is the merge, nothing else)",
               a_m0 is not None and a_m0 > 100 and by[g_m].get("merged") is None, f"age_h={a_m0}")
+        # a goal with a WORKFLOW is nagged per task by task_nag (plan-11324 S4, seed #60111): while its LATEST revision
+        # has a live task, the goal-level nag stands down; once every task is declared done or dropped it is back, so
+        # shipped-and-unclosed still reads
+        wf = lambda gid, rev, tasks: conn.execute(
+            "INSERT INTO goal_workflow (goal_id, rev, body, author) VALUES (%s, %s, %s::jsonb, 'seed')",
+            (gid, rev, __import__("json").dumps({"goal": gid, "tasks": tasks})))
+        P = ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"]
+        wf(g_old, 1, [{"id": "S1", "done": True}, {"id": "S2", "plan": P}])
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        check("REAL SQL: a goal whose latest workflow rev has a live task is NOT read here (task_nag owns it)",
+              g_old not in {r["id"] for r in cap} and g_new in {r["id"] for r in cap}, sorted(r["id"] for r in cap))
+        wf(g_old, 2, [{"id": "S1", "done": True}, {"id": "S2", "dropped": True}])
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        check("REAL SQL: …its LATEST rev all done or dropped: back here (shipped-and-unclosed must still read)",
+              g_old in {r["id"] for r in cap}, sorted(r["id"] for r in cap))
+        wf(g_old, 3, [{"id": "S1", "done": True}, {"id": "S3", "plan": P}])
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        check("REAL SQL: …and the LATEST rev decides, not any rev (rev 3 adds a live task: stands down again)",
+              g_old not in {r["id"] for r in cap}, sorted(r["id"] for r in cap))
+        wf(g_old, 4, [{"id": "S3", "plan": P}, {"id": "S4"}])
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        check("REAL SQL: an open task with NO plan keeps the goal HERE (task_nag can't judge it; a1 #60185 G-1)",
+              g_old in {r["id"] for r in cap}, sorted(r["id"] for r in cap))
+        wf(g_old, 5, [{"id": "S3", "plan": P, "done": "x"}, {"id": "S4", "plan": "soon"}])
+        cap.clear()
+        try:
+            fire(SpyCtx({}, conn))
+            ran = True
+        except Exception as e:  # noqa: BLE001
+            ran = f"{type(e).__name__}: {e}"
+        check("REAL SQL: done \"x\" and a non-array plan never raise (G-2: one bad body must not blind the guard org-wide)",
+              ran is True and g_old in {r["id"] for r in cap}, ran)
+        wf(g_old, 6, {"S1": {"done": True}})
+        cap.clear()
+        fire(SpyCtx({}, conn))
+        check("REAL SQL: a non-array tasks reads as no tasks: back HERE, not an error", g_old in {r["id"] for r in cap},
+              sorted(r["id"] for r in cap))
     finally:
         conn.close()
         _fx.__exit__(None, None, None)

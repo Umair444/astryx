@@ -46,6 +46,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import email
 import email.header
@@ -57,14 +58,19 @@ from pathlib import Path
 import psycopg
 
 REPO = repo_root(__file__)
-_env = {k: v for k, v in
-        (l.split("=", 1) for l in (REPO / ".env").read_text().splitlines() if "=" in l)}
-ADDR = _env["GMAIL_ADDRESS"].strip()
-PASS = _env["GMAIL_APP_PASSWORD"].strip()
-DSN = _env["ASTRYX_DSN"].strip()
+ESTATE = paths.estate(__file__)       # the org's .env and homes/ (plan-11324 S3a: the HOME in a cog of several orgs)
+# the mailbox login is read when the scan RUNS, never at import (a1 #62275/#62276): a tree with no .env (every
+# pushed-tree clone) must still import this module; a run with the keys missing still fails loudly, at login
+def _login_creds() -> tuple[str, str]:
+    env = config.read_env(ESTATE / ".env")      # the one .env reader (plan-10224 ENVREAD)
+    return env["GMAIL_ADDRESS"], env["GMAIL_APP_PASSWORD"]
+
+
+def _dsn() -> str:   # read when the scan connects, never at import (a1 #62279): the module has no import-time .env read
+    return config.dsn(ESTATE / ".env", env_first=False)
 
 AGENT = "canopus"
-STATE = REPO / "homes" / "canopus" / ".inbound_state.json"   # 0600, gitignored, integers only
+STATE = ESTATE / "homes" / "canopus" / ".inbound_state.json"   # 0600, gitignored, integers only
 SCAN_LIMIT = 60         # newest N new UIDs per run — a burst never floods
 
 # --- classification sets (high-precision, tune as mail teaches) --------------
@@ -82,7 +88,7 @@ GENERIC_ATS_DOMAINS = (
 # career targets, so they live ONLY in a gitignored 0600 file, never hardcoded in
 # this trackable poller and never on the wire. Absent file → degrade gracefully to
 # generic-ATS + token detection (still catches recruiter mail, daily sweep backstops).
-_TARGETS_FILE = REPO / "homes" / "canopus" / ".recruiter_targets.json"
+_TARGETS_FILE = ESTATE / "homes" / "canopus" / ".recruiter_targets.json"
 
 
 def _employer_domains() -> tuple[str, ...]:
@@ -118,7 +124,7 @@ URGENT_TOKENS = (
 
 def imap() -> imaplib.IMAP4_SSL:
     m = imaplib.IMAP4_SSL("imap.gmail.com")
-    m.login(ADDR, PASS)
+    m.login(*_login_creds())
     return m
 
 
@@ -187,7 +193,7 @@ def main() -> int:
         if not fresh:
             return 0
 
-        with psycopg.connect(DSN, autocommit=True) as conn:
+        with psycopg.connect(_dsn(), autocommit=True) as conn:
             for u in fresh:
                 scanned += 1
                 _, d = m.uid("fetch", str(u),

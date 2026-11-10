@@ -21,13 +21,16 @@ import re
 import time
 import urllib.error
 import urllib.request
+import sys
 from pathlib import Path
 from typing import List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
 REPO = Path(__file__).resolve().parents[2]
-OUT = REPO / "media" / "imagegen"
+sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
+from astryx import config, paths  # noqa: E402
+OUT = paths.estate(__file__) / "media" / "imagegen"
 API = "https://api.openai.com/v1/images/generations"
 DEFAULT_MODEL = "gpt-image-1"
 KNOWN_MODELS = ("gpt-image-1", "gpt-image-1-mini", "gpt-image-1.5", "gpt-image-2",
@@ -37,9 +40,9 @@ mcp = FastMCP("imagegen")
 
 
 def _key() -> str:
-    for line in (REPO / ".env").read_text().splitlines():
-        if line.startswith("OPENAI_API_KEY="):
-            return line.split("=", 1)[1].strip()
+    v = config.read_env(paths.estate(__file__) / ".env").get("OPENAI_API_KEY")   # the ONE .env reader (plan-10224)
+    if v is not None:
+        return v
     raise RuntimeError("OPENAI_API_KEY missing from .env")
 
 

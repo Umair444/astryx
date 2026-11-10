@@ -44,11 +44,23 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 # PII_SWEEP_SRC lets devtools/mutation_probe.py point this oracle at a MUTATED copy of the
 # guard, which is how the org proves an assertion can actually fail (mutants_pii_sweep_
 # ledger.py). Unset, it is the deployed guard.
 SUBJECT = Path(os.environ.get("PII_SWEEP_SRC")
-               or REPO / "triggers" / "steward" / "pii_sweep.py")
+               or ESTATE / "triggers" / "steward" / "pii_sweep.py")
 EXIT_SKIP = 77
 VALUE_RUN = re.compile(r"\d{7,}")     # the shape a routing id / phone number takes
 
@@ -205,6 +217,21 @@ def main():
           _emails("mail handler@server.py now") == ["handler@server.py"],
           "the code-location exclusion swallowed a colon-free address — over-broad, the "
           "UNDER-detection direction a PII guard must never take")
+
+    # ---- 3b2) a systemd unit instance is NOT an email ------------------------------
+    # The plan-11324 cog names one unit instance per org (`pulse@lab.timer`), and `<org>.<unit type>` reads as
+    # `domain.tld`: it flagged #61115 and step#128427 in its first week. Both directions: every exempt suffix is
+    # dropped, and the two real TLDs closest to a unit type (`.target`, a delegated brand TLD, and `.services`) still
+    # flag. If either were added to the exemption, a real address there would go unseen.
+    check("a systemd unit instance (pulse@lab.timer, observatory-org@lab.service, …) is NOT flagged as an email",
+          not _emails("units: pulse@lab.timer, observatory-org@lab.service, canvas@lab.socket, x@lab.path, "
+                      "y@lab.mount, z@lab.slice, w@lab.scope, v@lab.swap, u@lab.device, t@lab.automount"),
+          "a `<unit>@<org>.<type>` systemd instance matched as owner-email: the cog-era false positive (#61115)")
+    check("...and the real TLDs nearest a unit type (.target, .services) still flag (shape, not a mute)",
+          sorted(_emails("mail qa@shop.target and ops@acme.services now"))
+          == ["ops@acme.services", "qa@shop.target"],
+          "the unit-suffix exemption swallowed a delegated TLD: .target and .services are real, so an address "
+          "there could be the owner's, the UNDER-detection direction a PII guard must never take")
 
     # ---- 3c) a CI run id cited as one is NOT a phone ------------------------------
     # CI runs on every push since 10-15 (seed #55672) and agents cite its 11-digit run ids as evidence; the first sweep

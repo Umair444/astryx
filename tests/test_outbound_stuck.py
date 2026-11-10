@@ -25,13 +25,25 @@ import runpy
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 
 # The trigger BODY is gitignored, so on a fresh clone or a CI runner there is nothing to
 # test. SKIP LOUDLY (77) rather than pass: a check that silently reports success when it
 # could not run is the "a SKIP is not a PASS" defect in the one place anyone reads it.
 import os as _os  # noqa: E402
-if not _os.environ.get("OUTBOUND_STUCK_SRC") and not (REPO / "triggers" / "steward" / "outbound_stuck.py").exists():
+if not _os.environ.get("OUTBOUND_STUCK_SRC") and not (ESTATE / "triggers" / "steward" / "outbound_stuck.py").exists():
     print("SKIP: triggers/steward/outbound_stuck.py not present (gitignored body) — "
           "the outbound-stuck classifier was NOT verified this run")
     sys.exit(77)
@@ -43,7 +55,7 @@ if not _os.environ.get("OUTBOUND_STUCK_SRC") and not (REPO / "triggers" / "stewa
 # test_plan_lifecycle.py and test_ear_dark.py for exactly this: a body that may be absent
 # is addressed as a file, never as a module.
 import os  # noqa: E402
-SRC = os.environ.get("OUTBOUND_STUCK_SRC") or str(REPO / "triggers" / "steward" / "outbound_stuck.py")
+SRC = os.environ.get("OUTBOUND_STUCK_SRC") or str(ESTATE / "triggers" / "steward" / "outbound_stuck.py")
 _MOD = runpy.run_path(SRC)  # noqa: E402
 classify, SETTLED, BANDS = _MOD["classify"], _MOD["SETTLED"], _MOD["BANDS"]
 bucket = _MOD["bucket"]
@@ -270,7 +282,7 @@ def _run_with_roster(roster, sender="seed", to="abstractor-3", to_org="local", c
     ch.roster = lambda *a, **k: list(roster)
     try:
         return _MOD["outbound_stuck"](types.SimpleNamespace(
-            state={}, sql=lambda q, p=(): list(cands) if "AS cand" in q else rows)) or ""
+            state={}, sql=lambda q, p=(): [] if "AS copy" in q else list(cands) if "AS cand" in q else rows)) or ""
     finally:
         ch.roster_of_type, ch.roster = real_t, real_r
 
@@ -399,7 +411,7 @@ def test_refused_render_says_do_not_resend_through_the_real_entrypoint():
     rows = [{"id": 902, "ts": _dt.now(_tz.utc) - _td(hours=2), "to_agent": "owner", "to_org": "local",
              "status": "refused", "from_agent": "seed", "external_handle": False, "bridge_delivered": True,
              "sheet_delivered": False, "awaiting_peer_pickup": False, "last_pickup": None}]
-    out = _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): [] if "AS cand" in q else rows))
+    out = _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): [] if "AS cand" in q or "AS copy" in q else rows))
     assert out and "REFUSED BY THE DOOR (1)" in out and "DO NOT RESEND" in out and "#902" in out, out
     assert "ACTIONABLE" not in out and "BRIDGE-DELIVERED" not in out and "fix the addressing, RESEND" not in out, out
 
@@ -446,7 +458,7 @@ def _entry_rows(*specs):
 
 def _entry(rows):
     import types
-    return _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): [] if "AS cand" in q else rows))
+    return _MOD["outbound_stuck"](types.SimpleNamespace(state={}, sql=lambda q, p=(): [] if "AS cand" in q or "AS copy" in q else rows))
 
 
 def test_a_desk_thread_from_a_sender_the_desk_does_not_serve_is_uncarried():
@@ -525,14 +537,43 @@ def test_every_un_threaded_remedy_says_the_doorbell_is_a_group():
     bridge) must say what content it fits, at EVERY occurrence, through the real entrypoint."""
     import re
     out = _entry(_entry_rows((904, "refused", {}), (905, "pending", {"sheet_delivered": True}),
-                             (906, "pending", {"desk_served": True}), (907, "pending", {})))
+                             (906, "pending", {"desk_served": True}), (907, "pending", {}),
+                             (908, "pending", {"pane_served": True})))
     for cls in ("REFUSED BY THE DOOR", "UNSEEN ON THE EAR SHEET", "UNSERVED ON AN OBSERVATORY DESK",
-                "BRIDGE-DELIVERED RECIPIENT"):
+                "BRIDGE-DELIVERED RECIPIENT", "UNREAD IN AN OBSERVATORY THREAD PANE"):
         assert cls in out, (cls, out)
     hits = [m.start() for m in re.finditer(r"(?i)un-threaded", out)]
-    assert len(hits) >= 4, out
+    assert len(hits) >= 5, out
     for h in hits:
         assert "not an owner-only surface" in out[h:h + 160] and "never People detail" in out[h:h + 260], out[h:h + 260]
+
+
+# ------------------------------------------------ (g) the observatory THREAD PANE (painter 003bea7, steward #57406)
+# An agent's owner row on a named thread no bridge carries (thread 'owner', a proposals thread) is read when the owner
+# opens that thread's pane (POST /api/thread/read). The bridge's "resend un-threaded" would duplicate it into the group.
+def test_pane_reply_routes_to_pane_not_bridge():
+    g = bucket([_fentry(57176, "pending", 2)], _meta(57176, bridge_delivered=True, pane_served=True))
+    assert _ids(g["pane"]) == {"57176"} and g["bridge"] == [], g
+
+
+def test_counterexample_without_the_pane_flag_a_pane_reply_reads_as_bridge_fault():
+    """PROVES the pane class CAN FAIL: the 10-16 state (#57405), the same row with no pane_served, is the bridge's."""
+    g = bucket([_fentry(57176, "pending", 2)], _meta(57176, bridge_delivered=True))
+    assert _ids(g["bridge"]) == {"57176"} and g["pane"] == [], g
+
+
+def test_pane_carve_out_is_pending_only_and_ranks_below_the_door_and_the_desk():
+    g = bucket([_fentry(1, "dead", 72), _fentry(2, "refused", 2), _fentry(3, "pending", 2)],
+               {**_meta(1, bridge_delivered=True, pane_served=True), **_meta(2, bridge_delivered=True, pane_served=True),
+                **_meta(3, bridge_delivered=True, pane_served=True, desk_served=True)})
+    assert g["pane"] == [] and _ids(g["fresh"]) == {"1"} and _ids(g["refused"]) == {"2"} and _ids(g["desk"]) == {"3"}, g
+
+
+def test_pane_render_through_the_real_entrypoint_never_prescribes_a_resend_of_the_same_text():
+    out = _entry(_entry_rows((913, "pending", {"pane_served": True})))
+    assert "UNREAD IN AN OBSERVATORY THREAD PANE (1)" in out and "#913" in out, out
+    assert "DO NOT resend the same text" in out and "observatory:thread" in out and "DUPLICATE" in out, out
+    assert "BRIDGE-DELIVERED" not in out and "pgrep" not in out and "ACTIONABLE" not in out, out
 
 
 def test_desk_predicate_on_a_real_db_reads_the_consumers_prefixes_and_who():
@@ -571,7 +612,13 @@ def test_desk_predicate_on_a_real_db_reads_the_consumers_prefixes_and_who():
                 "UNSERVED ON THE PERSON DESK": [put("obs:person-77"), put("obs:person-78", "seed"),
                                                 put("obs:person-79", "owner")],         # the person rule wins
                 "UNCARRIED BY CONSTRUCTION": [put("obs:estate-cd34", "owner")],       # the consumer's WHO: not owner
-                "BRIDGE-DELIVERED RECIPIENT": [put("obs:other-1")],                  # a near-miss no desk serves
+                # the thread pane: a named thread no bridge carries (painter's owner_surfaces), from any agent; a desk
+                # near-miss obs: thread is the pane's now, not the bridge's
+                "UNREAD IN AN OBSERVATORY THREAD PANE": [put("obs:other-1"), put("owner", "p1"), put("proposals", "seed")],
+                # every bridged shape stays the bridge's: the wire's auto-minted t- thread, a wa: thread, a release, and
+                # (declared residual) the owner's own row on a pane thread, which the pane's WHO does not mark
+                "BRIDGE-DELIVERED RECIPIENT": [put("t-mvan9elq", "p1"), put("wa:100200@s.whatsapp.net", "seed"),
+                                               put("owner", "owner")],
                 # every OTHER computed bool of the site read TRUE once too (sqlguard's P rung: both values)
                 "UNSEEN ON THE EAR SHEET": [put("ear-room1")],                                  # sheet_delivered
                 "ACTIONABLE": [put(None, "seed", "wa:100200@s.whatsapp.net")],                  # external_handle
@@ -586,6 +633,71 @@ def test_desk_predicate_on_a_real_db_reads_the_consumers_prefixes_and_who():
         for h, ids in want.items():
             for i in ids:
                 assert f"#{i} " in sec[h] and not any(f"#{i} " in v for k, v in sec.items() if k != h), (h, i, out)
+        conn.close()
+    finally:
+        fxc.__exit__(None, None, None)
+
+def test_superseded_identical_delivered_copy_is_reported_once_never_resent():
+    """steward 10-20 (#61464): seed's two dead "the org has gone quiet" owner alarms had an IDENTICAL third copy that WAS
+    delivered, and the guard said RESEND, which would re-deliver a stale alarm. A row whose identical copy (sender,
+    recipient, org, thread, normalised body) was delivered later is reported ONCE as SUPERSEDED and never raised again.
+    A later delivered row that only shares the opening stays stuck (it stays a candidate, never a verdict). Real SQL:
+    the superseded site reads both 0 and >=1 rows (sqlguard's W rung)."""
+    try:
+        import psycopg
+        import importlib.util
+        from astryx.security.sqlguard.fixture import fixture_db
+        sp = importlib.util.spec_from_file_location("pulse_run_os2", REPO / "src" / "astryx" / "pulse" / "pulse_run.py")
+        pr = importlib.util.module_from_spec(sp)
+        sp.loader.exec_module(pr)
+        fxc = fixture_db()
+        fx = fxc.__enter__()
+    except Exception as e:  # noqa: BLE001
+        print(f"    (skipped: no fixture DB — {type(e).__name__})")
+        return
+    try:
+        conn = psycopg.connect(fx["dsn"], autocommit=True)
+
+        class C(pr.Ctx):
+            def __init__(s, st):
+                super().__init__(st)
+                s._conn = conn
+
+        def put(body, status, hours, thread="t-org-dark-escalation", to="owner"):
+            return conn.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, body, status, ts) "
+                                "VALUES ('seed','local',%s,'local',%s,%s,%s, now() - make_interval(hours => %s)) "
+                                "RETURNING id", (to, thread, body, status, hours)).fetchone()[0]
+        alarm = "ASTRYX: the org has gone quiet  —  1 agent(s) stopped taking turns."
+        near = put("ASTRYX: the org has gone quiet — 2 agent(s) stopped. A DIFFERENT tail.", "dead", 30)
+        st = {}
+        out = _MOD["outbound_stuck"](C(st)) or ""
+        # the superseded site at 0 rows first: one stuck row, no identical delivered copy
+        assert "SUPERSEDED" not in out and f"#{near} " in out, out
+        conn.execute("UPDATE messages SET status = 'delivered' WHERE id = %s", (near,))   # settled: off the board
+        a1, a2 = put(alarm, "dead", 72), put(alarm, "dead", 71)
+        put(alarm.replace("  ", " "), "delivered", 70)            # the identical copy, whitespace aside, delivered
+        st = {}
+        out = _MOD["outbound_stuck"](C(st)) or ""
+        # ONLY superseded rows fire: they're still reported, once (never dropped silently)
+        assert out.startswith("OUTBOUND STUCK — SUPERSEDED (2)") and f"#{a1} (→ delivered" in out \
+            and f"#{a2} (→ delivered" in out, out
+        assert st["warned"][str(a1)] >= 10 ** 6 and st["warned"][str(a2)] >= 10 ** 6, st
+        again = _MOD["outbound_stuck"](C(st)) or ""
+        assert f"#{a1}" not in again and f"#{a2}" not in again, again          # reported once, never re-nagged
+        # a4 #61466: the band must SURVIVE the tick (classify rebuilds it from the age band), and the rows must stay
+        # silent past the next rung, not merely until it
+        assert st["warned"][str(a1)] >= 10 ** 6 and st["warned"][str(a2)] >= 10 ** 6, st
+        conn.execute("UPDATE messages SET ts = now() - interval '200 hours' WHERE id = ANY(%s)", ([a1, a2],))
+        later = _MOD["outbound_stuck"](C(st)) or ""
+        assert f"#{a1}" not in later and f"#{a2}" not in later, later         # past 168 h: still not raised
+        # an identical pair with NO delivered copy is not superseded (a dead copy delivers nothing), and the
+        # near-miss shape (same opening, different tail, delivered later) supersedes nothing either
+        d1, d2 = put("ASTRYX: a second alarm, never delivered.", "dead", 30, "t-other"), \
+            put("ASTRYX: a second alarm, never delivered.", "dead", 29, "t-other")
+        n2 = put(alarm + " (a different tail)", "dead", 28)
+        put(alarm + " (yet another tail)", "delivered", 27)
+        out = _MOD["outbound_stuck"](C(st)) or ""
+        assert "SUPERSEDED" not in out and all(f"#{i} " in out for i in (d1, d2, n2)), out
         conn.close()
     finally:
         fxc.__exit__(None, None, None)

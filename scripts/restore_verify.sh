@@ -13,13 +13,23 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 . scripts/pgcontainer.sh                     # PG_CONTAINER: the one declared postgres (infra/pg)
-SCRATCH=astryx_restorecheck
+# plan-11324 S3a: the dumps and the stamp are the ORG's (its HOME's backups/), the DSN its own .env through the ONE
+# resolver. One org (no host registry): BK is backups/ in this checkout, exactly as before; several orgs: the HOME's.
+ROOT="$PWD"
+BK=backups   # org-home: one org, this checkout IS the HOME (several: the HOME, below)
+if [ -e "${ASTRYX_COG_REGISTRY:-/etc/astryx/cog.json}" ]; then
+  BK="$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" estate)/backups" || { echo "restore-verify: no org HOME" >&2; exit 1; }
+fi
 
-DSN=$(grep '^ASTRYX_DSN=' .env 2>/dev/null | cut -d= -f2-)
-[ -n "$DSN" ] || { echo "restore-verify: no ASTRYX_DSN in .env" >&2; exit 1; }
+DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file 2>/dev/null || true)
+[ -n "$DSN" ] || { echo "restore-verify: no ASTRYX_DSN in .env" >&2; exit 1; }   # org-home: a message
+# the scratch is named for THIS org's database (plan-10224 add-org-parity): astryx → astryx_restorecheck, as it always
+# was; a cog org's astryx_lab → astryx_lab_restorecheck. One fixed name was every org's, and each run starts by
+# DROPping it: two orgs' weekly verifies would drop each other's restore mid-check
+SCRATCH="$(pg_dsn_db "$DSN")_restorecheck"
 SCRATCH_DSN="${DSN%/*}/$SCRATCH"
 
-newest=$(ls -1t backups/astryx-*.dump 2>/dev/null | head -1)
+newest=$(ls -1t "$BK"/astryx-*.dump 2>/dev/null | head -1)
 [ -n "$newest" ] || { echo "restore-verify: no backup to verify (run scripts/backup.sh first)" >&2; exit 1; }
 
 # host psql/pg_restore if present (the norm — init.sh/backup.sh use host tools), else the container's
@@ -40,15 +50,22 @@ q_live -c "CREATE DATABASE $SCRATCH" >/dev/null || { echo "restore-verify: canno
 # AUTHORITATIVE gate — a truly-broken dump leaves the core tables absent or empty.
 do_restore >/dev/null 2>&1 || echo "restore-verify: pg_restore reported issues — checking tables anyway" >&2
 
+# >>> verify row counts
 fail=0
-for t in steps messages goals triggers; do
+LIVE_COUNTS=""   # handed to the drill: a table it restores with 0 rows is genuine only where live has 0 too
+for t in steps messages goals triggers; do   # org-home: SQL table names, not paths
   live=$(q_live -tAc "SELECT count(*) FROM $t" 2>/dev/null | tr -d '[:space:]')
   got=$(q_scratch -tAc "SELECT count(*) FROM $t" 2>/dev/null | tr -d '[:space:]')
+  LIVE_COUNTS="$LIVE_COUNTS $t=${live:-?}"
   if [ -z "$got" ]; then echo "  ✗ $t: table did NOT restore — the dump is not restorable" >&2; fail=1; continue; fi
-  if [ "$got" -eq 0 ]; then echo "  ✗ $t: restored EMPTY (0 rows) — truncated/corrupt dump" >&2; fail=1; continue; fi
+  # 0 rows is EMPTY, not truncated, only where the LIVE table is empty too (a new org's goals, seed #61553): a table
+  # that exists with 0 rows while live holds rows is still a truncated/corrupt dump
+  if [ "$got" -eq 0 ] && [ "${live:-x}" = 0 ]; then echo "  ✓ $t: restored, empty (live has 0 rows too)"; continue; fi
+  if [ "$got" -eq 0 ]; then echo "  ✗ $t: restored EMPTY (0 rows) while live has ${live:-?} — truncated/corrupt dump" >&2; fail=1; continue; fi
   if [ "$got" -gt $(( ${live:-0} * 2 + 100 )) ]; then echo "  ✗ $t: restored $got rows but live has $live — implausible" >&2; fail=1; continue; fi
   echo "  ✓ $t: restored $got rows (live $live)"
 done
+# <<< verify row counts
 
 # ---- trigger-body resolution: the tables restoring is NOT the org restoring --------------
 # The dump brings back the `triggers` TABLE, but its python-pointer rows (shape
@@ -68,7 +85,7 @@ if [ ! -f "$state" ]; then
 else
   members=$(tar -tzf "$state" 2>/dev/null | sed 's#^\./##')
   # the distinct file paths the RESTORED db's enabled python triggers point at (from scratch, not live)
-  need=$(q_scratch -tAc "SELECT DISTINCT split_part(check_src,'::',1) FROM triggers WHERE enabled AND check_src ~ '\.py::'" 2>/dev/null)
+  need=$(q_scratch -tAc "SELECT DISTINCT split_part(check_src,'::',1) FROM triggers WHERE enabled AND check_src ~ '\.py::'" 2>/dev/null)   # org-home: SQL, the triggers table
   missing=""
   # HERE-STRING, NOT A PIPE, and this is a correctness fix rather than style.
   # `printf ... | grep -qxF` under `set -o pipefail` is a RACE: grep -q exits the instant
@@ -96,7 +113,7 @@ fi
 # seam an empty-data-dir restore has. scripts/restore_drill.sh rehearses that world on a throwaway server (docs/restore.md).
 # Its NOT RUN (no docker, no image) fails this run like any other step: an unproven path never earns the OK stamp.
 DRILL_CAP=${RESTORE_DRILL_CAP:-1800}
-timeout "$DRILL_CAP" bash scripts/restore_drill.sh "$newest"; drc=$?
+RESTORE_LIVE_COUNTS="$LIVE_COUNTS" timeout "$DRILL_CAP" bash scripts/restore_drill.sh "$newest"; drc=$?
 case "$drc" in
   0) ;;
   124) echo "  ✗ restore-drill: TIMED OUT after ${DRILL_CAP}s (the drill's own trap tears it down)" >&2; fail=1 ;;
@@ -116,9 +133,9 @@ esac
 # but "who reads its side effects, and what do they conclude from the runs that failed?"
 # A stamp, a cache, a state row, a green tick — each inherits NONE of the check's safety.
 if [ "$fail" -ne 0 ]; then
-  echo "FAILED $(date -u +%Y-%m-%dT%H:%M:%SZ)" > backups/.last-restore-ok
+  echo "FAILED $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BK/.last-restore-ok"
   echo "restore-verify: FAILED — the newest backup does NOT restore cleanly. Fix the backup BEFORE trusting it." >&2
   exit 1
 fi
-echo "OK $(date -u +%Y-%m-%dT%H:%M:%SZ)" > backups/.last-restore-ok
+echo "OK $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BK/.last-restore-ok"
 echo "restore-verify: OK — ${newest##*/} restores into a working DB; stamped backups/.last-restore-ok"

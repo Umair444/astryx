@@ -11,11 +11,16 @@ key and the DSN password). It never prints the value.
 """
 from __future__ import annotations
 
-import os
-import tempfile
-from pathlib import Path
+if not __package__:  # run by path (`python src/astryx/config.py dsn` from a shell script): src/ goes first
+    import sys as _sys, os as _os
+    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))
 
-from astryx import paths
+import os  # noqa: E402
+import sys  # noqa: E402
+import tempfile  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from astryx import paths  # noqa: E402
 
 
 def env_path(home: Path | None = None) -> Path:
@@ -23,35 +28,153 @@ def env_path(home: Path | None = None) -> Path:
 
 
 def read_env(path: Path | None = None) -> dict[str, str]:
-    """Every KEY=value in the file, first occurrence wins. Missing file -> {}."""
+    """Every KEY=value in the file, first occurrence wins. Missing file -> {}.
+
+    Decoded PER LINE (plan-10224 ENVREAD, seed #61855): a line that is not UTF-8 is skipped and said on stderr as
+    file:line, never its bytes or value, and every other key reads. A key whose FIRST line is the bad one reads as
+    absent (a later line of it is not taken in its place), which is the caller's own missing-key path. A valid file
+    reads exactly as before, so nothing is printed for it. set_env still reads strictly: a writer that skipped a line
+    would drop it on the rewrite, so a non-UTF-8 .env makes it raise and the file is left as it was.
+    Residuals, not migrated here: the shell readers (`grep '^KEY=' .env`) and channel/home.mjs."""
     p = Path(path) if path else env_path()
     out: dict[str, str] = {}
+    lost: set[str] = set()
     try:
-        text = p.read_text()
+        raw = p.read_bytes()
     except (FileNotFoundError, NotADirectoryError):
         return out
-    for line in text.splitlines():
-        if not line or line.lstrip().startswith("#") or "=" not in line:
+    for n, chunk in enumerate(raw.split(b"\n"), 1):
+        try:
+            text = chunk.decode("utf-8")
+        except UnicodeDecodeError:
+            if chunk.lstrip().startswith(b"#"):
+                continue
+            k = _bad_key(chunk)
+            if k and k not in out:
+                lost.add(k)
+            print(f"config.read_env: {p}:{n}: not UTF-8, line skipped"
+                  + (f" ({k} reads as absent)" if k and k not in out else ""), file=sys.stderr)
             continue
-        k, v = line.split("=", 1)
-        if k and k == k.strip() and k not in out:
-            out[k] = v.strip()
+        for line in text.splitlines():      # str.splitlines' line breaks, as before (a valid file reads the same)
+            if not line or line.lstrip().startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k and k == k.strip() and k not in out and k not in lost:
+                out[k] = v.strip()
     return out
 
 
-def get(key: str, default: str = "", path: Path | None = None, environ: dict | None = None) -> str:
+def _bad_key(chunk: bytes) -> str | None:
+    """The KEY of a line that is not UTF-8, when the key itself reads (the value is never decoded)."""
+    if b"=" not in chunk:
+        return None
+    try:
+        k = chunk.split(b"=", 1)[0].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return k if k and k == k.strip() else None
+
+
+def get(key: str, default: str = "", path: Path | None = None, environ: dict | None = None,
+        env_first: bool = True) -> str:
+    """`key` from the environment first, else the HOME's .env.
+
+    On a MULTI-org host (orgs.multi) the environment is not consulted at all, for any key: the value is the HOME's
+    .env or `default`. An org-B process that inherited org A's PEOPLE_SALT or WA_CLI must not salt or send as A
+    (a3 BC-S3), and a .env name nobody listed is covered too, because nothing is listed (the polarity secretset uses:
+    unknown means guarded). ASTRYX_DSN is read through dsn(), which checks an environment value instead."""
     environ = os.environ if environ is None else environ
-    if environ.get(key):
+    if env_first and environ.get(key) and not _multi(environ):
         return environ[key]
     return read_env(path).get(key, default)
 
 
-def dsn(path: Path | None = None, environ: dict | None = None) -> str:
-    """ASTRYX_DSN: the environment first (an oracle binds a run to a fixture DB this way), else .env."""
-    v = get("ASTRYX_DSN", "", path, environ)
+def org_env(key: str, default=None, path: Path | None = None, environ: dict | None = None):
+    """An org name a reader took from the ENVIRONMENT only (`os.environ.get(key, default)`), routed (BC-S3(3)).
+    One org: exactly `environ.get(key, default)`, byte for byte (no .env read is added). Several orgs: the HOME's .env
+    (`path`, else the HOME's) or `default`, never the environment, which may be another org's (a3 #58597)."""
+    environ = os.environ if environ is None else environ
+    if not _multi(environ):
+        return environ.get(key, default)
+    v = read_env(path).get(key)
+    return v if v else default
+
+
+def _multi(environ) -> bool:
+    from astryx import orgs
+    return orgs.multi(environ)
+
+
+class ForeignDSN(RuntimeError):
+    """A DSN that binds ANOTHER registered org's database, or one libpq would reach by default (plan-11324 S3a
+    corrections 1 and 2). A RuntimeError, never a LookupError: an oracle reads LookupError as "no DB, skip"."""
+
+
+class DefaultDB(ForeignDSN):
+    """The ForeignDSN case where the DSN binds libpq's own default: no database named, `postgres`, or one named like its
+    user. Its own class so a caller can name the fix (rename the database) without reading the DSN itself (U1U2)."""
+
+
+def dsn(path: Path | None = None, environ: dict | None = None, env_first: bool = True) -> str:
+    """ASTRYX_DSN: the environment first (an oracle binds a run to a fixture DB this way), else .env.
+    env_first=False reads the file only (the readers that never consulted the environment keep doing exactly that).
+
+    In a cog of several orgs (and only there) the pair is checked against the registry, so the HOME and the DSN can't
+    disagree (a2 B(1), correction 2 of #58435):
+      a fixture database (astryx_fx_*)                          allowed (the oracles bind through the environment)
+      the environment's DSN binds ANOTHER registered org's db   refused
+      the DSN binds the user-named db or `postgres`            refused (libpq's own fallbacks, correction 1)
+      this HOME's own .env names a db other than its registry entry   refused (the disagreeing pair)"""
+    environ = os.environ if environ is None else environ
+    v = environ.get("ASTRYX_DSN") if env_first else ""
+    src = "the environment"
+    if not v:
+        p = Path(path) if path else env_path()
+        v, src = read_env(p).get("ASTRYX_DSN", ""), str(p)
     if not v:
         raise LookupError(f"ASTRYX_DSN is not set in the environment or {Path(path) if path else env_path()}")
+    if _multi(environ):
+        _check_pair(v, src, path, environ)
     return v
+
+
+def _check_pair(v: str, src: str, path, environ) -> None:
+    from astryx import orgs
+    if orgs.is_fixture(v):
+        return
+    reg = orgs.load(environ) or {}
+    info = orgs.conninfo(v)
+    db = info.get("dbname") or info.get("user")
+    if not db or db in orgs.NEVER_ORG_DB or db == info.get("user"):
+        raise DefaultDB(f"the DSN in {src} binds {db!r}: libpq's default database, never an org's (correction 1)")
+    if any(e["db"] == info.get("user") for e in reg.values()):
+        # correction 1(ii): an org whose database is the superuser's NAME is what `psql ""` + PGHOST/PGUSER binds
+        raise ForeignDSN("the org registry names a database called after the database user: libpq's default "
+                         "database, which an empty DSN reaches (correction 1(ii))")
+    home = Path(path).parent if path else paths.home()
+    mine = orgs.org_of(home, environ)
+    owner = next((o for o, e in reg.items() if e["db"] == db), None)
+    if owner is not None and owner != mine:
+        raise ForeignDSN(f"the DSN in {src} binds org {owner}'s database, and this HOME is "
+                         f"{mine or 'no registered org'} (correction 2)")
+    if mine is not None and owner is None and src != "the environment":
+        raise ForeignDSN(f"{src} names database {db!r}, and the registry gives {mine} {reg[mine]['db']!r}")
+
+
+def duplicate_keys(path: Path | None = None) -> list[str]:
+    """Keys a .env holds more than once (plan-11860 E5): read_env is first-wins and systemd's EnvironmentFile is
+    last-wins, so each one is a value two readers disagree on. Names only, never a value."""
+    p = Path(path) if path else env_path()
+    try:
+        text = p.read_text()
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+    seen: dict[str, int] = {}
+    for line in text.splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            k = line.split("=", 1)[0]
+            seen[k] = seen.get(k, 0) + 1
+    return sorted(k for k, n in seen.items() if n > 1)
 
 
 def is_set(key: str, path: Path | None = None) -> bool:
@@ -61,17 +184,38 @@ def is_set(key: str, path: Path | None = None) -> bool:
 def set_env(key: str, value: str, path: Path | None = None) -> None:
     if not key or "=" in key or "\n" in key or "\n" in value or "\r" in value:
         raise ValueError("set_env: key must be a bare name and value a single line")
+    _write_env(key, f"{key}={value}\n", path)
+
+
+def unset_env(key: str, path: Path | None = None) -> bool:
+    """The key REMOVED, every occurrence of it (plan-11859 U4). `KEY=` is not an unset: a unit's EnvironmentFile would
+    export the empty value. True when a line was removed."""
+    if not key or "=" in key or "\n" in key:
+        raise ValueError("unset_env: key must be a bare name")
+    return _write_env(key, None, path)
+
+
+def _write_env(key: str, new: str | None, path: Path | None) -> bool:
+    """The ONE .env writer: `new` replaces the key's first line (or is appended), or None removes the key."""
     p = Path(path) if path else env_path()
     try:
         text = p.read_text()
     except FileNotFoundError:
         text = ""
     lines = text.splitlines(keepends=True)
-    new = f"{key}={value}\n"
-    for i, line in enumerate(lines):
-        if line.split("=", 1)[0] == key and "=" in line:
-            lines[i] = new
-            break
+    # the key is written EXACTLY ONCE, at its first position, and every later occurrence is dropped in the same replace
+    # (plan-11860 BC-1): read_env is first-wins but a bridge's systemd EnvironmentFile is last-wins, so a duplicate
+    # left behind would hand the two readers different values
+    hits = [i for i, line in enumerate(lines) if "=" in line and line.split("=", 1)[0] == key]
+    if new is None:
+        if not hits:
+            return False
+        for i in reversed(hits):
+            del lines[i]
+    elif hits:
+        lines[hits[0]] = new
+        for i in reversed(hits[1:]):
+            del lines[i]
     else:
         if lines and not lines[-1].endswith("\n"):
             lines[-1] += "\n"
@@ -90,3 +234,42 @@ def set_env(key: str, value: str, path: Path | None = None) -> None:
             pass
         raise
     os.chmod(p, 0o600)
+    return True
+
+
+def _cli_estate(invoked: str) -> Path:
+    """The estate of a `"$ROOT/src/astryx/config.py"` call. One org: the tree the caller named, its symlinks NOT
+    followed (a fixture tree links this file from the real checkout, and `"$ROOT/.env"` was the fixture's). Several
+    orgs: the HOME (paths.estate), whoever's checkout runs the code."""
+    if _multi(os.environ):
+        return paths.estate()
+    for a in Path(os.path.abspath(invoked)).parents:
+        if (a / "src" / "astryx").is_dir():
+            return a
+    return paths.estate()
+
+
+def _main(argv) -> int:
+    """`python -m astryx.config dsn|get KEY|estate`: the shell's way to the ONE resolver (spawn.sh, backup.sh, …).
+    `dsn` and `get` print the value on stdout for `$(…)` capture, the way `grep '^K=' .env | cut -d= -f2-` did;
+    `estate` prints the org's estate root (paths.estate())."""
+    import sys
+    try:
+        f = _cli_estate(sys.argv[0]) / ".env"   # the invoking tree's on one org (what `"$ROOT/.env"` was), else the HOME's
+        if argv[:1] == ["dsn"]:
+            print(dsn(f, env_first="--file" not in argv))
+        elif argv[:1] == ["get"] and len(argv) >= 2:
+            print(get(argv[1], "", f, env_first="--file" not in argv))
+        elif argv[:1] == ["estate"]:
+            print(paths.estate())
+        else:
+            print("usage: python -m astryx.config dsn [--file] | get KEY [--file] | estate", file=sys.stderr)
+            return 2
+    except (LookupError, RuntimeError) as e:
+        print(f"astryx.config: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_main(sys.argv[1:]))

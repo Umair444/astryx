@@ -25,6 +25,7 @@ import json
 import os
 import re
 import time
+import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -36,21 +37,21 @@ from mcp.server.fastmcp import FastMCP
 logging.getLogger("httpx").setLevel(logging.WARNING)  # no per-request URL lines on stderr
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
+from astryx import config, paths  # noqa: E402
 
 
 def _env() -> dict[str, str]:
     try:
-        return {k.strip(): v.strip() for k, v in
-                (l.split("=", 1) for l in (REPO / ".env").read_text().splitlines()
-                 if "=" in l and not l.lstrip().startswith("#"))}
+        return config.read_env(paths.estate(__file__) / ".env")     # the ONE .env reader, per line (plan-10224 ENVREAD)
     except OSError:
         return {}
 
 
 _cfg = _env()
 TIMEOUT = float(_cfg.get("JOBS_HTTP_TIMEOUT") or 20)
-CACHE_DIR = Path(os.environ.get("JOBS_CACHE_DIR") or _cfg.get("JOBS_CACHE_DIR")
-                 or REPO / "var" / "cache" / "jobs")
+CACHE_DIR = Path(config.org_env("JOBS_CACHE_DIR") or _cfg.get("JOBS_CACHE_DIR")
+                 or paths.estate(__file__) / "var" / "cache" / "jobs")
 UA = "astryx-jobs/1.0 (+public job-posting lookup)"
 
 SPONSOR_PAGE = "https://www.gov.uk/government/publications/register-of-licensed-sponsors-workers"
@@ -380,10 +381,15 @@ def ats_job(url: str) -> str:
 
 # ── boards ───────────────────────────────────────────────────────────────────
 
+_ATS_HOSTS = ("greenhouse.io", "lever.co", "ashbyhq.com")
+
+
 def _slug(board: str, ats: str) -> str:
     b = board.strip()
-    if "/" not in b and "." not in b:
-        return b
+    host = b.split("?", 1)[0].lower()
+    ats_host = any(host == h or host.endswith("." + h) for h in _ATS_HOSTS)   # a LABEL match: "clever.co" isn't lever.co
+    if "/" not in b and "?" not in b and not ats_host:   # a bare slug, dotted ones too (Ashby has
+        return b                        # "acme.com"); a URL has a "/" or a "?", and a bare ATS host names no board
     u = urlparse(b if "://" in b else "https://" + b)
     q = parse_qs(u.query)
     if ats == "greenhouse" and q.get("for"):

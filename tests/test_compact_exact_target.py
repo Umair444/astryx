@@ -44,7 +44,7 @@ spec.loader.exec_module(cc)
 
 
 def tm(*a):
-    return subprocess.run(["tmux", *a], capture_output=True, text=True, timeout=10)
+    return subprocess.run(["tmux", *a], capture_output=True, text=True, timeout=10)   # org-home: a private server (TMUX_TMPDIR above)
 
 
 def pane(sess):

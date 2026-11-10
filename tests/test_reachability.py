@@ -127,7 +127,7 @@ EXEMPT = {
     # GITIGNORED — a git-derived reachability scan is blind exactly there (the oracle-split
     # class), so the edge is declared here by hand, with its location.
     "devtools/check_watch.sh":    "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, daily 05:20)",
-    "scripts/restore_verify.sh": "invoked by triggers/steward/org_runners.py (gitignored estate; pulse trigger, weekly Sun 03:00)",
+    # scripts/restore_verify.sh: no longer here. The tracked shipped org_backup trigger invokes it (plan-10224 add-org-parity)
     "src/astryx/federation/fedtest.py":     "manual: federation end-to-end probe; CLAUDE.md documents the human command",
     # Hands (plan-7862): both are started by the per-desktop sway config that src/astryx/hands/hands_desktop.py
     # GENERATES (an `exec <venv python> <path>` line written into the state dir at runtime), so the edge
@@ -138,9 +138,6 @@ EXEMPT = {
     # --ro-bind argument, so no committed launcher names it. tests/test_hearing.py runs it through the pool.
     "src/astryx/hearing/hear_worker.py":  "invoked by src/astryx/hearing/hear_pool.py at runtime (bwrap, one per opted-in agent's hear.py); runs no SQL",
     "devtools/esc_latency.py":  "manual: MIN_QUIET_H calibration measurement, run on demand; reports and never recommends, so a timer would only manufacture noise",
-    "scripts/doorbell.sh":    "manual: operator notify helper, self-declared Usage line",
-    "scripts/wallpane.sh":    "manual: single-pane variant of wall.sh, invoked by an operator",
-    "scripts/refresh.sh":     "manual: operator session refresh",
     "scripts/growbot_flash.sh": "manual: operator flash step — copies the body firmware "
         "onto the Pico over USB; run once per firmware change, documented in docs/growbot.md",
     "src/astryx/contrib/growbot_firmware.py":
@@ -157,6 +154,8 @@ EXEMPT = {
     "devtools/sqlsite.sh": "manual: the pre-flight an agent TYPES before a merge_check on a branch with new SQL (seed #56477, "
                            "medic #56480); its oracle test_sqlsite.py is what check.sh runs",
     "devtools/review_range.sh": "manual: the range an agent TYPES for a review-request or merge-ready marker (a4 night-review 10-12); its oracle test_review_range.py is what check.sh runs",
+    "devtools/marker.sh": "manual: the author TYPES it on a branch tip to get the pushed_tree_check clause a reviewer's merge-ready marker quotes (a4 night-review 10-22); its oracle test_marker.py is what check.sh runs",
+    "devtools/rebase_equiv.py": "manual: the check a lander or reviewer TYPES after rebasing a reviewed range, before re-marking or landing it (a4 night-review 10-21; seed uses it at each rebase-before-land, #61599); its oracle test_rebase_equiv.py is what check.sh runs (a2 #61613)",
     "devtools/apply_receipt.py": "manual: operator-run at deploy — seed applies a PASSed gitignored body with it and posts the "
                                 "`applied:` receipt it prints (plan-5791 staging protocol, a3 BC-3); its oracle "
                                 "test_merge_ready.py is what check.sh runs",
@@ -173,14 +172,7 @@ EXEMPT = {
     # spec, and their `Run:` lines reached it back — a mutual-citation ring. Making them
     # visible is the fix working; whether they should instead be WIRED is a call for
     # whoever owns them, and the exemption is what forces that call to be made out loud.
-    "scripts/smoke.sh":
-        "manual: doctor-class post-deploy probe, self-declared (`# Usage: scripts/smoke.sh "
-        "[observatory-port]`) and already classified as manual by test_check_coverage.py:56",
-    # invoked by scripts/spawn.sh (per-agent provider/auth override, read at each spawn) — a
-    # SHELL invocation, outside this scanner's committed-python view. charter.py sits in the
-    # same spawn.sh line and passes ONLY because python files (mcp/org, observatory) also call
-    # it; runtime_env.py has no python caller by design, so the shell invoker is its only one.
-    "src/astryx/core/runtime_env.py": "invoked by scripts/spawn.sh:133 (shell; outside the committed-python scan)",
+    # runtime_env.py left this list (plan-10224 ORGAUTH): observatory/api/main.py now calls its org_login.
 }
 
 INTERP = r"(?:bash|sh|zsh|exec|source|\.|python3?|\$PY|\$\{PY\}|venv/bin/python3?|uv\s+run|/usr/bin/env\s+\S+)"
@@ -217,9 +209,18 @@ def population():
     # goal 10224 S4: nucleus/ moved into src/astryx/, devtools/ and scripts/. What stays in nucleus/ is the compat
     # stubs, whose callers are gitignored or external by construction (their census: var/reorg_stubs/), so a
     # stub is not a population member; nucleus/__init__.py still is.
-    return sorted(p for p in _git("ls-tree", "-r", "--name-only", "HEAD", "nucleus/", "src/astryx/", "devtools/",
-                                  "scripts/")
-                  if p.endswith((".py", ".sh")) and not _is_reorg_stub(p))
+    return sorted(p for p in _git("ls-tree", "-r", "--name-only", "HEAD", *POPULATION_ROOTS) if in_domain(p))
+
+
+# The population's DOMAIN, one source: population() above and `--in-domain` below (land.sh's S2F trigger, seed #61742)
+POPULATION_ROOTS = ("nucleus/", "src/astryx/", "devtools/", "scripts/")
+POPULATION_SUFFIXES = (".py", ".sh")
+
+
+def in_domain(p):
+    """A path the population would hold: under a root, a .py or .sh, and not a reorg stub. A path with no file (a
+    DELETE, read after the fact) can't be read as a stub, so it counts: deleting a member can stale an EXEMPT entry."""
+    return p.startswith(POPULATION_ROOTS) and p.endswith(POPULATION_SUFFIXES) and not _is_reorg_stub(p)
 
 
 def _is_reorg_stub(p):
@@ -395,6 +396,31 @@ def _is_loader_call(func):
     return False
 
 
+# THE SHIPPED TRIGGERS' SHIMS ARE PYTHON WRITTEN AS DATA (plan-10224 add-org-parity, seed #61534). An installer writes
+# each SHIMS value of this ONE file into triggers/seed/<x>.py, where the pulse runs it: its import IS the edge that
+# reaches the shipped module. While init.sh held the texts as heredocs, its shell lines carried them; in shims.py they
+# are string constants, which the AST rightly reads as no import. So for this file, and only for the values of its
+# SHIMS dict, the text is parsed as the module it becomes. A python snippet anywhere else stays a string.
+SHIM_SOURCE = "src/astryx/pulse/shipped_triggers/shims.py"
+
+
+def _shim_imports(tree):
+    """The imports of every SHIMS value (a str written as a trigger file), parsed as the module it becomes."""
+    out = set()
+    for node in ast.walk(tree):
+        tgt = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        if any(isinstance(x, ast.Name) and x.id == "SHIMS" for x in tgt) and isinstance(node.value, ast.Dict):
+            for v in node.value.values:
+                if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                    for n in ast.walk(ast.parse(v.value)):
+                        if isinstance(n, ast.ImportFrom):
+                            out.add(n.module or "")
+                            out.update(f"{n.module}.{a.name}" for a in n.names)
+                        elif isinstance(n, ast.Import):
+                            out.update(a.name for a in n.names)
+    return out
+
+
 def _py_index(label, text):
     """-> ({imported dotted names}, [(lineno, (string constants,))]) for one .py surface.
 
@@ -440,6 +466,8 @@ def _py_index(label, text):
                                if isinstance(s, ast.Constant) and isinstance(s.value, str))
                 if consts:
                     calls.append((node.lineno, consts, "subprocess"))
+        if label == SHIM_SOURCE:
+            imports |= _shim_imports(tree)
         _PY_INDEX[label] = (imports, calls)
     return _PY_INDEX[label]
 
@@ -792,6 +820,15 @@ FIXTURES = [
     ("a name imported FROM a dotted submodule", True,
      [("src/astryx/security/sqlguard/enforce.py", "from astryx.security.sqlguard.normalize import norm\n")],
      "src/astryx/security/sqlguard/normalize.py"),
+    ("a shim's text in shims.py's SHIMS reaches its shipped module (the installers write it as a trigger)", True,
+     [(SHIM_SOURCE, 'SHIMS = {"x": "from astryx.pulse.shipped_triggers.fxshim import fxshim  # noqa: F401\\n"}\n')],
+     "src/astryx/pulse/shipped_triggers/fxshim.py"),
+    ("...the same text in a string of ANY OTHER file is prose", False,
+     [("tests/test_x.py", 'SHIMS = {"x": "from astryx.pulse.shipped_triggers.fxshim import fxshim\\n"}\n')],
+     "src/astryx/pulse/shipped_triggers/fxshim.py"),
+    ("...and in shims.py, a string that is not a SHIMS value is prose", False,
+     [(SHIM_SOURCE, 'NOTE = "from astryx.pulse.shipped_triggers.fxshim import fxshim\\n"\n')],
+     "src/astryx/pulse/shipped_triggers/fxshim.py"),
     ("a dotted import in a docstring is prose", False,
      [("nucleus/x.py", '"""use it as: from astryx.security.sqlguard import inventory"""\n')],
      "src/astryx/security/sqlguard/inventory.py"),
@@ -892,6 +929,7 @@ def self_test():
     seen_blind = set(UNPARSEABLE)
     _PY_INDEX.clear()             # fixtures reuse labels with DIFFERENT text; see below
     for name, want, texts, path in FIXTURES:
+        _PY_INDEX.clear()         # each fixture its own index: two may share a label (shims.py's) with different text
         got = bool(invocations(path, texts))
         if got != want:
             bad.append(f"  {'MISSED' if want else 'FALSE POSITIVE'}: {name}")
@@ -925,6 +963,11 @@ def self_test():
 
 
 def main():
+    if "--in-domain" in sys.argv:          # paths on stdin -> those in the population's domain (land.sh S2F)
+        for p in sys.stdin.read().split("\n"):
+            if p.strip() and in_domain(p.strip()):
+                print(p.strip())
+        return 0
     report = "--report" in sys.argv
     bad = self_test()
     if bad:

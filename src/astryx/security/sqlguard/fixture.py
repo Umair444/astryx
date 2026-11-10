@@ -23,10 +23,13 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__)))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import contextlib
 import hashlib
 import itertools
 import os
+import signal
+import threading
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -127,24 +130,52 @@ def _drop(admin, name: str) -> str:
         return "plain"
 
 
-def reap(admin, keep: str = "") -> list[tuple[str, str, str]]:
-    """Drop every astryx_fx_* database whose verdict is 'reap'. Never raises: a reaper that fails keeps."""
+def _side_admin(admin):
+    """A short connection of the caller's own role and server, for reap's writes (steward #61372): a statement that
+    draws a FATAL ends its SESSION, so one run on the caller's connection left fixture_db's next statement, its CREATE,
+    on a closed connection ("the connection is closed", six live-suite reds at 01:42Z)."""
+    return psycopg.connect(make_conninfo(admin.info.dsn, password=admin.info.password or None), autocommit=True,
+                           connect_timeout=5)
+
+
+def reap(admin, keep: str = "", side=None) -> list[tuple[str, str, str]]:
+    """Drop every astryx_fx_* database whose verdict is 'reap'. Never raises: a reaper that fails keeps. The caller's
+    `admin` only LISTS; every write runs on `side` (by default a fresh _side_admin connection, reopened if a FATAL
+    closed it, and closed on return), so nothing reap meets can close the caller's."""
     out = []
     try:
-        rows = admin.execute("SELECT datname, shobj_description(oid, 'pg_database') FROM pg_database "
+        rows = admin.execute("SELECT datname, shobj_description(oid, 'pg_database'), datconnlimit = -2 FROM pg_database "
                              "WHERE starts_with(datname, %s)", (PREFIX,)).fetchall()
     except psycopg.Error:
         return out
-    for name, comment in rows:
-        if name == keep:            # belt and braces: fixture_db reaps BEFORE its CREATE, so its own name is never
-            continue                # listed yet (a3 #39195 M7: dropping this line is an EQUIVALENT mutant)
-        act, why = verdict(name, comment)
-        if act == "reap":
-            try:
-                _drop(admin, name)
-            except psycopg.Error as e:
-                act, why = "keep", f"drop refused ({type(e).__name__}): {why}"
-        out.append((name, act, why))
+    own = side is None
+    try:
+        for row in rows:
+            name, comment, invalid = row[0], row[1], len(row) > 2 and row[2]
+            if name == keep:        # belt and braces: fixture_db reaps BEFORE its CREATE, so its own name is never
+                continue            # listed yet (a3 #39195 M7: dropping this line is an EQUIVALENT mutant)
+            act, why = verdict(name, comment)
+            if act == "reap":
+                try:
+                    if own and (side is None or side.closed):
+                        side = _side_admin(admin)
+                    # a dead creator's TEMPLATE is garbage too, and DROP refuses a template: a killed run of the batch
+                    # arm left one kept forever (steward #58601). Un-template only what the verdict already condemned.
+                    # An INVALID database (an interrupted DROP leaves datconnlimit = -2) refuses ALTER with a FATAL,
+                    # and a plain DROP is what the server allows it: it goes straight to the drop.
+                    if not invalid:
+                        side.execute('ALTER DATABASE "{}" IS_TEMPLATE false'.format(name.replace('"', '""')))
+                except psycopg.Error as e:
+                    act, why = "keep", f"un-template refused ({type(e).__name__}): {why}"   # a4 #58605: nothing dropped
+            if act == "reap":
+                try:
+                    _drop(side, name)
+                except psycopg.Error as e:
+                    act, why = "keep", f"drop refused ({type(e).__name__}): {why}"
+            out.append((name, act, why))
+    finally:
+        if own and side is not None:
+            side.close()
     return out
 
 
@@ -171,8 +202,20 @@ class FixtureUnavailable(Exception):
 
 
 def live_dsn() -> str:
-    return next(l.split("=", 1)[1].strip() for l in (REPO / ".env").read_text().splitlines()
-                if l.startswith("ASTRYX_DSN="))
+    """The org's DSN (the .env FILE: the admin connection is the org's own, never a fixture's), through the ONE resolver.
+    The .env is the ASTRYX_SQLGUARD_ROOT tree's when one is named (as REPO's was), else the org's estate.
+    ASTRYX_FIXTURE_ADMIN_DSN is that DSN passed by env, read ONLY when there is no .env: a worktree holds none, and the
+    live one is never linked into it (seed #59548). A present .env always wins, so a stale export can't re-point a live
+    tree's admin connection at another org's database (steward #60156 A1). It's a name of its own, never ASTRYX_DSN,
+    which an oracle binds to a fixture; a fixture DSN in it is refused loud, not used as the admin."""
+    base = REPO if os.environ.get("ASTRYX_SQLGUARD_ROOT") else paths.estate(__file__)
+    v = os.environ.get("ASTRYX_FIXTURE_ADMIN_DSN")
+    if v and not (base / ".env").is_file():   # org-home: base is paths.estate() unless ASTRYX_SQLGUARD_ROOT names a tree
+        from astryx import orgs
+        if orgs.is_fixture(v):
+            raise ValueError("ASTRYX_FIXTURE_ADMIN_DSN names a fixture database: the admin connection is the org's own")
+        return v
+    return config.dsn(base / ".env", env_first=False)   # org-home: base is paths.estate() unless ASTRYX_SQLGUARD_ROOT names a tree
 
 
 def file_sha() -> str:
@@ -223,17 +266,150 @@ def _stamp_rels(conn, sha: str) -> int:
     return len(rels)
 
 
+def fresh_name() -> str:
+    """A fixture name, unique per process: PREFIX + `<run>_<pid>_<n>` (the shared tail name_pid() parses). A database a
+    caller makes OUTSIDE fixture_db but hands to a Batch (the parity oracle's birth database) takes it too, so batch
+    members never collide and the reaper's prefix covers them (a4 #57168 §3)."""
+    return f"{PREFIX}{run_id()}_{os.getpid()}_{next(_n)}".lower()
+
+
+# ── THE LIFETIME SEAM (plan-11253 S3, a4 #57171; ONE seam with plan-11254, a4 #57439 §1). fixture_db(lifetime=...):
+#   "immediate" (the DEFAULT, every existing caller): dropped at block exit, as always. Several suites assert "gone at
+#               exit" (the reaper and sigpath arms), so flipping the default is 11254's, behind its own gate.
+#   "batch"     (opt-in, with batch=): NOT dropped at block exit. The name is enrolled in the Batch, which drops every
+#               member at its close, CONCURRENTLY. Each DROP forces a checkpoint and one admin session is serial: a3
+#               measured 3 concurrent drops at 2.9-3.7 s against 19-25 s sequential (#57352).
+# plan-11254's "retire" is one more branch of the SAME exit dispatch below, never a second mechanism. Members keep the
+# PREFIX name and the owner stamp exactly as today, so a process killed before its close leaves databases reap() still
+# collects (the backstop).
+LIFETIMES = ("immediate", "batch")
+BATCH_THREAD = "astryx-fixture-batch"              # the close's worker threads: an execute-layer counter can attribute
+
+
+class BatchDropError(RuntimeError):
+    """Batch.close() could not drop members that STILL EXIST. `failed` = {name: why}; every one is named."""
+
+    def __init__(self, failed: dict):
+        self.failed = dict(failed)
+        super().__init__("fixture batch: %d member(s) still exist after the close: %s" % (
+            len(failed), "; ".join(f"{n} ({w})" for n, w in sorted(failed.items()))))
+
+
+class Batch:
+    """Opt-in batch teardown. Members are fixture_db(lifetime="batch", batch=B) databases (B.fixture is that creator,
+    the shape run()'s `fixture=` takes) and any name a caller enrolls. close() drops them all CONCURRENTLY, one admin
+    session per member, waits for every one, and then judges each by what EXISTS (a3 BC-6 #57352): a member already
+    gone (a stale sweep, an arm, a race) is dropped; only one that still exists is a failure. Failures are collected
+    and raised ONCE, each by name, never swallowed. A context manager: leaving the block closes it."""
+
+    def __init__(self):
+        self.members, self.report, self.closed = [], [], False
+
+    def enroll(self, name: str) -> str:
+        if self.closed:
+            raise RuntimeError(f"fixture batch is closed; {name} would never be dropped")
+        if name not in self.members:
+            self.members.append(name)
+        return name
+
+    def fixture(self, extra: tuple = ()):
+        return fixture_db(extra=extra, lifetime="batch", batch=self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def _drop_one(self, name: str) -> dict:
+        r = {"name": name, "pid": None, "path": None, "error": None, "start": None, "end": None}
+        try:
+            with psycopg.connect(live_dsn(), autocommit=True) as a:      # its OWN session: one session is serial
+                r["pid"] = a.info.backend_pid
+                r["start"] = time.monotonic()
+                r["path"] = _drop(a, name)
+                r["end"] = time.monotonic()
+        except Exception as e:                       # judged below by existence, never here (BC-6)
+            r["error"] = f"{type(e).__name__}: {e}".strip()
+        return r
+
+    def close(self) -> list[dict]:
+        """Drop every member concurrently and wait. Returns one report per member (name, backend pid, drop path,
+        start/end monotonic, error). Raises BatchDropError naming every member that STILL EXISTS."""
+        if self.closed:
+            return self.report
+        self.closed = True
+        names = list(self.members)
+        if not names:
+            return self.report
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(names), thread_name_prefix=BATCH_THREAD) as pool:
+            self.report = list(pool.map(self._drop_one, names))
+        with psycopg.connect(live_dsn(), autocommit=True) as a:
+            left = {r[0] for r in a.execute("SELECT datname FROM pg_database WHERE datname = ANY(%s)",
+                                            (names,)).fetchall()}
+        failed = {r["name"]: r["error"] or "still exists after its drop" for r in self.report if r["name"] in left}
+        if failed:
+            raise BatchDropError(failed)
+        return self.report
+
+
+_HELD = (signal.SIGTERM, signal.SIGHUP)
+
+
 @contextlib.contextmanager
-def fixture_db(extra: tuple = ()):
-    """A fresh database, schema.sql applied whole, every relation stamped; dropped WITH (FORCE) in finally.
+def _hold_kills():
+    """TERM and HUP wait out the block, then act as the caller's own disposition says (steward #61229: a gate cap's kill
+    is a TERM, and one landing between CREATE and the owner COMMENT left the database UNSTAMPED, which reap() keeps
+    forever: a name-tail pid is never trusted). On the MAIN thread the disposition is swapped for one that only RECORDS,
+    process-wide, so whichever thread the kernel hands the signal to it waits (a3 #61239: a per-thread mask let a live
+    daemon thread take it mid-window, test_nudge's shape); the block ends, the caller's handlers come back, and each
+    recorded signal is raised again. Off the main thread signal.signal can't be called: the per-thread mask is the
+    fallback, and a TERM another unblocked thread takes still lands mid-window there. Not held: KILL (can't be) and INT
+    (gates run in their own process group, so a terminal ^C never reaches one; an interactive ^C is the residual)."""
+    if threading.current_thread() is threading.main_thread():
+        got = []
+        prev = {s: signal.signal(s, lambda n, _f: got.append(n)) for s in _HELD}
+        try:
+            yield
+        finally:
+            for s, h in prev.items():
+                signal.signal(s, signal.SIG_DFL if h is None else h)   # None: a handler set outside Python
+            for n in dict.fromkeys(got):
+                signal.raise_signal(n)
+    else:
+        old = signal.pthread_sigmask(signal.SIG_BLOCK, set(_HELD))
+        try:
+            yield
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, old)
+
+
+@contextlib.contextmanager
+def fixture_db(extra: tuple = (), lifetime: str = "immediate", batch: Batch | None = None):
+    """A fresh database, schema.sql applied whole, every relation stamped; at block exit, its LIFETIME decides
+    (the seam above): "immediate" (default) drops it WITH (FORCE) in finally; "batch" enrolls it in `batch`.
 
     `extra` is DDL a module owns OUTSIDE schema.sql (or an oracle's own probe relations). It is applied here,
     after schema.sql and BEFORE the stamp, so those relations are stamped too and their CREATE runs under
     this applier rather than in the oracle."""
-    name = f"{PREFIX}{run_id()}_{os.getpid()}_{next(_n)}".lower()
+    if lifetime not in LIFETIMES:
+        raise ValueError(f"fixture_db: unknown lifetime {lifetime!r} (one of {LIFETIMES})")
+    if lifetime == "batch" and batch is None:
+        raise ValueError('fixture_db: lifetime="batch" needs batch=, the Batch that drops it')
+    name = fresh_name()
+    if lifetime == "batch":
+        # enrolled BEFORE the CREATE: a closed batch refuses here, having made nothing, and every database that exists
+        # is already a member (a name the CREATE never made is "already gone" at the close, BC-6). A close issued while
+        # this block is still open drops it under the caller: closing a batch is the caller's last act.
+        batch.enroll(name)
     try:
         admin = psycopg.connect(live_dsn(), autocommit=True)
-    except (OSError, StopIteration, psycopg.OperationalError) as e:
+    except (OSError, StopIteration, LookupError, psycopg.OperationalError) as e:
+        if lifetime == "batch":
+            # no CREATE ran, so the name leaves the batch: a member no admin DSN can judge would make close() raise
+            # LookupError from a caller's finally, masking its NOT SEARCHED (77) as a crash (seed #61038, CI)
+            batch.members.remove(name)
         raise FixtureUnavailable(f"no reachable admin DSN ({type(e).__name__})") from e
     t0 = time.monotonic()
     reap(admin, keep=name)                           # the dead runs' leftovers first (never raises; keep is default)
@@ -245,19 +421,20 @@ def fixture_db(extra: tuple = ()):
         # Hardened at the CREATOR with NO window (plan-4918 #28982, a3 BC-5): born with connections DISALLOWED (nobody,
         # superuser included, can connect, and P0-b's datallowconn listing never sees it), PUBLIC CONNECT revoked,
         # THEN opened. A REVOKE after an open CREATE wouldn't evict a session a concurrent run role got in the gap.
-        try:
-            admin.execute(f'CREATE DATABASE "{name}" ALLOW_CONNECTIONS false'
-                          + (f' TEMPLATE "{tpl}"' if tpl and tpl.replace("_", "").isalnum() else ""))
-        except psycopg.errors.InsufficientPrivilege as e:
-            raise FixtureUnavailable("this role can't CREATE DATABASE") from e
-        admin.execute(f'REVOKE CONNECT ON DATABASE "{name}" FROM PUBLIC')
-        admin.execute(f'ALTER DATABASE "{name}" ALLOW_CONNECTIONS true')
-        # the OWNER STAMP the reaper judges by, AFTER BC-5's CREATE → REVOKE → ALTER (that order is an access
-        # invariant, armed in test_branch_check_prep). Unstamped for an instant → the reaper KEEPS it (safe).
-        try:
-            admin.execute(f'COMMENT ON DATABASE "{name}" IS \'{owner_stamp()}\'')    # inline: digits/hex only
-        except psycopg.Error:
-            pass                                     # unstamped → kept; never fail a fixture for this
+        with _hold_kills():                          # CREATE → COMMENT never ends unstamped (steward #61229)
+            try:
+                admin.execute(f'CREATE DATABASE "{name}" ALLOW_CONNECTIONS false'
+                              + (f' TEMPLATE "{tpl}"' if tpl and tpl.replace("_", "").isalnum() else ""))
+            except psycopg.errors.InsufficientPrivilege as e:
+                raise FixtureUnavailable("this role can't CREATE DATABASE") from e
+            admin.execute(f'REVOKE CONNECT ON DATABASE "{name}" FROM PUBLIC')
+            admin.execute(f'ALTER DATABASE "{name}" ALLOW_CONNECTIONS true')
+            # the OWNER STAMP the reaper judges by, AFTER BC-5's CREATE → REVOKE → ALTER (that order is an access
+            # invariant, armed in test_branch_check_prep). Unstamped for an instant → the reaper KEEPS it (safe).
+            try:
+                admin.execute(f'COMMENT ON DATABASE "{name}" IS \'{owner_stamp()}\'')    # inline: digits/hex only
+            except psycopg.Error:
+                pass                                 # unstamped → kept; never fail a fixture for this
         dsn = make_conninfo(live_dsn(), dbname=name)
         sha = file_sha()
         with psycopg.connect(dsn, autocommit=True) as c:
@@ -275,7 +452,10 @@ def fixture_db(extra: tuple = ()):
             s = _side.pop(name, None)
             if s is not None:
                 s.close()
-            _drop(admin, name)
+            if lifetime == "batch":
+                pass                                 # a member since entry: dropped at the batch's close, concurrently
+            else:
+                _drop(admin, name)                   # "immediate": gone at block exit, as every caller expects
         finally:
             admin.close()
 

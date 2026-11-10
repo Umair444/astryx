@@ -34,6 +34,18 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 from astryx.paths import Checkouts  # noqa: E402
 FAIL, SKIP = [], []
@@ -63,6 +75,8 @@ REGENERABLE = {
     "canvas/web/node_modules/":       "npm install (init.sh _act_obs)",
     "canvas/web/dist/":               "npm run build in canvas/web (init.sh _act_obs; includes the vendored kit)",
     "canvas/web/tsconfig.tsbuildinfo": "tsc build artifact",
+    "mcp/phone/upstream/node_modules/": "npm ci --ignore-scripts from the tracked package-lock.json "
+                                        "(scripts/android_setup.sh install)",
     "units/":                         "init.sh units() regenerates from runners.conf",
     "backups/":                       "the artifact itself — capturing it would recurse",
     "homes/":                         "spawn.sh regenerates .mcp.json/settings.json; "
@@ -72,6 +86,9 @@ REGENERABLE = {
     "harness/results/":               "test output",
     "var/":                           "derived runtime state (tokenwatch highwater, usage cache)",
     "harness/cell/canary/step.py":    "copied from hooks/step.py by harness/cell/build.sh",
+    ".astryx":                        "an EMPTY marker file (paths.find_marker's rung, plan-11324 S3f): `touch "
+                                      "<checkout>/.astryx` recreates it (devtools/cog_add_org.md:42, :114); in a cog, "
+                                      "init.sh doctor and deploy.sh refuse loudly without it (seed #61381)",
 }
 
 
@@ -253,7 +270,7 @@ def main():
 def roles_arm():
     import re
     import tempfile
-    dumps = sorted((REPO / "backups").glob("astryx-*.dump"), key=lambda p: p.stat().st_mtime)
+    dumps = sorted((ESTATE / "backups").glob("astryx-*.dump"), key=lambda p: p.stat().st_mtime)
     if not dumps:
         skip("the newest dump's roles file carries every role its grants name", "no dump on disk")
         return

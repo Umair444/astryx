@@ -23,10 +23,12 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse, JSONResponse
 
 from astryx.hearing import voice_mint as V
+from observatory.api.hostfile import atomic_write
 
 router = APIRouter()
 REPO = Path(__file__).resolve().parents[2]
-AUDIO = REPO / "var" / "room"
+from astryx import paths  # noqa: E402 — var/ is org estate (its HOME in a cog of several orgs), plan-11324 S3a
+AUDIO = paths.estate(__file__) / "var" / "room"
 TTS_MODEL = V.env("ROOM_TTS_MODEL", "gpt-4o-mini-tts")
 # one voice per agent, so the room can tell them apart by ear; an unlisted agent gets a stable pick from the rest
 VOICES = {"seed": "cedar", "painter": "coral", "steward": "sage", "forge": "ash", "canopus": "verse",
@@ -55,8 +57,7 @@ def speak(text: str, voice: str, out: Path) -> str | None:
         headers={"authorization": f"Bearer {V.env('OPENAI_API_KEY')}", "content-type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_bytes(r.read())
+            atomic_write(out, r.read())          # the one host writer (plan-11860 E3): never a torn mp3
         return None
     except urllib.error.HTTPError as e:
         return f"tts http {e.code}"

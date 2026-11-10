@@ -35,7 +35,19 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-TRIGGERS = REPO / "triggers/scout"   # the .env-loudness arm below is behavioural and scout-scoped;
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+TRIGGERS = ESTATE / "triggers/scout"   # the .env-loudness arm below is behavioural and scout-scoped;
                                      # the STATIC arm sweeps ALL of triggers/ (steward, msg 6027)
 EXIT_SKIP = 77
 
@@ -115,7 +127,7 @@ print("filed by me, eleven hours after I filed it. So: EVERY bare `except -> ret
 print("suspect, and the only way out is an explicit positive marker `# TRANSIENT: <reason>`.")
 print("An unmarked swallow is RED by default and no novel phrasing can defeat it.\n")
 
-ALL_TRIGGERS = REPO / "triggers"
+ALL_TRIGGERS = ESTATE / "triggers"
 
 
 def swallows(root):

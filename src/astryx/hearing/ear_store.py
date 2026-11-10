@@ -25,6 +25,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import os
 import sys
@@ -39,14 +40,10 @@ EXIT_BLIND = 77
 
 
 def _env(key: str) -> str:
-    if os.environ.get(key):
-        return os.environ[key]
-    f = REPO / ".env"
-    if f.is_file():
-        for line in f.read_text().splitlines():
-            if line.startswith(key + "="):
-                return line.split("=", 1)[1].strip()
-    return ""
+    v = config.org_env(key)
+    if v:
+        return v
+    return config.read_env(paths.estate(__file__) / ".env").get(key, "")   # the ONE .env reader (plan-10224 ENVREAD)
 
 
 TTL_MAX = 7

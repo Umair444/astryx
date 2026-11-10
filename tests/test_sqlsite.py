@@ -30,11 +30,23 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 SUBJECT = Path(os.environ.get("SQLSITE_SRC") or REPO / "devtools" / "sqlsite.sh")
 LEDGER = REPO / "src" / "astryx" / "security" / "sqlguard" / "ledger.json"
 ORACLE = "tests/test_observatory_late_replies.py"
 PREFIX = "observatory/api/main.py::memory_"
-if not (REPO / ".env").exists():
+if not (ESTATE / ".env").exists():
     print("SKIP: no .env at the repo root (the subject oracle's fixture_db reads the DSN from it)")
     sys.exit(77)
 
@@ -112,7 +124,7 @@ try:
     arm("DEFAULT: rows by judge's attribution (the question read saw 0 and 1)", "rows=[0, 1]" in q and q.startswith("RESPONSIVE"), out)
 
     probe = tmp / "probe.py"
-    probe.write_text("import os, sys\nopen(sys.argv[0] + '.env', 'w').write(repr(os.environ.get('ASTRYX_AGENT')))\n")
+    probe.write_text("import os, sys\nopen(sys.argv[0] + '.env', 'w').write(repr(os.environ.get('ASTRYX_AGENT')))\n")  # org-home: inspection: a probe reports the env it was given
     rc, out = run("--ledger", str(probe), "nothing::", env={"ASTRYX_AGENT": "painter"})
     arm("SPAWN: the oracle runs without ASTRYX_AGENT", (tmp / "probe.py.env").read_text() == "None",
         (tmp / "probe.py.env").read_text() if (tmp / "probe.py.env").exists() else "not written")
@@ -120,6 +132,24 @@ try:
 
     rc, out = run("--ledger", "tests/mutants_sqlsite.py", "nothing::")
     arm("REGISTRATION: an oracle check.sh only mentions in a comment is warned about",
+        any("no run line in devtools/check.sh" in l for l in lines(out, "!")), out)
+
+    # A registered oracle's run line followed by more run lines than a pipe holds: a `grep -q` consumer exits at the match,
+    # the producer takes SIGPIPE, and pipefail reads that as "no run line" (the 10-21 timer red, ~23% of runs on the real
+    # check.sh). Past 1 MB the race is a certainty, so 5 runs are a deterministic arm.
+    big = tmp / "bigcheck"
+    (big / "devtools").mkdir(parents=True)
+    (big / "tests").mkdir()
+    (big / "tests" / "test_reg.py").write_text("pass\n")
+    (big / "devtools" / "check.sh").write_text('run "reg" "$PY" tests/test_reg.py\n'
+                                               + "".join(f'run "pad {i}" "$PY" tests/test_pad_{i}.py\n' for i in range(20000)))
+    be = {"ASTRYX_FIXTURE_ADMIN_DSN": "postgresql://nobody@127.0.0.1:1/none", "PY": sys.executable}
+    warned = [o for _, o in (run("--ledger", "./tests/test_reg.py", "nothing::", root=big, env=be) for _ in range(5))
+              if any("no run line" in l for l in lines(o, "!"))]
+    arm("REGISTRATION: a registered oracle draws no warning when check.sh outgrows a pipe (5 of 5 runs)", not warned,
+        warned[:1])
+    rc, out = run("--ledger", "./tests/test_unreg.py", "nothing::", root=big, env=be)
+    arm("REGISTRATION: …and in that same root an unregistered oracle is still warned about",
         any("no run line in devtools/check.sh" in l for l in lines(out, "!")), out)
 
     ok_py = tmp / "ok.py"
@@ -130,6 +160,14 @@ try:
                       X + "select 3": {"rung": "RESPONSIVE", "live_only": True},     # listed live-only: LIVE-ONLY
                       X + "select 4": {"rung": "EXECUTED"},                          # unlisted: R-NEW
                       X + "select 5": {"rung": "RESPONSIVE"}}}                       # listed, climbed: R-STALE
+    (tmp / "rep.json").write_text(json.dumps(stub))
+    rc, out = run("--ledger", str(ok_py), "src/astryx/x.py::", env={"SQLSITE_REPORT": str(tmp / "rep.json")})
+    arm("SEAL: a report with no seal (pre-plan-11908 D2) is NOT SEARCHED, rc 1, and no verdict line",
+        rc == 1 and "NOT SEARCHED: the report carries no seal" in out
+        and not [l for l in out.splitlines() if "x.py::f :: select " in l], (rc, out))
+    # the stub carries the seal the D2 writer makes for a dir with no traces: the arms below grade, not refuse
+    (tmp / "empty-traces").mkdir()
+    stub["seal"] = _astryx("security.sqlguard.evidence", "seal", str(tmp / "empty-traces"))
     (tmp / "rep.json").write_text(json.dumps(stub))
     (tmp / "stub_ledger.json").write_text(json.dumps({"rows": {X + "select 3": {"debt": "EXECUTED"},
                                                                 X + "select 5": {"debt": "EXECUTED"}}}))
@@ -167,8 +205,16 @@ try:
 
     bare = tmp / "bare"
     bare.mkdir()
-    rc, out = run("--ledger", ORACLE, PREFIX, root=bare)
-    arm("SKIP: no .env is 77 with a SKIP line", rc == 77 and out.startswith("SKIP"), (rc, out))
+    rc, out = run("--ledger", ORACLE, PREFIX, root=bare, env={"ASTRYX_FIXTURE_ADMIN_DSN": ""})
+    arm("SKIP: no .env and no ASTRYX_FIXTURE_ADMIN_DSN is 77 with a SKIP line that never says to link the .env",
+        rc == 77 and out.startswith("SKIP") and "ASTRYX_FIXTURE_ADMIN_DSN" in out and "link it" not in out, (rc, out))
+    # the DSN passed by env opens the same door (a worktree, seed #59548): past the SKIP, onto the next precondition
+    e = {k: v for k, v in os.environ.items() if k != "PY"}
+    p = subprocess.run(["bash", str(SUBJECT), "--ledger", ORACLE, PREFIX], capture_output=True, text=True, timeout=60,
+                       env={**e, "SQLSITE_ROOT": str(bare), "GIT_CEILING_DIRECTORIES": str(tmp),
+                            "ASTRYX_FIXTURE_ADMIN_DSN": "postgresql://nobody@127.0.0.1:1/none"})
+    arm("BY ENV: no .env but ASTRYX_FIXTURE_ADMIN_DSN set is not the SKIP (it reaches the venv check, rc 2)",
+        p.returncode == 2 and "SKIP" not in p.stdout and "set PY" in p.stdout, (p.returncode, p.stdout, p.stderr))
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 

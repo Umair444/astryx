@@ -60,7 +60,7 @@ if IMG is None:
     skip("no local image to run a stand-in container")
 try:
     import psycopg
-    from astryx.security.sqlguard.fixture import fixture_db
+    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db
 except ImportError as e:
     skip(f"deps ({e})")
 
@@ -188,6 +188,9 @@ try:
             want("W7 HANDS_WINDOWS_IDLE_S=0 disables the stop",
                  stop_mod.tick(st, now=t0 + 10 ** 6, conns=none) is None and running())
             os.environ["HANDS_WINDOWS_IDLE_S"] = "600"
+except FixtureUnavailable as e:      # no admin DSN reachable (a DSN-less tree): NOT SEARCHED, never a crash
+    from astryx.security.sqlguard.estate import unavailable
+    unavailable("test_windows_ondemand", REPO, e, failed=fails)
 finally:
     docker("rm", "-f", STAND_IN)
     shutil.rmtree(TMP, ignore_errors=True)

@@ -74,7 +74,7 @@ elif [ "$cell_live" = 0 ]; then
 else pass "direct TCP to arbitrary internet denied"; fi
 
 echo "== the denied attempt is logged (arbitrary-host-exfil detector) =="
-if docker logs "$PROXY" 2>&1 | grep -qiE 'example\.com|Filtered|denied'; then
+if grep -qiE 'example\.com|Filtered|denied' <<<"$(docker logs "$PROXY" 2>&1)"; then
   pass "denied attempt is on the record in the proxy log"
 else echo "  NOTE  proxy log did not clearly show a deny line (check LogLevel) — non-fatal"; fi
 

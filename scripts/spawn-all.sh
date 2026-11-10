@@ -17,7 +17,7 @@ cd "$ROOT"
 # Residents' channel servers need the org's postgres (docker container, ~50s to
 # accept after a cold boot). Wait for it before waking anyone, or they race a dead
 # socket. Bounded so a genuinely-absent DB can't hang boot forever.
-DSN=$(grep '^ASTRYX_DSN=' .env | cut -d= -f2-)
+DSN=$(venv/bin/python src/astryx/config.py dsn --file)   # the ONE resolver (plan-11324 S3a)
 for _ in $(seq 1 60); do
   psql "$DSN" -qc 'SELECT 1' >/dev/null 2>&1 && break
   sleep 2

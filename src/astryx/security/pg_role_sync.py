@@ -18,6 +18,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import base64
 import hashlib
 import hmac
@@ -117,8 +118,7 @@ def container() -> str:
 
 
 def _live_dsn() -> str:
-    return next(line.split("=", 1)[1].strip() for line in (REPO / ".env").read_text().splitlines()
-                if line.startswith("ASTRYX_DSN="))
+    return config.dsn(paths.estate(__file__) / ".env", env_first=False)
 
 
 def check(dsn: str) -> tuple[bool, str]:
@@ -166,7 +166,7 @@ def main(argv: list[str]) -> int:
     if len(argv) < 1 or argv[0] not in ("check", "apply"):
         print(__doc__.split("\n\n")[2])
         return 2
-    dsn = os.environ.get("ASTRYX_DSN") or _live_dsn()
+    dsn = config.dsn(paths.estate(__file__) / ".env")
     ok, why = (check if argv[0] == "check" else apply)(dsn)
     print(f"pg_role_sync {argv[0]}: {'OK' if ok else 'FAIL'}: {why}")
     return 0 if ok else 1

@@ -73,6 +73,7 @@ def main():
                       f"test -e .claude/\u00fc.log && echo UNILINKED >> {rec}; "
                       f"test -f agents/secret/charter.md && echo SUBLINKED >> {rec}; "
                       f"echo written >> agents/secret/charter.md; "
+                      f"echo RUNTIME_WRITTEN=1 >> .env; "
                       f"echo scratch > agents/secret/run_made.txt; "
                       f"echo other > {r}/agents/secret/concurrent_new.txt; "
                       f"test -d agents/secret/empty && echo EMPTYDIR >> {rec}; "
@@ -117,6 +118,8 @@ def main():
         check("a1 R2: a write the run made THROUGH a linked file reaches LIVE and is NAMED in the report",
               "LIVE WRITES" in p.stdout and "charter.md" in p.stdout
               and "written" in (r / "agents" / "secret" / "charter.md").read_text(), p.stdout[-400:])
+        check("a4 #57740 R1: a write THROUGH a RUNTIME link (.env, venv, a node_modules) is NAMED too, never only the estate's",
+              f"{r}/.env" in p.stdout and "RUNTIME_WRITTEN" in (r / ".env").read_text(), p.stdout[-400:])
         check("a1 #43404: a CONCURRENT writer's NEW file in a live estate dir is listed too (the scan walks the estate, not the links)",
               "concurrent_new.txt" in p.stdout, p.stdout[-400:])
         check("…and NOT attributed to the run: the estate has concurrent writers, a mtime can't tell them apart (a4 10-10)",

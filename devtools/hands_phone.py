@@ -34,6 +34,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 from astryx.hands import hands_desktop as h  # noqa: E402
+from astryx import config  # noqa: E402  (OBS_KEY routed, plan-11324 S3a: one org reads the environment exactly)
 
 WEB = ROOT / "observatory" / "web"
 TARGET = ROOT / "devtools" / "hands_phone_target.html"
@@ -141,7 +142,7 @@ async def drive(desk):
             url = f"http://127.0.0.1:{PORT}/"
             await cdp("Page.navigate", url=url)
             await asyncio.sleep(2)
-            await ev(f"localStorage.setItem('obs_key', {json.dumps(os.environ['OBS_KEY'])})")
+            await ev(f"localStorage.setItem('obs_key', {json.dumps(config.org_env('OBS_KEY'))})")
             await cdp("Page.navigate", url=url)
             await asyncio.sleep(5)
 
@@ -230,7 +231,7 @@ async def drive(desk):
 def main():
     if not RUNNER:
         bail("run it as an agent (ASTRYX_AGENT): it works on that agent's own pool desk")
-    if not os.environ.get("OBS_KEY"):
+    if not config.org_env("OBS_KEY"):
         bail("OBS_KEY is unset: OBS_KEY=$(grep ^OBS_KEY= .env | cut -d= -f2-) devtools/hands_phone.py")
     if subprocess.run(["which", "chromium"], capture_output=True).returncode:
         bail("no chromium on PATH")

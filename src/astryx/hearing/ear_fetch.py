@@ -15,6 +15,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import os
 import sys
 from pathlib import Path
@@ -26,11 +27,7 @@ from astryx.hearing.ear_fence import wrap  # noqa: E402
 
 
 def dsn() -> str:
-    v = os.environ.get("ASTRYX_DSN")
-    if v:
-        return v
-    return next(l.split("=", 1)[1].strip() for l in (REPO / ".env").read_text().splitlines()
-                if l.startswith("ASTRYX_DSN="))
+    return config.dsn(paths.estate(__file__) / ".env")
 
 
 def fetch(conn, hid: int, agent: str) -> tuple[int, str]:

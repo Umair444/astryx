@@ -11,6 +11,12 @@ triggers/), with ASTRYX_DSN unset:
      guard off quietly)
   U4 the chokepoint with its A24 control already RED, no database, committed-only tree → 1, names it (a4 #55279:
      a real RED read as NOT SEARCHED on CI)
+  U5 the admin DSN passed by env (ASTRYX_FIXTURE_ADMIN_DSN), still no .env → the gate RUNS, 0 (medic, seed #60093)
+  U6 a FIXTURE DSN in that variable → 1, refused by name: it never becomes the admin, and never reads as 77
+  U7 a present .env wins over that variable: it's the no-.env path only (steward #60156 A1)
+  U8 a batch fixture whose admin connect fails leaves NO member, so the batch closes without a DSN (e52acd4: the
+     never-created member made close() raise LookupError from an oracle's finally, masking its 77; seed #61038)
+  U9 test_schema_parity, that finally's oracle, on a committed-only tree → 77, no traceback (CI's symptom)
 ESTATE_SRC points at a mutant estate.py (tests/mutants_fixture_unavailable.py). Exit 0 pass · 1 fail · 77 not run (no psycopg).
 """
 import os
@@ -38,7 +44,11 @@ if subprocess.run([sys.executable, "-c", "import psycopg"], capture_output=True)
     sys.exit(77)
 
 ge = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-tracked = subprocess.run(["git", "-C", str(REPO), "ls-files", "-z"], capture_output=True, env=ge, check=True).stdout
+ls = subprocess.run(["git", "-C", str(REPO), "ls-files", "-z"], capture_output=True, env=ge)
+if ls.returncode != 0:      # a `git archive` extract: no index to copy the committed-only tree from, so nothing to verify
+    print(f"NOT RUN: {REPO} is not a git checkout, so there's no tracked set to build the test tree from. Nothing was verified here.")
+    sys.exit(77)
+tracked = ls.stdout
 with tempfile.TemporaryDirectory(prefix="fxu-") as td:
     tree = Path(td) / "tree"
     for rel in tracked.decode(errors="replace").split("\0"):
@@ -49,11 +59,11 @@ with tempfile.TemporaryDirectory(prefix="fxu-") as td:
     if os.environ.get("ESTATE_SRC"):                            # a mutant estate.py (tests/mutants_fixture_unavailable.py)
         shutil.copy2(os.environ["ESTATE_SRC"], tree / "src/astryx/security/sqlguard/estate.py")
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("ASTRYX_DSN", "ASTRYX_SQLGUARD", "GIT_")) and k != "ESTATE_SRC"}
+           if not k.startswith(("ASTRYX_DSN", "ASTRYX_SQLGUARD", "ASTRYX_FIXTURE_ADMIN_DSN", "GIT_")) and k != "ESTATE_SRC"}
 
-    def run(gate):
-        r = subprocess.run([sys.executable, str(tree / gate)], cwd=tree, env=env, capture_output=True, text=True,
-                           timeout=300)
+    def run(gate, extra=None):
+        r = subprocess.run([sys.executable, str(tree / gate)], cwd=tree, env={**env, **(extra or {})},
+                           capture_output=True, text=True, timeout=300)
         return r.returncode, r.stdout + r.stderr
 
     check("the copy is a committed-only tree (no .env, no triggers/)",
@@ -76,6 +86,47 @@ with tempfile.TemporaryDirectory(prefix="fxu-") as td:
     check("U4 an arm already RED, then no database, on a committed-only tree → 1, names it, no traceback",
           rc == 1 and "RED before the fixture" in out and "A24 control" in out.split("RED before the fixture")[-1]
           and "Traceback" not in out, f"rc {rc}: {out[-300:]}")
+    # U5/U6: the admin DSN passed by env, ASTRYX_FIXTURE_ADMIN_DSN (a worktree holds no .env, and the live one is never
+    # linked into it, seed #59548). U6 first: a fixture DSN there is refused loud (1, named), never used as the admin.
+    rc, out = run(GATES[0], {"ASTRYX_FIXTURE_ADMIN_DSN": "postgresql://nobody@127.0.0.1:1/astryx_fx_nobody"})
+    check("U6 a fixture DSN in ASTRYX_FIXTURE_ADMIN_DSN, no .env → 1, refused by name, never 77",
+          rc == 1 and "ASTRYX_FIXTURE_ADMIN_DSN names a fixture database" in out, f"rc {rc}: {out[-300:]}")
+    admin = subprocess.run([sys.executable, str(REPO / "src/astryx/config.py"), "get", "ASTRYX_DSN"], cwd=REPO,
+                           capture_output=True, text=True).stdout.strip()   # the ONE resolver: env first, then the .env
+    if admin:
+        rc, out = run(GATES[0], {"ASTRYX_FIXTURE_ADMIN_DSN": admin})
+        check(f"U5 {GATES[0]} with the admin DSN by env and no .env → it RUNS (0), not NOT SEARCHED",
+              rc == 0 and "NOT SEARCHED" not in out, f"rc {rc}: {out[-300:]}")
+    else:
+        print("  NOTE  U5 not run: no admin DSN on this host (the U6 refusal above still decides its half)")
+    # U7: a present .env wins over the variable (steward #60156 A1: a stale export must not re-point a live tree's
+    # admin). Asked of live_dsn() itself, with placeholder DSNs on port 1: no database is touched, no real DSN is copied.
+    (tree / ".env").write_text("ASTRYX_DSN=postgresql://u7@127.0.0.1:1/from_the_file\n")
+    try:
+        r = subprocess.run([sys.executable, "-c", "from astryx.security.sqlguard import fixture; print(fixture.live_dsn())"],
+                           cwd=tree, env={**env, "PYTHONPATH": str(tree / "src"),
+                                          "ASTRYX_FIXTURE_ADMIN_DSN": "postgresql://u7@127.0.0.1:1/from_the_variable"},
+                           capture_output=True, text=True, timeout=60)
+    finally:
+        (tree / ".env").unlink()
+    check("U7 a present .env wins over ASTRYX_FIXTURE_ADMIN_DSN (the variable is the no-.env path only)",
+          r.stdout.strip().endswith("/from_the_file"), f"rc {r.returncode}: {(r.stdout + r.stderr)[-300:]}")
+    # U8/U9 (seed #61038, steward #61051): pinned here so a revert of e52acd4 goes red at land, not first in public CI
+    r = subprocess.run([sys.executable, "-c",
+                        "from astryx.security.sqlguard import fixture as F\n"
+                        "B = F.Batch()\n"
+                        "try:\n"
+                        "    with F.fixture_db(lifetime='batch', batch=B): pass\n"
+                        "except F.FixtureUnavailable: pass\n"
+                        "print('members', len(B.members)); B.close(); print('closed')"],
+                       cwd=tree, env={**env, "PYTHONPATH": str(tree / "src")}, capture_output=True, text=True, timeout=60)
+    out = r.stdout + r.stderr
+    check("U8 a batch fixture whose admin connect failed leaves no member, and the batch closes with no DSN",
+          r.returncode == 0 and "members 0" in out and "closed" in out and "Traceback" not in out,
+          f"rc {r.returncode}: {out[-300:]}")
+    rc, out = run("tests/test_schema_parity.py")
+    check("U9 tests/test_schema_parity.py with no database on a committed-only tree → 77, NOT SEARCHED, no traceback",
+          rc == 77 and "NOT SEARCHED" in out and "Traceback" not in out, f"rc {rc}: {out[-300:]}")
     (tree / "triggers").mkdir()
     for gate in GATES:
         rc, out = run(gate)

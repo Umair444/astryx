@@ -43,21 +43,31 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from astryx import orgs  # the org's tmux server (plan-11324 S3b)
+from astryx.security import relay  # noqa: E402   canvas_cookie(): the session cookie's one name (plan-11859 D3)
+from astryx.security.serve import serve_untrusted  # noqa: E402   the ONE server of untrusted bytes (plan-11884 G3)
 from astryx.core import canvas as cv
 from astryx.core import presence as pres
 from .canvas_shell import render
-from .common import (MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target,
+from .common import (ESTATE, MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target,
                      step_line, wire_insert)
 from .transcribe import transcribe
 
 DSN = env("ASTRYX_DSN")
 OBS_KEY = env("OBS_KEY")
 DIST = REPO / "canvas" / "web" / "dist"
-COOKIE = "cv_session"
 HOME_AGENT = env("CANVAS_HOME_AGENT", "seed")      # the owner's default chat partner
 PAINTER = env("CANVAS_PAINTER", "painter")         # default author of new canvases
 ORG = "canvas"                                     # from_org of everything this surface inserts
 PREFIX = "/canvas"                                 # served at <host>/canvas/ (observatory proxies it)
+# plan-11324 S3c canvas (a2 #60582 A-2): in a cog of several orgs each org runs its own canvas, and the viewer reaches
+# it under the cog front's /o/<org>/: its cookie lives at THAT path, under a name of its own, so one browser holds each
+# org's session apart (a cookie name on one host is host-wide, like a tmux socket) and never sends one org's session
+# to another's canvas. The org is THIS process's registry name, computed, never read from a request. One org: the
+# public path is PREFIX and the cookie `cv_session`, exactly as before.
+_ORG = orgs.name()
+PUBLIC = f"/o/{_ORG}{PREFIX}" if _ORG else PREFIX
+COOKIE = relay.canvas_cookie(_ORG)                 # ONE name, read by both relays too (src/astryx/security/relay.py)
 
 pool: asyncpg.Pool | None = None
 clients: dict[str, set[asyncio.Queue]] = {}        # viewer name -> open SSE queues
@@ -118,7 +128,7 @@ def public_base(request: Request) -> str:
     """The URL the VIEWER reached us at, through the observatory proxy or the tunnel in front of it."""
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
-    return f"{proto.split(',')[0].strip()}://{host.split(',')[0].strip()}{PREFIX}"
+    return f"{proto.split(',')[0].strip()}://{host.split(',')[0].strip()}{PUBLIC}"
 
 
 def deny(code=403, msg="forbidden"):
@@ -363,7 +373,7 @@ async def login(body: Login, request: Request):
     await pool.execute("INSERT INTO canvas_sessions (token_hash, user_name) VALUES ($1,$2)", _h(tok), name)
     resp = JSONResponse({"ok": True, "name": name})
     resp.set_cookie(COOKIE, tok, max_age=30 * 86400, httponly=True, samesite="strict",
-                    secure=public_base(request).startswith("https:"), path=PREFIX)
+                    secure=public_base(request).startswith("https:"), path=PUBLIC)
     return resp
 
 
@@ -372,7 +382,7 @@ async def logout(request: Request):
     tok = request.cookies.get(COOKIE, "")
     await pool.execute("DELETE FROM canvas_sessions WHERE token_hash=$1", _h(tok))
     resp = JSONResponse({"ok": True})
-    resp.delete_cookie(COOKIE, path=PREFIX)
+    resp.delete_cookie(COOKIE, path=PUBLIC)
     return resp
 
 
@@ -382,7 +392,7 @@ def _roster() -> list[str]:
 
 
 def _blurb(name: str) -> str:
-    f = next((p for p in (REPO / "agents").rglob(f"{name}.md")), None)
+    f = next((p for p in (ESTATE / "agents").rglob(f"{name}.md")), None)
     if not f:
         return ""
     for line in f.read_text().splitlines():
@@ -394,7 +404,7 @@ def _blurb(name: str) -> str:
 
 def _alive() -> set[str]:
     try:
-        out = subprocess.run(["tmux", "ls", "-F", "#{session_name}"], capture_output=True,
+        out = subprocess.run([*orgs.tmux(), "ls", "-F", "#{session_name}"], capture_output=True,
                              text=True, timeout=3).stdout
         return {s[3:] for s in out.split() if s.startswith("ax-")}
     except Exception:
@@ -431,7 +441,7 @@ async def avatar(name: str):
     from fastapi.responses import FileResponse
     if not _NAME.match(name):
         return deny(404, "no such agent")
-    charter = next((f for f in (REPO / "agents").rglob(f"{name}.md") if ".example" not in str(f)), None)
+    charter = next((f for f in (ESTATE / "agents").rglob(f"{name}.md") if ".example" not in str(f)), None)
     pic = next((charter.parent / f"avatar{ext}" for ext in _AVATAR_TYPES
                 if charter and (charter.parent / f"avatar{ext}").is_file()), None)
     if not pic:
@@ -573,11 +583,11 @@ def _never_served(path: Path) -> bool:
     home = Path.home()
     # the host's credential stores too: the Claude OAuth token every resident runs on (~/.claude), the
     # GitHub token and astryx's own config (~/.config), keyrings (steward #37779)
-    dirs = [REPO / "agents", REPO / "triggers", REPO / "memory", home / ".ssh", home / ".gnupg",
+    dirs = [ESTATE / "agents", ESTATE / "triggers", ESTATE / "memory", home / ".ssh", home / ".gnupg",
             home / ".claude", home / ".config", home / ".local" / "share" / "keyrings",
             home / "genesis", home / ".astryx-quarantine"]          # secretset scan roots that are whole trees
-    dirs += [d for d in (REPO / "homes").glob("*/.people")]
-    files = {REPO / ".env", REPO / "local.md", REPO / "relations.md", REPO / "owner.md", home / ".pgpass"}
+    dirs += [d for d in (ESTATE / "homes").glob("*/.people")]
+    files = {ESTATE / ".env", ESTATE / "local.md", ESTATE / "relations.md", ESTATE / "owner.md", home / ".pgpass"}
     try:
         from astryx.security import secretset
         for h in secretset.holders().get("holders", []):
@@ -647,26 +657,23 @@ _convert_lock = asyncio.Lock()          # one soffice at a time: it is heavy, an
 async def message_file(msg: int, n: int, request: Request, inline: int = 0):
     """A file an agent or the viewer embedded in a message the viewer can see. `inline=1` asks to
     VIEW it in the page — granted only for INLINE_TYPES / TEXT_TYPES; anything else downloads."""
-    from fastapi.responses import FileResponse
     v = V(request)
     path = await _message_file(v, msg, n)
     if not path:
         return deny(404, "file not found")
     ext = path.suffix.lower()
-    if inline and ext in TEXT_TYPES:
-        return FileResponse(path, media_type="text/plain; charset=utf-8", content_disposition_type="inline",
-                            filename=path.name, headers={"X-Content-Type-Options": "nosniff"})
-    if inline and ext in INLINE_TYPES:
-        return FileResponse(path, content_disposition_type="inline", filename=path.name,
-                            headers={"X-Content-Type-Options": "nosniff"})
-    return FileResponse(path, filename=path.name)
+    # plan-11884 G3 (a2 BC-2): through serve_untrusted, the ONE server of untrusted bytes. INLINE_TYPES / TEXT_TYPES still
+    # decide what the page may ASK to view; the bytes decide what it gets (sniffed: an "x.png" that is markup downloads).
+    # frame_pdf: Media.tsx shows a PDF in a frame, and a sandboxed frame can't run the browser's PDF viewer.
+    if inline and (ext in TEXT_TYPES or ext in INLINE_TYPES):
+        return serve_untrusted(path, inline=True, frame_pdf=ext == ".pdf")
+    return serve_untrusted(path, inline=False)
 
 
 @app.get("/api/file/preview")
 async def message_file_preview(msg: int, n: int, request: Request):
     """An Office document rendered to PDF for viewing in the page. Converted once (LibreOffice,
     headless, its own throwaway profile) and cached by the file's content hash."""
-    from fastapi.responses import FileResponse
     v = V(request)
     path = await _message_file(v, msg, n)
     if not path:
@@ -698,8 +705,7 @@ async def message_file_preview(msg: int, n: int, request: Request):
                     if not made.is_file():
                         return deny(422, "this document could not be rendered")
                     shutil.move(str(made), out)
-    return FileResponse(out, media_type="application/pdf", content_disposition_type="inline",
-                        filename=f"{path.stem}.pdf", headers={"X-Content-Type-Options": "nosniff"})
+    return serve_untrusted(out, inline=True, filename=f"{path.stem}.pdf", frame_pdf=True)   # plan-11884 G3 (a2 BC-2 ii)
 
 
 @app.post("/api/upload")
@@ -1126,7 +1132,7 @@ class _Prefixed:
             path = scope["path"]
             if path == PREFIX:
                 await send({"type": "http.response.start", "status": 308,
-                            "headers": [(b"location", (PREFIX + "/").encode())]})
+                            "headers": [(b"location", (PUBLIC + "/").encode())]})
                 await send({"type": "http.response.body", "body": b""})
                 return
             if path.startswith(PREFIX + "/"):

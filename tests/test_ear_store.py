@@ -135,6 +135,7 @@ try:
 
         def dumped(extra):
             src, env = bp._argv_safe(fx["dsn"], c.info.dbname)
+            # own-env: pg_dump with the base-pusher's libpq env (bp._argv_safe, the subject); no astryx runs
             r = subprocess.run(["pg_dump", "-Fp", *extra, "-d", src], capture_output=True, text=True, env=env,
                                timeout=120)
             return r.returncode, r.stdout

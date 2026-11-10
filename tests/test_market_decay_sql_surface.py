@@ -41,9 +41,21 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 EXIT_SKIP = 77
-BODY = Path(os.environ.get("MARKET_DECAY_SRC", REPO / "triggers" / "steward" / "market_decay.py"))
-ENV = REPO / ".env"
+BODY = Path(os.environ.get("MARKET_DECAY_SRC", ESTATE / "triggers" / "steward" / "market_decay.py"))
+ENV = ESTATE / ".env"
 if not BODY.exists() or not ENV.exists():
     print("SKIP: market_decay body and/or .env absent (gitignored body / bare clone) — nothing asserted.")
     sys.exit(EXIT_SKIP)

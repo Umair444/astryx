@@ -227,7 +227,11 @@ try:
             import main as obs
             from fastapi.testclient import TestClient
             cl = TestClient(obs.app)
-            OWNER = {"x-obs-key": os.environ["OBS_KEY"]}
+            from astryx import config
+            key = config.org_env("OBS_KEY")      # one org: os.environ's exactly; several: the HOME's .env (S3a BC-S3)
+            if key is None:
+                raise KeyError("OBS_KEY")         # as os.environ["OBS_KEY"] did
+            OWNER = {"x-obs-key": key}
             r = cl.post(f"/api/hands/{droid.phone_desktop(AVD)}/stop", headers=OWNER)
             out = run(srv.act("button", device=AVD, button="HOME"))
             want("D7b the owner's stop button (the real route) refuses a REAL phone action",

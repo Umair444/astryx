@@ -67,7 +67,7 @@ def offending_imports(source: str) -> list:
 # ── RED controls: the scan must FIRE on the broken shape and stay silent on the fix ──
 _BAD = "from triggers.seed.usage_poll import STALE_S\nimport triggers.steward.owner_queue_age\n"
 _GOOD = ("import importlib.util\n"
-         "spec = importlib.util.spec_from_file_location('m', REPO/'triggers/seed/x.py')\n")
+         "spec = importlib.util.spec_from_file_location('m', REPO/'triggers/seed/x.py')\n")  # org-home: fixture tree data: a fake file's text
 check("RED-control: a static `from triggers.`/`import triggers.` IS flagged (both forms)",
       len(offending_imports(_BAD)) == 2)
 check("RED-control: a path-load (spec_from_file_location) is NOT flagged", offending_imports(_GOOD) == [])

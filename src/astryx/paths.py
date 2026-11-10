@@ -55,10 +55,17 @@ def find_marker(start: Path | None = None) -> Path | None:
     return None
 
 
+class NoHome(LookupError):
+    """A cog of several orgs where neither ASTRYX_HOME nor a marker names a REGISTERED org's HOME."""
+
+
 def resolve_home(env: dict | None = None, cwd: Path | None = None, package: Path = PACKAGE,
                  user_home: Path | None = None) -> tuple[Path, str]:
     """(HOME, which rung found it). Every input is injectable so each rung is testable."""
     env = os.environ if env is None else env
+    from astryx import orgs
+    if orgs.multi(env):
+        return _resolve_multi(env, cwd, orgs)
     root = checkout_root(package)
     if env.get("ASTRYX_HOME"):
         h = Path(env["ASTRYX_HOME"]).expanduser().resolve()
@@ -72,8 +79,48 @@ def resolve_home(env: dict | None = None, cwd: Path | None = None, package: Path
     return (Path(user_home) if user_home else Path.home()) / ".astryx", "default"
 
 
+def _resolve_multi(env, cwd, orgs) -> tuple[Path, str]:
+    """plan-11324 S3a (#58435 item 2): in a cog of several orgs the core checkout carries no estate, so its rung and the
+    default (~/.astryx) REFUSE. The env rung takes any REGISTERED HOME (whatever checkout runs the code: the HOME is
+    carried, so a worktree serves the org that launched it); the marker rung stays as a fallback, registered homes
+    only. It can't see through a worktree (find_marker stops at the first git root), which is why the HOME is carried."""
+    if env.get("ASTRYX_HOME"):
+        h = Path(env["ASTRYX_HOME"]).expanduser().resolve()
+        if orgs.org_of(h, env):
+            return h, "env"
+    m = find_marker(cwd)
+    if m is not None and orgs.org_of(m, env):
+        return m, "marker"
+    raise NoHome(f"this cog runs several orgs ({orgs.path(env)}) and neither ASTRYX_HOME nor a .astryx marker "
+                 "names a registered one's HOME: refusing the checkout and ~/.astryx")
+
+
 def home() -> Path:
     return resolve_home()[0]
+
+
+def estate(file: str | Path | None = None) -> Path:
+    """The root of the ORG's estate (.env, local.md, agents/, homes/, triggers/, …: data/estate_partition.json's org
+    class), for a module at `file` (plan-11324 S3a BC-S2). One org: the root of the FILE's own tree, what every
+    `REPO / ".env"` (REPO = `parents[n]`) meant until now, a fake tree loaded by path included: the nearest ancestor
+    holding src/astryx/ (repo_root's rule), else, for a copy in a tree with no package (an oracle's bare tree), the
+    ancestor whose path down to the file is the file's own path in the code tree. Never ANOTHER tree's estate (the
+    package's, as repo_root falls back to): a copy that matches neither raises NoHome. Several orgs: the HOME, because
+    the core checkout carries no estate there. Every estate read builds on THIS (devtools/org_census.py)."""
+    from astryx import orgs
+    if orgs.multi():
+        return home()
+    if file is None:
+        return repo_root()
+    f = Path(file).resolve()
+    for a in f.parents:
+        if (a / "src" / "astryx").is_dir() or (a / "astryx.py").is_file():
+            return a
+    base = repo_root()
+    for k in range(len(f.parts) - 1, 0, -1):         # the LONGEST tail that is a code-tree file (mcp/gmail/server.py,
+        if (base / Path(*f.parts[-k:])).is_file():    # never a top-level server.py)
+            return f.parents[k - 1]
+    raise NoHome(f"{f} is in no astryx tree: no estate to read")
 
 
 def code() -> Path:

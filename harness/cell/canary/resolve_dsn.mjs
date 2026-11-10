@@ -5,5 +5,5 @@
 // prints the SANDBOX dsn; if the cell leaked the real tree it would print the real one.
 import { readFileSync } from 'node:fs'
 const DSN = readFileSync(new URL('../.env', import.meta.url), 'utf8')
-  .split('\n').find(l => l.startsWith('ASTRYX_DSN=')).slice('ASTRYX_DSN='.length).trim()
+  .split('\n').find(l => l.startsWith('ASTRYX_DSN=')).slice('ASTRYX_DSN='.length).trim()   // org-home: the containment canary: it MUST read the checkout's .env (the sibling path the real server once read)
 console.log(DSN)

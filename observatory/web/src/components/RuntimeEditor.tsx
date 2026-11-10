@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import OrgLogin from './OrgLogin'
 import { api, apiSend, displayName } from '../api'
 
 /* Owner-only per-agent provider/auth, SHARED by the agent side-drawer and the Agents-tab
@@ -16,6 +17,15 @@ export type RuntimeCfg = {
   effort: string
   env_keys: string[]
   configured: boolean
+  // the ORG's login beneath this entry (plan-10224 ORGAUTH): the .env key NAME, never its value
+  org_login?: {
+    cli: string
+    key: string | null
+    billing: 'subscription' | 'metered' | 'ambient'
+    supported: boolean
+    note: string | null
+    source: string
+  }
 }
 
 export default function RuntimeEditor({ name, live }: { name: string; live: boolean }) {
@@ -98,6 +108,27 @@ export default function RuntimeEditor({ name, live }: { name: string; live: bool
         <span className="font-mono">.env</span> — here you only name the key that holds it. Applies
         on the agent's next respawn{live ? ' (it is live now).' : '.'}
       </div>
+
+      {cfg.org_login && (
+        <div className="text-[11px] text-ink-mute">
+          <span className={labelCls}>{cfg.org_login.cli} login</span>{' '}
+          {cfg.org_login.supported ? (
+            <span className={cfg.org_login.billing === 'metered' ? 'text-bad' : cfg.org_login.key ? 'text-good' : ''}>
+              {cfg.org_login.source}
+              {cfg.org_login.key && (
+                <>
+                  {' '}(<span className="font-mono">{cfg.org_login.key}</span>
+                  {baseUrl ? ', unused: this agent sets its own base url' : ''})
+                </>
+              )}
+            </span>
+          ) : (
+            <span className="text-bad">cli {cfg.org_login.cli} not yet supported: spawn refuses</span>
+          )}
+          {cfg.org_login.note && <div className="text-bad">{cfg.org_login.note}</div>}
+          {cfg.org_login.supported && <OrgLogin onChanged={load} />}
+        </div>
+      )}
 
       <div>
         <div className={labelCls}>base url (custom provider — blank = Anthropic default)</div>

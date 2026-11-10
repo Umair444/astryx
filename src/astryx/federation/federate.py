@@ -16,6 +16,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import argparse
 import sys
 from pathlib import Path
@@ -34,18 +35,10 @@ RESTART = "sudo systemctl restart astryx-gateway"
 
 # ------------------------------------------------------------------ .env, in place
 def set_env(path: Path, values: dict) -> None:
-    """Rewrite KEY=... lines in place, append the missing keys, keep every other line."""
-    lines = path.read_text().splitlines() if path.exists() else []
-    left = dict(values)
-    out = []
-    for line in lines:
-        k = line.split("=", 1)[0].strip() if "=" in line and not line.lstrip().startswith("#") else None
-        if k in left:
-            out.append(f"{k}={left.pop(k)}")
-        else:
-            out.append(line)
-    out += [f"{k}={v}" for k, v in left.items()]
-    path.write_text("\n".join(out) + "\n")
+    """Set each KEY=value through config.set_env, the ONE .env writer (plan-11860 E5): atomic, 0600, a single-line
+    value only, and the key written exactly once."""
+    for k, v in values.items():
+        config.set_env(k, str(v), path)
 
 
 def _pubkey(env: dict) -> str:
@@ -130,7 +123,7 @@ def main(argv=None) -> int:
     ap.add_argument("--no-introduce", dest="introduce", action="store_false")
     ap.add_argument("--unlisted", action="store_true", help="stay out of the relay directory")
     ap.add_argument("--force", action="store_true", help="write --public-url even if unreachable")
-    ap.add_argument("--env-file", default=str(REPO / ".env"))
+    ap.add_argument("--env-file", default=str(paths.estate(__file__) / ".env"))
     a = ap.parse_args(argv)
     env_path = Path(a.env_file)
     interactive = a.relay is None and a.public_url is None and not a.skip

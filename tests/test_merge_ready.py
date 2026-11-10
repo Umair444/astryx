@@ -44,7 +44,19 @@ from pathlib import Path
 for _k in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_k]
 REPO = Path(__file__).resolve().parents[1]
-BODY = Path(os.environ.get("MERGE_READY_SRC") or REPO / "triggers" / "seed" / "merge_ready.py")
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+BODY = Path(os.environ.get("MERGE_READY_SRC") or ESTATE / "triggers" / "seed" / "merge_ready.py")
 PY = sys.executable
 HELPER = REPO / "devtools" / "apply_receipt.py"
 fails, skips = [], []
@@ -268,6 +280,7 @@ _orig_run = m.Git.run
 
 
 def _hermetic_run(self, *args, stdin=None, check=False):      # the body's git sees the scrubbed env too
+    # own-env: git only, in this oracle's temp repo (the subject's git_env, or ENV)
     r = subprocess.run(["git", "-C", str(self.repo), *args], input=stdin, capture_output=True, text=True,
                        timeout=20, env=m.git_env(ENV) if hasattr(m, "git_env") else ENV)   # the body's own locale pin
     return r

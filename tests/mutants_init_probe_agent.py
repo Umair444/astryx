@@ -12,8 +12,8 @@ TIMEOUT = 120
 
 MUTANTS = {
     "_chk_login inherits the caller's name":
-        ("_chk_login() { printf 'reply with exactly: ok' | env -u ASTRYX_AGENT timeout",
-         "_chk_login() { printf 'reply with exactly: ok' | timeout"),
+        ("_chk_login() { [ -n \"$(printf 'reply with exactly: ok' | env -u ASTRYX_AGENT timeout",
+         "_chk_login() { [ -n \"$(printf 'reply with exactly: ok' | timeout"),
     "the doctor's probe inherits the caller's name":
         ("_login_out=$(printf 'reply with exactly: ok' | env -u ASTRYX_AGENT timeout",
          "_login_out=$(printf 'reply with exactly: ok' | timeout"),

@@ -15,14 +15,25 @@ import importlib.util
 import sys
 
 
+def _estate(repo):
+    """This module's own tree is the ORG's estate (its HOME in a cog of several orgs, plan-11324 S3a); another tree, itself."""
+    from pathlib import Path
+    from astryx import paths
+    if Path(repo).resolve() == paths.repo_root(__file__).resolve():
+        return paths.estate(__file__)
+    return Path(repo)
+
+
 def absent(repo, deps=("psycopg",), env=True):
     """(rc, why) when an entry can't run on this tree, else None. rc 77 = absent here; rc 1 = broken."""
-    need_env, env = env, repo / ".env"
-    live = (repo / "triggers").is_dir()
+    from astryx import config
+    base = _estate(repo)
+    need_env, env = env, base / ".env"
+    live = (base / "triggers").is_dir()
     miss = None
     if need_env and not env.is_file():
         miss = ".env absent"
-    elif need_env and not any(l.startswith("ASTRYX_DSN=") for l in env.read_text().splitlines()):
+    elif need_env and "ASTRYX_DSN" not in config.read_env(env):       # the ONE .env reader: a line, any value
         return 1, ".env is present but has no ASTRYX_DSN line (a misconfigured host, not an absent one)"
     else:
         missing = [d for d in deps if importlib.util.find_spec(d) is None]
@@ -36,6 +47,12 @@ def absent(repo, deps=("psycopg",), env=True):
 
 
 def gate(name, repo, deps=("psycopg",), env=True):
+    # check.sh's registry pin, for a gate run BY HAND (seed 10-19: the relay oracle, run bare on the cog host, started
+    # its fixture gateways under /etc/astryx/cog.json, and 'orga.test' introduced itself to our LIVE seed). A path naming
+    # no file, set before the first estate read; a value already in the env (check.sh's, or an oracle's own) stands.
+    import os
+    import tempfile
+    os.environ.setdefault("ASTRYX_COG_REGISTRY", f"{tempfile.gettempdir()}/astryx-gate-{os.getpid()}-no-registry/cog.json")
     got = absent(repo, deps, env)
     if got:
         rc, why = got

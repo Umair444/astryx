@@ -11,11 +11,35 @@ P1 (a3 #22368, privacy): the TRACKED ledger may carry NO plaintext key whose pat
 committing it. Such keys must be sha256 digests. "Ignored" is asked of git, never listed by hand.
 """
 import json
+import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+
+
+def _dsn_env(path: Path):
+    """A .env holding ONLY the estate's ASTRYX_DSN line, mode 0600, owned by the arm's tmp tree. Never a link to the
+    LIVE .env: that made every other secret in it reachable from a scratch tree for the arm's length (a3 #61413)."""
+    dsn = _astryx("config", "read_env", ESTATE / ".env").get("ASTRYX_DSN", "")
+    path.unlink(missing_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with open(fd, "w") as f:
+        f.write(f"ASTRYX_DSN={dsn}\n")
 fails = []
 
 
@@ -74,7 +98,8 @@ def dp_arms():
             ledger.LEDGER = out
             ledger.judge.judge = lambda d: {"sites": {"triggers/zz/c.py::f\x1fselect 1": {"rung": "UNEXECUTED"}},
                                             "run_not_searched": [], "extractors": {}, "covering": {},
-                                            "counts": {}, "untraced_children": {}}
+                                            "counts": {}, "untraced_children": {},
+                                            "seal": {"files": [], "lines": 0}}   # the real judge's shape (plan-11908 D2)
             refused = False
             try:
                 ledger.seed(nonrepo)
@@ -427,6 +452,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from astryx.security.sqlguard import ledger, privacy  # noqa: E402
+try:                    # plan-11908 D1: shrink acts only on a report judged at its own tuple (an older package: none)
+    from astryx.security.sqlguard import evidence  # noqa: E402
+    STAMP = {"stamp": evidence.stamp(ledger.REPO)}
+except ImportError:
+    STAMP = {}
 
 OUT = {}
 try:
@@ -450,7 +480,7 @@ try:
         t = Path(t)
         led = t / "ledger.json"
         led.write_text(json.dumps(doc))
-        (t / "report.json").write_text(json.dumps({"sites": {k: {"rung": v, "live_only": k == "a.py::lv\x1fselect 7"}
+        (t / "report.json").write_text(json.dumps({**STAMP, "sites": {k: {"rung": v, "live_only": k == "a.py::lv\x1fselect 7"}
                                                              for k, v in sites.items()},
                                                    "run_not_searched": [], "covering": {}}))
         removed, moved = ledger.shrink(str(t), led)
@@ -466,7 +496,7 @@ try:
         again = ledger.shrink(str(t), led)
         OUT["idempotent"] = again == ([], []) and json.loads(led.read_text()) == after
         led.write_text(json.dumps(doc))
-        (t / "report.json").write_text(json.dumps({"sites": {}, "run_not_searched": ["triggers/ absent"]}))
+        (t / "report.json").write_text(json.dumps({**STAMP, "sites": {}, "run_not_searched": ["triggers/ absent"]}))
         try:
             ledger.shrink(str(t), led)
             OUT["refused"] = False
@@ -496,8 +526,15 @@ S2 = "subj/arms.py::gone\x1fselect 2"
 OUT = {}
 
 
+try:                    # plan-11908 D1: admit acts only on a report judged at its own tuple (an older package: none)
+    from astryx.security.sqlguard import evidence  # noqa: E402
+    STAMP = {"stamp": evidence.stamp(ledger.REPO)}
+except ImportError:
+    STAMP = {}
+
+
 def rep(sites, gates=None, covering=None, extractors=None):
-    return {"sites": {CAN: {"rung": "RESPONSIVE"}, **{k: {"rung": v} for k, v in sites.items()}},
+    return {**STAMP, "sites":{CAN: {"rung": "RESPONSIVE"}, **{k: {"rung": v} for k, v in sites.items()}},
             "run_not_searched": [], "gates": gates or {}, "covering": covering or {},
             "extractors": extractors or {}, "blind": []}
 
@@ -508,7 +545,11 @@ def lg(rows=None, extractors=None):
 
 
 def run(name, r, led, dsn):
-    out = enforce.enforce("", ledger=led, dsn=dsn, rep=r)
+    # plan-11908 D5: these arms ARE the timer's semantics (R-CLOCK / R-LEAK need the clocks to advance), so they run
+    # with the timer's write; an older package has no such parameter and always wrote
+    import inspect
+    kw = {"write_seen": True} if "write_seen" in inspect.signature(enforce.enforce).parameters else {}
+    out = enforce.enforce("", ledger=led, dsn=dsn, rep=r, **kw)
     OUT[name] = {"rc": out["rc"], "red": out["red"], "report": out["report"], "ns": out["not_searched"]}
 
 
@@ -641,7 +682,7 @@ def _build_tree(tmp: Path, rev=None):
                         ignore=shutil.ignore_patterns("__pycache__", "ledger.json"))
     from _astryx_skel import skeleton                # goal 10224 S4: astryx.* needs its spine in the fake repo
     skeleton(tmp, "src/astryx/security/__init__.py", "src/astryx/pulse/pulse_run.py", "src/astryx/sql/schema.sql")
-    (tmp / ".env").symlink_to((REPO / ".env").resolve())
+    _dsn_env(tmp / ".env")
     (tmp / "triggers").mkdir()
     (tmp / "subj").mkdir()
     (tmp / "subj" / "__init__.py").write_text("")
@@ -662,7 +703,10 @@ def _build_tree(tmp: Path, rev=None):
 
 def _env(tmp: Path, run: str, trace=None, gate=""):
     import os
+    # A registry naming no file (check.sh's pin, which this fresh env would drop): on a cog host the subject's
+    # pulse_run._dsn would otherwise read /etc/astryx/cog.json, the LIVE orgs, from this fake tree (10-20).
     e = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp"),
+         "ASTRYX_COG_REGISTRY": str(tmp / "no-cog-registry" / "cog.json"),
          "ASTRYX_SQLGUARD_ROOT": str(tmp), "ASTRYX_SQLGUARD_RUN": run}
     if trace is not None:
         e.update(ASTRYX_SQLGUARD_DIR=str(trace), ASTRYX_SQLGUARD_GATE=gate,
@@ -815,6 +859,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     t2.mkdir()
     envi = {"PYTHONPATH": str(tmp / "src" / "astryx" / "security" / "sqlguard" / "shim"), "ASTRYX_SQLGUARD_DIR": str(t2),
             "ASTRYX_SQLGUARD_GATE": "g-envi"}
+    # own-env: asserts its own env: the shim harness's env (PYTHONPATH, SQLGUARD vars) is the arm
     rc_e = subprocess.run([sys.executable, "-m", "astryx.security.sqlguard.canary"], cwd=tmp, env=envi,
                           capture_output=True).returncode
     (t2 / "gates.tsv").write_text(f"g-envi\t{rc_e}\n")
@@ -833,13 +878,18 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     shutil.copy2(tmp / "astryx.py", bare / "astryx.py")
     shutil.copy2(REPO / "src" / "astryx" / "security" / "sqlguard" / "ledger.json", bare / "src" / "astryx" / "security" / "sqlguard" / "ledger.json")
     (bare / "t").mkdir()
-    benv = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp")}
+    # a registry naming no file keeps the bare tree ONE org on a cog host, where the child would otherwise read the live
+    # /etc/astryx/cog.json (a3 #61413)
+    benv = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp"),
+            "ASTRYX_COG_REGISTRY": str(bare / "no-registry" / "cog.json")}
     envf = bare / ".env"
 
+    # rc alone does NOT tell these cases apart (77 and 1 come out alike for a missing .env and missing deps): the TAG
+    # and WORD checks carry the polarity (a3 #61416: a "real" case writing no .env fails only on the tag)
     def bare_case(name, env, live, flags, rc, tag, word):
         envf.unlink(missing_ok=True)
         if env == "real":
-            envf.symlink_to((REPO / ".env").resolve())
+            _dsn_env(envf)
         elif env == "nodsn":
             envf.write_text("SOMETHING_ELSE=1\n")
         (bare / "triggers").mkdir(exist_ok=True) if live else shutil.rmtree(bare / "triggers", ignore_errors=True)
@@ -856,8 +906,7 @@ def harness_arms(tmp: Path, quiet=False, rev=None, mutate=None):
     bare_case("live-broken deps", "real", True, ["-S"], 1, "psycopg", "BROKEN")         # a runner lost its interpreter
     bare_case("no-DSN", "nodsn", False, [], 1, "ASTRYX_DSN", "BROKEN")                  # misconfigured even when bare
     # positive control: .env and deps present, on a live-shaped tree, runs the canary for real (absence only)
-    envf.unlink(missing_ok=True)
-    envf.symlink_to((REPO / ".env").resolve())
+    _dsn_env(envf)
     p = subprocess.run([sys.executable, "-m", "astryx.security.sqlguard.canary"], cwd=bare, env=benv,
                        capture_output=True, text=True)
     arm("estate control: with .env and deps the canary runs (rc 0)", p.returncode == 0,
@@ -976,15 +1025,16 @@ MUTANTS = [
     ("judge.py", "complete = all(gates.get(g, 0) == 0 for g in cov)", "complete = True", "asymmetry"),
     ("judge.py", "old = stored_covering.get(ledger_key(k))", "old = stored_covering.get(k)", "DIGEST"),
     ("judge.py", "if not any(f[0] == APPLIER for f in fr):", "if True:", "F-b the extractor list"),
-    ("enforce.py", 'red.append(f"R-NEW {label(key)}', 'report.append(f"R-NEW {label(key)}', "R-NEW a new site"),
+    ("enforce.py", 'R(f"R-NEW {ledger_key(key)}", f"R-NEW {label(key)}', 'report.append(f"R-NEW {label(key)}',
+     "R-NEW a new site"),
     ("enforce.py", "if gs and all(gates.get(g) == 0 for g in gs):", "if True:", "proves no absence"),
     ("enforce.py", "if runs >= LEAK_RUNS and now - first >= LEAK_AGE:", "if True:", "not on first sight"),
     ("enforce.py", "if not canary or any(", "if False and any(", "canary absent"),
     ("enforce.py", "if runs > NS_RUNS and age.days >= NS_DAYS:", "if True:", "R-CLOCK not before"),
     ("ledger.py", 'if lk in doc["rows"]:', "if False:", "admit refuses"),
     ("ledger.py", 'doc.setdefault("header", {})["debt_rows"] = len(doc["rows"])', "pass", "admit restamps"),
-    ("estate.py", "if not env.is_file():", "if False:", "estate-absent: canary"),
-    ("estate.py", "if not env.is_file():", "if False:", "estate-absent: enforce"),
+    ("estate.py", "if need_env and not env.is_file():", "if False:", "estate-absent: canary"),
+    ("estate.py", "if need_env and not env.is_file():", "if False:", "estate-absent: enforce"),
     ("estate.py", "if missing:", "if False:", "deps-absent: enforce"),
     ("estate.py", "if missing:", "if False:", "deps-absent: canary"),
     ("estate.py", "if live:", "if False:", "live-broken deps: enforce"),
@@ -1061,7 +1111,7 @@ def propagate_arms():
     import os
     sys.path.insert(0, str(REPO))
     from astryx.security.sqlguard import propagate
-    saved = {k: v for k, v in os.environ.items() if k.startswith("ASTRYX_SQLGUARD_")}
+    saved = {k: v for k, v in os.environ.items() if k.startswith("ASTRYX_SQLGUARD_") or k == "ASTRYX_COG_REGISTRY"}
     try:
         for k in saved:
             del os.environ[k]
@@ -1076,8 +1126,32 @@ def propagate_arms():
         check("F-a ...puts the shim FIRST and keeps the oracle's own PYTHONPATH",
               pp[0].endswith(os.path.join("sqlguard", "shim")) and pp[1:] == ["/oracle/own"], out["PYTHONPATH"])
         check("F-a ...and never mutates the dict it was given", base == {"PATH": "/usr/bin", "PYTHONPATH": "/oracle/own"})
-    finally:
+        # the COG REGISTRY pin (steward #61378, seed #61381): carried from the parent, never invented, never overriding
         for k in ("ASTRYX_SQLGUARD_DIR", "ASTRYX_SQLGUARD_GATE", "ASTRYX_SQLGUARD_RUN"):
+            os.environ.pop(k, None)
+        check("F-c no parent pin: nothing is invented (the stated env comes back unchanged)",
+              propagate.env_for_child(base) == base)
+        pin = "/tmp/astryx-gate-probe-no-registry/cog.json"
+        os.environ["ASTRYX_COG_REGISTRY"] = pin
+        check("F-c outside a trace, the parent's pin is CARRIED and nothing else is added (a hand run = a gate run)",
+              propagate.env_for_child(base) == {**base, "ASTRYX_COG_REGISTRY": pin}, str(propagate.env_for_child(base)))
+        own = {**base, "ASTRYX_COG_REGISTRY": "/oracle/own/cog.json"}
+        check("F-c an oracle's OWN registry (test_canvas_cog's) is kept, never overridden by the parent's",
+              propagate.env_for_child(own)["ASTRYX_COG_REGISTRY"] == "/oracle/own/cog.json")
+        os.environ.update(ASTRYX_SQLGUARD_DIR="/tmp/sg-probe", ASTRYX_SQLGUARD_GATE="g", ASTRYX_SQLGUARD_RUN="r")
+        extra = set(propagate.env_for_child(base)) - set(base)
+        check("F-c inside a trace: the sqlguard variables and the parent's pin, nothing else",
+              extra == {"ASTRYX_SQLGUARD_DIR", "ASTRYX_SQLGUARD_GATE", "ASTRYX_SQLGUARD_RUN", "ASTRYX_COG_REGISTRY"},
+              str(extra))
+        # a tool-ledger-shaped child: a FRESH env (PATH, agent) through the helper still reads the parent's registry
+        import subprocess as _sp
+        r = _sp.run([sys.executable, "-c", "import os; print(os.environ.get('ASTRYX_COG_REGISTRY'))"],
+                    env=propagate.env_for_child({"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ASTRYX_AGENT": "alice"}),
+                    capture_output=True, text=True)
+        check("F-c a fresh-env child launched through the helper reads the PARENT's registry pin, never the host's",
+              r.stdout.strip() == pin, r.stdout + r.stderr)
+    finally:
+        for k in ("ASTRYX_SQLGUARD_DIR", "ASTRYX_SQLGUARD_GATE", "ASTRYX_SQLGUARD_RUN", "ASTRYX_COG_REGISTRY"):
             os.environ.pop(k, None)
         os.environ.update(saved)
 
@@ -1088,7 +1162,7 @@ def main():
     if "--mutants" in args:
         i = args.index("--mutants")
         return mutant_battery(args[i + 1] if i + 1 < len(args) else None)
-    if not (REPO / ".env").exists():
+    if not (ESTATE / ".env").exists():
         print("NOT SEARCHED: no .env (ASTRYX_DSN), so the harness can't reach postgres. Nothing was verified.")
         return 77
     if "--against" in args:                    # RED-first: this harness against an OLDER package
@@ -1127,4 +1201,7 @@ def main():
 
 
 if __name__ == "__main__":
+    # a gate cap's TERM unwinds through every TemporaryDirectory, so no _dsn_env copy of the DSN outlives the run
+    # (a3 #61416; the 22a3d72 idiom)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     sys.exit(main())

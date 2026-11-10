@@ -35,4 +35,63 @@ MUTANTS = {
         ('[ -z "$stray" ] || refuse', 'true || refuse'),
     "N13 any non-empty body prefix is accepted (a 1-hex prefix passes 1 body in 16: steward #56607)":
         ('[[ "$want" =~ ^[0-9a-f]{12,64}$ ]] || die', 'true || die'),
+    "N14 a refused push's gate lines are not printed (only tail -2: 10-16)":
+        ("printf '%s\\n' \"$pout\" | grep -E '^FAILED", "true || printf '%s\\n' \"$pout\" | grep -E '^FAILED"),
+    "N15 a --test already in the range runs twice":
+        ('*" $t "*) ;; *) TESTS+=("$t");;', '*) TESTS+=("$t");;'),
+    "N16 the gate lines keep the FIRST 12 (head), so decoy ✗ arms push the real verdict out (a4 #57476)":
+        ("✗' | tail -12 |", "✗' | head -12 |"),
+    "N17 a --test isn't normalised (./tests/x.py runs twice)":
+        ('  t=$(realpath -m --relative-to=. "$t")', '  :'),
+    "N18 a known-red test may ADD failing lines (any red passes once it is named)":
+        ('if [ -n "$new" ]; then why=', 'if false; then why='),
+    "N19 a known-red test GREEN on main isn't refused (the range's own red gets named known)":
+        ('[ $rc -ne 0 ] || refuse "--known-red', 'true || refuse "--known-red'),
+    "N20 a mutants file can be known-red (a NOT PROBED mutant waved through)":
+        ('case "$(basename "$k")" in test_*.py) ;;', 'case "$(basename "$k")" in *) ;;'),
+    "N21 an equal rc with no failing line passes though main HAD failing lines (a crash reads as a fix: a4 #59276 R1)":
+        ('{ [ -n "${BASE_FAILS[$t]}" ] || [ "$rc" -ne', '{ [ "$rc" -ne'),
+    "N22 a known-red naming a test the land doesn't run is accepted":
+        ('*" $k "*) ;; *) die', '*) ;; *) die'),
+    "N23 a Traceback B printed is not a refusal (a crash prints no FAIL line: a4 #59276 R2a)":
+        ('elif [ "$tb" -gt "${BASE_TB[$t]}" ]; then', 'elif false; then'),
+    "N24 fewer verdict lines than main is not a refusal (a deleted arm reads as fixed: a4 #59276 R2b)":
+        ('elif [ "$nv" -lt "${BASE_N[$t]}" ]; then', 'elif false; then'),
+    "N25 failset sees only FAIL/✗/NOT RUN (FAILED, FAIL:, ✘ pass as absent: a4 #59276 A3)":
+        ("(FAIL[A-Za-z]*|ERROR|SURVIVED|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed", "(FAIL|✗|NOT RUN)([[:space:]:(]|$)' | sed"),
+    "N26 ERROR and SURVIVED aren't failing lines (a new failure in the repo's other spellings reads as known: a4 #59280 B1)":
+        ("|ERROR|SURVIVED|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed", "|✗|✘|NOT RUN)([[:space:]:(]|$)' | sed"),
+    "N27 no registry pin (on a cog host every range test runs under multi: plan-11324 S3f S3)":
+        ('export ASTRYX_COG_REGISTRY="${TMPDIR:-/tmp}/astryx-gate-$$-no-registry/cog.json"\n', ''),
+    "F1 S2F: a range changing the reachability gate's population never runs it":
+        ('  if [ -n "$REACH_WHY" ]; then', '  if false; then'),
+    "F2 S2F: a DELETED script doesn't count (only adds trigger the gate)":
+        ('git diff --name-only --no-renames --diff-filter=AD', 'git diff --name-only --no-renames --diff-filter=A'),
+    "F3 S2F: the receipt doesn't say why the gate ran":
+        ('[ -n "$REACH_WHY" ] && TAIL=', 'false && TAIL='),
+    "F4 S2F: a failed domain query skips the gate (fail OPEN)":
+        ('    REACH_WHY="its domain query failed, rc $mrc, so it runs anyway"', '    REACH_WHY=""'),
+    "F5 S2F: the domain is a copy here (every .py/.sh anywhere), not the gate's own rule":
+        ('            | env -u ASTRYX_AGENT timeout "$TEST_TIMEOUT" "$PY" "$REACH" --in-domain 2>/dev/null); mrc=$?',
+         "            | grep -E '[.](py|sh)$'); mrc=$?"),
+    "F6 S2F: the workflow refusal pipes its lint output into grep -q again (a big UNATTRIBUTED list lands)":
+        ("if [ $wrc -eq 3 ] && grep -q '^UNATTRIBUTED ' <<<\"$wl\"; then",
+         "if [ $wrc -eq 3 ] && printf '%s\\n' \"$wl\" | grep -q '^UNATTRIBUTED '; then"),
+    # plan-11908 D6 / a3 #62868: the probe's admin DSN is a prefix on its invocation alone (L18)
+    "P1 the admin DSN is exported land-wide (every range test and child sees a superuser DSN)":
+        ('[ -f .env ] && PROBE_ENV=(', '[ -f .env ] && export "ASTRYX_FIXTURE_ADMIN_DSN=$("$PY" src/astryx/config.py dsn --file 2>/dev/null)" && PROBE_ENV=('),
+    "P2 the probe gets no admin DSN (a DB-needing mutants file is unlandable)":
+        ('${PROBE_ENV[@]+"${PROBE_ENV[@]}"} timeout', 'timeout'),
+    "P4 the land judge runs from the TREE at B (the range grades itself)":
+        ('"$PY" "$JT/$LJ" "$A_SHA"', '"$PY" "$LJ" "$A_SHA"'),
+    "P5 an ambient admin DSN is not removed (it reaches every range test)":
+        ("\nunset ASTRYX_FIXTURE_ADMIN_DSN\n", "\n"),
+    "P3 the land judge's refusal doesn't stop the land":
+        ('[ $jrc -eq 0 ] || { echo "  ✗ land judge rc $jrc"; RED=1; }', 'true'),
+    "a range changing a schema file doesn't run test_schema_current (plan-12214 R-2)":
+        ('  if [ -n "$sch" ]; then\n    SCHEMA_WHY=', '  if false; then\n    SCHEMA_WHY='),
+    "the schema gate is said but never run":
+        ('    case " ${TESTS[*]-} " in *" $SCHEMA_GATE "*) ;; *) TESTS+=("$SCHEMA_GATE");; esac\n', ''),
+    "the receipt doesn't say why the schema gate ran":
+        ('[ -n "$SCHEMA_WHY" ] && TAIL="$TAIL; $(basename "$SCHEMA_GATE") ran because $SCHEMA_WHY"\n', ''),
 }

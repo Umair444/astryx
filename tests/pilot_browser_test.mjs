@@ -23,11 +23,14 @@ import { fileURLToPath } from 'node:url'
 const REPO = process.env.PILOT_REPO || join(dirname(fileURLToPath(import.meta.url)), '..')
 const CHROME = ['/usr/bin/chromium', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser'].find(existsSync)
 const WEB = join(REPO, 'observatory/web')
-const envPath = join(REPO, '.env')
+const envPath = join(REPO, '.env')  // org-home: one org: a live probe of this tree's org; no JS estate resolver (home.mjs defaults to ASTRYX_HOME, not this tree)
 const KEY = existsSync(envPath) ? (readFileSync(envPath, 'utf8').split('\n').find((l) => l.startsWith('OBS_KEY=')) || '').slice(8).trim() : ''
+// THIS tree's federation name: in a cog the front answers a bare /api with 409 until the viewer picks a room, and a fresh
+// profile has picked none, so the gate picks the room this tree IS, by name, never "the first org" (steward #61761)
+const ORG_NAME = existsSync(envPath) ? (readFileSync(envPath, 'utf8').split('\n').find((l) => l.startsWith('ASTRYX_ORG=')) || '').slice(11).trim() : ''
 if (!CHROME || !KEY || !existsSync(join(WEB, 'node_modules/.bin/vite'))) {
   const why = !CHROME ? 'no chromium' : !KEY ? 'no OBS_KEY in .env' : 'no observatory/web/node_modules'
-  if (existsSync(join(REPO, 'triggers'))) { console.log(`  BROKEN: ${why} on a live host (triggers/ present)`); process.exit(1) }
+  if (existsSync(join(REPO, 'triggers'))) { console.log(`  BROKEN: ${why} on a live host (triggers/ present)`); process.exit(1) }  // org-home: audit: is THIS tree a live host
   console.log(`  NOT SEARCHED: ${why} (a committed-only tree: triggers/ absent)`)
   process.exit(77)
 }
@@ -145,6 +148,23 @@ await cdp('Page.enable')
 await cdp('Page.navigate', { url: URL0 })
 await until('the first page load', () => ev(`document.readyState === 'complete'`))
 await ev(`localStorage.setItem('obs_key', ${JSON.stringify(KEY)}); true`)
+// A cog's front (409 on a bare /api/whoami): choose this tree's room as the app's chooser does, the astryx_org cookie
+// (cog.tsx chooseOrg), so the reload lands in it. One org: whoami answers, nothing is set, the run is as before.
+const room0 = await ev(`(async () => {
+  const h = { 'x-obs-key': localStorage.getItem('obs_key') }
+  const w = await fetch('/api/whoami', { headers: h })
+  if (w.status !== 409) return { cog: false }
+  const c = await fetch('/api/cog', { headers: h }).then((r) => r.json()).catch(() => ({}))
+  const m = (c.orgs || []).filter((x) => x.name === ${JSON.stringify(ORG_NAME)})   // exactly one: a shared name is a collision, never a pick
+  const o = m.length === 1 ? m[0] : null
+  if (!o || !o.org) return { cog: true, org: null, names: (c.orgs || []).map((x) => x.name) }
+  document.cookie = 'astryx_org=' + encodeURIComponent(o.org) + '; Path=/; SameSite=Strict'
+  return { cog: true, org: o.org }
+})()`)
+if (room0?.cog && !room0.org) {
+  arm(`a cog front, and this tree's org (${ORG_NAME || 'ASTRYX_ORG unset'}) is one of its rooms`, false, JSON.stringify(room0.names))
+  console.log('FAIL (1)'); cleanup(); process.exit(1)
+}
 await cdp('Page.reload')
 await until('the reloaded page', () => ev(`document.readyState === 'complete'`))
 await until('the dev harness (window.__pilotTest)', () => ev(`!!${T}`))

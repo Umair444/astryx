@@ -77,11 +77,9 @@ def _alarm(*_):
 def env_file() -> dict:
     out = {}
     try:
-        with open(os.path.join(REPO, ".env")) as f:
-            for line in f:
-                if "=" in line and not line.lstrip().startswith("#"):
-                    k, v = line.split("=", 1)
-                    out[k.strip()] = v.strip().strip('"').strip("'")
+        from astryx import config, paths    # the org's .env (its HOME's in a cog of several orgs), plan-11324 S3a
+        for k, v in config.read_env(paths.estate(__file__) / ".env").items():   # the ONE reader (plan-10224 ENVREAD)
+            out[k] = v.strip('"').strip("'")
     except Exception:
         pass
     return out
@@ -169,7 +167,11 @@ def main() -> None:
         return
     cfg = env_file()
     url = cfg.get("ASTRYX_CLASSIFIER_URL", "")
-    dsn = cfg.get("ASTRYX_DSN", "")
+    try:
+        from astryx import config, paths    # the DSN through the ONE resolver (plan-11324 S3a); the file only
+        dsn = config.dsn(paths.estate(__file__) / ".env", env_first=False)
+    except Exception:                       # noqa: BLE001 — absent/unreadable: no DSN, as env_file() gave ""
+        dsn = ""
     if not url or not dsn:
         return
     from nucleus.tier import is_content_public

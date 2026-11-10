@@ -49,7 +49,7 @@ from .common import (HERE, MEDIA_DIR, Outcome, route_target, describe_media,
                      step_line, update_poll_votes, vote_body, vote_changes, wire_insert,
                      door_open, door_org_ok, live_steps_ok, released)
 from .pulse_witness import PulseWitness
-from .providers.whatsapp import WhatsAppProvider
+from .providers.whatsapp import WhatsAppProvider, run_wacli
 
 PROVIDER = WhatsAppProvider()          # wacli send logic
 
@@ -59,7 +59,8 @@ WA_CLI = shlex.split(env("WA_CLI", "docker exec wacli-sync wacli"))
 DATA_HOST = env("WA_DATA_HOST")       # wacli store dir on the host (media on/off switch)
 DATA_CTR = env("WA_DATA_CTR", "/data")    # same dir as the wacli process sees it
 WA_DOCKER = WA_CLI[2] if WA_CLI[:2] == ["docker", "exec"] else ""
-ROUTES_FILE = HERE / "routes-whatsapp.json"
+from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
+ROUTES_FILE = ESTATE / "bridges" / "routes-whatsapp.json"
 
 JOB_TIMEOUT = 1800    # lifecycle GC only: forget a job nobody answered in 30 min
 
@@ -88,35 +89,10 @@ def jid_str(v) -> str:
     return str(v or "")
 
 
-# wacli errors that mean the call never reached WhatsApp, so a retry can't double-send: the store held by another
-# wacli (wacli-sync still starting at boot) and WhatsApp's rate limit on the recipient lookup that precedes a send.
-# On 10-15 the pulse witness's DOWN and RESUMED rings both died this way in the boot window (#54618 store locked,
-# #54624 429 rate-overlimit) and the owner saw neither: the one alarm about a dark org was eaten by the org waking up.
-WACLI_TRANSIENT = re.compile(r"store is locked|status 429|rate-overlimit", re.I)
-WACLI_RETRY_WAITS = (2, 5, 15)                  # seconds before each retry: bounded, ~22 s worst case
-
-
+# The transient-retry rules (what may be retried, how often, the last-stderr-line rule) live in the provider, the one
+# implementation every send shares (steward #62329); this is the bridge's own spelling of a call through it.
 async def wacli(*args: str) -> str:
-    for attempt, wait in enumerate((*WACLI_RETRY_WAITS, None)):
-        proc = await asyncio.create_subprocess_exec(
-            *WA_CLI, *args,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=60)
-        if proc.returncode == 0:
-            if attempt:
-                print(f"whatsapp: wacli {' '.join(args[:2])} succeeded after {attempt} transient retr"
-                      f"{'y' if attempt == 1 else 'ies'}", flush=True)
-            return out.decode(errors="replace")
-        # Classify the LAST stderr line only: that is the error wacli exits with. A 429 also appears EARLIER as a
-        # warning ("warn: send warmup for <jid> failed (send will proceed): ...status 429...") before every send in
-        # a rate-limited window, and searching all of stderr let a following "send timed out after 45s" (the message
-        # node may already be accepted, only the ack lost) be retried: a double send (a3 #54634, reproduced).
-        msg = (err.decode(errors="replace").strip().splitlines() or [""])[-1][:200]
-        if wait is None or not WACLI_TRANSIENT.search(msg):
-            # a failed call must fail loudly; a silent non-zero exit hides a lost send
-            raise RuntimeError(f"wacli {' '.join(args[:2])}: {msg}"
-                               + (f" (after {attempt} transient retries)" if attempt else ""))
-        await asyncio.sleep(wait)
+    return await run_wacli(WA_CLI, *args)
 
 
 def find_id(obj) -> str | None:
@@ -137,32 +113,52 @@ def find_id(obj) -> str | None:
 
 
 # ---------------------------------------------------------------------- media
+# A message id is the SENDING client's string (a1 #62931), and it becomes a path under the store and an
+# argv element. Every live store dir name fits this (10 215 measured 10-25: 18-34 alphanumerics, one
+# with an inner hyphen): no "/", no ".", no quote, no leading "-". Anything else is refused, never fetched.
+MSGID_OK = re.compile(r"[0-9A-Za-z][0-9A-Za-z-]{0,127}")
+
+
+def _under(p: Path, root: Path) -> bool:
+    """p, resolved, sits inside root (a belt under MSGID_OK: a symlink in the store can't walk out)."""
+    try:
+        return p.resolve().is_relative_to(root.resolve())
+    except OSError:
+        return False
+
+
 async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
     """Inbound attachment -> host Path (or an excuse string). sync
     --download-media already saves every file under store/media/<chat>/<msgid>/,
     so no second download (and no store-lock contention): we wait for it."""
     if not DATA_HOST:
         return f"<{media} attached, media dir not configured>"
+    if not MSGID_OK.fullmatch(msgid):
+        return f"<{media} attached, refused: its message id is not a WhatsApp id>"
     rel = f"store/media/{chat.replace('@', '_')}/{msgid}"
     base = Path(DATA_HOST) / rel
     for _ in range(20):
         try:
-            files = [p for p in base.rglob("message-*") if os.access(p, os.R_OK)]
+            # ANY file under the message's dir: wacli names a photo message-*, but a document keeps
+            # its own filename (store/media/<chat>/<msgid>/document/resume.pdf, msg 62886)
+            files = [p for p in base.rglob("*") if p.is_file() and os.access(p, os.R_OK)
+                     and _under(p, base)]
         except PermissionError:
             files = []
         if files:
             return files[0]
         if WA_DOCKER:                      # store unreadable from host: copy out
             try:
-                proc = await asyncio.create_subprocess_exec(
-                    "docker", "exec", WA_DOCKER, "sh", "-c",
-                    f"ls {DATA_CTR}/{rel}/*/message-* 2>/dev/null | head -1",
-                    stdout=asyncio.subprocess.PIPE)
+                proc = await asyncio.create_subprocess_exec(      # argv, never a shell (a1 #62931 R1)
+                    "docker", "exec", WA_DOCKER, "find", f"{DATA_CTR}/{rel}", "-type", "f",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
                 out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-                ctr_path = out.decode().strip()
+                ctr_path = (out.decode().splitlines() or [""])[0].strip()
                 if ctr_path:
                     MEDIA_DIR.mkdir(exist_ok=True)
-                    dst = MEDIA_DIR / Path(ctr_path).name
+                    dst = MEDIA_DIR / f"{msgid}-{Path(ctr_path).name}"   # two resume.pdf never collide
+                    if not _under(dst, MEDIA_DIR):
+                        return f"<{media} attached, refused: its stored name leaves the media dir>"
                     with open(dst, "wb") as f:
                         proc = await asyncio.create_subprocess_exec(
                             "docker", "exec", WA_DOCKER, "cat", ctr_path, stdout=f)
@@ -195,7 +191,7 @@ async def send_files(chat: str, files: list[str], out: Outcome | None = None, *,
         return
     outbox = Path(DATA_HOST) / "astryx-outbox"
     outbox.mkdir(exist_ok=True)
-    route = next((r for r in routes() if str(r.get("chat")) == chat), None)
+    route = routes().chat(chat)
     for f in files:
         try:                              # never silent: the body may still say "attached"
             name, data = read_checked(f, agent, owner_only("whatsapp", route))
@@ -275,6 +271,20 @@ async def stored_text(chat: str, msgid: str, waits=(2, 5, 12)) -> str:
     return ""
 
 
+async def stored_media(chat: str, msgid: str) -> str:
+    """The media type wacli's store holds for an event whose payload named none. Its webhook omits
+    Media for a captioned document (msg 62886: the caption arrived, the PDF did not), its store
+    does not. wacli stores before it posts, so one read and no wait. The price: one `wacli messages
+    show` per inbound TEXT event (every non-media, non-reaction one), fine at a household's volume."""
+    if not MSGID_OK.fullmatch(msgid):
+        return ""
+    try:
+        d = json.loads(await wacli("messages", "show", "--chat", chat, "--id", msgid, "--json"))
+    except Exception:
+        return ""
+    return ((d.get("data") or {}).get("MediaType") or "").strip()
+
+
 @app.post("/hook")
 async def hook(request: Request):
     body = await request.body()
@@ -288,7 +298,7 @@ async def hook(request: Request):
         return Response(status_code=400)
 
     chat = jid_str(m.get("Chat"))
-    route = next((r for r in routes() if r.get("chat") == chat), None)
+    route = routes().chat(chat)
     if route is None:
         return {"ok": True}                       # not a surface we serve
 
@@ -338,40 +348,35 @@ async def hook(request: Request):
             + " | ".join(pc.get("Options", [])), route=route)
         return {"ok": True}
 
-    if m.get("FromMe"):
-        return {"ok": True}                       # our own sends echo back; drop
-
-    # ---- reactions (goal 15, owner-added): wacli flattens a whatsmeow reaction to
-    # ReactionToID (the id of the message reacted TO) + ReactionEmoji (empty string = the
-    # reaction was REMOVED). A reaction carries no Text, so it must be handled HERE, before
-    # the `if not text` drop below that would otherwise discard it (why 0 intent='reaction'
-    # rows ever existed on wa: threads). FromMe is already dropped above — we don't signal
-    # our own reactions. Mirrors the Discord/Telegram branches: resolve the reacted-to
-    # message's agent + snippet from what we stored when we SENT it (delivery.message_id),
-    # then deliver one wire signal (intent='reaction') to that agent.
-    rt = m.get("ReactionToID") or ""
-    if rt:
-        remoji = (m.get("ReactionEmoji") or "").strip()
-        if not remoji:
-            return {"ok": True}                   # a removal — nothing to signal
-        if msgid and msgid in seen_msgids:
-            return {"ok": True}                   # wacli re-posted this reaction event; signal once
-        r_jid = jid_str(m.get("SenderJID"))
-        r_trusted = r_jid in route.get("trusted_jids", [])
-        if not r_trusted and not route.get("open"):
-            return {"ok": True}                   # closed surface: trusted reactors only
+    # ---- reactions: a reaction has no text, so the empty-text drop below discarded every one (owner
+    # 10-18: "does whatsapp chat reactions respond back to u?"). Discord and Telegram already deliver
+    # them through reaction_signal; this is the same path. It runs BEFORE the FromMe drop: the bridge
+    # never sends a reaction, so a FromMe reaction is the linked account's holder, the owner (the poll
+    # branch above reasons the same way). Only the OWNER's reaction, to a message an agent SENT here
+    # (its WhatsApp id stored as delivery.message_id), is delivered: a family thumbs-up on an open
+    # surface is not addressed to an agent. A removal carries no emoji and says nothing.
+    if m.get("ReactionToID"):
+        emoji = (m.get("ReactionEmoji") or "").strip()
+        if not emoji or (msgid and msgid in seen_msgids):
+            return {"ok": True}
+        if not (m.get("FromMe") or jid_str(m.get("SenderJID")) in route.get("trusted_jids", [])):
+            return {"ok": True}
+        agent, snippet = await reacted_message(pool, f"wa:{chat}", m["ReactionToID"])
+        if agent is None:
+            return {"ok": True}
         if msgid:
             seen_msgids[msgid] = now
-        who = "owner" if r_trusted else \
-            f"wa-{''.join(c for c in r_jid.split('@')[0] if c.isdigit()) or 'unknown'}"
-        agent, snippet = await reacted_message(pool, f"wa:{chat}", rt)
-        await reaction_signal(pool, "whatsapp", f"wa:{chat}", who,
-                              remoji, agent or route["agent"], snippet)
+        await reaction_signal(pool, "whatsapp", f"wa:{chat}", "owner", emoji, agent, snippet)
         return {"ok": True}
+
+    if m.get("FromMe"):
+        return {"ok": True}                       # our own sends echo back; drop
 
     text = (m.get("Text") or "").strip()
     # media rides as a nested object in the webhook payload: Media.Type
     media = ((m.get("Media") or {}).get("Type") or m.get("MediaType") or "").strip()
+    if not media and msgid and not m.get("ReactionToID") and not m.get("ReactionEmoji") and not m.get("Revoked"):
+        media = await stored_media(chat, msgid)
     if media and msgid:
         got = await fetch_media(chat, msgid, media)
         got = await describe_media(got, media) if isinstance(got, Path) else got
@@ -464,7 +469,8 @@ async def worker(agent: str):
     job["busy"] = True
     try:
         while job is jobs.get(agent) and job["latest"] != job["sent"]:
-            line = job["latest"]
+            raw = job["latest"]
+            line = signed(agent, raw, job["chat"])
             await typing(job["chat"])
             try:
                 if job["ph_id"] is None:
@@ -479,12 +485,23 @@ async def worker(agent: str):
                                 "--id", job["ph_id"], "--message", line)
             except Exception:
                 pass
-            job["sent"] = line
+            job["sent"] = raw
     finally:
         job["busy"] = False
 
 
 # ------------------------------------------------------------------- outbound
+def signed(agent: str, text: str, chat) -> str:
+    """WhatsApp shows one number for every agent, so the text names its sender: a bold
+    label line, then the body. Idempotent (an edited bubble is never signed twice). A route
+    with `"signed": false` stays unlabelled: an agent speaking there in the owner's voice."""
+    route = routes().chat(chat)
+    if route is not None and route.get("signed") is False:
+        return text
+    label = f"▸ *{agent}*\n"
+    return text if not text or text.startswith(label) else label + text
+
+
 _skipped_threads: set = set()
 
 # The owner doorbell's HOME surface, pinned by NAME (forge, plan-2457 msg 13041). The
@@ -574,7 +591,8 @@ async def deliver(row):
         # The watcher re-fetches ALL pending rows on every wire event, so without
         # memory this line would repeat for the row's whole life. Once per process is
         # enough for a human reading the log; the row itself stays pending because its
-        # consumer is the observatory (which marks it on serve), not this bridge.
+        # consumer is the observatory (which marks it on serve), not this bridge. The shapes this bridge DOES
+        # serve are named once in bridges/owner_surfaces.py: change a branch here, change it there.
         if row["id"] not in _skipped_threads:
             _skipped_threads.add(row["id"])
             print(f"whatsapp: skipped outbound msg {row['id']} — thread {thread!r} names "
@@ -582,8 +600,8 @@ async def deliver(row):
                   f"un-threaded or wa:<jid> to reach WhatsApp)", flush=True)
         return
     else:                            # UNTHREADED: the owner doorbell, by design.
-        route = next((r for r in routes() if r["agent"] == row["from_agent"]), None) \
-            or next((r for r in routes() if r["agent"] == HOME_AGENT), None)
+        rt = routes()
+        route = rt.doorbell(row["from_agent"]) or rt.doorbell(HOME_AGENT)
         chat = route and route["chat"]
         if not chat and row["id"] not in _skipped_threads:
             _skipped_threads.add(row["id"])
@@ -597,6 +615,7 @@ async def deliver(row):
     agent = row["from_agent"]
     text, files = split_files(stamped[1] if stamped else row["body"])
     text, polls = split_polls(text, max_options=12)
+    text = signed(agent, text, chat)
     out = Outcome()
     try:
         job = jobs.pop(agent, None)

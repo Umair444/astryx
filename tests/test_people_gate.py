@@ -386,7 +386,7 @@ try:
              keyset <= {"id", "org", "name", "direct"}, str(keyset))
 
         # CUTOVER: the writers, pointed at the fixture.
-        os.environ["ASTRYX_DSN"], os.environ["ASTRYX_ORG"] = fx["dsn"], ORG
+        os.environ["ASTRYX_DSN"], os.environ["ASTRYX_ORG"] = fx["dsn"], ORG  # org-home: fixture-bound: the test BINDS its fixture DSN here (a write)
         from astryx.people import people, persona
         real_wa = people._wa
         people._wa = lambda *a, **k: None                   # main's write_pg ends in dm_refresh: never the live wacli

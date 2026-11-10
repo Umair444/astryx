@@ -28,7 +28,19 @@ from astryx.memory.okf import (  # noqa: E402
 )
 
 REPO = Path(__file__).resolve().parent.parent
-WIKI = REPO / "memory" / "wiki"
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
+WIKI = ESTATE / "memory" / "wiki"
 
 # ── the three live lints' regexes, copied VERBATIM from triggers/memory/*.py ──────────
 # Copied, not imported: triggers/ is gitignored, so it is absent from a clean checkout and
@@ -251,7 +263,7 @@ def test_every_live_page_survives_attach_unchanged():
 def test_index_md_marker_survives():
     """compile_lag + recon.sh both parse `compiled-through · org-news #N` out of index.md,
     and `compiled-through` is a forbidden key precisely so it stays a body fact."""
-    idx = REPO / "memory" / "index.md"
+    idx = ESTATE / "memory" / "index.md"
     if not idx.is_file():
         return
     original = idx.read_text()

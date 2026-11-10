@@ -57,6 +57,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import argparse
 import sys
@@ -102,9 +103,7 @@ ORDER BY m.id
 
 
 def dsn() -> str:
-    return next(l.split("=", 1)[1].strip()
-                for l in (REPO / ".env").read_text().splitlines()
-                if l.startswith("ASTRYX_DSN="))
+    return config.dsn(paths.estate(__file__) / ".env", env_first=False)
 
 
 def dropped(conn, hours: int = 168, grace: int = 2, agent: str | None = None) -> list[dict]:

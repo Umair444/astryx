@@ -18,6 +18,9 @@ RED:
             A listed extractor whose gate skipped or failed is left alone (the F-b absence rule).
 NOT SEARCHED (run level, rc 77, never a pass): shim internal errors; triggers/ absent; the canary site not
 RESPONSIVE; the state table absent (apply schema.sql).
+READ-ONLY (plan-11908 D5): the R-CLOCK / R-LEAK clocks in sqlguard_seen advance ONLY when ASTRYX_SQLGUARD_WRITE_SEEN=1
+(exported by check_watch.sh, the timer). Every other run reads the stored clocks, writes nothing, and ends rc 77 with
+"seen-set clocks not advanced (read-only run)" unless it found a RED (rc 1 then: read-only never masks a finding).
 Every answer prints judge.REMAINDER, the ceiling of what RESPONSIVE certifies.
 """
 if not __package__:  # run by path: the checkout root goes first on sys.path so `astryx` resolves (goal 10224 S4)
@@ -48,7 +51,8 @@ NS_RUNS, NS_DAYS = 7, 3                    # the per-site NOT SEARCHED clock (de
 LEAK_RUNS, LEAK_AGE = 3, datetime.timedelta(hours=1)
 EX_DAYS = 30                               # EX2: a listed extractor's migration window (declared)
 CANARY = "src/astryx/security/sqlguard/canary.py::canary"
-REASON_MAX = 160                           # a hashed absent row's reason, cut AFTER masking (seed #56874)
+READ_ONLY = "seen-set clocks not advanced (read-only run)"   # plan-11908 D5: every run but the timer's
+REASON_MAX = 160                          # a hashed absent row's reason, cut AFTER masking (seed #56874)
 _PATHISH = re.compile(r"(?:~/|/)?[\w.-]+(?:/[\w.-]*)+")
 
 
@@ -90,9 +94,16 @@ def load_ledger(path=None):
     return json.loads(open(p).read()) if os.path.exists(p) else None
 
 
-def _clock(conn, kind, keys):
-    """Upsert the keys seen this run, delete resolved ones, and return {key: (first_seen, runs)}."""
+def _clock(conn, kind, keys, write=False):
+    """Upsert the keys seen this run, delete resolved ones, and return {key: (first_seen, runs)}.
+    write=False (plan-11908 D5, every run but the timer's): READ the stored clocks of these keys, write nothing. A
+    narrow run (a merge check, a hand run) would otherwise count runs for keys it merely couldn't search (an early
+    R-CLOCK) and DELETE every key it didn't list (a2's data loss)."""
     now = datetime.datetime.now(datetime.UTC)
+    if not write:
+        return {k: (f, r) for k, f, r in conn.execute(
+            "SELECT key, first_seen, runs FROM sqlguard_seen WHERE kind=%s AND key = ANY(%s)",
+            (kind, list(keys))).fetchall()}, now
     out = {}
     for k in keys:
         r = conn.execute("INSERT INTO sqlguard_seen (kind, key) VALUES (%s,%s) ON CONFLICT (kind, key) DO UPDATE "
@@ -103,7 +114,10 @@ def _clock(conn, kind, keys):
     return out, now
 
 
-def enforce(trace_dir, ledger=None, dsn=None, rep=None):
+def enforce(trace_dir, ledger=None, dsn=None, rep=None, write_seen=False):
+    """write_seen: advance the sqlguard_seen clocks. False by default and never read from the env here (a3 BC-1
+    #62652): only __main__ maps ASTRYX_SQLGUARD_WRITE_SEEN=1, which only the timer (check_watch.sh) exports. A
+    read-only run says so as a NOT SEARCHED line, so a timer that lost its flag shows the aging detector dark."""
     ledger = ledger if ledger is not None else load_ledger()
     # The ledger's covering map (the last clean run) is unioned in, so a gate that crashed before reaching a
     # site still COVERS it and the site grades NOT SEARCHED, never a false UNEXECUTED (C1).
@@ -203,7 +217,7 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
                 tks = {}
                 for k in ns_keys:
                     tks.setdefault(text_key(k), k)
-                seen, now = _clock(c, "ns_site", list(tks))
+                seen, now = _clock(c, "ns_site", list(tks), write_seen)
                 for tk, (first, runs) in seen.items():
                     age = now - first
                     if runs > NS_RUNS and age.days >= NS_DAYS:
@@ -221,7 +235,7 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
                     if d.startswith(mine):
                         R("R-LEAK this run", f"R-LEAK {d}: this run's fixture DB is still present")
                 foreign = [d for d in fx if not d.startswith(mine)]
-                fseen, now = _clock(c, "fx_db", foreign)
+                fseen, now = _clock(c, "fx_db", foreign, write_seen)
                 for d, (first, runs) in fseen.items():
                     if runs >= LEAK_RUNS and now - first >= LEAK_AGE:
                         R(f"R-LEAK foreign {d}", f"R-LEAK {d}: a foreign fixture DB present for {runs} runs since {first:%F %T}")
@@ -232,7 +246,11 @@ def enforce(trace_dir, ledger=None, dsn=None, rep=None):
     if privacy.ERRORS:                                             # a3 D-P: the privacy authority couldn't answer
         not_searched.append(f"privacy classification failed ({len(privacy.ERRORS)}); findings for those "
                             f"sites were redacted, never printed in plaintext")
-    rc = 77 if not_searched else (1 if red else 0)
+    hard = list(not_searched)
+    if not write_seen:                  # D5: the omission is VISIBLE (a lost timer flag reads ○, never a quiet pass)
+        not_searched.append(READ_ONLY)
+    # A read-only run's RED is still RED: only a HARD not-searched (the evidence itself) masks findings as rc 77.
+    rc = 77 if hard else (1 if red else (77 if not_searched else 0))
     return {"rc": rc, "red": red, "red_ids": ids, "report": report, "not_searched": not_searched}
 
 
@@ -262,7 +280,8 @@ if __name__ == "__main__":
     rep = judge.judge(d, stored_covering=(led or {}).get("covering"))
     judge.print_report(rep)
     judge.write_report(d, rep)                  # ledger admit reads it
-    out = enforce(d, ledger=led, rep=rep)
+    timer = os.environ.get("ASTRYX_SQLGUARD_WRITE_SEEN") == "1"     # D5: mapped HERE only (check_watch.sh exports it)
+    out = enforce(d, ledger=led, rep=rep, write_seen=timer)
     write_red(d, out)
     print("\n".join(render(out)))
     print("  " + judge.REMAINDER)

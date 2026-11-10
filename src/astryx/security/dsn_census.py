@@ -24,6 +24,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 import argparse
 import json
 import os
@@ -37,7 +38,7 @@ KEEP = ("HOME", "USER", "LOGNAME", "PATH", "PGPASSFILE")
 SERVICES = ("astryx-observatory", "astryx-gateway", "astryx-whatsapp", "astryx-telegram",
             "astryx-discord", "astryx-senses", "astryx-geoloc", "astryx-growbot",
             "genesis-observer")
-DSN_FILES = (REPO / ".env", Path.home() / "genesis/services/observer/.env")
+DSN_FILES = (paths.estate(__file__) / ".env", Path.home() / "genesis/services/observer/.env")
 
 
 def passwordless(dsn: str) -> str:
@@ -49,12 +50,9 @@ def passwordless(dsn: str) -> str:
 def dsns() -> dict[str, str]:
     out = {}
     for f in DSN_FILES:
-        if not f.exists():
-            continue
-        for line in f.read_text().splitlines():
-            k, _, v = line.partition("=")
-            if k.strip().endswith("_DSN") and "://" in v:
-                out[f"{f.parent.name}/{k.strip()}"] = passwordless(v.strip())
+        for k, v in config.read_env(f).items():         # the ONE .env reader, per line (plan-10224 ENVREAD)
+            if k.endswith("_DSN") and "://" in v:
+                out[f"{f.parent.name}/{k}"] = passwordless(v)
     return out
 
 
@@ -109,13 +107,7 @@ def runners() -> dict[str, dict]:
 
 
 def _node() -> str:
-    env = REPO / ".env"
-    if not env.exists():                                  # a bare clone: PATH's node
-        return "node"
-    for line in env.read_text().splitlines():
-        if line.startswith("ASTRYX_NODE="):
-            return line.split("=", 1)[1].strip()
-    return "node"
+    return config.read_env(paths.estate(__file__) / ".env").get("ASTRYX_NODE", "node")   # a bare clone: PATH's node
 
 
 def clients(dsn: str) -> dict[str, list[str]]:

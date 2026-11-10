@@ -24,9 +24,9 @@ tests/test_trigger_names.py checks the model against discover() itself (parity) 
 
 STATES of (N, target agent), in this order:
   installed  some triggers/<a>/*.py's closure has N, and (a, N) has no tombstone   (global: any agent's copy counts)
-  retired    triggers/<target>/.retired/N exists (trigger_rm's tombstone; per TARGET agent, a3 BC-1)
+  retired    triggers/<target>/.retired/N exists (the trigger tool's tombstone; per TARGET agent, a3 BC-1)
   deferred   N might exist where this can't see: a blind file; a LEGACY python row for N with no file and no tombstone
-             (a removal, a departed agent or a lossy restore: indistinguishable, so the owner chooses: `trigger_rm N`
+             (a removal, a departed agent or a lossy restore: indistinguishable, so the owner chooses: `trigger action=retire name=N`
              or `init.sh --reinstall N`); or the triggers table can't be read
   absent     none of the above: init.sh installs it
 
@@ -41,6 +41,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
+from astryx import config, paths  # noqa: E402
 
 import ast
 import importlib.machinery
@@ -335,15 +336,12 @@ def names(path: Path | str, repo: Path | None = None) -> Read:
 
 # ── the row side: read ONLY to tell a legacy row-only name, restricted to kind='python' (a2 G3) ──────────────────
 def _dsn(repo: Path) -> str | None:
-    if os.environ.get("ASTRYX_DSN"):
-        return os.environ["ASTRYX_DSN"]
+    # this module's own tree reads the ORG's .env (its estate: the HOME in a cog of several orgs); another tree, its own
+    env = (paths.estate(__file__) if Path(repo).resolve() == REPO.resolve() else Path(repo)) / ".env"   # org-home: this tree reads its ESTATE (paths.estate); another tree, its own
     try:
-        for line in (repo / ".env").read_text().splitlines():
-            if line.startswith("ASTRYX_DSN="):
-                return line.split("=", 1)[1].strip()
-    except OSError:
-        pass
-    return None
+        return config.dsn(env)
+    except (LookupError, OSError):
+        return None
 
 
 def _python_rows(name: str, repo: Path) -> list[str] | None:
@@ -363,7 +361,13 @@ def _python_rows(name: str, repo: Path) -> list[str] | None:
 def state(name: str, target: str = "seed", repo: Path | None = None) -> tuple[str, str]:
     """(state, detail) for trigger `name`, whose shipped installer targets `target`."""
     repo = (repo or REPO).resolve()
-    root = repo / "triggers"
+    # the triggers the PULSE registers are its ESTATE's (pulse.py: paths.estate(__file__) / "triggers"): this module's own
+    # tree reads the ORG's (its HOME in a cog of several orgs; on one org, this tree), the rule _dsn uses. Imports still
+    # resolve against the CODE tree (Walk(repo)). Another tree, its own (S7b: a cog org's doctor read the primary's).
+    try:
+        root = (paths.estate(__file__) if repo == REPO.resolve() else repo) / "triggers"   # org-home: this tree reads its ESTATE (paths.estate); another tree, its own
+    except paths.NoHome as e:                  # a cog of several orgs and no HOME carried: whose triggers is unknown
+        return "deferred", f"no org HOME is carried here, so whose triggers/ this asks is unknown: set ASTRYX_HOME ({e})"
     retired = lambda a: (root / a / ".retired" / name).exists()   # noqa: E731
     blind, defined_by = [], []
     for f in sorted(root.glob("*/*.py")):
@@ -376,7 +380,7 @@ def state(name: str, target: str = "seed", repo: Path | None = None) -> tuple[st
         if r.blind:
             blind.append(r.blind[0])
     if retired(target):
-        return "retired", f"triggers/{target}/.retired/{name} (trigger_rm's tombstone)"
+        return "retired", f"triggers/{target}/.retired/{name} (the trigger tool's tombstone)"
     if blind:                                       # global scope: one unreadable file defers EVERY absent install,
         return "deferred", (f"{len(blind)} trigger file(s) this can't read statically, so {name} may be defined "
                             f"there: {'; '.join(blind[:3])}. Exit: fix or move that file (or "
@@ -388,7 +392,7 @@ def state(name: str, target: str = "seed", repo: Path | None = None) -> tuple[st
     if legacy:
         return "deferred", (f"LEGACY: a python row for {name} under {', '.join(legacy)} with no file defining it and "
                             f"no tombstone (a removal, a departed agent or a lossy restore). Choose: "
-                            f"`trigger_rm {name}` to retire it, or `./init.sh --reinstall {name}` to install it")
+                            f"`trigger action=retire name={name}` to retire it, or `./init.sh --reinstall {name}` to install it")
     return "absent", "no file defines it, no tombstone, no row"
 
 

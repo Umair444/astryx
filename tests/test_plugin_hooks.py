@@ -45,7 +45,7 @@ try:
     (home / ".env").write_text("ASTRYX_DSN=postgresql://x@127.0.0.1:1/x\n")
     ran = tmp / "step-ran"
     stub = home / "venv" / "bin" / "python"
-    stub.write_text(f"#!/bin/sh\n{{ echo \"argv=$*\"; echo \"agent=$ASTRYX_AGENT\"; cat; }} > '{ran}'\n")
+    stub.write_text(f"#!/bin/sh\n{{ echo \"argv=$*\"; echo \"agent=$ASTRYX_AGENT\"; cat; }} > '{ran}'\n")  # org-home: inspection: a stub reports the env it was given
     stub.chmod(0o755)
     for s in ("step.py", "usage.py", "nudge.py"):
         (home / "hooks" / s).write_text("# stub\n")
@@ -62,7 +62,7 @@ try:
         root = Path(tempfile.mkdtemp(dir=tmp, prefix="proc-"))
         chain = [(300, mode_names[0], ["/bin/sh", "-c", "python3 hook"], 200),
                  (200, "claude", argv, 100) if argv is not None else (200, "node", ["node", "x.js"], 100),
-                 (100, mode_names[1], ["tmux", "new-session"], 1)]
+                 (100, mode_names[1], ["tmux", "new-session"], 1)]   # org-home: a FAKE process table's argv, never run
         for pid, name, av, ppid in chain:
             d = root / str(pid)
             d.mkdir()
@@ -80,6 +80,7 @@ try:
             proc = proc_tree(argv)
         e["ASTRYX_HOOK_PROC"], e["ASTRYX_HOOK_PPID"] = str(proc[0]), str(proc[1])
         e.update(env or {})
+        # own-env: the hook is stdlib-only and never resolves an org; its relay target is this oracle's stub (home/venv/bin/python)
         return subprocess.run([sys.executable, str(HOOK), *args], input=json.dumps(stdin or {}),
                               capture_output=True, text=True, env=e, timeout=30)
 
@@ -246,7 +247,9 @@ try:
     for _d in ("devtools", "scripts", "src/astryx/contrib", "src/astryx/core", "src/astryx/data", "src/astryx/econ", "src/astryx/federation", "src/astryx/hands", "src/astryx/hearing", "src/astryx/memory", "src/astryx/people", "src/astryx/pg", "src/astryx/pulse", "src/astryx/pulse/shipped_triggers", "src/astryx/security", "src/astryx/security/sqlguard", "src/astryx/security/sqlguard/shim", "src/astryx/sql"):  # goal 10224 S4: the moved tree's dirs
         (root / _d).mkdir(parents=True, exist_ok=True)
     for f in ("scripts/spawn.sh", "src/astryx/core/charter.py", "astryx.py", "src/astryx/__init__.py",
-              "src/astryx/paths.py", "src/astryx/_version.py"):    # the moved tree (goal 10224 S4)
+              "src/astryx/paths.py", "src/astryx/_version.py",    # the moved tree (goal 10224 S4)
+              "src/astryx/orgs.py", "src/astryx/config.py",         # spawn asks THE org predicate and the resolver (S3a)
+              "scripts/org_tmux.sh"):                              # ...and sources the org's tmux (S3b)
         (root / f).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO / f, root / f)
     (root / "venv" / "bin").mkdir(parents=True)

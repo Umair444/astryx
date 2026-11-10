@@ -17,6 +17,8 @@ and is checked against the PULSE's own discover() (`pulse.py --names`), the sema
   E  import-safe with no .env and no ASTRYX_DSN (a4 #49617): it answers (deferred), never crashes
   B  a1 BC-1: every construct the model doesn't positively understand makes the file BLIND → DEFERRED (17 fixtures,
      one at a time, each named in the detail with its exits, a4 #50070; `names` exits 3), with a control beside them
+  H  a cog org's triggers are its HOME's (the pulse's ESTATE): a name only its HOME defines reads installed under that
+     HOME, one only the code tree defines reads absent, with no registry the tree is the estate (control), and a registry with no HOME carried defers (never a crash)
   P  parity: names == discover for every non-blind fixture AND for the live corpus (triggers/*/*.py, where present)
 Needs a fixture database, else 77.
 """
@@ -28,6 +30,18 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "tests"))
 fails = []
@@ -64,6 +78,7 @@ def state(name, target="seed", dsn=None, env=None):
     e = {k: v for k, v in os.environ.items() if k != "ASTRYX_DSN"} if env is None else env
     if dsn:
         e["ASTRYX_DSN"] = dsn
+    # own-env: no caller here passes env, so e is os.environ minus ASTRYX_DSN (the pin kept)
     r = subprocess.run([PY, "-m", "astryx.core.trigger_names", "state", name, "--target", target], cwd=T,
                        capture_output=True, text=True, timeout=120, env=e)
     return r.returncode, r.stdout.strip(), r.stderr.strip()[-300:]
@@ -169,11 +184,11 @@ try:
             rc, out, err = state("zz_none", dsn=DSN)
             want("S1 a name nothing defines → absent, exit 2 (control)", rc == 2 and out.startswith("absent"),
                  f"{rc} {out} {err}")
-            put("triggers/memory/.retired/zz_mem", "retired by trigger_rm\n")
+            put("triggers/memory/.retired/zz_mem", "retired by the trigger tool\n")
             rc, out, _ = state("zz_mem", dsn=DSN)
             want("S2 another agent's tombstoned copy retires only THAT copy: seed's answer is absent (a3 BC-1)",
                  rc == 2 and out.startswith("absent"), f"{rc} {out}")
-            put("triggers/seed/.retired/zz_mem", "retired by trigger_rm\n")
+            put("triggers/seed/.retired/zz_mem", "retired by the trigger tool\n")
             rc, out, _ = state("zz_mem", dsn=DSN)
             want("S2 ...seed's own tombstone → retired, exit 1, naming it",
                  rc == 1 and "triggers/seed/.retired/zz_mem" in out, f"{rc} {out}")
@@ -181,15 +196,47 @@ try:
             rc, out, _ = state("zz_mem", dsn=DSN)
             want("S2 ...an untombstoned copy anywhere → installed (the duplicate check stays global)",
                  rc == 0 and out == "installed triggers/umair/mem_copy.py", f"{rc} {out}")
+            # ── H: a cog org's triggers are its HOME's, never the code tree's (the pulse's ESTATE; S7b) ──────────────
+            reg_d = Path(tempfile.mkdtemp(prefix="tnames-cog-"))
+            try:
+                homes = {}
+                for o in ("fxh", "fxh2"):
+                    h = reg_d / f"home-{o}"
+                    (h / "triggers" / "seed").mkdir(parents=True)
+                    (h / ".astryx").write_text("astryx home\n")
+                    (h / ".env").write_text(f"ASTRYX_DSN={NODSN}\nASTRYX_ORG={o}\n")
+                    homes[o] = h
+                (homes["fxh"] / "triggers" / "seed" / "home_only.py").write_text(TRIG + DEF.format("zz_homeonly"))
+                put("triggers/seed/tree_only.py", TRIG + DEF.format("zz_treeonly"))
+                (reg_d / "cog.json").write_text(json.dumps({"orgs": {o: {"home": str(h), "db": f"fxtn_{o}"}
+                                                                     for o, h in homes.items()}}))
+                henv = {**{k: v for k, v in os.environ.items() if k != "ASTRYX_DSN"},
+                        "ASTRYX_COG_REGISTRY": str(reg_d / "cog.json"), "ASTRYX_HOME": str(homes["fxh"])}
+                rc, out, err = state("zz_homeonly", dsn=DSN, env=dict(henv))
+                want("H1 a name only the org's HOME/triggers defines → installed, naming its file (the pulse's ESTATE)",
+                     rc == 0 and out == "installed triggers/seed/home_only.py", f"rc={rc} {out} {err}")
+                rc, out, err = state("zz_treeonly", dsn=DSN, env=dict(henv))
+                want("H2 ...and one only the CODE tree's triggers/ defines is NOT the org's (absent)",
+                     rc == 2 and out.startswith("absent"), f"rc={rc} {out} {err}")
+                rc, out, err = state("zz_treeonly", dsn=DSN)
+                want("H3 control: with no registry (one org) the tree IS the estate → installed", rc == 0
+                     and out == "installed triggers/seed/tree_only.py", f"rc={rc} {out} {err}")
+                rc, out, err = state("zz_homeonly", dsn=DSN, env={k: v for k, v in henv.items() if k != "ASTRYX_HOME"})
+                want("H4 the registry and NO HOME carried: whose triggers is unknown → deferred (exit 3), never a crash",
+                     rc == 3 and out.startswith("deferred") and "ASTRYX_HOME" in out, f"rc={rc} {out} {err}")
+            finally:
+                import shutil as _sh
+                _sh.rmtree(reg_d, ignore_errors=True)
+                (T / "triggers" / "seed" / "tree_only.py").unlink(missing_ok=True)
             # ── L: legacy rows ──────────────────────────────────────────────────────────────────────────────────────
             c.execute("INSERT INTO triggers (agent, name, schedule, kind, check_src, next_fire) VALUES "
                       "('ghost', 'zz_legacy', '* * * * *', 'python', 'triggers/ghost/gone.py::zz_legacy', now()), "
                       "('ghost', 'zz_hb', '* * * * *', 'heartbeat', NULL, now())")
             rc, out, _ = state("zz_legacy", dsn=DSN)
             want("L1 a python row with no file and no tombstone → DEFERRED (exit 3), naming the agent and both exits",
-                 rc == 3 and "LEGACY" in out and "ghost" in out and "trigger_rm zz_legacy" in out
+                 rc == 3 and "LEGACY" in out and "ghost" in out and "trigger action=retire name=zz_legacy" in out
                  and "./init.sh --reinstall zz_legacy" in out, f"{rc} {out}")
-            put("triggers/ghost/.retired/zz_legacy", "retired by trigger_rm\n")
+            put("triggers/ghost/.retired/zz_legacy", "retired by the trigger tool\n")
             rc, out, _ = state("zz_legacy", dsn=DSN)
             want("L1 ...its tombstone settles it: absent", rc == 2 and out.startswith("absent"), f"{rc} {out}")
             rc, out, _ = state("zz_hb", dsn=DSN)
@@ -201,7 +248,7 @@ try:
                 "trigger_names_rows", os.environ.get("TRIGGER_NAMES_SRC") or REPO / "src/astryx/core/trigger_names.py")
             _tn = importlib.util.module_from_spec(_spec)
             _spec.loader.exec_module(_tn)
-            _was = os.environ.get("ASTRYX_DSN")
+            _was = os.environ.get("ASTRYX_DSN")  # org-home: fixture-bound: saved to restore after the test binds its fixture
             os.environ["ASTRYX_DSN"] = DSN
             try:
                 one, none, hb = (_tn._python_rows(n, T) for n in ("zz_legacy", "zz_none", "zz_hb"))
@@ -247,7 +294,7 @@ try:
             bad.append(f"{f.relative_to(T)}: model {sorted(mine or [])} rc={nrc}, discover {sorted(theirs or [])}")
     want(f"P1 names == discover for every fixture file ({len(list((T / 'triggers').glob('*/*.py')))})", not bad,
          "; ".join(bad[:4]))
-    live = sorted((REPO / "triggers").glob("*/*.py"))
+    live = sorted((ESTATE / "triggers").glob("*/*.py"))
     if live:
         import importlib.util
         spec = importlib.util.spec_from_file_location("tn_under_test", T / "src/astryx/core/trigger_names.py")

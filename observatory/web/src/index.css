@@ -246,3 +246,67 @@ body {
 /* the voice orb's confirm: a fill that runs across the button for its inert window (VoiceOrb INERT_MS) */
 .ax-inert { width: 0; animation: ax-inert linear forwards; }
 @keyframes ax-inert { to { width: 100%; } }
+
+/* a working agent's halo (plan-11860 follow-up, owner 10-22): opacity + scale only, one symmetric sine, never a jump */
+@keyframes ax-halo { 0%, 100% { opacity: .25; transform: scale(.98); } 50% { opacity: .7; transform: scale(1.05); } }
+.ax-halo { box-shadow: 0 0 22px 2px var(--t-accent); animation: ax-halo 3.6s cubic-bezier(.45,0,.55,1) infinite; }
+@media (prefers-reduced-motion: reduce) { .ax-halo { animation: none; opacity: .5; } }
+
+/* ── /chat (plan-11884) ────────────────────────────────────────────────────────────────────────────────────────
+   Agents' answers read like a page (Newsreader at a reading size and measure); the display lines are Instrument
+   Serif; the UI stays Inter. One motion idea: a working agent's halo, a slow symmetric breath (no bob, no jump). */
+.chat-display { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.01em; }
+.chat-prose { font-family: "Newsreader Variable", "Newsreader", Georgia, serif; font-size: 16.5px; line-height: 1.66; color: color-mix(in srgb, var(--t-fg) 90%, var(--t-dim)); max-width: 68ch; }
+.chat-prose code { font-family: var(--font-mono); font-size: .82em; background: var(--t-panel2); border: 1px solid var(--t-line); border-radius: 5px; padding: .06em .32em; }
+.chat-prose pre { font-family: var(--font-mono); font-size: 13px; line-height: 1.55; background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 12px; padding: .9em 1.1em; overflow-x: auto; }
+.chat-prose a { color: var(--t-accent2); text-decoration: underline; text-underline-offset: 2px; }
+.chat-tool { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 28px; padding: 0 8px; border-radius: 8px;
+  font-size: 12.5px; color: var(--t-dim); transition: background-color 120ms ease-out, color 120ms ease-out; }
+.chat-tool:hover:not(:disabled) { background: var(--t-panel2); color: var(--t-fg); }
+.chat-tool:disabled { opacity: .4; }
+.chat-tool:focus-visible, .chat-prose a:focus-visible { outline: 2px solid var(--t-accent2); outline-offset: 2px; }
+@keyframes chat-halo { 0%, 100% { opacity: .2; transform: scale(.97); } 50% { opacity: .65; transform: scale(1.05); } }
+.chat-halo { box-shadow: 0 0 18px 2px var(--t-accent); animation: chat-halo 3.6s cubic-bezier(.45,0,.55,1) infinite; }
+@keyframes chat-caret { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+.chat-caret { display: inline-block; width: 6px; height: 1em; margin-left: 3px; vertical-align: -2px; background: var(--t-accent2); animation: chat-caret 1.1s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) { .chat-halo, .chat-caret { animation: none; } .chat-halo { opacity: .45; } }
+
+
+/* SIGN-IN (goal 11859 U3, components/AuthScreens.tsx): ORBIT's language in tokens only. One display face for the one
+   headline; every control shows keyboard focus as a ring in the second accent; nothing animates on its own. */
+.auth-display { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; font-size: clamp(40px, 9vw, 52px); line-height: 1.02; letter-spacing: -0.01em; color: var(--t-fg); }
+.auth-field {
+  width: 100%; height: 44px; padding: 0 14px; border-radius: 12px; font-size: 15px; color: var(--t-fg);
+  background: var(--t-panel); border: 1px solid var(--t-line2); outline: none;
+}
+.auth-field:hover { border-color: color-mix(in srgb, var(--t-line2) 60%, var(--t-dim)); }
+.auth-field[aria-invalid="true"] { border-color: color-mix(in srgb, var(--t-bad) 65%, var(--t-line2)); }
+.auth-field:focus-visible, .auth-primary:focus-visible, .auth-link:focus-visible, .auth-org:focus-visible, .auth-chip:focus-visible {
+  outline: 2px solid var(--t-accent2); outline-offset: 2px;
+}
+.auth-primary {
+  display: inline-flex; align-items: center; justify-content: center; height: 44px; padding: 0 20px; border-radius: 12px;
+  font-size: 15px; font-weight: 600; color: var(--t-on); background: var(--t-accent); text-decoration: none;
+}
+.auth-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--t-accent) 88%, var(--t-fg)); }
+.auth-primary:disabled { opacity: .72; cursor: default; }
+.auth-link { color: var(--t-accent2); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, var(--t-accent2) 45%, transparent); border-radius: 4px; }
+.auth-link:hover { text-decoration-color: var(--t-accent2); }
+.auth-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px 0 4px; border-radius: 999px;
+  font-size: 12px; color: var(--t-dim); border: 1px solid var(--t-line); text-decoration: none;
+}
+a.auth-chip { padding: 0 12px; }
+.auth-chip:hover { color: var(--t-fg); border-color: var(--t-line2); }
+.auth-initial { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--t-on); background: var(--t-accent); }
+.auth-orgs { display: grid; gap: 6px; }
+.auth-org {
+  display: flex; align-items: center; gap: 14px; width: 100%; padding: 12px 14px; border-radius: 14px;
+  border: 1px solid var(--t-line); background: color-mix(in srgb, var(--t-panel) 70%, transparent);
+}
+.auth-org:hover { border-color: var(--t-line2); background: var(--t-panel); }
+.auth-org[aria-current="true"] { border-color: color-mix(in srgb, var(--t-accent) 55%, var(--t-line)); }
+/* the seat: a still dot on its own small orbit; yours is the accent, as on the stage's outer ring */
+.auth-seat { position: relative; width: 22px; height: 22px; border-radius: 999px; border: 1px dashed var(--t-line2); flex: none; }
+.auth-seat::after { content: ""; position: absolute; right: -3px; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 999px; background: var(--t-dim); }
+.auth-seat[data-current]::after { background: var(--t-accent); }

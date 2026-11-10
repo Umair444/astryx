@@ -32,6 +32,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 
 # PREREQUISITES — the gitignored trigger body and a reachable DB (via .env). A bare clone
@@ -40,8 +52,8 @@ sys.path.insert(0, str(REPO))
 # `from triggers...`): a static triggers-tree import in a COMMITTED file reads as an
 # unmanifested third-party dep in a clone where triggers/ is empty (deps.py:68), which is the
 # very drift that would fail the clean-clone gate.
-TRIGGER = REPO / "triggers" / "seed" / "usage_poll.py"
-ENV = REPO / ".env"
+TRIGGER = ESTATE / "triggers" / "seed" / "usage_poll.py"
+ENV = ESTATE / ".env"
 if not TRIGGER.exists() or not ENV.exists():
     print("SKIP — usage-authority: prerequisites absent (gitignored trigger body and/or "
           ".env/DB). A bare clone cannot verify this; run on a live host.")

@@ -12,6 +12,7 @@ a4 #49789, steward #49904). Three parts:
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -19,6 +20,15 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 from bridges import embed_root as E  # noqa: E402  (stdlib only)
+
+
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(REPO / "tests"))
+from org_estate import astryx_call  # noqa: E402
+
+
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
 
 fails = 0
 
@@ -158,13 +168,30 @@ for ch, extra_bad in (("discord", ("path.read_bytes()", "discord.File(str(p))"))
 
 # ── CENSUS (live host) ───────────────────────────────────────────────────────────────────────────────────────────
 DOT_AND_TWO = 4   # measured 2026-10-12: 933, 19814, and 2 embeds under a home dot-dir (.playwright-mcp)
-LIVE = Path(os.environ.get("ASTRYX_LIVE_REPO") or REPO)   # a worktree has no .env/homes/routes: point it at the host
+
+
+def live_root(repo: Path) -> Path:
+    """The MAIN working tree, which holds the estate (homes/, media/, tier/, the routes), from any linked worktree of it.
+    merge_check's tree links .env in but NOT homes/ or media/ (its ESTATE_EXCLUDE), so a census judging against REPO
+    there found the DSN, ran, and refused every home and scratchpad embed: red in every merge_check, green live (seed
+    #57615). A clone (CI) is its own main tree, so it stays REPO, and with no .env it reads NOT SEARCHED."""
+    try:
+        r = subprocess.run(["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return repo
+    common = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+    return common.parent if common is not None and common.name == ".git" else repo
+
+
+LIVE = Path(os.environ.get("ASTRYX_LIVE_REPO") or live_root(REPO))
 
 
 def census():
-    env = LIVE / ".env"
-    dsn = next((ln.split("=", 1)[1].strip() for ln in env.read_text().splitlines()
-                if ln.startswith("ASTRYX_DSN=")), "") if env.is_file() else ""
+    try:                     # the LIVE org's DSN through the ONE resolver (astryx.config.dsn), its .env only as before
+        dsn = _astryx("config", "dsn", LIVE / ".env", None, False)   # org-home: LIVE is the live repo by name (ASTRYX_LIVE_REPO or live_root)
+    except LookupError:
+        dsn = ""
     try:
         import psycopg
     except ImportError:
@@ -201,9 +228,26 @@ def census():
                 allowed_n += 1
     return n, out, allowed_n
 
+# live_root, hermetic: a scratch repo and a linked worktree of it (the shape of merge_check's tree)
+_g = Path(tempfile.mkdtemp(prefix="embed_live."))
+_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+_run = lambda *a: subprocess.run(["git", *a], cwd=_g, env=_env, capture_output=True, text=True)  # noqa: E731
+_run("init", "-q", "main")
+(_g / "main" / "f").write_text("x")
+_run("-C", "main", "-c", "user.email=t@t", "-c", "user.name=t", "add", "f")
+_run("-C", "main", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x")
+_run("-C", "main", "worktree", "add", "-q", "--detach", str(_g / "wt"))
+_main, _wt = (_g / "main").resolve(), (_g / "wt").resolve()
+arm("live_root: a linked worktree (merge_check's tree) resolves to the MAIN tree, which holds homes/ and media/",
+    _wt.is_dir() and live_root(_wt).resolve() == _main)
+arm("…the main tree is its own live root, and a directory outside any repo stays itself",
+    live_root(_main).resolve() == _main and live_root(_g) == _g)
+shutil_ = __import__("shutil")
+shutil_.rmtree(_g, ignore_errors=True)
+
 searched = True
 if "--census" in sys.argv:            # its own check.sh line, so a no-DSN tree reads only the CENSUS as NOT SEARCHED
-    E.HOMES, E.MEDIA, E.TIER = LIVE / "homes", LIVE / "media", LIVE / "tier"
+    E.HOMES, E.MEDIA, E.TIER = LIVE / "homes", LIVE / "media", LIVE / "tier"   # org-home: LIVE is the live repo by name (ASTRYX_LIVE_REPO or live_root)
     E.SCRATCH_BASE = Path(f"/tmp/claude-{os.getuid()}")
     res = census()
 else:

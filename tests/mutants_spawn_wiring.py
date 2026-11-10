@@ -22,15 +22,28 @@ MUTANTS = {
     "P1 the door is not wired":
         ('\n  "tools": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/tools/server.py"] },', ''),
     # A trailing comma that is valid only when nothing follows: invisible until a grant splices
-    # in ($EXTRA starts with its own comma). The LAST server before $EXTRA is hands since cd0005c.
+    # in ($EXTRA starts with its own comma). The LAST server before $EXTRA was hands since cd0005c; it is influence
+    # since plan-11324 (seed #58432).
     "P2 a comma that breaks only with a grant spliced in":
-        ('"unix:path=/run/user/$(id -u)/bus" } }$PHONE$EXTRA } }', '"unix:path=/run/user/$(id -u)/bus" } }$PHONE,$EXTRA } }'),
+        ('"env": { "ASTRYX_AGENT": "$AGENT" } }$PHONE$EXTRA } }', '"env": { "ASTRYX_AGENT": "$AGENT" } }$PHONE,$EXTRA } }'),
+    # plan-11324 (seed #58432): who_should_i_ask's own server, every resident, the asker written into its env.
+    "P5 influence is not wired":
+        ('\n  "influence": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/influence/server.py"],\n'
+         '    "env": { "ASTRYX_AGENT": "$AGENT" } }$PHONE', '$PHONE'),
+    "P6 influence inherits ASTRYX_AGENT instead of being told it":
+        ('["$ROOT/mcp/influence/server.py"],\n    "env": { "ASTRYX_AGENT": "$AGENT" } }',
+         '["$ROOT/mcp/influence/server.py"] }'),
+    # The pre-move shape's risk: the memory grant brings who_should_i_ask along again (a second server, same tool).
+    "P7 the memory grant splices influence too":
+        (r'[\"$ROOT/mcp/memory/server.py\"] }";;',
+         r'[\"$ROOT/mcp/memory/server.py\"] },' '\n' r'  \"influence2\": { \"command\": \"$ROOT/venv/bin/python\", '
+         r'\"args\": [\"$ROOT/mcp/influence/server.py\"] }";;'),
     # Same group as usage.py: the nudge then shares usage.py's entry, the layout a4 excluded (W1).
     "P3 the nudge shares usage.py's group":
-        ('"timeout": 5 } ] },\n      { "hooks": [\n      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/nudge.py"',
-         '"timeout": 5 },\n      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/nudge.py"'),
+        ('"timeout": 15 } ] },\n      { "hooks": [\n      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/nudge.py"',
+         '"timeout": 15 },\n      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/nudge.py"'),
     "P4 the nudge gets usage.py's timeout":
-        ('hooks/nudge.py", "timeout": 3 }', 'hooks/nudge.py", "timeout": 5 }'),
+        ('hooks/nudge.py", "timeout": 3 }', 'hooks/nudge.py", "timeout": 15 }'),
 
     "Q1 render writes the heartbeat trigger row":
         ('[ -z "$RENDER" ] && psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind)\n',
@@ -45,7 +58,7 @@ MUTANTS = {
     "Q5 render without umask 077":
         ('  umask 077\n', ''),
     "Q6 render into the repo allowed":
-        ('    "$(realpath -m "$ROOT")"/*) echo "spawn --render: <outdir> must be outside the repo ($OUT)"; exit 1;;',
+        ('    "$(realpath -m "$ROOT")"/*|"$(realpath -m "$ORGH")"/*) echo "spawn --render: <outdir> must be outside the repo and the org\'s HOME ($OUT)"; exit 1;;',
          '    /nonexistent-zz/*) exit 1;;'),
     "Q7 render runs the live-body pgrep guard":
         ('if [ -z "$RENDER" ] && ! tmux has-session -t "=ax-$AGENT"', 'if ! tmux has-session -t "=ax-$AGENT"'),
