@@ -82,11 +82,13 @@ def _salt() -> str:
         if v:
             return v
     e = config.read_env(paths.estate(__file__) / ".env")    # the ONE .env reader, per line (plan-10224 ENVREAD)
-    salt, org = e.get("PEOPLE_SALT"), e.get("ASTRYX_ORG")
-    if salt is not None and org is not None:            # both: whichever the file names FIRST, as before
-        return salt if list(e).index("PEOPLE_SALT") < list(e).index("ASTRYX_ORG") else org
-    if salt is not None or org is not None:
-        return salt if salt is not None else org
+    # PEOPLE_SALT wins wherever it sits in the file. Line order must not decide: an appended
+    # PEOPLE_SALT used to lose to an earlier ASTRYX_ORG, so the salt became the PUBLIC org name and
+    # the phone-number hashes were reversible (number space ~10^10). Empty values never count.
+    for k in ("PEOPLE_SALT", "ASTRYX_ORG"):
+        v = (e.get(k) or "").strip()
+        if v:
+            return v
     return "astryx-unsalted"        # last resort; scan() warns loudly when this is hit
 
 
