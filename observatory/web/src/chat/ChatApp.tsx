@@ -72,10 +72,11 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const { agents: roster, messages, presence, send, who } = useStore()
   const reduce = useReducedMotion()
   const now = useNow(5000)
-  // the rail's order: seed first, then the agents/ tree as /api/agents lists it
+  // the rail's order: seed first, then by name. STABLE on purpose (iteration 10): /api/agents lists by latest step, so
+  // following it reshuffled the rail every time someone worked, and a face never stayed where the hand remembers it
   const names = useMemo(() => {
     const all = roster.map((a) => a.agent)
-    return [...all.filter((a) => a === 'seed'), ...all.filter((a) => a !== 'seed')]
+    return [...all.filter((a) => a === 'seed'), ...all.filter((a) => a !== 'seed').sort()]
   }, [roster])
   const status = useMemo(() => {
     const out: Record<string, Status> = {}

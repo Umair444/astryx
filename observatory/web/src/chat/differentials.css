@@ -23,6 +23,10 @@
 .ws-turn-acts button:hover:not(:disabled) { background: color-mix(in srgb, var(--t-fg) 6%, transparent); color: var(--t-fg); }
 .ws-turn-said { padding: 0 8px 0 4px; font-size: 11.5px; color: var(--t-mute); white-space: nowrap; }
 .ws-turn-acts.is-inline { position: static; padding: 0; background: none; border: 0; box-shadow: none; }
+/* in an agent turn's header row: at its far end, the row's own height (no jump when they appear) */
+.ws-turn-head > .ws-turn-acts { margin-left: auto; flex-shrink: 0; margin-block: -2px; }
+/* a continued turn has no header: its toolbar floats in the gap above it, clear of the prose */
+.ws-turn.is-cont > .ws-turn-acts { top: -18px; }
 .ws-turn-acts.is-inline button { height: 22px; padding: 0 5px; }
 [data-turn]:hover .ws-turn-acts.is-inline, [data-turn]:focus-within .ws-turn-acts.is-inline { opacity: 1; pointer-events: auto; }
 /* no hover (a phone): the actions sit quietly under each answer, always reachable */
@@ -65,3 +69,30 @@
 .ws-unsent { border-style: dashed; border-color: color-mix(in srgb, var(--t-bad) 45%, var(--t-line)); }
 .ws-link-btn { color: var(--t-dim); font-weight: 500; text-underline-offset: 2px; }
 .ws-link-btn:hover { color: var(--t-fg); text-decoration: underline; }
+
+/* ── per-change review in the diff (iteration 10): each change keeps or undoes on its own ─────────────────────────── */
+.ws-hunk-pick { position: absolute; top: 3px; right: 6px; z-index: 1; height: 22px; padding: 0 8px; border-radius: 7px;
+  font-family: "Inter Variable", Inter, sans-serif; font-size: 11.5px; line-height: 20px; color: var(--t-dim);
+  background: var(--t-panel); border: 1px solid var(--t-line); opacity: 0; transition: opacity 120ms ease-out, color 120ms ease-out; }
+.ws-diff-cell:hover .ws-hunk-pick, .ws-hunk-pick:focus-visible, .ws-hunk-pick[data-undone="true"] { opacity: 1; }
+.ws-hunk-pick:hover { color: var(--t-fg); border-color: var(--t-line2); }
+.ws-hunk-pick:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent); outline-offset: 1px; }
+.ws-hunk-pick[data-undone="true"] { color: var(--t-fg); }
+.ws-diff-undone { color: color-mix(in srgb, var(--t-fg) 70%, transparent); background: color-mix(in srgb, var(--t-fg) 3.5%, transparent);
+  box-shadow: inset 2px 0 0 var(--t-line2); padding-block: 3px; margin-block: 2px; }
+.ws-diff-cell > .relative > .ws-diff-undone { margin: 0 -20px; padding: 2px 20px; }
+@media (hover: none) { .ws-hunk-pick { opacity: .85; } }
+@media (prefers-reduced-motion: reduce) { .ws-hunk-pick { transition: none; } }
+/* the change's text keeps clear of its button */
+.ws-diff-cell:has(> .ws-hunk-pick) { padding-right: 112px; }
+.ws-diff-cell > .relative:has(> .ws-hunk-pick) > :first-child { padding-right: 112px; }
+
+/* where else a turn worked: quiet thread tags, not underlined ids */
+.ws-elsewhere { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 6px; font-size: 11.5px; color: var(--t-dim);
+  background: color-mix(in srgb, var(--t-fg) 4.5%, transparent); transition: background-color 120ms ease-out, color 120ms ease-out; }
+.ws-elsewhere:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 8%, transparent); }
+.ws-elsewhere:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent); outline-offset: 1px; }
+
+/* the panel's toolbar stays ONE row: in a narrow panel "From db · 3 KB" steps aside (the version menu names the author) */
+.ws-pbody { container-type: inline-size; }
+@container (max-width: 600px) { .ws-pfrom { display: none !important; } }

@@ -62,7 +62,9 @@ export default function Avatar({
   const cx = 50
   const stroke = `hsl(${hue} 40% 96% / 0.9)`
 
-  const showInitial = size <= 22 // tiny chips read better as a mark; large frames get a face
+  // only a speck reads better as a mark; from 16px up the face itself shows, so an agent looks the same in a 16px
+  // handoff pill, a 22px turn header and the 30px rail (the chat workspace mixes all three on one screen)
+  const showInitial = size < 16
 
   return (
     <svg

@@ -51,6 +51,7 @@ export default function TeamHome({ names, status, lines, agents, threads, compos
             const a = by.get(n)
             const s = status[n]
             const now = s === 'working' ? lines[n] : ''
+            const said = spoken(a?.last_said)
             return (
               <button key={n} onClick={() => onAgent(n)} className="ws-card text-left p-3.5 flex flex-col gap-2 min-h-[118px]"
                 style={{ ['--ws-agent' as string]: agentColor(n), ['--ws-pip-bg' as string]: 'var(--t-panel)' }}>
@@ -63,7 +64,7 @@ export default function TeamHome({ names, status, lines, agents, threads, compos
                 </span>
                 {a?.role && <span className="text-[12.5px] text-ink-dim leading-snug line-clamp-2">{a.role}</span>}
                 <span className="mt-auto text-[12px] leading-snug line-clamp-2 text-ink-mute">
-                  {now ? <span className="ws-shimmer">{now}</span> : a?.last_said ? <>“{a.last_said}”</> : <span className="italic">Nothing said to you lately.</span>}
+                  {now ? <span className="ws-shimmer">{now}</span> : said ? <>“{said}”</> : <span className="italic">Nothing said to you lately.</span>}
                 </span>
               </button>
             )
@@ -89,4 +90,11 @@ export default function TeamHome({ names, status, lines, agents, threads, compos
       )}
     </div>
   )
+}
+
+/* an agent's last words as a quote: markdown's marks dropped, and a placeholder the wire writes for a turn with no
+   words ("(tool-only turn)") is no quote at all */
+function spoken(s: string | null | undefined): string {
+  const t = (s ?? '').replace(/(\*\*|__|`|^#+\s*|\*(?=\S)|(?<=\S)\*)/g, '').replace(/\s+/g, ' ').trim()
+  return /^\(.*\)$/.test(t) ? '' : t
 }
