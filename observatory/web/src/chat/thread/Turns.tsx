@@ -4,7 +4,7 @@ import { agentColor, displayName, fmtDay, fmtTime } from '../../api'
 import type { Msg, Step } from '../../types'
 import AgentFace from '../../components/AgentFace'
 import Prose from './Prose'
-import { embeds, stripEmbeds, type Turn as WTurn, type Work } from '../model'
+import { embeds, PROJECT_BLOCK, stripEmbeds, type Turn as WTurn, type Work } from '../model'
 import FileChip, { type OpenRequest } from '../artifacts/FileChip'
 import LiveActivity, { type Pending, type StopFn } from './LiveActivity'
 import Replay from './Replay'
@@ -153,7 +153,9 @@ const LONG = 560
 
 function Mine({ m, to, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; onEdit: (m: Msg) => void; onOpenFile: (r: OpenRequest) => void; onOpenAsk?: (a: ParsedAsk) => void }) {
   const [more, setMore] = useState(false)
-  const files = embeds(m.body)
+  // a project chat's first message: the project's pinned files ride inside its hidden context block for the agents;
+  // the owner didn't attach them, so they are not chips here (the media drawer still lists them) (iteration 11)
+  const files = embeds(m.body.trimStart().replace(PROJECT_BLOCK, ''))
   const ask = parseAsk(m.body)          // asked from a highlight: the quote is a chip, the question is the text
   const ch = ask ? null : parseChanges(m.body)     // "send my changes": a card, never raw diff text
   const raw = ask ? ask.question : ch ? '' : stripEmbeds(m.body)

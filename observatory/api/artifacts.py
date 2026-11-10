@@ -524,6 +524,11 @@ class Store:
                     return self.put(thread, cand, data, author, f"open as document: {cand}", msg=msg)
                 if self.content(aid)[0] == data:
                     return self.artifact(aid)
+                # the words it STARTED from (v1, by the same author): the owner edited it since, so opening the same
+                # turn again opens that edited document, never a fresh "(2)" copy of the original words (iteration 11)
+                first = self.versions(idx[aid]["path"])[-1:]
+                if first and first[0]["author"] == author and self.content(aid, first[0]["rev"])[0] == data:
+                    return self.artifact(aid)
             raise StoreError(409, "too many documents by that name")
 
     def annotations(self, aid: str) -> dict:

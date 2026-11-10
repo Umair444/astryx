@@ -45,14 +45,20 @@ export default function PdfView({ blob }: { blob: Blob }) {
   const scales = useMemo(() => dims.map((d) => (zoom === 'fit' ? (width ? Math.min(2, (width - gutter) / Math.max(1, d.w)) : 1) : zoom)), [dims, zoom, width, gutter])
   const scale = scales[page - 1] ?? scales[0] ?? 1      // the page in view's: the pill's percentage, a zoom step's base
   const step = (d: 1 | -1) => {
-    const next = d > 0 ? STEPS.find((s) => s > scale + 1e-3) : [...STEPS].reverse().find((s) => s < scale - 1e-3)
+    // a step is a visible step: from a fitted 66%, "+" goes to 80%, not to 67% (iteration 11)
+    const next = d > 0 ? STEPS.find((s) => s > scale * 1.05) : [...STEPS].reverse().find((s) => s < scale / 1.05)
     if (next) setZoom(next)
   }
 
   // the page in view: the last page whose top has passed a third of the viewport
+  // the pager's own jump names its page: the scroll it causes is not re-read (a short landscape page under the target
+  // put the next page's top above the third-of-viewport mark, so "next" from 1 said 3 and "previous" from there
+  // scrolled nowhere: iteration 11). A jump that cannot move (the end of the column) sets the number and no flag.
+  const jumped = useRef(false)
   const onScroll = () => {
     const el = box.current
     if (!el) return
+    if (jumped.current) { jumped.current = false; return }
     const mark = el.scrollTop + el.clientHeight / 3
     let y = 24, p = 1
     for (let i = 0; i < dims.length; i++) { if (y > mark) break; p = i + 1; y += dims[i].h * scales[i] + 16 }
@@ -63,7 +69,10 @@ export default function PdfView({ blob }: { blob: Blob }) {
     if (!el) return
     let y = 0
     for (let i = 0; i < p - 1; i++) y += dims[i].h * scales[i] + 16
-    el.scrollTo({ top: y })
+    const top = Math.max(0, Math.min(y, el.scrollHeight - el.clientHeight))
+    jumped.current = Math.abs(top - el.scrollTop) >= 1
+    setPage(p)
+    el.scrollTo({ top })
   }
 
   if (err) return <Failed err={err} />

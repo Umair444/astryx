@@ -311,7 +311,8 @@ function Body({ art, at, view, setView, wide, onSaved, onAttach, saveRef, from, 
             )}
             {canDiff && <button className="ws-tool" aria-pressed={!!view.diff} onClick={toggleDiff} title="Compare versions">{DiffIcon}<span>Diff</span></button>}
             {annotatable && !view.diff && (
-              <button className="ws-tool" aria-pressed={!!view.ann} onClick={() => setAnn(!view.ann)} title={view.ann ? 'Hide the notes' : 'Annotate: highlight, comment, ask an agent'}>
+              <button className="ws-tool" aria-pressed={!!view.ann} onClick={() => setAnn(!view.ann)} title={view.ann ? 'Hide the notes' : 'Annotate: highlight, comment, ask an agent'}
+                aria-label={count > 0 ? `Annotate, ${count} notes` : 'Annotate'}>
                 {A.margin()}<span className="max-sm:hidden">Annotate</span>
                 {count > 0 && <span className="ax-count" aria-label={`${count} notes`}>{count}</span>}
               </button>

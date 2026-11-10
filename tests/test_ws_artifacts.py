@@ -196,6 +196,11 @@ def main():
         and tc["kind"] == "table" and tc["versions"][0]["author"] == "db", tc)
     arm("a hostile table name is still reduced", S2.create(T2, "../x.tsv", "a\tb\n", "db")["name"] == "x.tsv")
     arm("an editable text: the owner can save over it", S2.save(c1["id"], "# Q3\nrevenue up (checked)\n")["versions"][0]["n"] == 2)
+    again = S2.create(T2, "Q3 answer", "# Q3\nrevenue up\n", "db")
+    arm("the same turn opened again after an owner edit -> the EDITED document, not a '(n)' copy (iteration 11)",
+        again["id"] == c1["id"] and again["versions"][0]["n"] == 2 and again["versions"][0]["author"] == "owner", again)
+    other = S2.create(T2, "Q3 answer", "# Q3\nrevenue up\n", "seed")
+    arm("the same words from ANOTHER author are not that document", other["id"] != c1["id"], other["name"])
     for label, args in (("empty text", (T2, "x", "  ", "db")), ("no thread", ("", "x", "t", "db")),
                         ("a bad author", (T2, "x", "t", "../db"))):
         arm(f"{label} -> 400", code_of(S2.create, *args) == 400)
