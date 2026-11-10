@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import DataView from '../../tables/DataView'
 
 /* CSV/TSV (and a spreadsheet's sheet, from Sheet.tsx) as a table: sticky header, a row-number column, numbers right-
    aligned in tabular figures, and a click on a header sorts by it (numeric when the column is numeric). Rendering
@@ -80,7 +81,8 @@ export function Grid({ rows }: { rows: string[][] }) {
   )
 }
 
-export default function Table({ text, ext }: { text: string; ext: string }) {
+/* iteration 9: the table with its chart (Table | Chart) and its downloads (CSV, Excel), tables/DataView.tsx */
+export default function Table({ text, ext, name = 'table.csv', memo = '' }: { text: string; ext: string; name?: string; memo?: string }) {
   const rows = useMemo(() => parseDelimited(text, ext === 'tsv' ? '\t' : ','), [text, ext])
-  return <Grid rows={rows} />
+  return <DataView rows={rows} name={name} memo={memo || name} source={name}><Grid rows={rows} /></DataView>
 }

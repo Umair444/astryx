@@ -62,3 +62,10 @@
 .ws-check { width: 18px; height: 18px; border-radius: 6px; border: 1.5px solid var(--t-line2); display: grid; place-items: center; color: var(--t-on); flex-shrink: 0; }
 .ws-check[data-on="true"] { background: var(--t-accent); border-color: var(--t-accent); }
 }
+
+/* a prose file's first lines as a small page: the reading serif for headings, Inter for the lines (iteration 10) */
+.ws-libpage { font: 11px/1.45 "Inter Variable", Inter, sans-serif; white-space: normal; display: flex; flex-direction: column; padding: 14px 16px; }
+.ws-libpage > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-libpage-h1 { font-family: "Instrument Serif", Georgia, serif; font-size: 19px; line-height: 1.1; color: var(--t-fg); margin-bottom: 5px; }
+.ws-libpage-h2 { font-weight: 600; font-size: 11px; color: var(--t-fg); margin-top: 3px; }
+.ws-libpage-gap { height: 5px; }

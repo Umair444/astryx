@@ -187,8 +187,9 @@ export default forwardRef<ComposerHandle, {
           )}
           {err && <span className="ml-2 text-[12px] text-bad truncate" role="alert">{err}</span>}
           {dict.phase === 'error' && dict.error && !err && <span className="ml-2 text-[12px] text-bad truncate" role="alert">{dict.error}</span>}
-          <span className="ws-composer-hint ml-auto mr-2 text-[11px] text-ink-mute hidden md:inline">{text ? 'Enter to send · Shift+Enter for a line' : '/ for commands · @ for agents'}</span>
-          <button onClick={send} disabled={!canSend} className="ws-send ws-sig max-md:ml-auto" aria-label={busy ? 'sending' : 'send'} title="Send (Enter)">
+          <span className="flex-1 min-w-2" aria-hidden />
+          <span className="ws-composer-hint mr-2 text-[11px] text-ink-mute hidden md:inline">{text ? 'Enter to send · Shift+Enter for a line' : '/ for commands · @ for agents'}</span>
+          <button onClick={send} disabled={!canSend} className="ws-send ws-sig shrink-0" aria-label={busy ? 'sending' : 'send'} title="Send (Enter)">
             {busy ? <span className="w-3.5 h-3.5 rounded-full border-2 border-white/70 border-t-transparent animate-spin" /> : I.send('w-[18px] h-[18px]')}
           </button>
         </div>

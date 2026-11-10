@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Grid } from './Table'
+import DataView from '../../tables/DataView'
 import { Failed, Loading } from './common'
 import { readXlsx, type Sheet } from './office'
 
 /* An .xlsx as its sheets' VALUES (no formulas, no styles: what an agent's export carries), one tab per sheet. Read
    with JSZip + the browser's XML parser (office.ts), a few KB instead of a spreadsheet engine. */
-export default function SheetView({ blob }: { blob: Blob }) {
+export default function SheetView({ blob, name = 'workbook.xlsx', memo = '' }: { blob: Blob; name?: string; memo?: string }) {
   const [sheets, setSheets] = useState<Sheet[] | null>(null)
   const [err, setErr] = useState('')
   const [at, setAt] = useState(0)
@@ -19,7 +20,10 @@ export default function SheetView({ blob }: { blob: Blob }) {
   if (!sheets.length) return <Failed err="This spreadsheet has no sheets." />
   return (
     <div className="h-full flex flex-col">
-      <div className="flex-1 min-h-0"><Grid key={at} rows={sheets[at].rows} /></div>
+      <div className="flex-1 min-h-0">
+        <DataView key={at} rows={sheets[at].rows} name={name} memo={`${memo || name}#${at}`} source={sheets.length > 1 ? `${name} · ${sheets[at].name}` : name}
+          sheet={sheets.length > 1 ? sheets[at].name : undefined}><Grid rows={sheets[at].rows} /></DataView>
+      </div>
       {sheets.length > 1 && (
         <div className="shrink-0 flex gap-0.5 px-2 py-1.5 border-t border-line overflow-x-auto" role="tablist" aria-label="sheets">
           {sheets.map((s, i) => (

@@ -28,7 +28,7 @@ function TextKinds({ art, rev }: { art: Opened; rev?: string }) {
   if (err) return <Failed err={err} />
   if (text == null) return <Loading />
   const ext = extOf(art.name)
-  if (art.kind === 'table') return <Table text={text} ext={ext} />
+  if (art.kind === 'table') return <Table text={text} ext={ext} name={art.name} memo={art.id} />
   if (art.kind === 'code') return <Code text={text} ext={ext} />
   return ext === 'md' || ext === 'markdown' ? <Markdown text={text} /> : isProse(art.name) ? <Plain text={text} /> : <Code text={text} ext={ext} />
 }
@@ -41,7 +41,7 @@ function BlobKinds({ art, rev }: { art: Opened; rev?: string }) {
     case 'image': return <ImageView blob={blob} name={art.name} />
     case 'pdf': return <PdfView blob={blob} />
     case 'docx': return <DocxView blob={blob} />
-    case 'sheet': return <SheetView blob={blob} />
+    case 'sheet': return <SheetView blob={blob} name={art.name} memo={art.id} />
     case 'audio': case 'video': return <Player blob={blob} kind={art.kind} name={art.name} />
     default: return <Card art={art} blob={blob} />
   }

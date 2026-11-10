@@ -36,6 +36,7 @@ import Panel, { type Layout } from './artifacts/Panel'
 import { usePanel } from './artifacts/usePanel'
 import MediaDrawer from './artifacts/MediaDrawer'
 import { byId, createArtifact, distinctMedia, loadMedia, mediaOfRows, type MediaItem } from './artifacts/api'
+import { preferChart } from './tables/DataView'
 import { ChipCtx, useChipAwareness } from './artifacts/versions/awareness'
 import { quoteText, TurnActionsCtx, type TurnActionsValue } from './thread/TurnActions'
 import Outbox, { type Outgoing } from './thread/Outbox'
@@ -52,6 +53,10 @@ const ProjectHome = lazy(() => import('./projects/ProjectHome'))
 const ProjectsIndex = lazy(() => import('./projects/ProjectsIndex'))
 import { interruptAgent, loadHandoffs, useTabTitle, useUnread, type Handoff } from './live'
 import ListSeam, { useListWidth } from './shell/ListSeam'
+import MoreMenu from './shell/MoreMenu'
+import { NotifyPrompt, useReplyNotifications } from './shell/notify'
+import { useInstallable } from './shell/pwa'
+import { exportConversation } from './thread/exportMd'
 
 /* /chat, the WORKSPACE (plan-11884; rebuilt on feat/chat-workspace after homes/seed/chat-rebuild/DESIGN.md). Four
    columns: the AGENT RAIL (who is here, who is working), the CONVERSATION LIST (every conversation the owner has with
@@ -72,10 +77,11 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const { agents: roster, messages, presence, send, who } = useStore()
   const reduce = useReducedMotion()
   const now = useNow(5000)
-  // the rail's order: seed first, then the agents/ tree as /api/agents lists it
+  // the rail's order: seed first, then by name. STABLE on purpose (iteration 10): /api/agents lists by latest step, so
+  // following it reshuffled the rail every time someone worked, and a face never stayed where the hand remembers it
   const names = useMemo(() => {
     const all = roster.map((a) => a.agent)
-    return [...all.filter((a) => a === 'seed'), ...all.filter((a) => a !== 'seed')]
+    return [...all.filter((a) => a === 'seed'), ...all.filter((a) => a !== 'seed').sort()]
   }, [roster])
   const status = useMemo(() => {
     const out: Record<string, Status> = {}
@@ -89,6 +95,10 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   }, [roster, presence, status, now])
 
   const { threads, loaded, reload, patch } = useWsThreads(messages)
+  // iteration 9: an agent's reply while the tab is hidden → an OS notification (opt-in; name + title only); the chat
+  // is installable (manifest + icons in <head> only while it is on screen)
+  useReplyNotifications(messages, threads, names, useCallback((t: string) => nav(t), [nav]))
+  useInstallable()
   const [team, setTeam] = useState<WsAgent[]>([])
   const [history, setHistory] = useState<Msg[] | null>(null)
   const [steps, setSteps] = useState<Record<string, Step[]>>({})
@@ -394,6 +404,12 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       const a = await createArtifact({ thread: current, name: docName(text), text, author: m.from, msg: { id: m.id, ts: m.ts } })
       openFile({ path: byId(a.id), label: a.name, from: m.from })
     },
+    // iteration 9: a table in a turn → a CSV artifact by that agent, opened as its chart
+    openTable: async (m, csv, name) => {
+      const a = await createArtifact({ thread: current, name, text: csv, author: m.from, msg: { id: m.id, ts: m.ts } })
+      preferChart(a.id)
+      openFile({ path: byId(a.id), label: a.name, from: m.from })
+    },
   }
   // a quoted ask in the chat: open its file (by name, from this thread's files) at the highlight it came from
   const openAsk = (a: ParsedAsk) => {
@@ -432,7 +448,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
             files={files.length} media={filesOpen}
             onRename={(t) => currentRow && setMeta(currentRow, { title: t })}
             onWorkforce={() => setWorkforce((w) => !w)} onMedia={() => setFilesOpen((f) => !f)}
-            onMenu={() => setDrawer(true)} onAgent={openAgent} names={names} lines={lines} />
+            onMenu={() => setDrawer(true)} onAgent={openAgent} names={names} lines={lines}
+            more={<MoreMenu onExport={() => exportConversation(rows, title, current, names)} />} />
         )}
         <div className="flex-1 min-h-0 overflow-y-auto">
           {home && <TeamHome names={names} status={status} lines={lines} agents={team} threads={threads} composer={box(true)} onAgent={openAgent} onGo={go} />}
@@ -459,6 +476,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
           </TurnActionsCtx.Provider></ChipCtx.Provider>
         </div>
         {note && <div className="mx-auto max-w-[760px] w-full px-6 pb-1 text-[12.5px] text-ink-dim cursor-pointer" role="status" onClick={() => setNote('')}>{note}</div>}
+        {view === 'thread' && !home && <NotifyPrompt waiting={pending.length > 0 || outbox.some((o) => o.thread === current)} />}
         {view === 'thread' && !home && box(false)}
 
         {/* the media drawer: over the conversation's right edge, under the top bar (the whole screen on a phone) */}

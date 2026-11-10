@@ -81,7 +81,7 @@ function Face({ it, big }: { it: Item; big: boolean }) {
     <span ref={ref} className={`ws-libface ${it.kind === 'image' ? 'ws-checker' : ''}`} data-kind={it.kind}>
       {pdf && <canvas ref={canvas} className="ws-libpaper" data-on={paper} aria-hidden />}
       {paper ? null : blob ? <BlobImg blob={blob} alt="" className="w-full h-full object-cover" draggable={false} />
-        : text !== null && big ? <span className="ws-libtext">{text}</span>
+        : text !== null && big ? (PROSE.test(it.name) ? <Page text={text} /> : <span className="ws-libtext">{text}</span>)
         : (
           <span className="absolute inset-0 grid place-items-center">
             <span className="flex flex-col items-center gap-1.5 text-ink-mute">
@@ -90,6 +90,26 @@ function Face({ it, big }: { it: Item; big: boolean }) {
             </span>
           </span>
         )}
+    </span>
+  )
+}
+
+/* a prose file's first lines as a tiny PAGE (iteration 10): headings in the reading serif, markdown's marks dropped,
+   every line still a text node (never markup); code and data keep the monospace first lines */
+const PROSE = /\.(md|markdown|txt|rst)$/i
+function Page({ text }: { text: string }) {
+  const lines = text.split('\n').map((l) => l.trimEnd())
+    .filter((l) => !/^\s*\|?[\s:|-]+\|?\s*$/.test(l) || !l.includes('-'))          // a table's |---| rule
+    .map((l) => (/^\s*\|.*\|\s*$/.test(l) ? l.trim().slice(1, -1).split('|').map((c) => c.trim()).join('   ') : l))
+    .filter((l, i, a) => l || (i > 0 && a[i - 1])).slice(0, 12)
+  return (
+    <span className="ws-libtext ws-libpage" aria-hidden>
+      {lines.map((l, i) => {
+        const h = /^(#{1,6})\s+(.*)$/.exec(l)
+        const plain = (x: string) => x.replace(/(\*\*|__|`)/g, '').replace(/^\s*[-*+]\s+/, '• ').replace(/^>\s?/, '')
+        if (h) return <span key={i} className={h[1].length === 1 ? 'ws-libpage-h1' : 'ws-libpage-h2'}>{plain(h[2])}</span>
+        return l ? <span key={i} className="ws-libpage-p">{plain(l)}</span> : <span key={i} className="ws-libpage-gap" />
+      })}
     </span>
   )
 }

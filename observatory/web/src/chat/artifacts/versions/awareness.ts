@@ -1,7 +1,7 @@
-import { createContext, useCallback, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Msg } from '../../../types'
 import { embeds } from '../../model'
-import { nameOf, threadArtifacts, type Artifact, type MsgRef, type Version } from '../api'
+import { nameOf, openArtifact, threadArtifacts, type Artifact, type MsgRef, type Version } from '../api'
 import type { OpenRequest } from '../FileChip'
 
 /* NEW-VERSION AWARENESS (iteration 7, "agents keep track of differentials"). An agent that re-sends a file by the same
@@ -11,8 +11,9 @@ import type { OpenRequest } from '../FileChip'
 
    Nothing is imported to draw a chip. Two cheap sources answer it: the thread's rows (an earlier message embedding the
    same name = this one is an update) and ONE GET /api/ws/artifacts?thread= (what the store already holds, with each
-   version's provenance: the message that carried it). A file nobody has opened yet still says "updated"; its number
-   arrives once it is stored. */
+   version's provenance: the message that carried it). A file re-sent under the same name that the store does not hold
+   yet is imported quietly in the background (iteration 10), exactly as opening its newest chip would (earlier paths
+   first, so the store's order is the thread's), so the chip reads "v3 · updated" before anyone opens it. */
 
 /* the version a message carried. Exact when the store recorded the message (provenance); else the newest agent
    version a message at or before it carried (an unchanged re-send keeps the version); else, for versions stored before
@@ -99,12 +100,40 @@ export function useChipAwareness(thread: string, rows: Msg[], bump: string, open
   const [stored, setStored] = useState<Artifact[]>([])
   const newest = rows.at(-1)?.id ?? 0
   useEffect(() => { setStored([]) }, [thread])
+  const tried = useRef(new Set<string>())        // thread|name|message: one background import per new mention
   useEffect(() => {
     if (!thread || !any) return
     let live = true
-    threadArtifacts(thread).then((a) => live && setStored(a)).catch(() => {})
+    ;(async () => {
+      const arts = await threadArtifacts(thread)
+      if (!live) return
+      setStored(arts)
+      // updated files the store has not caught up with: import them as their newest chip would, then look again
+      const behind = [...by].filter(([name, list]) => {
+        if (list.length < 2) return false
+        const last = list.at(-1)!
+        const key = `${thread}|${name}|${last.msg.id}`
+        if (tried.current.has(key)) return false
+        const art = arts.find((a) => a.name === name)
+        if (art?.versions.some((v) => v.msg === last.msg.id)) return false
+        tried.current.add(key)
+        return true
+      })
+      if (!behind.length) return
+      for (const [, list] of behind) {
+        const seen = new Set<string>()
+        for (const x of list) {               // each distinct path once, oldest first, carried by its NEWEST message
+          if (seen.has(x.path)) continue
+          seen.add(x.path)
+          const carrier = [...list].reverse().find((y) => y.path === x.path)!.msg
+          await openArtifact(x.path, thread, carrier.from, x.label, ref(carrier)).catch(() => null)
+        }
+      }
+      const again = await threadArtifacts(thread)
+      if (live) setStored(again)
+    })().catch(() => {})
     return () => { live = false }
-  }, [thread, any, newest, bump])
+  }, [thread, any, newest, bump, by])
   const info = useCallback((m: Msg, path: string, label?: string) => chipVer(m, path, label, by, stored), [by, stored])
   const whatChanged = useCallback((r: OpenRequest) => open({ ...r, diff: true }), [open])
   return useMemo(() => ({ info, whatChanged }), [info, whatChanged])

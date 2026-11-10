@@ -1,0 +1,17 @@
+{
+  "id": "/#/chat",
+  "name": "astryx chat",
+  "short_name": "astryx chat",
+  "description": "Your agents, your conversations and the files they make.",
+  "start_url": "/#/chat",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#07091a",
+  "theme_color": "#07091a",
+  "icons": [
+    { "src": "/chat-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/chat-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/chat-icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

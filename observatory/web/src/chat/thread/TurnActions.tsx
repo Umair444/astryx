@@ -9,6 +9,8 @@ import type { Msg } from '../../types'
 export interface TurnActionsValue {
   quote: (text: string, m: Msg) => void
   openDoc: (m: Msg, text: string) => Promise<void>
+  /* a table in the turn, as a CSV artifact by that agent, opened as its chart (iteration 9, thread/TableActions.tsx) */
+  openTable?: (m: Msg, csv: string, name: string) => Promise<void>
 }
 export const TurnActionsCtx = createContext<TurnActionsValue | null>(null)
 

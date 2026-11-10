@@ -387,6 +387,13 @@ _room.bind(lambda: pool, _fanout)
 app.include_router(_room.router)
 
 
+# A DEV observatory pointed at a live org's data (a worktree's dev server) must never act on the org: with
+# ASTRYX_DEV_NO_WIRE set, every write that reaches agents (a wire message, an interrupt) is refused at the server, so
+# a test script can't wake an agent in the owner's name however it is written (a held, not blocked, POST did: 10774).
+_DEV_NO_WIRE = bool(os.environ.get("ASTRYX_DEV_NO_WIRE"))
+_WIRE_WRITE = re.compile(r"^/api/(messages|ws/agents/[^/]+/interrupt)$")
+
+
 @app.middleware("http")
 async def privacy_gate(request: Request, call_next):
     request.state.uid, request.state.role = await _who(request)
@@ -395,6 +402,8 @@ async def privacy_gate(request: Request, call_next):
     if (p.startswith("/api/") and (m, p) not in PUBLIC and not (m == "GET" and _PUBLIC_AVATAR.match(p))
             and not is_owner(request)):
         return Response(status_code=403)
+    if _DEV_NO_WIRE and m != "GET" and _WIRE_WRITE.match(p):
+        return JSONResponse({"error": "dev server: wire writes are disabled (ASTRYX_DEV_NO_WIRE)"}, status_code=503)
     return await call_next(request)
 
 

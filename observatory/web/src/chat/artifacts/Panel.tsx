@@ -14,6 +14,7 @@ import type { AnnotateCtx } from './annotate/types'
 import { A } from './annotate/icons'
 import type { Focus } from './versions/awareness'
 import { parseChanges } from './versions/changes'
+import type { Picks } from './versions/DiffView'
 
 /* THE ARTIFACT PANEL (DESIGN.md layout): the thing being made, beside the conversation about it. Tabs for every file
    opened in this conversation; for the active one, its versions (git, by author), Diff, Edit (text kinds: a new
@@ -247,6 +248,21 @@ function Body({ art, at, view, setView, wide, onSaved, onAttach, saveRef, from, 
       note((err as { status?: number }).status === 409 ? 'Nothing to revert: the latest version already holds that.' : `Not reverted: ${(err as Error).message}`)
     } finally { setBusy(false) }
   }
+  // per-change review (iteration 10): the diff reports which changes are undone; the kept ones save as ONE owner version
+  const [picks, setPicks] = useState<Picks | null>(null)
+  const pickable = !!review && EDITABLE.includes(art.kind)
+  async function keepPicked(p: Picks) {
+    if (busy || !head) return
+    setBusy(true)
+    try {
+      const kept = p.total - p.undone
+      const a = await saveArtifact(art.id, p.text(), `kept ${kept} of ${p.total} of ${head.author}'s changes in v${head.n}`)
+      onSaved({ ...art, ...a, kind: art.kind })
+      setView((v) => ({ ...FRESH, ann: v.ann, note: `Kept ${kept} of ${who(head.author)}'s ${p.total} changes: saved as v${a.versions[0]?.n ?? ''}.` }))
+    } catch (err) {
+      note((err as { status?: number }).status === 409 ? 'No changes: the latest version already holds this.' : `Not saved: ${(err as Error).message}`)
+    } finally { setBusy(false) }
+  }
   const toggleDiff = () => setView((v) => {
     if (v.diff) return { ...v, diff: null }
     const to = v.rev ?? art.head
@@ -270,10 +286,10 @@ function Body({ art, at, view, setView, wide, onSaved, onAttach, saveRef, from, 
   const offer = art.store && !!base && !!head && !sent && waved !== head.rev && sendTo.length > 0 && !e && !view.diff
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col">
+    <div className="ws-pbody flex-1 min-h-0 flex flex-col">
       {/* toolbar */}
       <div className="shrink-0 min-h-11 flex items-center gap-1.5 flex-wrap px-3 py-1.5 border-b border-line/70 text-[12.5px]">
-        {!e && <span className="inline-flex items-center gap-1.5 text-ink-mute min-w-0 mr-1" title={`${KIND_WORD[art.kind]} from ${who(madeBy)}`}>
+        {!e && <span className="ws-pfrom inline-flex items-center gap-1.5 text-ink-mute min-w-0 mr-1" title={`${KIND_WORD[art.kind]} from ${who(madeBy)}`}>
           <AgentFace name={madeBy} size={18} />
           <span className="truncate max-w-[200px] max-sm:hidden">{madeBy === 'owner' ? 'Uploaded by you' : `From ${displayName(madeBy)}`}{art.size ? ` · ${bytes(art.size)}` : ''}</span>
         </span>}
@@ -319,11 +335,19 @@ function Body({ art, at, view, setView, wide, onSaved, onAttach, saveRef, from, 
       {review && head && (
         <div className="shrink-0 flex items-center gap-2.5 flex-wrap px-4 py-2 text-[12.5px] ws-reviewbar" role="group" aria-label="review this change">
           <AgentFace name={head.author} size={18} />
-          <span className="text-ink-dim"><b className="text-ink font-semibold">{who(head.author)}</b> changed this in v{head.n}{review.n !== head.n - 1 ? ` (since v${review.n})` : ''}.</span>
+          <span className="text-ink-dim min-w-0"><b className="text-ink font-semibold">{who(head.author)}</b> changed this in v{head.n}{review.n !== head.n - 1 ? ` (since v${review.n})` : ''}.
+            {pickable && picks && <span className="text-ink-mute max-md:hidden">{picks.undone ? ` ${picks.undone} of ${picks.total} undone.` : picks.total > 1 ? ' Undo any change on its own.' : ''}</span>}
+          </span>
           <span className="ml-auto flex gap-1.5">
             <button className="ws-btn !h-7 !text-[12px]" disabled={busy} onClick={() => void revert(review)} title={`A new version holding v${review.n}: ${who(head.author)}'s v${head.n} stays in the history`}>Revert to v{review.n}</button>
-            <button className="ws-btn ws-btn-primary !h-7 !text-[12px]" disabled={busy}
-              onClick={() => setView((v) => ({ ...v, diff: null, rev: null, note: `Accepted ${who(head.author)}'s v${head.n}.` }))}>Accept all</button>
+            {pickable && picks && picks.undone > 0 && picks.undone < picks.total
+              ? <button className="ws-btn ws-btn-primary !h-7 !text-[12px]" disabled={busy} onClick={() => void keepPicked(picks)}
+                  title={`A new version by you: the ${picks.total - picks.undone} kept changes on top of v${review.n}`}>Keep {picks.total - picks.undone} of {picks.total}</button>
+              : pickable && picks && picks.undone > 0
+              ? <button className="ws-btn ws-btn-primary !h-7 !text-[12px]" disabled={busy} onClick={() => void revert(review)}
+                  title={`Every change undone: a new version holding v${review.n}`}>Undo all</button>
+              : <button className="ws-btn ws-btn-primary !h-7 !text-[12px]" disabled={busy}
+                  onClick={() => setView((v) => ({ ...v, diff: null, rev: null, note: `Accepted ${who(head.author)}'s v${head.n}.` }))}>Accept all</button>}
           </span>
         </div>
       )}
@@ -350,7 +374,7 @@ function Body({ art, at, view, setView, wide, onSaved, onAttach, saveRef, from, 
       <div className="flex-1 min-h-0 relative">
         {view.diff ? (
           <Suspense fallback={<Loading what="Comparing" />}>
-            <DiffView art={art} from={view.diff.from} to={view.diff.to} wide={wide}
+            <DiffView art={art} from={view.diff.from} to={view.diff.to} wide={wide} onPicks={pickable ? setPicks : undefined}
               onFrom={(r) => setView((v) => ({ ...v, diff: v.diff && { ...v.diff, from: r } }))}
               onTo={(r) => setView((v) => ({ ...v, diff: v.diff && { ...v.diff, to: r } }))} />
           </Suspense>

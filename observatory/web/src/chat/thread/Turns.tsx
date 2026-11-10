@@ -183,19 +183,22 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
   const files = embeds(m.body)
   const text = stripEmbeds(m.body)
   return (
-    <div className={`ws-turn ${cont ? 'mt-3' : 'mt-7 first:mt-0'}`} data-turn>
-      <TurnActions m={m} text={text} />
+    <div className={`ws-turn ${cont ? 'mt-3 is-cont' : 'mt-7 first:mt-0'}`} data-turn>
+      {cont && <TurnActions m={m} text={text} />}
       {!cont && (
-        <div className="flex items-center gap-2.5 mb-1.5">
+        // the actions live IN the header row (iteration 10): they take their own room at its end, so the role
+        // shortens to make space instead of being painted over
+        <div className="ws-turn-head flex items-center gap-2.5 mb-1.5 min-w-0">
           <AgentFace name={m.from} size={22} />
-          <span className="text-[13.5px] font-semibold text-ink">{displayName(m.from)}</span>
-          {role && <span className="text-[12px] text-ink-mute truncate max-sm:hidden">{role}</span>}
-          <span className="text-[11.5px] text-ink-mute shrink-0 ml-auto md:ml-0">{fmtTime(m.ts)}</span>
+          <span className="text-[13.5px] font-semibold text-ink shrink-0">{displayName(m.from)}</span>
+          {role && <span className="text-[12px] text-ink-mute truncate min-w-0 max-sm:hidden" title={role}>{role}</span>}
+          <span className="text-[11.5px] text-ink-mute shrink-0">{fmtTime(m.ts)}</span>
+          <TurnActions m={m} text={text} inline />
         </div>
       )}
       <div className="md:pl-[32px]">
         {turn && turn.steps.length > 0 && <WorkTrace steps={turn.steps} elsewhere={turn.elsewhere} agent={m.from} end={turn.ended_at} />}
-        {text && <Prose text={text} />}
+        {text && <Prose text={text} msg={m} />}
         {files.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} msg={m} onOpen={onOpenFile} />)}</div>}
       </div>
     </div>
@@ -221,7 +224,7 @@ function Handoff({ h }: { h: HandoffView }) {
           <svg viewBox="0 0 24 16" className="w-[18px] h-[12px] ws-handoff-arrow" aria-hidden><path d="M1 8h19M15 3l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
           <AgentFace name={h.to} size={16} />
           <span className="text-ink-dim">{displayName(h.to)}</span>
-          {label && <span className="text-ink-mute max-sm:hidden">· <span className="font-mono text-[11px]">{label}</span></span>}
+          {label && <span className="text-ink-mute max-sm:hidden">· {label}</span>}
           <span className="text-ink-mute">· {fmtTime(h.ts)}</span>
           <span className={`text-ink-mute transition-transform duration-150 ${open ? 'rotate-90' : ''}`} aria-hidden>›</span>
         </span>
@@ -230,7 +233,7 @@ function Handoff({ h }: { h: HandoffView }) {
         <div className="ws-payload mt-2.5 mx-auto max-w-[620px]">
           <div className="flex items-center gap-2 text-[11.5px] text-ink-mute mb-1.5 flex-wrap">
             <span>What {displayName(h.from)} handed {displayName(h.to)}</span>
-            {h.thread && <a href={`#/wire/${encodeURIComponent(h.thread)}`} className="font-mono hover:text-ink underline-offset-2 hover:underline">on {h.thread}</a>}
+            {h.thread && <a href={`#/wire/${encodeURIComponent(h.thread)}`} className="hover:text-ink underline-offset-2 hover:underline">on {h.thread}</a>}
             {h.intent && h.intent !== 'chat' && <span className="border border-line rounded-full px-1.5">{h.intent}</span>}
           </div>
           <div className={`text-[13.5px] ${long && !more ? 'max-h-[14em] overflow-hidden [mask-image:linear-gradient(#000_72%,transparent)]' : ''}`}>
@@ -280,8 +283,9 @@ function WorkTrace({ steps, elsewhere, agent, end, answered = true }: { steps: S
         {errs > 0 && <span className="text-bad">· {errs} {errs === 1 ? 'error' : 'errors'}</span>}
       </button>
       {elsewhere.length > 0 && (
-        <div className="text-[12px] text-ink-mute mt-0.5">{answered ? 'This turn also touched' : 'Answered in'} {elsewhere.map((t) => (
-          <a key={t} href={/^(chat|obs|cv):/.test(t) ? `#/chat/${encodeURIComponent(t)}` : `#/wire/${encodeURIComponent(t)}`} className="text-ink-dim hover:text-ink underline underline-offset-2 mr-1.5">{t}</a>))}
+        <div className="text-[12px] text-ink-mute mt-0.5 flex items-center flex-wrap gap-x-1 gap-y-1">{answered ? 'Also worked in' : 'Answered in'} {elsewhere.map((t) => (
+          <a key={t} href={/^(chat|obs|cv):/.test(t) ? `#/chat/${encodeURIComponent(t)}` : `#/wire/${encodeURIComponent(t)}`}
+            title={answered ? `This turn also wrote to ${t}: open it` : `The answer went to ${t}: open it`} className="ws-elsewhere">{t}</a>))}
         </div>
       )}
       {open && <Replay steps={steps} agent={agent} end={end} />}

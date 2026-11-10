@@ -190,7 +190,11 @@ def main():
     arm("the same words again -> the same artifact", S2.create(T2, "Q3 answer", "# Q3\nrevenue up\n", "db")["id"] == c1["id"])
     c2 = S2.create(T2, "Q3 answer.md", "other words\n", "db")
     arm("other words under a taken name -> 'name (2).md'", c2["name"] == "Q3 answer (2).md" and c2["id"] != c1["id"], c2["name"])
-    arm("a non-text name gets .md", S2.create(T2, "data.csv", "a,b\n", "seed")["name"] == "data.csv.md")
+    arm("a non-text name gets .md", S2.create(T2, "data.json", "{}\n", "seed")["name"] == "data.json.md")
+    tc = S2.create(T2, "Revenue by region.csv", "region,rev\nNorth,10\n", "db")
+    arm("a table keeps .csv and is a table (a turn's table charted, iteration 9)", tc["name"] == "Revenue by region.csv"
+        and tc["kind"] == "table" and tc["versions"][0]["author"] == "db", tc)
+    arm("a hostile table name is still reduced", S2.create(T2, "../x.tsv", "a\tb\n", "db")["name"] == "x.tsv")
     arm("an editable text: the owner can save over it", S2.save(c1["id"], "# Q3\nrevenue up (checked)\n")["versions"][0]["n"] == 2)
     for label, args in (("empty text", (T2, "x", "  ", "db")), ("no thread", ("", "x", "t", "db")),
                         ("a bad author", (T2, "x", "t", "../db"))):

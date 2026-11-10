@@ -74,12 +74,26 @@ export default function ChatGate({ thread, go }: { thread: string | null; go: (t
 
   const signedIn = async () => { await recheckWho(); setDenied(false) }
 
+  // the door is modal: while it is up, no key reaches the workspace beneath (Esc would close its panel, ⌘K open the
+  // palette, a letter chord navigate). Stopped at the window's capture phase, before any of the workspace's listeners;
+  // typing and Enter in the key field are default actions, which stopping propagation leaves alone. Registered ONCE,
+  // when the gate mounts: the workspace's own capture listeners (the panel, the annotator, the team map) register
+  // later, so this one runs first and stopImmediatePropagation silences them too.
+  const holding = useRef(false)
+  holding.current = denied
+  useEffect(() => {
+    const hold = (e: KeyboardEvent) => { if (holding.current) e.stopImmediatePropagation() }
+    addEventListener('keydown', hold, true)
+    return () => removeEventListener('keydown', hold, true)
+  }, [])
+
   let body: React.ReactNode
   if (!whoChecked) body = <Loading />
   else if (!who.owner) body = reach === 'down' ? <Offline onRetry={async () => { await probe(); await recheckWho() }} /> : reach === 'unknown' ? <Loading /> : <Door onIn={signedIn} />
   else body = (
     <>
-      <Suspense fallback={<Loading />}><ChatApp thread={thread} go={go} /></Suspense>
+      {/* inert while the door is up: no focus, no click and no screen reader reaches the workspace under it */}
+      <div className="contents" inert={denied}><Suspense fallback={<Loading />}><ChatApp thread={thread} go={go} /></Suspense></div>
       {denied && (
         <div className="fixed inset-0 z-[65]" role="dialog" aria-modal="true" aria-label="sign in again">
           <Door again onIn={signedIn} />
