@@ -1,0 +1,81 @@
+/* The chat workspace's GATE (iteration 8): what /chat shows before, around and instead of the workspace — the loading
+   outline while its chunk arrives, the owner's sign-in door (canvas's Login, in the workspace's tokens), the offline
+   state, and the toasts. Eager (in the main bundle) and small, so none of it waits on the workspace's own CSS. */
+@layer components {
+.ws-gate-bg {
+  background:
+    radial-gradient(1100px 620px at 18% -8%, color-mix(in srgb, var(--t-accent) 11%, transparent), transparent 62%),
+    radial-gradient(900px 600px at 105% 108%, color-mix(in srgb, var(--t-accent2) 9%, transparent), transparent 60%),
+    var(--t-bg);
+}
+:root[data-theme="dark"] .ws-gate-bg {
+  background:
+    radial-gradient(1100px 620px at 18% -8%, color-mix(in srgb, var(--t-accent) 16%, transparent), transparent 62%),
+    radial-gradient(900px 600px at 105% 108%, color-mix(in srgb, var(--t-accent2) 9%, transparent), transparent 60%),
+    var(--t-bg);
+}
+.ws-gate-serif { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.015em; }
+.ws-gate-sig { background: linear-gradient(120deg, var(--t-accent), var(--t-accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.ws-gate-link { color: var(--t-dim); text-decoration: underline; text-decoration-color: var(--t-line2); text-underline-offset: 3px; }
+.ws-gate-link:hover { color: var(--t-fg); }
+
+/* toasts: bottom centre, above the composer; a quiet panel, the one coloured edge says what kind */
+.ws-toast { background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 12px; color: var(--t-fg);
+  box-shadow: inset 3px 0 0 var(--ws-toast, var(--t-accent)), 0 12px 34px -16px rgba(0,0,0,.45); }
+.ws-toast[data-kind="error"] { --ws-toast: var(--t-bad); }
+
+/* the sign-in door: canvas's Login (aurora, the signature square, the serif wordmark) in the workspace's tokens */
+.ws-door-mark { width: 64px; height: 64px; border-radius: 22px; background: linear-gradient(135deg, var(--t-accent), var(--t-accent2));
+  box-shadow: 0 18px 50px -18px color-mix(in srgb, var(--t-accent) 70%, transparent); animation: ws-door 7s ease-in-out infinite; }
+@keyframes ws-door { 0%, 100% { transform: rotate(0) scale(1); } 40% { transform: rotate(6deg) scale(1.04); } 70% { transform: rotate(-4deg) scale(1); } }
+.ws-door-field { width: 100%; height: 50px; border-radius: 16px; padding: 0 16px; font-size: 15px; color: var(--t-fg); outline: none;
+  background: color-mix(in srgb, var(--t-panel) 80%, transparent); border: 1px solid var(--t-line); transition: border-color 140ms, box-shadow 140ms; }
+.ws-door-field::placeholder { color: var(--t-mute); }
+.ws-door-field:focus { border-color: color-mix(in srgb, var(--t-accent) 55%, var(--t-line)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--t-accent) 14%, transparent); }
+.ws-door-field[aria-invalid="true"] { border-color: color-mix(in srgb, var(--t-bad) 60%, var(--t-line)); }
+.ws-door-go { width: 100%; height: 50px; border-radius: 16px; font-weight: 500; font-size: 15px; color: var(--t-on);
+  background: linear-gradient(135deg, var(--t-accent), var(--t-accent2)); transition: filter 120ms, opacity 120ms; }
+.ws-door-go:hover:not(:disabled) { filter: brightness(1.08); }
+/* dark palettes run the gradient into a light cyan: white type on it fell to ~1.8:1, the page's ink reads ≥5:1 */
+:root[data-theme="dark"] .ws-door-go { color: var(--t-bg); }
+.ws-door-go:disabled { opacity: .6; }
+.ws-shake { animation: ws-shake 320ms ease-in-out 1; }
+@keyframes ws-shake { 20% { transform: translateX(-6px); } 45% { transform: translateX(5px); } 70% { transform: translateX(-3px); } 100% { transform: none; } }
+
+/* the workspace loading (its chunk on the way): the rail, the list and a column, in outline */
+.ws-skel { background: color-mix(in srgb, var(--t-fg) 6%, transparent); border-radius: 8px; }
+
+.ws-toast-x, .ws-toast-act { border-radius: 8px; color: var(--t-dim); transition: background-color 120ms, color 120ms; }
+.ws-toast-x { width: 26px; height: 26px; display: grid; place-items: center; }
+.ws-toast-act { height: 26px; padding: 0 9px; font-weight: 500; color: var(--t-fg); }
+.ws-toast-x:hover, .ws-toast-act:hover { background: color-mix(in srgb, var(--t-fg) 7%, transparent); color: var(--t-fg); }
+
+/* the loading outline: the rail, the list, a column, breathing slowly */
+.ws-skel { animation: ws-skel 1.6s ease-in-out infinite; }
+@keyframes ws-skel { 50% { opacity: .55; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-door-mark, .ws-shake, .ws-skel { animation: none; }
+}
+}
+
+/* CONTRAST (iteration 8 QA): the shared palettes' tertiary ink (--t-mute) measured 3.6:1 on astryx dark and 2.1:1 on
+   catppuccin-latte, under body-size AA (4.5:1); the workspace sets small text in it everywhere (times, roles, hints).
+   Inside the workspace only (canvas and the floor keep the palette), mute is DERIVED from the secondary ink: dark,
+   --t-dim 80% toward the page (astryx 5.2:1, ≥4.9 on 7 of 9 dark palettes); light, --t-dim nudged 12% toward the ink
+   (latte 2.1 -> ~4.4:1; a stronger push made tertiary text darker than secondary on the light palettes). Unlayered custom properties on the workspace roots; text-ink-mute reads var(--t-mute) inline. */
+:root[data-theme="dark"] :is(.ws, .ws-gate) { --t-mute: color-mix(in srgb, var(--t-dim) 80%, var(--t-bg)); }
+:root:not([data-theme="dark"]) :is(.ws, .ws-gate) { --t-mute: color-mix(in srgb, var(--t-dim) 88%, var(--t-fg)); }
+
+/* KEYBOARD (iteration 8 QA): one visible focus ring for everything focusable in the workspace and the door, shown only
+   for keyboard focus (:focus-visible). Text fields are left out (their wells light their own border on focus-within);
+   a block a search jump focused is marked by its pulse instead. Unlayered, so a layered `outline-none` utility on a
+   button cannot hide it. */
+:is(.ws, .ws-gate) :focus-visible:not(input, textarea, select, [contenteditable="true"], [data-jump]) {
+  outline: 2px solid color-mix(in srgb, var(--t-accent) 70%, transparent); outline-offset: 2px;
+}
+.ws-door-field:focus-visible { outline: none; }
+
+/* unlayered like workspace.css's twin: Mantine's global `input, button { font: inherit }` is unlayered and would beat
+   every layered size here */
+.ws-gate :where(button, input) { font: revert-layer; }

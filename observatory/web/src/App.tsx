@@ -7,21 +7,9 @@ import { StoreProvider, useStore } from './store'
 import { CogProvider, useCog } from './cog'
 import { CogChooser, CogSwitcher } from './components/CogBuilding'
 import Sidebar from './components/Sidebar'
-import NetworkView from './components/NetworkView'
-import FloorView from './components/FloorView'
-import PeopleView from './components/PeopleView'
-import WireView from './components/WireView'
-import GoalsView from './components/GoalsView'
-import EconomyView from './components/EconomyView'
-import ToolsView from './components/ToolsView'
 import { DesktopOverlay } from './ui/hands'
-import SystemView from './components/SystemView'
-import TheatreView from './components/TheatreView'
-import MemoryView from './components/MemoryView'
-import GrowbotView from './components/GrowbotView'
-import FaceView from './components/FaceView'
 import AgentDrawer from './components/AgentDrawer'
-import ChatApp from './chat/ChatApp'
+import ChatGate from './chat/Gate'                 // /chat: the sign-in door + the workspace as its own lazy chunk
 import ChatSheet from './components/ChatSheet'
 import { AnimatePresence } from 'motion/react'
 import VegaChat from './components/VegaChat'
@@ -33,6 +21,21 @@ import Palette from './components/Palette'
 import { PilotHost } from './pilot'
 import PilotConfirm from './pilot/Confirm'
 import { Orb } from './ui/kit'
+
+/* every view is its own chunk (iteration 8 of the chat workspace): /chat downloads none of them, and a tab downloads
+   only itself; the shell (header, sidebar, store) stays in the main bundle */
+const NetworkView = lazy(() => import('./components/NetworkView'))
+const FloorView = lazy(() => import('./components/FloorView'))
+const PeopleView = lazy(() => import('./components/PeopleView'))
+const WireView = lazy(() => import('./components/WireView'))
+const GoalsView = lazy(() => import('./components/GoalsView'))
+const EconomyView = lazy(() => import('./components/EconomyView'))
+const ToolsView = lazy(() => import('./components/ToolsView'))
+const SystemView = lazy(() => import('./components/SystemView'))
+const TheatreView = lazy(() => import('./components/TheatreView'))
+const MemoryView = lazy(() => import('./components/MemoryView'))
+const GrowbotView = lazy(() => import('./components/GrowbotView'))
+const FaceView = lazy(() => import('./components/FaceView'))
 
 /* SIGN-IN (goal 11859 U3), behind the LOGIN build flag until forge's U1U2 lands: off, none of it is in the build (the
    imports below are never made, so no /auth request exists), and the key door below is the only way in, as before. */
@@ -270,9 +273,9 @@ function Shell() {
 
   // The creature face is a MODE, not a tab: fullscreen, no chrome — the whole
   // phone becomes the robot's face (it does its own key gate).
-  if (route.tab === 'face') return <FaceView />
+  if (route.tab === 'face') return <Suspense fallback={null}><FaceView /></Suspense>
   // /chat is a WORKSPACE, not a tab (plan-11884): fullscreen, its own rail, its own keys
-  if (route.tab === 'chat') return <ChatApp thread={route.thread ?? null} go={(t) => nav({ tab: 'chat', thread: t ?? undefined })} />
+  if (route.tab === 'chat') return <ChatGate thread={route.thread ?? null} go={(t) => nav({ tab: 'chat', thread: t ?? undefined })} />
   const page = authPage()
   if (page) return page
 
@@ -324,7 +327,7 @@ function Shell() {
               <LockPanel />
             ) : null
           ) : (
-            <>
+            <Suspense fallback={null}>
               {route.tab === 'floor' && <FloorView onOpenAgent={openAgent} talking={talking} />}
               {route.tab === 'network' && <NetworkView onOpenAgent={openAgent} />}
               {route.tab === 'agents' && <PeopleView />}
@@ -336,7 +339,7 @@ function Shell() {
               {route.tab === 'theatre' && <TheatreView />}
               {route.tab === 'memory' && <MemoryView />}
               {route.tab === 'growbot' && <GrowbotView />}
-            </>
+            </Suspense>
           )}
         </div>
       </AppShell.Main>

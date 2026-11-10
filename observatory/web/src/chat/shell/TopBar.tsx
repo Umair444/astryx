@@ -56,6 +56,7 @@ export default function TopBar({ onProject, title, canRename, surface, project, 
         <div className="flex items-center -space-x-1 cursor-pointer" aria-label="agents in this conversation" onClick={map.toggle}>
           {agents.slice(0, 6).map((a) => (
             <button key={a} onClick={(e) => { e.stopPropagation(); onAgent(a) }} title={`${displayName(a)} · ${STATUS_WORD[status[a] ?? 'down']}`}
+              aria-label={`${displayName(a)}, ${STATUS_WORD[status[a] ?? 'down']}: open their desk`}
               className="rounded-full ring-2 ring-[var(--t-bg)] hover:z-10 relative" style={{ ['--ws-agent' as string]: agentColor(a), ['--ws-pip-bg' as string]: 'var(--t-bg)' }}>
               <Presence agent={a} status={status[a]} size={24} />
             </button>

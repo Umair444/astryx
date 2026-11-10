@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useReducedMotion } from 'motion/react'
 import { agentColor, displayName, fmtDay, fmtTime } from '../../api'
 import type { Msg, Step } from '../../types'
@@ -14,6 +14,7 @@ import { parseAsk, type ParsedAsk } from '../artifacts/annotate/ask'
 import { parseChanges } from '../artifacts/versions/changes'
 import ChangesCard from './ChangesCard'
 import TurnActions from './TurnActions'
+import { blockMsg, useWindowed, type Focus } from './focus'
 
 /* The conversation (plan-11884 C2, reshaped for the workspace per DESIGN.md "turns: flat, not bubbles"). Agents'
    answers read as a page: face + name + role + time, then prose at a reading measure; consecutive answers from the
@@ -93,8 +94,9 @@ export function blocksOf(items: Row[], roster: Set<string>, handoffs: WHandoff[]
   return out
 }
 
-export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty, handoffs, onStop }: {
+export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty, handoffs, onStop, focus = null }: {
   rows: Msg[]
+  focus?: Focus | null                         // open AT this message (a search hit): thread/focus.ts
   handoffs?: WHandoff[]
   onStop?: StopFn
   work: Work | null
@@ -111,7 +113,9 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   const end = useRef<HTMLDivElement>(null)
   const blocks = useMemo(() => blocksOf(rowsOf(rows, work), new Set(roster), handoffs), [rows, work, roster, handoffs])
   const last = rows.at(-1)?.id ?? 0
-  useEffect(() => { end.current?.scrollIntoView({ block: 'end', behavior: reduce ? 'auto' : 'smooth' }) }, [last, pending.length, reduce])
+  // a long thread renders its newest window ("Show earlier" above); a jump widens it and lands on its message
+  const win = useWindowed(blocks, focus, !loading, () => end.current?.parentElement?.parentElement ?? null)
+  useEffect(() => { if (!win.jumping()) end.current?.scrollIntoView({ block: 'end', behavior: reduce ? 'auto' : 'smooth' }) }, [last, pending.length, reduce]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return (
     <div className="mx-auto w-full max-w-[720px] px-6 pt-10 flex flex-col gap-5" aria-busy>
@@ -121,7 +125,12 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   return (
     <div className="mx-auto w-full max-w-[720px] px-5 md:px-6 pt-8 pb-6 flex flex-col" role="log" aria-label="conversation">
       {blocks.length === 0 && empty}
-      {blocks.map((b) => {
+      {win.hidden > 0 && (
+        <button onClick={win.earlier} className="ws-earlier w-full mb-2 py-2 hover:text-ink">
+          Show earlier · {win.hidden} more
+        </button>
+      )}
+      {win.shown.map((b) => <Fragment key={b.key}>{blockMsg(b.key) !== null && <span data-msg={blockMsg(b.key)!} hidden />}{(() => {
         switch (b.kind) {
           case 'day': return <div key={b.key} className="text-center text-[11.5px] text-ink-mute pt-4 pb-2">{b.label}</div>
           case 'mine': return <Mine key={b.key} m={b.msg} to={b.to} onEdit={onEdit} onOpenFile={onOpenFile} onOpenAsk={onOpenAsk} />
@@ -130,7 +139,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
           case 'note': return <Note key={b.key} m={b.msg} />
           case 'elsewhere': return <Elsewhere key={b.key} turn={b.turn} />
         }
-      })}
+      })()}</Fragment>)}
       {pending.length > 0 && <div className="pt-5"><LiveActivity pending={pending} onStop={onStop} /></div>}
       <div ref={end} />
     </div>

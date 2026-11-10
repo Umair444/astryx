@@ -43,6 +43,8 @@ import type { OpenRequest } from './artifacts/FileChip'
 import type { AnnotateCtx } from './artifacts/annotate/types'
 import type { ParsedAsk } from './artifacts/annotate/ask'
 import { I } from './icons'
+import type { Jump, MessageHit } from './search'
+import { friendly, toast } from './toast'
 
 // the library and the project pages load on first visit (their own chunk); the sidebar's project rows are eager
 const Library = lazy(() => import('./library/Library'))
@@ -112,6 +114,9 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const current = view === 'thread' ? thread ?? '' : ''
   const panel = usePanel(view === 'thread' ? current : thread ?? '')    // the library and a project keep their own tabs
   const go = useCallback((t: string | null) => { setDrawer(false); nav(t) }, [nav])
+  // a search hit opens its conversation AT that message (thread/focus.ts scrolls to it and pulses it once)
+  const [jump, setJump] = useState<Jump | null>(null)
+  const onJump = useCallback((h: MessageHit) => { setPalette(false); setJump({ thread: h.thread, id: h.msg_id, n: Date.now() }); go(h.thread) }, [go])
 
   useEffect(() => { loadCommands().then(setCmds); loadWsAgents().then(setTeam).catch(() => {}) }, [])
 
@@ -234,7 +239,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       setOutbox((xs) => xs.filter((x) => x.key !== o.key))
       reload()
     } catch (e) {
-      setOutbox((xs) => xs.map((x) => (x.key === o.key ? { ...x, to: left, failed: String((e as Error).message || 'the send failed') } : x)))
+      setOutbox((xs) => xs.map((x) => (x.key === o.key ? { ...x, to: left, failed: friendly(e, 'This message') } : x)))   // the toasts' wording (chat/toast.tsx)
     }
   }
   async function onSend(text: string, files: Uploaded[], to: string[]) {
@@ -275,7 +280,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   // a title or a pin: optimistic on the row, then the server's list
   async function setMeta(t: WsThread, p: { title?: string; pinned?: boolean }) {
     patch(t.thread, { ...(p.pinned !== undefined ? { pinned: p.pinned } : {}), ...(p.title ? { title: p.title, custom_title: true } : {}) })
-    try { await saveThreadMeta(t.thread, p) } catch (e) { setNote(String((e as Error).message)) }
+    try { await saveThreadMeta(t.thread, p) } catch (e) { toast(friendly(e, 'Saving that')) }
     reload()
   }
 
@@ -296,10 +301,18 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     { key: 'keys', label: 'Keyboard', hint: 'every shortcut', run: () => setHelp(true) },
   ]
   // "/remember text" is sent to memory's proposal route, not to the chat
+  // in an open conversation a failed send stays in the OUTBOX with Retry (deliver, above); what still blocks the box (a
+  // NEW chat's first message, /remember) keeps the draft on failure (the composer clears only on success), a toast says
+  // what happened in the same words, and the box says "not sent" (chat/toast.tsx)
   async function onSendOrCommand(text: string, files: Uploaded[], to: string[]) {
-    const r = /^\/remember\s+([\s\S]+)/.exec(text)
-    if (r) { await apiPost('/memory/propose', { text: r[1], nodes: [] }); setNote('Proposed to the memory agent.'); return }
-    return onSend(text, files, to)
+    try {
+      const r = /^\/remember\s+([\s\S]+)/.exec(text)
+      if (r) { await apiPost('/memory/propose', { text: r[1], nodes: [] }); setNote('Proposed to the memory agent.'); return }
+      return await onSend(text, files, to)
+    } catch (e) {
+      toast(`${friendly(e, 'Your message')} It’s still in the box.`, { key: 'send' })
+      throw new Error('Not sent')
+    }
   }
 
   // ------------------------------------------------------------------------------------------------- keys
@@ -343,15 +356,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     return () => removeEventListener('keydown', k)
   }, [palette, help, workforce, filesOpen, drawer, current, dirty, panel.tabs.length, chatIds.join('|')]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!who.owner) return (
-    <div className="ws h-dvh grid place-items-center ws-backdrop text-ink p-8">
-      <div className="max-w-sm text-center">
-        <div className="ws-display text-[40px] leading-none">Chat is for the owner</div>
-        <p className="mt-3 text-ink-dim text-[14px]">Sign in on the floor first, then come back here.</p>
-        <a href="#/" className="ws-btn mt-6">Go to the floor</a>
-      </div>
-    </div>
-  )
+  // signed out, offline and a rotated key are the gate's (chat/Gate.tsx): this renders only for the owner
+  if (!who.owner) return null
 
   const roles = Object.fromEntries(team.map((a) => [a.agent, a.role]))
   const title = currentRow?.title ?? (activeProject ? activeProject.name : 'New chat')
@@ -368,7 +374,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       onNewProject={() => setAsking('new')} onMove={(t, to) => void proj.mutate(moveThread(t.thread, to))}
       onPin={(t) => setMeta(t, { pinned: !t.pinned })} onRename={(t, title) => setMeta(t, { title })}
       onClose={phone ? () => setDrawer(false) : undefined}
-      unread={unread}
+      unread={unread} onJump={onJump}
       className={phone ? '!w-[86vw] max-w-[340px]' : `max-md:hidden ${listHidden ? '!hidden' : ''}`} />
   )
   const home = view === 'thread' && !current
@@ -403,6 +409,9 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   }
   return (
     <div className="ws h-dvh flex ws-backdrop text-ink overflow-hidden" style={{ ['--ws-list' as string]: `${listW.width}px` }}>
+      {/* the first Tab stop: past the rail's agents and the list, straight to the box (a hash link would route) */}
+      <button onClick={() => composer.current?.focus()}
+        className="sr-only focus:not-sr-only focus:fixed focus:z-[80] focus:left-3 focus:top-3 ws-btn !bg-[var(--t-panel)]">Skip to the message box</button>
       <AgentRail agents={names} status={status} lines={lines} current={current || null} onPick={openAgent}
         onHome={() => { setListFilter(null); go(null) }} onPalette={() => setPalette(true)} onKeys={() => setHelp(true)} />
       {list(false)}
@@ -441,7 +450,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
           )}
           </Suspense>
           <ChipCtx.Provider value={chipAware}><TurnActionsCtx.Provider value={turnActs}>
-          {current && <Turns rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} onStop={interruptAgent}
+          {current && <Turns focus={jump?.thread === current ? jump : null} rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} onStop={interruptAgent}
             onOpenFile={openFile} onOpenAsk={openAsk} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
             empty={<FreshThread agents={inChat} status={status} roles={roles} lines={lines} />} />}
           {current && <Outbox items={outbox.filter((o) => o.thread === current)} onRetry={(o) => void deliver(o)}
@@ -504,7 +513,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       </AnimatePresence>
 
       {palette && <Palette threads={listThreads} names={names} status={status} projects={proj.projects} commands={commands} onClose={() => setPalette(false)}
-        lines={lines} files={files} unread={unread} live={live} onOpenFile={(f) => { setPalette(false); openFile(f) }}
+        lines={lines} files={files} unread={unread} live={live} onOpenFile={(f) => { setPalette(false); openFile(f) }} onJump={onJump}
         go={(t) => { setPalette(false); go(t) }}
         openProject={(id) => { setPalette(false); openProject(id) }}
         openAgent={(n) => { setPalette(false); openAgent(n) }} />}
