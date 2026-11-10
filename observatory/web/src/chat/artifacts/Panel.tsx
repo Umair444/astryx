@@ -89,6 +89,7 @@ export default function Panel({ panel, layout, onAttach, onDirty, annotate }: {
     el.addEventListener('pointermove', move); el.addEventListener('pointerup', up)
   }
 
+  const overPanel = () => [...document.querySelectorAll('[role="dialog"]')].some((d) => !d.closest('[aria-label="artifact panel"]'))
   // ── keys: ⌘⇧F fullscreen, ⌘S save an edit, Esc leaves fullscreen first ──────────────────────────────────────
   const saveRef = useRef<() => void>(() => {})
   useEffect(() => {
@@ -96,7 +97,9 @@ export default function Panel({ panel, layout, onAttach, onDirty, annotate }: {
       const mod = e.metaKey || e.ctrlKey
       if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setFull((f) => !f) }
       else if (mod && e.key.toLowerCase() === 's' && view.edit) { e.preventDefault(); saveRef.current() }
-      else if (e.key === 'Escape' && full && !document.querySelector('[data-ann-open]')) { e.preventDefault(); e.stopImmediatePropagation(); setFull(false) }
+      // Esc closes the TOP layer only: a dialog over the full-screen panel (⌘K, ⌘/, a new project, the team map) is
+      // that dialog's to close (iteration 11: Esc in the palette left full screen and the palette stayed open)
+      else if (e.key === 'Escape' && full && !document.querySelector('[data-ann-open]') && !overPanel()) { e.preventDefault(); e.stopImmediatePropagation(); setFull(false) }
     }
     addEventListener('keydown', k, true)
     return () => removeEventListener('keydown', k, true)
@@ -311,7 +314,8 @@ function Body({ art, at, view, setView, wide, onSaved, onAttach, saveRef, from, 
             )}
             {canDiff && <button className="ws-tool" aria-pressed={!!view.diff} onClick={toggleDiff} title="Compare versions">{DiffIcon}<span>Diff</span></button>}
             {annotatable && !view.diff && (
-              <button className="ws-tool" aria-pressed={!!view.ann} onClick={() => setAnn(!view.ann)} title={view.ann ? 'Hide the notes' : 'Annotate: highlight, comment, ask an agent'}>
+              <button className="ws-tool" aria-pressed={!!view.ann} onClick={() => setAnn(!view.ann)} title={view.ann ? 'Hide the notes' : 'Annotate: highlight, comment, ask an agent'}
+                aria-label={count > 0 ? `Annotate, ${count} notes` : 'Annotate'}>
                 {A.margin()}<span className="max-sm:hidden">Annotate</span>
                 {count > 0 && <span className="ax-count" aria-label={`${count} notes`}>{count}</span>}
               </button>

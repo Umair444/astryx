@@ -92,6 +92,8 @@
   background: color-mix(in srgb, var(--t-fg) 4.5%, transparent); transition: background-color 120ms ease-out, color 120ms ease-out; }
 .ws-elsewhere:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 8%, transparent); }
 .ws-elsewhere:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent); outline-offset: 1px; }
+/* a named thread (GET /api/ws/thread-titles) reads as words: one line, clipped; the wire id lives in its title */
+.ws-elsewhere.is-named { display: inline-block; line-height: 20px; max-width: min(36ch, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 
 /* the panel's toolbar stays ONE row: in a narrow panel "From db · 3 KB" steps aside (the version menu names the author) */
 .ws-pbody { container-type: inline-size; }

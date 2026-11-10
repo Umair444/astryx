@@ -4,7 +4,7 @@ import { agentColor, displayName, fmtDay, fmtTime } from '../../api'
 import type { Msg, Step } from '../../types'
 import AgentFace from '../../components/AgentFace'
 import Prose from './Prose'
-import { embeds, stripEmbeds, type Turn as WTurn, type Work } from '../model'
+import { embeds, PROJECT_BLOCK, stripEmbeds, type Turn as WTurn, type Work } from '../model'
 import FileChip, { type OpenRequest } from '../artifacts/FileChip'
 import LiveActivity, { type Pending, type StopFn } from './LiveActivity'
 import Replay from './Replay'
@@ -15,6 +15,7 @@ import { parseChanges } from '../artifacts/versions/changes'
 import ChangesCard from './ChangesCard'
 import TurnActions from './TurnActions'
 import { blockMsg, useWindowed, type Focus } from './focus'
+import { useThreadTitles } from '../data'
 
 /* The conversation (plan-11884 C2, reshaped for the workspace per DESIGN.md "turns: flat, not bubbles"). Agents'
    answers read as a page: face + name + role + time, then prose at a reading measure; consecutive answers from the
@@ -152,7 +153,9 @@ const LONG = 560
 
 function Mine({ m, to, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; onEdit: (m: Msg) => void; onOpenFile: (r: OpenRequest) => void; onOpenAsk?: (a: ParsedAsk) => void }) {
   const [more, setMore] = useState(false)
-  const files = embeds(m.body)
+  // a project chat's first message: the project's pinned files ride inside its hidden context block for the agents;
+  // the owner didn't attach them, so they are not chips here (the media drawer still lists them) (iteration 11)
+  const files = embeds(m.body.trimStart().replace(PROJECT_BLOCK, ''))
   const ask = parseAsk(m.body)          // asked from a highlight: the quote is a chip, the question is the text
   const ch = ask ? null : parseChanges(m.body)     // "send my changes": a card, never raw diff text
   const raw = ask ? ask.question : ch ? '' : stripEmbeds(m.body)
@@ -271,6 +274,7 @@ function Elsewhere({ turn }: { turn: WTurn }) {
 /* a turn's work: one line ("Worked 42s · 6 tool calls"), then its replay (thread/Replay.tsx) */
 function WorkTrace({ steps, elsewhere, agent, end, answered = true }: { steps: Step[]; elsewhere: string[]; agent: string; end: string | null; answered?: boolean }) {
   const [open, setOpen] = useState(false)
+  const names = useThreadTitles(elsewhere)              // the threads' names (GET /api/ws/thread-titles); ids until then
   const tools = steps.filter((s) => s.kind === 'tool').length
   const errs = steps.filter((s) => s.kind === 'error').length
   const secs = Math.max(1, Math.round((Date.parse(steps.at(-1)!.ts) - Date.parse(steps[0].ts)) / 1000))
@@ -285,7 +289,7 @@ function WorkTrace({ steps, elsewhere, agent, end, answered = true }: { steps: S
       {elsewhere.length > 0 && (
         <div className="text-[12px] text-ink-mute mt-0.5 flex items-center flex-wrap gap-x-1 gap-y-1">{answered ? 'Also worked in' : 'Answered in'} {elsewhere.map((t) => (
           <a key={t} href={/^(chat|obs|cv):/.test(t) ? `#/chat/${encodeURIComponent(t)}` : `#/wire/${encodeURIComponent(t)}`}
-            title={answered ? `This turn also wrote to ${t}: open it` : `The answer went to ${t}: open it`} className="ws-elsewhere">{t}</a>))}
+            title={`${answered ? 'This turn also wrote here' : 'The answer went here'} (${t}): open it`} className={`ws-elsewhere${names[t] ? ' is-named' : ''}`}>{names[t] ?? t}</a>))}
         </div>
       )}
       {open && <Replay steps={steps} agent={agent} end={end} />}

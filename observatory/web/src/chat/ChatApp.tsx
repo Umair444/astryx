@@ -131,13 +131,26 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   useEffect(() => { loadCommands().then(setCmds); loadWsAgents().then(setTeam).catch(() => {}) }, [])
 
   // the thread: its history once, then the live feed, merged by id
+  // a history that failed to load is SAID, and retried: shown as an empty thread it read as a conversation that had
+  // only its last few live rows (iteration 11, the API down mid-session)
+  const [histErr, setHistErr] = useState(false)
+  const [histTry, setHistTry] = useState(0)
+  const histFor = useRef('')
   useEffect(() => {
-    if (!current) { setHistory([]); return }
+    if (!current) { histFor.current = ''; setHistory([]); setHistErr(false); return }
     let live = true
-    setHistory(null)
-    api<Msg[]>(`/messages?thread=${encodeURIComponent(current)}&limit=500`).then((h) => live && setHistory(h)).catch(() => live && setHistory([]))
+    if (histFor.current !== current) { histFor.current = current; setHistory(null) }    // a retry keeps what's shown
+    api<Msg[]>(`/messages?thread=${encodeURIComponent(current)}&limit=500`)
+      .then((h) => { if (live) { setHistory(h); setHistErr(false) } })
+      .catch(() => { if (live) { setHistory((cur) => cur ?? []); setHistErr(true) } })
     return () => { live = false }
-  }, [current])
+  }, [current, histTry])
+  useEffect(() => { setHistErr(false) }, [current])
+  useEffect(() => {
+    if (!histErr) return
+    const t = setTimeout(() => setHistTry((n) => n + 1), 5000)
+    return () => clearTimeout(t)
+  }, [histErr, histTry])
   const rows = useMemo(() => {
     const by = new Map<number, Msg>()
     for (const m of history ?? []) by.set(m.id, m)
@@ -169,11 +182,15 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     if (!current) return null
     if (listed) return listed
     const desk = deskAgent(current, names)
+    // the server names a conversation by the owner's first line (workspace.derive_title); until its list catches up
+    // (a fresh chat, the moment after the first send), name it the same way here instead of "New chat"
+    const first = stripEmbeds(rows.find((m) => m.from === 'owner')?.body ?? '').split('\n').find((l) => l.trim())?.replace(/\s+/g, ' ').trim() ?? ''
+    const said = first.length > 80 ? `${first.slice(0, 79)}…` : first
     return {
-      thread: current, title: desk ? `Desk with ${displayName(desk)}` : 'New chat', custom_title: false, agents: desk ? [desk] : [],
+      thread: current, title: said || (desk ? `Desk with ${displayName(desk)}` : 'New chat'), custom_title: false, agents: desk ? [desk] : participants(rows, names),
       surface: surfaceOf(current), last_ts: new Date().toISOString(), preview: '', last_from: null, count: 0, pinned: false, project: null,
     }
-  }, [current, listed, names])
+  }, [current, listed, names, rows])
   const listThreads = useMemo(() => (currentRow && !listed ? [currentRow, ...threads] : threads), [currentRow, listed, threads])
   // replies the owner hasn't opened (per browser), and the tab's "(n) Chat · astryx"
   const unread = useUnread(threads, current || null)
@@ -373,7 +390,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const title = currentRow?.title ?? (activeProject ? activeProject.name : 'New chat')
   const box = (hero: boolean, placeholder?: string) => (
     <Composer ref={composer} hero={hero} roster={names} inChat={recipients} skills={cmds.skills} tools={cmds.tools}
-      commands={commands} onSend={onSendOrCommand}
+      commands={commands} onSend={onSendOrCommand} draftKey={view === 'thread' ? current : thread ?? ''}
       placeholder={placeholder ?? (hero ? 'Ask the team anything. @mention who should take it; seed routes the rest.' : undefined)}
       lastMine={() => stripEmbeds([...rows].reverse().find((m) => m.from === 'owner')?.body ?? '')} />
   )
@@ -467,9 +484,15 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
           )}
           </Suspense>
           <ChipCtx.Provider value={chipAware}><TurnActionsCtx.Provider value={turnActs}>
+          {current && histErr && (
+            <div className="mx-auto max-w-[760px] w-full px-6 pt-4 text-[12.5px] text-ink-dim flex items-center gap-2" role="status">
+              <span className="ws-live-dot" aria-hidden />Couldn’t load this conversation’s history: the org isn’t answering. Trying again…
+              <button className="underline underline-offset-2 hover:text-ink" onClick={() => setHistTry((n) => n + 1)}>Retry now</button>
+            </div>
+          )}
           {current && <Turns focus={jump?.thread === current ? jump : null} rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} onStop={interruptAgent}
             onOpenFile={openFile} onOpenAsk={openAsk} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
-            empty={<FreshThread agents={inChat} status={status} roles={roles} lines={lines} />} />}
+            empty={histErr ? null : <FreshThread agents={inChat} status={status} roles={roles} lines={lines} />} />}
           {current && <Outbox items={outbox.filter((o) => o.thread === current)} onRetry={(o) => void deliver(o)}
             onDiscard={(o) => setOutbox((xs) => xs.filter((x) => x.key !== o.key))}
             onEdit={(o) => { setOutbox((xs) => xs.filter((x) => x.key !== o.key)); composer.current?.set(o.text); o.files.forEach((f) => composer.current?.attach(f)) }} />}

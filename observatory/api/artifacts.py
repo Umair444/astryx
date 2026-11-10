@@ -34,7 +34,9 @@ naming where its bytes came from: `Astryx-Source: <resolved path>`, `Astryx-Msg:
 message's ts>`. Every version shape answers them as `source`, `msg`, `msg_ts` (null when not recorded: an owner edit, a
 store made before this), so the chat can open an OLD message's chip at THAT message's version and mark a newer one
 "v3 · updated". Ids are the wire's, monotonic: an import attributed to a message OLDER than one a version already
-records never becomes the head (history can't be reordered) and answers `superseded: true` instead.
+records never becomes the head (history can't be reordered) and answers `superseded: true` instead. Since iteration 12
+a version's SUBJECT is that message's headline (workspace.headline, looked up by id in the import's own owner thread),
+so the version menu says what the agent said when it sent it; the generic "import x" stays when no message names it.
 
 SAFETY. A source is read ONLY through chat.readable, the gate /api/chat/file uses (the media dir and the agents'
 homes, resolved, never a dot-path or an .env); anything else is 403. Ids are 16 hex chars (sha1 of thread + name)
@@ -70,6 +72,7 @@ INDEX = ".index.json"
 SOURCES = ".sources.json"                          # {id: {resolved source path: sha256 of its bytes at last import}}
 ANN = ".annotations.json"
 OWNER = "owner"
+HEADLINE_MAX = 80                                  # a version's subject from its message's first line (iteration 12)
 
 _get_pool = None
 ESTATE: Path | None = None
@@ -521,6 +524,11 @@ class Store:
                     return self.put(thread, cand, data, author, f"open as document: {cand}", msg=msg)
                 if self.content(aid)[0] == data:
                     return self.artifact(aid)
+                # the words it STARTED from (v1, by the same author): the owner edited it since, so opening the same
+                # turn again opens that edited document, never a fresh "(2)" copy of the original words (iteration 11)
+                first = self.versions(idx[aid]["path"])[-1:]
+                if first and first[0]["author"] == author and self.content(aid, first[0]["rev"])[0] == data:
+                    return self.artifact(aid)
             raise StoreError(409, "too many documents by that name")
 
     def annotations(self, aid: str) -> dict:
@@ -545,8 +553,9 @@ class Store:
 
 
 def import_source(store: Store, path: str, thread: str, author: str = OWNER, label: str | None = None,
-                  msg: dict | None = None) -> dict:
-    """POST open's body: the source is read ONLY if chat.readable (the /api/chat/file gate) admits it."""
+                  msg: dict | None = None, subject: str | None = None) -> dict:
+    """POST open's body: the source is read ONLY if chat.readable (the /api/chat/file gate) admits it. `subject` (the
+    carrying message's headline) names the version when it makes one; else "import x" / "new version of x"."""
     if not valid_thread(thread):
         raise StoreError(400, "a thread is required")
     if not AUTHOR_RE.fullmatch(author or ""):
@@ -556,7 +565,7 @@ def import_source(store: Store, path: str, thread: str, author: str = OWNER, lab
         raise StoreError(403, "that file can't be opened here")
     if p.stat().st_size > store.max_bytes:
         raise StoreError(413, f"the file is over {store.max_bytes // (1024 * 1024)} MB")
-    return store.put(thread, artifact_name(str(path), label), p.read_bytes(), author, source=str(p), msg=msg)
+    return store.put(thread, artifact_name(str(path), label), p.read_bytes(), author, subject, source=str(p), msg=msg)
 
 
 # ------------------------------------------------------------------------------------------------------ routes
@@ -615,10 +624,31 @@ class Restore(BaseModel):
     message: str | None = Field(None, max_length=200)
 
 
+HEADLINE_SQL = ("SELECT body FROM messages WHERE id = $1 AND thread = $2 "
+                "AND (from_agent = 'owner' OR to_agent = 'owner' OR thread LIKE 'chat:%')")
+
+
+async def msg_headline(request: Request, msg_id: int | None, thread: str) -> str | None:
+    """The commit subject a version imported from a message carries (iteration 12): that message's headline (its first
+    meaningful line, cleaned, ≤80 chars), so the version menu reads "v3 · Db · Active wallets 6.4% after the close"
+    instead of "new version of x". Looked up server-side by id, and only in the owner conversation the import names
+    (an id from another thread, or a thread that isn't the owner's, names nothing). None = the generic subject."""
+    from observatory.api import workspace as _ws
+    if not msg_id or not _ws.surface_of(thread):
+        return None
+    try:
+        pool = _get_pool() if _get_pool else request.app.state.pool
+        row = await pool.fetchrow(HEADLINE_SQL, msg_id, thread)
+    except Exception:                               # noqa: BLE001 — no database: the generic subject stands
+        return None
+    return (_ws.headline(row["body"], HEADLINE_MAX) or None) if row else None
+
+
 @router.post("/api/ws/artifacts/open")
-async def art_open(body: Open):
+async def art_open(body: Open, request: Request):
+    subject = await msg_headline(request, body.msg_id, body.thread)
     return await _run(import_source, store(), body.path, body.thread, body.author or OWNER, body.label,
-                      _msg(body.msg_id, body.msg_ts))
+                      _msg(body.msg_id, body.msg_ts), subject)
 
 
 @router.post("/api/ws/artifacts/create")

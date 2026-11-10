@@ -25,11 +25,17 @@ export function mentions(body: string, roster: string[]): string[] {
   return out
 }
 
-/* who is in a chat: every non-owner party of its rows, first-seen order */
+/* who is in a chat: the agents that exchanged a message WITH THE OWNER here (the owner wrote to them, or they wrote
+   to the owner), first-seen order. An agent→agent row on an owner thread (seed correcting finance, a handoff) stays
+   in the history and draws its divider, but never makes its sender a recipient: the owner's next reply would copy
+   them in silently (workspace.py agents_of is the same rule for the list) */
 export function participants(rows: Msg[], roster: string[]): string[] {
   const known = new Set(roster)                     // agents only: pulse, a canvas, a federation peer never join
   const out: string[] = []
-  for (const m of rows) for (const n of [m.from, m.to]) if (n && known.has(n) && !out.includes(n)) out.push(n)
+  for (const m of rows) {
+    const n = m.from === 'owner' ? m.to : m.to === 'owner' ? m.from : null
+    if (n && known.has(n) && !out.includes(n)) out.push(n)
+  }
   return out
 }
 

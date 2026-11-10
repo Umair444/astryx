@@ -65,6 +65,14 @@
 .ws-prose pre { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 12px; padding: .9em 1.1em; overflow-x: auto; }
 .ws-prose pre code { background: none; border: 0; padding: 0; }
 .ws-prose a { color: var(--t-accent2); text-decoration: underline; text-underline-offset: 2px; }
+/* an answer's provenance line (thread/provenance.ts): a footer, not prose — small, muted, under a short hairline */
+.ws-source { display: flex; gap: 7px; align-items: flex-start; margin-top: 14px; padding-top: 9px; max-width: 680px; position: relative;
+  font-size: 12.5px; line-height: 1.5; color: var(--t-mute); overflow-wrap: anywhere; }
+.ws-source::before { content: ""; position: absolute; top: 0; left: 0; width: min(120px, 30%); border-top: 1px solid var(--t-line); }
+.ws-source-glyph { width: 13px; height: 13px; flex: none; margin-top: 3px; opacity: .8; }
+.ws-source code { font-family: var(--font-mono); font-size: .92em; color: var(--t-dim); }
+.ws-source strong { font-weight: 600; color: var(--t-dim); }
+.ws-source a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .ws-prose > :first-child { margin-top: 0; } .ws-prose > :last-child { margin-bottom: 0; }
 .ws-prose p { margin: .5em 0; }
 .ws-prose ul, .ws-prose ol { margin: .45em 0; padding-left: 1.35em; } .ws-prose li { margin: .18em 0; }
@@ -354,3 +362,13 @@
    silently did nothing. Inside the workspace, form controls roll back to the layered cascade (Tailwind's own preflight
    still inherits; utilities and these components then apply as written). */
 .ws :where(button, input, textarea, select) { font: revert-layer; }
+
+/* the sidebar's Projects heading row: "See all" opens the projects page (iteration 12, one section, no duplicate row) */
+.ws-see-all { font-size: 11.5px; color: var(--t-mute); padding: 2px 6px; border-radius: 6px; transition: color 120ms ease-out, background-color 120ms ease-out; }
+.ws-see-all:hover, .ws-see-all[aria-current="page"] { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 6%, transparent); }
+.ws-see-all:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent); outline-offset: 1px; }
+
+/* home's roster tile (empty/TeamHome.tsx): no box at rest; a soft surface on hover/focus. Working agents keep .ws-card */
+.ws-mate { border: 1px solid transparent; border-radius: 14px; transition: background-color 120ms ease-out, border-color 120ms ease-out; }
+.ws-mate:hover, .ws-mate:focus-visible { background: color-mix(in srgb, var(--t-panel) 70%, transparent); border-color: var(--t-line); }
+.ws-mate:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent); outline-offset: 1px; }

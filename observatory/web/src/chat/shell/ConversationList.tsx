@@ -82,10 +82,11 @@ export default function ConversationList({ threads, loaded, current, live, proje
         </label>
       </div>
 
-      {onLibrary && onProjects && <Nav view={view} onLibrary={onLibrary} onProjects={onProjects} />}
+      {onLibrary && <Nav view={view} onLibrary={onLibrary} />}
       {filter && projects.find((p) => p.id === filter) && <FilterChip p={projects.find((p) => p.id === filter)!} onClear={() => onFilter?.(null)} />}
       <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-4" onScroll={() => menu && setMenu(null)}>
-        {!q && <ProjectRows projects={projects} threads={threads} active={view === 'project' ? project : null} filter={filter} onOpen={onProject} onNew={() => onNewProject?.()} onFilter={(id) => onFilter?.(id)} />}
+        {!q && <ProjectRows projects={projects} threads={threads} active={view === 'project' ? project : null} filter={filter} onOpen={onProject} onNew={() => onNewProject?.()} onFilter={(id) => onFilter?.(id)}
+          all={view === 'projects'} onAll={onProjects} />}
         {groups.map(([g, rows]) => (
           <section key={g} className="mb-1">
             <div className="ws-label px-2.5 pt-3 pb-1">{g}</div>
@@ -118,6 +119,9 @@ function Row({ t, current, live, unread, editing, menuOpen, move, onGo, onMenu, 
 }) {
   const [v, setV] = useState(t.title)
   useEffect(() => { if (editing) setV(t.title) }, [editing, t.title])
+  // a row near the bottom opens its menu UPWARD: below it the menu was cut off, and scrolling the list to reach it
+  // closes it (iteration 11: the phone drawer's last rows could not be pinned, renamed or moved)
+  const [up, setUp] = useState(false)
   const lead = t.agents[0]
   const who = t.agents.length > 1 ? `${displayName(lead)} +${t.agents.length - 1}` : lead ? displayName(lead) : SURFACE_LABEL[t.surface]
   return (
@@ -149,13 +153,13 @@ function Row({ t, current, live, unread, editing, menuOpen, move, onGo, onMenu, 
         </button>
       )}
       {!editing && (
-        <button onClick={onMenu} aria-label={`more for ${t.title}`} aria-expanded={menuOpen}
+        <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setUp(innerHeight - r.bottom < 300 && r.top > innerHeight - r.bottom); onMenu() }} aria-label={`more for ${t.title}`} aria-expanded={menuOpen}
           className={`absolute right-1.5 top-1/2 -translate-y-1/2 ws-icon !w-7 !h-7 ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'}`}>
           {I.dots()}
         </button>
       )}
       {menuOpen && (
-        <div className="ws-menu absolute right-1.5 top-[calc(100%-4px)] z-30 w-52 p-1" role="menu">
+        <div className={`ws-menu absolute right-1.5 ${up ? 'bottom-[calc(100%-4px)]' : 'top-[calc(100%-4px)]'} z-30 w-52 p-1`} role="menu">
           <button role="menuitem" onClick={onPin} className="ws-row w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] text-ink">{I.pin('w-3.5 h-3.5')}{t.pinned ? 'Unpin' : 'Pin'}</button>
           <button role="menuitem" onClick={onEdit} className="ws-row w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] text-ink">{I.edit('w-3.5 h-3.5')}Rename</button>
           {move}

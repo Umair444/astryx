@@ -5,7 +5,9 @@ import { openPdf, TextLayer, type PdfDoc } from './pdf'
 /* A PDF as a continuous column of pages on the panel's backdrop: each page a canvas (rendered at the device's pixel
    ratio when it nears the viewport, released far from it) under pdf.js's TEXT LAYER, so text selects and copies like
    text, the anchor annotations hang from (annotate/: one text root per page, data-page names it). Fit-to-width by default; the pill steps the zoom and
-   shows the page in view. */
+   shows the page in view. "Fit" fits EACH page to the width (iteration 12; it used to fit the WIDEST page, so one
+   landscape chart shrank every portrait page to ~70% on a phone): every page fills the column, a landscape page is
+   simply shorter. A zoom step is one scale for all pages, from the page in view. */
 const STEPS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3]
 
 interface Dim { w: number; h: number }
@@ -21,7 +23,7 @@ export default function PdfView({ blob }: { blob: Blob }) {
 
   useEffect(() => {
     let live = true, d: PdfDoc | null = null
-    setDoc(null); setDims([]); setErr('')
+    setDoc(null); setDims([]); setErr(''); setPage(1)
     openPdf(blob).then(async (x) => {
       d = x
       if (!live) return void x.loadingTask.destroy()
@@ -39,29 +41,38 @@ export default function PdfView({ blob }: { blob: Blob }) {
     ro.observe(el)
     return () => ro.disconnect()
   }, [doc])
-  const widest = useMemo(() => Math.max(1, ...dims.map((d) => d.w)), [dims])
-  const fit = width ? Math.min(2, (width - 56) / widest) : 1
-  const scale = zoom === 'fit' ? fit : zoom
+  const gutter = width && width < 640 ? 24 : 56          // the column's side padding (px-3 on a phone, px-7 else)
+  const scales = useMemo(() => dims.map((d) => (zoom === 'fit' ? (width ? Math.min(2, (width - gutter) / Math.max(1, d.w)) : 1) : zoom)), [dims, zoom, width, gutter])
+  const scale = scales[page - 1] ?? scales[0] ?? 1      // the page in view's: the pill's percentage, a zoom step's base
   const step = (d: 1 | -1) => {
-    const next = d > 0 ? STEPS.find((s) => s > scale + 1e-3) : [...STEPS].reverse().find((s) => s < scale - 1e-3)
+    // a step is a visible step: from a fitted 66%, "+" goes to 80%, not to 67% (iteration 11)
+    const next = d > 0 ? STEPS.find((s) => s > scale * 1.05) : [...STEPS].reverse().find((s) => s < scale / 1.05)
     if (next) setZoom(next)
   }
 
   // the page in view: the last page whose top has passed a third of the viewport
+  // the pager's own jump names its page: the scroll it causes is not re-read (a short landscape page under the target
+  // put the next page's top above the third-of-viewport mark, so "next" from 1 said 3 and "previous" from there
+  // scrolled nowhere: iteration 11). A jump that cannot move (the end of the column) sets the number and no flag.
+  const jumped = useRef(false)
   const onScroll = () => {
     const el = box.current
     if (!el) return
+    if (jumped.current) { jumped.current = false; return }
     const mark = el.scrollTop + el.clientHeight / 3
     let y = 24, p = 1
-    for (let i = 0; i < dims.length; i++) { if (y > mark) break; p = i + 1; y += dims[i].h * scale + 16 }
+    for (let i = 0; i < dims.length; i++) { if (y > mark) break; p = i + 1; y += dims[i].h * scales[i] + 16 }
     setPage(p)
   }
   const goPage = (p: number) => {
     const el = box.current
     if (!el) return
     let y = 0
-    for (let i = 0; i < p - 1; i++) y += dims[i].h * scale + 16
-    el.scrollTo({ top: y })
+    for (let i = 0; i < p - 1; i++) y += dims[i].h * scales[i] + 16
+    const top = Math.max(0, Math.min(y, el.scrollHeight - el.clientHeight))
+    jumped.current = Math.abs(top - el.scrollTop) >= 1
+    setPage(p)
+    el.scrollTo({ top })
   }
 
   if (err) return <Failed err={err} />
@@ -75,8 +86,8 @@ export default function PdfView({ blob }: { blob: Blob }) {
   return (
     <div className="relative h-full">
       <div ref={box} onScroll={onScroll} className="h-full overflow-auto ws-paperbed">
-        <div className="flex flex-col items-center gap-4 py-6 pb-24 min-w-max px-7">
-          {dims.map((d, i) => <Page key={i} doc={doc} n={i + 1} dim={d} scale={scale} root={box} />)}
+        <div className={`flex flex-col items-center gap-4 py-6 pb-24 min-w-max ${gutter === 24 ? 'px-3' : 'px-7'}`}>
+          {dims.map((d, i) => <Page key={i} doc={doc} n={i + 1} dim={d} scale={scales[i]} root={box} />)}
         </div>
       </div>
       <Pill>

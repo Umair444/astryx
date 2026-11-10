@@ -17,6 +17,19 @@ export interface ComposerHandle { focus: () => void; insert: (text: string) => v
 
 interface Item { key: string; label: string; hint: string; kind: 'cmd' | 'skill' | 'tool' | 'agent'; apply: () => void }
 
+const DRAFTS = 'ws.drafts.v1'
+const FILES = new Map<string, Uploaded[]>()           // attachments waiting in a conversation's box (this page only)
+function drafts(): Record<string, string> { try { return JSON.parse(sessionStorage.getItem(DRAFTS) || '{}') as Record<string, string> } catch { return {} } }
+function draftOf(key: string): string { return drafts()[key] ?? '' }
+function keepDraft(key: string, text: string) {
+  try {
+    const all = drafts()
+    if ((all[key] ?? '') === text) return
+    if (text) all[key] = text; else delete all[key]
+    sessionStorage.setItem(DRAFTS, JSON.stringify(all))
+  } catch { /* private mode: the draft lives as long as the box */ }
+}
+
 export default forwardRef<ComposerHandle, {
   roster: string[]
   inChat: string[]
@@ -27,9 +40,21 @@ export default forwardRef<ComposerHandle, {
   onSend: (text: string, files: Uploaded[], to: string[]) => Promise<void>
   hero?: boolean
   placeholder?: string
-}>(function Composer({ roster, inChat, skills, tools, commands, lastMine, onSend, hero = false, placeholder }, ref) {
-  const [text, setText] = useState('')
-  const [files, setFiles] = useState<Uploaded[]>([])
+  draftKey?: string           // the conversation the draft belongs to: each keeps its own (iteration 11)
+}>(function Composer({ roster, inChat, skills, tools, commands, lastMine, onSend, hero = false, placeholder, draftKey = '' }, ref) {
+  const [text, setText] = useState(() => draftOf(draftKey))
+  const [files, setFiles] = useState<Uploaded[]>(() => FILES.get(draftKey) ?? [])
+  // A DRAFT PER CONVERSATION: the box used to keep its words across a switch, so a line written to finance sat ready
+  // to go to seed on Enter; now switching stashes it and brings back that conversation's own (per tab, so a reload
+  // or an outage that remounts the workspace keeps it too). Derived state: swapped during render, never a frame late.
+  const [owner, setOwner] = useState(draftKey)
+  if (owner !== draftKey) {
+    keepDraft(owner, text); FILES.set(owner, files)
+    setOwner(draftKey); setText(draftOf(draftKey)); setFiles(FILES.get(draftKey) ?? [])
+  }
+  useEffect(() => { if (owner === draftKey) keepDraft(owner, text) }, [owner, draftKey, text])
+  const ownerRef = useRef(owner)
+  ownerRef.current = owner
   const [uploading, setUploading] = useState(0)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -105,8 +130,10 @@ export default forwardRef<ComposerHandle, {
     if (!canSend) { if (!to.length && (text.trim() || files.length)) setErr('Mention an agent with @ to start this chat.'); return }
     setBusy(true); setErr('')
     try {
+      const sentFrom = owner
       await onSend(text.trim(), files, to)
-      setText(''); setFiles([])
+      keepDraft(sentFrom, ''); FILES.delete(sentFrom)     // sent: that conversation's draft is spent, even if we moved on
+      if (ownerRef.current === sentFrom) { setText(''); setFiles([]) }
     } catch (e) { setErr(String((e as Error).message ?? e)) } finally { setBusy(false) }
   }
   async function addFiles(list: FileList | File[]) {

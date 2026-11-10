@@ -122,6 +122,33 @@ def main():
     arm("a body that merely mentions [project: x] mid-text is untouched", W.clean("see [project: x]\nok") == "see [project: x] ok")
     arm("the SQL cuts the block before the 400-char clip", "[/project]" in W.THREADS_SQL and "+ 12" in W.THREADS_SQL)
 
+    print("headline (iteration 12: version subjects, thread labels)")
+    h = W.headline
+    arm("first meaningful line, marks gone", h("## **Active wallets** 6.4% after the _September_ close\nmore") == "Active wallets 6.4% after the September close", h("## **Active wallets** 6.4% after the _September_ close"))
+    arm("embeds and blank lines skipped", h("[[file:/h/homes/db/x.pdf]] (x.pdf)\n\n  Here is Q3  ") == "Here is Q3")
+    arm("snake_case table names keep their underscores", h("From o.product_pl and d_dfs.financial_product_fact") == "From o.product_pl and d_dfs.financial_product_fact")
+    arm("a list marker and a link read as text", h("- See [the wiki](http://x/y) for it") == "See the wiki for it")
+    arm("a fenced block, a table and a rule are skipped", h("```sql\nSELECT 1\n```\n| a | b |\n|---|---|\n---\nDone: 3 rows") == "Done: 3 rows")
+    arm("a trailing colon is dropped", h("Here is the summary:\n| a |") == "Here is the summary")
+    arm("routing prefix and project block hidden", h("[project: Q4]\nsecret brief\n[/project]\n[chat with @db — x]\nWhat moved?") == "What moved?")
+    arm("an MSISDN-shaped run is masked", "0300" not in h("Checked 0300 1234567 for you") and h("Checked 0300 1234567 for you") == "Checked … for you", h("Checked 0300 1234567 for you"))
+    arm("a date and a figure are kept", h("2026-11-10: 12,345,678 rows") == "2026-11-10: 12,345,678 rows", h("2026-11-10: 12,345,678 rows"))
+    arm("no words -> ''", h("[[file:/a.pdf]]\n```\nx\n```") == "" and h(None) == "" and h("***") == "")
+    arm("clipped with an ellipsis", len(h("w" * 200, 60)) == 60 and h("w" * 200, 60).endswith("…"))
+
+    print("thread titles")
+    arm("ids: distinct, well-formed, capped", W.title_ids("a, b,a,,bad id,x\x00y," + ",".join(f"t-{i}" for i in range(60))) [:2] == ["a", "b"]
+        and len(W.title_ids(",".join(f"t-{i}" for i in range(60)))) == W.TITLE_IDS_MAX and "bad id" not in W.title_ids("bad id"))
+    arm("WhatsApp is named by its surface only", W.thread_label("wa:1@g.us", "my private words") == "A WhatsApp chat")
+    arm("a self-introduction is dropped", W.thread_label("t-1", "general here. In za d_dfs.fact, product='X'") == "In za d_dfs.fact, product='X'", W.thread_label("t-1", "general here. In za d_dfs.fact, product='X'"))
+    arm("an addressing prefix is dropped, the label capitalised", W.thread_label("t-1", "finance → seed, for the owner-queue (not urgent)") == "For the owner-queue (not urgent)")
+    arm("a leading [agent] tag is dropped", W.thread_label("t-1", "[insurance] Pipeline gap, first fix") == "Pipeline gap, first fix")
+    arm("an agent thread: its first line, ≤60", W.thread_label("t-mv5788bf", "**Reconcile** wallets for "+ "x" * 100 + "\nsecond line") .startswith("Reconcile wallets") and len(W.thread_label("t-1", "y" * 300)) == W.LABEL_MAX)
+    rows = [{"thread": "obs:seed", "title": "Desk with Seed"}]
+    got = W.titles_of(["t-1", "obs:seed", "t-2", "t-3"], rows, {"t-1": "Plan the close", "t-2": "[[file:/x.pdf]]"})
+    arm("owner rows by their list title, others by label, the unnamed left out, ids' order",
+        got == {"t-1": "Plan the close", "obs:seed": "Desk with Seed"} and list(got) == ["t-1", "obs:seed"], got)
+
     print("meta route (in-process, a temp estate; skipped without fastapi)")
     try:
         import json
@@ -144,6 +171,27 @@ def main():
     c.put("/api/ws/threads/meta", json={"thread": "obs:seed", "pinned": False, "title": ""})
     stored = json.loads((est / "chat" / "threads.json").read_text())
     arm("clearing both leaves nothing stored", stored == {"threads": {}}, stored)
+
+    class Pool:                                     # answers TITLES_SQL / FIRST_SQL from fixtures
+        calls = []
+
+        async def fetch(self, sql, *args):
+            self.calls.append((sql, args))
+            if sql == W.TITLES_SQL:
+                return [{"thread": "chat:1-a", "count": 2, "last_ts": None, "first_owner": "**Q3** wallets?\nplease",
+                         "last_body": None, "last_from": None, "parties": ["owner", "db"]}]
+            if sql == W.FIRST_SQL:
+                return [{"thread": t, "body": {"t-mv1": "Reconcile the close for finance", "wa:9@g.us": "hi"}[t]}
+                        for t in args[0] if t in ("t-mv1", "wa:9@g.us")]
+            return []
+    pool = Pool()
+    W.bind(lambda: pool, est, roster=lambda: ROSTER)
+    r = c.get("/api/ws/thread-titles", params={"ids": "t-mv1,chat:1-a,wa:9@g.us,t-none,../x"})
+    arm("thread-titles: owner chat by the list's own title (its derivation, verbatim), agent thread by its first line, WhatsApp by surface",
+        r.status_code == 200 and r.json() == {"titles": {"t-mv1": "Reconcile the close for finance", "chat:1-a": "**Q3** wallets?",
+                                                         "wa:9@g.us": "A WhatsApp chat"}}, r.text)
+    arm("the malformed id never reached SQL", all("../x" not in a[0] for _, a in pool.calls if a), pool.calls)
+    arm("no ids -> empty, no query", (pool.calls.clear(), c.get("/api/ws/thread-titles").json())[1] == {"titles": {}} and not pool.calls)
 
 
 if __name__ == "__main__":
