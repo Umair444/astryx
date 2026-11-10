@@ -5,10 +5,10 @@ import { I } from '../icons'
 import { Presence, STATUS_WORD } from './AgentRail'
 
 /* THE TOP BAR (48px): the conversation's title (click to rename; stored server-side), the surface it lives on and
-   its project, and the PRESENCE STRIP: every agent in the thread, the working one ringed. The workforce toggle opens
-   the side panel (⌘J). On a phone it also opens the conversation drawer. */
+   its project, and the PRESENCE STRIP: every agent in the thread, the working one ringed. Then the FILES toggle (the
+   media drawer, with the conversation's file count) and the workforce toggle (⌘J). On a phone it also opens the conversation drawer. */
 
-export default function TopBar({ title, canRename, surface, project, agents, status, workforce, onRename, onWorkforce, onMenu, onAgent }: {
+export default function TopBar({ title, canRename, surface, project, agents, status, workforce, files, media, onRename, onWorkforce, onMedia, onMenu, onAgent }: {
   title: string
   canRename: boolean
   surface: Surface | null
@@ -16,8 +16,11 @@ export default function TopBar({ title, canRename, surface, project, agents, sta
   agents: string[]
   status: Record<string, Status>
   workforce: boolean
+  files: number
+  media: boolean
   onRename: (title: string) => void
   onWorkforce: () => void
+  onMedia: () => void
   onMenu: () => void
   onAgent: (a: string) => void
 }) {
@@ -52,6 +55,9 @@ export default function TopBar({ title, canRename, surface, project, agents, sta
           ))}
           {agents.length > 6 && <span className="text-[11.5px] text-ink-mute pl-2">+{agents.length - 6}</span>}
         </div>
+        <button className="ws-icon !w-auto px-2 gap-1.5 !flex items-center" onClick={onMedia} aria-pressed={media} title="Files in this conversation (⌘⇧E)" aria-label={`files in this conversation: ${files}`}>
+          {I.clip('w-4 h-4')}{files > 0 && <span className="text-[12px] tabular-nums font-medium">{files}</span>}
+        </button>
         <button className="ws-icon max-lg:hidden" onClick={onWorkforce} aria-pressed={workforce} title="The workforce (⌘J)" aria-label="the workforce">{I.side()}</button>
       </div>
     </header>

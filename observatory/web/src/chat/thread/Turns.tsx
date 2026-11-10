@@ -5,7 +5,7 @@ import type { Msg, Step } from '../../types'
 import AgentFace from '../../components/AgentFace'
 import Prose from './Prose'
 import { embeds, stepLine, stripEmbeds, type Turn as WTurn, type Work } from '../model'
-import { FileChip } from '../Side'
+import FileChip, { type OpenRequest } from '../artifacts/FileChip'
 import LiveActivity, { type Pending } from './LiveActivity'
 
 /* The conversation (plan-11884 C2, reshaped for the workspace per DESIGN.md "turns: flat, not bubbles"). Agents'
@@ -79,7 +79,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   pending: Pending[]
   roster: string[]
   roles: Record<string, string>
-  onOpenFile: (path: string) => void
+  onOpenFile: (r: OpenRequest) => void
   onEdit: (m: Msg) => void
   loading: boolean
   empty: React.ReactNode
@@ -118,7 +118,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
 const CANVAS_CTX = /^\[canvas #(\d+)(?: "([^"\]]*)")?(?: v(\d+))?\]\s*/
 const LONG = 560
 
-function Mine({ m, to, onEdit, onOpenFile }: { m: Msg; to: string[]; onEdit: (m: Msg) => void; onOpenFile: (p: string) => void }) {
+function Mine({ m, to, onEdit, onOpenFile }: { m: Msg; to: string[]; onEdit: (m: Msg) => void; onOpenFile: (r: OpenRequest) => void }) {
   const [more, setMore] = useState(false)
   const files = embeds(m.body)
   const raw = stripEmbeds(m.body)
@@ -131,7 +131,7 @@ function Mine({ m, to, onEdit, onOpenFile }: { m: Msg; to: string[]; onEdit: (m:
       <div className="ws-mine max-w-[80%] rounded-[14px] px-4 py-2.5 text-[15px] leading-[1.55] text-ink whitespace-pre-wrap break-words">
         <div className={long && !more ? 'max-h-[11.5em] overflow-hidden [mask-image:linear-gradient(#000_70%,transparent)]' : ''}>{text}</div>
         {long && <button onClick={() => setMore((x) => !x)} className="mt-1 text-[12px] text-ink-mute hover:text-ink">{more ? 'Show less' : 'Show all'}</button>}
-        {files.length > 0 && <div className={`${text ? 'mt-2' : ''} flex flex-wrap gap-1.5`}>{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} onOpen={onOpenFile} />)}</div>}
+        {files.length > 0 && <div className={`${text ? 'mt-2' : ''} flex flex-wrap gap-1.5`}>{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} onOpen={onOpenFile} />)}</div>}
       </div>
       <div className="flex items-center gap-2 text-[11px] text-ink-mute pr-1">
         <button onClick={() => onEdit(m)} className="opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-ink" title="Send again, edited (↑ in an empty composer)">Edit</button>
@@ -142,7 +142,7 @@ function Mine({ m, to, onEdit, onOpenFile }: { m: Msg; to: string[]; onEdit: (m:
   )
 }
 
-function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | null; cont: boolean; role?: string; onOpenFile: (p: string) => void }) {
+function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | null; cont: boolean; role?: string; onOpenFile: (r: OpenRequest) => void }) {
   const files = embeds(m.body)
   const text = stripEmbeds(m.body)
   return (
@@ -158,7 +158,7 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
       <div className="md:pl-[32px]">
         {turn && turn.steps.length > 0 && <WorkTrace steps={turn.steps} elsewhere={turn.elsewhere} agent={m.from} />}
         {text && <Prose text={text} />}
-        {files.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} onOpen={onOpenFile} />)}</div>}
+        {files.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} onOpen={onOpenFile} />)}</div>}
       </div>
     </div>
   )

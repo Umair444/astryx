@@ -9,7 +9,23 @@ import { focusBase, safeBase } from '../cog'
    no face is ever a bare letter. One component for every surface: a person looks the same
    in the sidebar, the wire, the network and the profile. */
 
-const missing = new Set<string>()
+/* faces known to be missing: remembered for a few hours across loads, so an agent that has not drawn itself yet costs
+   one 404 per browser per few hours, not one on every page load (the floor and the chat ask for every face at once) */
+const MISS_KEY = 'ax_face_missing', MISS_TTL = 6 * 3600_000
+const missing = new Set<string>((() => {
+  try {
+    const m = JSON.parse(localStorage.getItem(MISS_KEY) ?? '{}') as Record<string, number>
+    return Object.keys(m).filter((k) => Date.now() - m[k] < MISS_TTL)
+  } catch { return [] }
+})())
+function markMissing(k: string) {
+  missing.add(k)
+  try {
+    const m = JSON.parse(localStorage.getItem(MISS_KEY) ?? '{}') as Record<string, number>
+    m[k] = Date.now()
+    localStorage.setItem(MISS_KEY, JSON.stringify(m))
+  } catch { /* private mode: this load only */ }
+}
 const HUMAN = /^(owner|(wa|tg|dc|cv|canvas)-.+)$|@/
 
 const RING: Record<AvatarStatus, string> = { live: 'var(--t-good)', dormant: 'var(--t-mute)', retired: 'var(--t-warn)' }
@@ -54,7 +70,7 @@ export default function AgentFace({ name, size = 32, radius = '9999px', dim = fa
       width={size}
       height={size}
       draggable={false}
-      onError={() => { missing.add(mk); setFailed(true) }}
+      onError={() => { markMissing(mk); setFailed(true) }}
       className="shrink-0 object-cover select-none"
       style={{ ...style, boxShadow: '0 0 0 1px var(--t-line2)' }}
     />

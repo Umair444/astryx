@@ -60,7 +60,7 @@
 /* turns: owner = a tinted block on the right; agents = prose on the page */
 .ws-mine { background: color-mix(in srgb, var(--t-accent) 7%, var(--t-panel)); border: 1px solid color-mix(in srgb, var(--t-accent) 14%, var(--t-line)); }
 :root[data-theme="dark"] .ws-mine { background: color-mix(in srgb, var(--t-accent) 11%, var(--t-panel)); }
-.ws-prose { font-family: "Newsreader Variable", "Newsreader", Georgia, serif; font-size: 16.5px; line-height: 1.64; color: color-mix(in srgb, var(--t-fg) 92%, var(--t-dim)); overflow-wrap: anywhere; }
+.ws-prose { font-family: "Inter Variable", Inter, system-ui, sans-serif; font-size: 16px; line-height: 1.6; color: var(--t-fg); overflow-wrap: anywhere; font-feature-settings: "cv11", "ss01"; }
 .ws-prose code { font-family: var(--font-mono); font-size: .8em; background: var(--t-panel2); border: 1px solid var(--t-line); border-radius: 5px; padding: .06em .32em; }
 .ws-prose pre { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 12px; padding: .9em 1.1em; overflow-x: auto; }
 .ws-prose pre code { background: none; border: 0; padding: 0; }
@@ -68,8 +68,13 @@
 .ws-prose > :first-child { margin-top: 0; } .ws-prose > :last-child { margin-bottom: 0; }
 .ws-prose p { margin: .5em 0; }
 .ws-prose ul, .ws-prose ol { margin: .45em 0; padding-left: 1.35em; } .ws-prose li { margin: .18em 0; }
-.ws-prose ul { list-style: disc; } .ws-prose ol { list-style: decimal; }
-.ws-prose li::marker { color: var(--t-mute); }
+.ws-prose ol { list-style: decimal; } .ws-prose ol > li::marker { color: var(--t-mute); font-variant-numeric: tabular-nums; font-size: .92em; }
+/* bullets: a small round mark in the ink's quiet tone, optically centred on the first line (no square, no accent) */
+.ws-prose ul { list-style: none; padding-left: 1.25em; }
+.ws-prose ul > li { position: relative; }
+.ws-prose ul > li::before { content: ""; position: absolute; left: -0.95em; top: calc(0.8em - 2.5px); width: 5px; height: 5px; border-radius: 9999px;
+  background: color-mix(in srgb, var(--t-fg) 42%, transparent); }
+.ws-prose ul ul > li::before { background: transparent; box-shadow: inset 0 0 0 1.2px color-mix(in srgb, var(--t-fg) 42%, transparent); }
 .ws-prose h1, .ws-prose h2, .ws-prose h3, .ws-prose h4 { font-family: "Inter Variable", sans-serif; font-weight: 600; color: var(--t-fg); margin: 1em 0 .35em; line-height: 1.3; }
 .ws-prose h1 { font-size: 1.12em; } .ws-prose h2 { font-size: 1.04em; } .ws-prose h3, .ws-prose h4 { font-size: .95em; }
 .ws-prose strong { color: var(--t-fg); font-weight: 600; }
@@ -107,8 +112,154 @@
 .ws-menu { background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 12px; box-shadow: 0 18px 50px -20px rgba(0,0,0,.45); }
 .ws-scrim { background: color-mix(in srgb, #000 38%, transparent); }
 
+/* ── iteration 2: files, the artifact panel, the media drawer, diffs ─────────────────────────────────────────────── */
+/* a file chip in a turn: an icon well + name + kind, hairline, no shadow */
+.ws-chip { border: 1px solid var(--t-line); background: color-mix(in srgb, var(--t-panel) 80%, transparent);
+  transition: border-color 120ms ease-out, background-color 120ms ease-out; }
+.ws-chip:hover { border-color: var(--t-line2); background: var(--t-panel); }
+.ws-chip[aria-pressed="true"] { border-color: color-mix(in srgb, var(--t-accent) 45%, var(--t-line)); }
+.ws-chip-icon { background: color-mix(in srgb, var(--t-fg) 5.5%, transparent); color: var(--t-dim); }
+.ws-chip:hover .ws-chip-icon { color: var(--t-fg); }
+
+/* the panel: its seam (1px, 3px on hover/drag), its tabs */
+.ws-artifact { animation: ws-panel-in 200ms var(--ws-ease); }
+@keyframes ws-panel-in { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+.ws-seam { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; touch-action: none; }
+.ws-seam::after { content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px; background: transparent; transition: background-color 120ms, width 120ms, left 120ms; }
+.ws-seam:hover::after, .ws-seam:active::after { left: 2px; width: 3px; background: color-mix(in srgb, var(--t-accent) 55%, transparent); }
+.ws-noscroll { scrollbar-width: none; } .ws-noscroll::-webkit-scrollbar { display: none; }
+.ws-tab { display: flex; align-items: center; height: 36px; border-radius: 10px 10px 0 0; font-size: 12.5px; color: var(--t-dim);
+  border: 1px solid transparent; border-bottom: 0; margin-bottom: -1px; flex-shrink: 0; max-width: 240px;
+  transition: color 120ms, background-color 120ms; }
+.ws-tab:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 3.5%, transparent); }
+.ws-tab.is-on { color: var(--t-fg); font-weight: 500; background: var(--t-bg); border-color: var(--t-line); }
+.ws-tab-x { width: 22px; height: 22px; margin-right: 5px; border-radius: 6px; display: grid; place-items: center; color: var(--t-mute); opacity: 0; }
+.ws-tab:hover .ws-tab-x, .ws-tab.is-on .ws-tab-x, .ws-tab-x:focus-visible { opacity: 1; }
+.ws-tab .ws-tab-x:has(span.rounded-full) { opacity: 1; }
+.ws-tab-x:hover { background: color-mix(in srgb, var(--t-fg) 8%, transparent); color: var(--t-fg); }
+.ws-tool { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: 10px; color: var(--t-dim);
+  transition: background-color 120ms, color 120ms; }
+.ws-tool:hover { background: color-mix(in srgb, var(--t-fg) 6%, transparent); color: var(--t-fg); }
+.ws-tool[aria-pressed="true"] { background: color-mix(in srgb, var(--t-accent) 12%, transparent); color: var(--t-accent); }
+.ws-select { border: 1px solid var(--t-line); background: color-mix(in srgb, var(--t-panel) 70%, transparent); transition: border-color 120ms; }
+.ws-select:hover, .ws-select[aria-expanded="true"] { border-color: var(--t-line2); }
+.ws-input { border: 1px solid var(--t-line); border-radius: 10px; padding: 0 10px; font-size: 12.5px; background: var(--t-panel); color: var(--t-fg); outline: none; }
+.ws-input:focus { border-color: color-mix(in srgb, var(--t-accent) 45%, var(--t-line)); }
+.ws-btn-primary { background: var(--t-fg); color: var(--t-bg); border-color: transparent; font-weight: 500; }
+.ws-btn-primary:hover:not(:disabled) { background: var(--t-fg); filter: brightness(1.12); border-color: transparent; }
+.ws-btn:disabled { opacity: .4; cursor: default; }
+.ws-oldbar { background: color-mix(in srgb, var(--t-warn) 9%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--t-warn) 22%, var(--t-line)); }
+.ws-seg { padding: 2px; border-radius: 10px; background: color-mix(in srgb, var(--t-fg) 5%, transparent); }
+.ws-seg button { height: 26px; padding: 0 10px; border-radius: 8px; font-size: 12px; color: var(--t-dim); }
+.ws-seg button[aria-checked="true"] { background: var(--t-panel); color: var(--t-fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.ws-pill { background: color-mix(in srgb, var(--t-panel) 88%, transparent); border: 1px solid var(--t-line); backdrop-filter: blur(12px);
+  box-shadow: 0 10px 30px -12px rgba(0,0,0,.35); }
+
+/* the reading surfaces */
+.ws-doc { font-family: "Newsreader Variable", "Newsreader", Georgia, serif; font-size: 17px; line-height: 1.65; color: var(--t-fg); overflow-wrap: anywhere; }
+.ws-doc > :first-child { margin-top: 0; }
+.ws-doc p { margin: .75em 0; }
+.ws-doc h1, .ws-doc h2, .ws-doc h3, .ws-doc h4 { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.01em; line-height: 1.15; margin: 1.4em 0 .45em; color: var(--t-fg); }
+.ws-doc h1 { font-size: 2.1em; margin-top: 0; } .ws-doc h2 { font-size: 1.6em; } .ws-doc h3 { font-size: 1.3em; } .ws-doc h4 { font-size: 1.1em; }
+.ws-doc ul, .ws-doc ol { margin: .6em 0; padding-left: 1.4em; } .ws-doc li { margin: .25em 0; }
+.ws-doc ol { list-style: decimal; } .ws-doc ol > li::marker { color: var(--t-mute); }
+.ws-doc ul { list-style: none; } .ws-doc ul > li { position: relative; }
+.ws-doc ul > li::before { content: ""; position: absolute; left: -1em; top: calc(.82em - 2.5px); width: 5px; height: 5px; border-radius: 9999px; background: color-mix(in srgb, var(--t-fg) 40%, transparent); }
+.ws-doc a { color: var(--t-accent2); text-decoration: underline; text-underline-offset: 2px; }
+.ws-doc strong { font-weight: 600; }
+.ws-doc blockquote { border-left: 2px solid var(--t-line2); padding-left: 14px; color: var(--t-dim); font-style: italic; margin: 1em 0; }
+.ws-doc hr { border: 0; border-top: 1px solid var(--t-line); margin: 1.6em 0; }
+.ws-doc code { font-family: var(--font-mono); font-size: .78em; background: var(--t-panel2); border: 1px solid var(--t-line); border-radius: 5px; padding: .06em .32em; }
+.ws-doc pre { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 12px; padding: .9em 1.1em; overflow-x: auto; }
+.ws-doc pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+.ws-doc table { font-family: "Inter Variable", sans-serif; font-size: 13px; font-variant-numeric: tabular-nums; border-collapse: collapse; display: block; overflow-x: auto; margin: 1em 0; }
+.ws-doc th, .ws-doc td { border: 1px solid var(--t-line); padding: 5px 10px; text-align: left; }
+.ws-doc th { background: var(--t-panel2); font-weight: 600; }
+
+/* code: mono 12.5/1.65; tokens coloured from the theme, so all twelve palettes carry it */
+.ws-code pre { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.65; color: var(--t-fg); margin: 0; tab-size: 4; }
+.ws-code-gutter { color: var(--t-mute); opacity: .7; background: color-mix(in srgb, var(--t-bg) 92%, var(--t-bg2)); }
+.ws-code .hljs-keyword, .ws-code .hljs-built_in, .ws-code .hljs-selector-tag, .ws-code .hljs-literal { color: var(--t-accent); }
+.ws-code .hljs-string, .ws-code .hljs-regexp, .ws-code .hljs-template-tag, .ws-code .hljs-addition { color: var(--t-good); }
+.ws-code .hljs-number, .ws-code .hljs-symbol, .ws-code .hljs-bullet { color: var(--t-warn); }
+.ws-code .hljs-comment, .ws-code .hljs-quote, .ws-code .hljs-meta { color: var(--t-mute); font-style: italic; }
+.ws-code .hljs-title, .ws-code .hljs-title.function_, .ws-code .hljs-section, .ws-code .hljs-name, .ws-code .hljs-attr { color: var(--t-accent2); }
+.ws-code .hljs-type, .ws-code .hljs-params, .ws-code .hljs-variable, .ws-code .hljs-attribute { color: color-mix(in srgb, var(--t-fg) 80%, var(--t-accent2)); }
+.ws-code .hljs-deletion { color: var(--t-bad); }
+
+/* tables (CSV, sheets): sticky header and row numbers, hairlines, tabular figures */
+.ws-grid table { border-collapse: separate; border-spacing: 0; font-size: 12.5px; font-variant-numeric: tabular-nums; min-width: 100%; }
+.ws-grid th, .ws-grid td { padding: 5px 12px; border-bottom: 1px solid var(--t-line); border-right: 1px solid color-mix(in srgb, var(--t-line) 60%, transparent); white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; color: var(--t-fg); }
+.ws-grid thead th { position: sticky; top: 0; z-index: 2; background: var(--t-bg2); font-weight: 600; text-align: left; color: var(--t-fg); border-bottom-color: var(--t-line2); }
+.ws-grid thead th button { font-weight: 600; }
+.ws-grid tbody tr:hover td { background: color-mix(in srgb, var(--t-fg) 3.5%, transparent); }
+.ws-grid .ws-grid-n { position: sticky; left: 0; z-index: 1; background: var(--t-bg2); color: var(--t-mute); text-align: right; font-weight: 400; min-width: 44px; }
+.ws-grid thead .ws-grid-n { z-index: 3; }
+
+/* images on a checkerboard; paper on a bed (PDF, Word) */
+.ws-checker { background-color: var(--t-bg); background-image:
+  linear-gradient(45deg, color-mix(in srgb, var(--t-fg) 5%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--t-fg) 5%, transparent) 75%),
+  linear-gradient(45deg, color-mix(in srgb, var(--t-fg) 5%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--t-fg) 5%, transparent) 75%);
+  background-size: 18px 18px; background-position: 0 0, 9px 9px; }
+.ws-paperbed { background: color-mix(in srgb, var(--t-bg2) 70%, var(--t-fg) 4%); }
+:root[data-theme="dark"] .ws-paperbed { background: color-mix(in srgb, var(--t-bg) 80%, #000 20%); }
+.ws-paper { background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.06), 0 10px 30px -14px rgba(0,0,0,.35); border-radius: 2px; }
+.ws-paper .textLayer { position: absolute; inset: 0; overflow: clip; line-height: 1; text-align: initial; transform-origin: 0 0; z-index: 1; forced-color-adjust: none; }
+.ws-paper .textLayer :is(span, br) { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%; }
+.ws-paper .textLayer > :not(.markedContent), .ws-paper .textLayer .markedContent span:not(.markedContent) {
+  --font-height: 0; --scale-x: 1; --rotate: 0deg; font-size: calc(var(--total-scale-factor) * var(--font-height)); transform: rotate(var(--rotate)) scaleX(var(--scale-x)); }
+.ws-paper .textLayer .markedContent { display: contents; }
+.ws-paper .textLayer ::selection { background: color-mix(in srgb, var(--t-accent) 30%, transparent); }
+.ws-paper .textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; }
+.ws-docx .axdocx-wrapper { background: transparent !important; padding: 28px 24px 96px !important; display: flex; flex-flow: column; align-items: center; gap: 18px; }
+.ws-docx .axdocx-wrapper > section.axdocx { margin: 0 !important; box-shadow: 0 0 0 1px rgba(0,0,0,.06), 0 10px 30px -14px rgba(0,0,0,.35) !important; color: #111; }
+
+/* the editor */
+.ws-editor { padding: 40px max(32px, calc((100% - 720px) / 2)) 120px; color: var(--t-fg); caret-color: var(--t-accent); }
+.ws-editor-prose { font-family: "Newsreader Variable", Georgia, serif; font-size: 17px; line-height: 1.65; }
+.ws-editor-code { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.65; padding: 20px 24px 120px; tab-size: 2; white-space: pre; overflow: auto; }
+
+/* diffs: removed = bad, added = good; a changed block 12%, its changed words 28% */
+.ws-diff-prose { font-family: "Newsreader Variable", Georgia, serif; font-size: 15.5px; line-height: 1.6; }
+.ws-diff-mono { font-family: var(--font-mono); font-size: 12px; line-height: 1.6; }
+.ws-diff-cell { padding: 1px 20px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--t-fg); min-width: 0; }
+.ws-diff-same { color: color-mix(in srgb, var(--t-fg) 62%, transparent); }
+.ws-diff-del { background: color-mix(in srgb, var(--t-bad) 12%, transparent); margin: 0 -20px; padding: 2px 20px; box-shadow: inset 2px 0 0 color-mix(in srgb, var(--t-bad) 70%, transparent); }
+.ws-diff-add { background: color-mix(in srgb, var(--t-good) 12%, transparent); margin: 0 -20px; padding: 2px 20px; box-shadow: inset 2px 0 0 color-mix(in srgb, var(--t-good) 70%, transparent); }
+.ws-diff-gap { margin: 0 -20px; height: 100%; min-height: 1.6em; background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--t-fg) 4%, transparent) 6px 7px); }
+.ws-w-del { background: color-mix(in srgb, var(--t-bad) 28%, transparent); border-radius: 3px; text-decoration: none; }
+.ws-w-add { background: color-mix(in srgb, var(--t-good) 28%, transparent); border-radius: 3px; text-decoration: none; }
+.ws-diff-mix del.ws-w-del { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--t-bad) 70%, transparent); color: color-mix(in srgb, var(--t-fg) 70%, transparent); }
+.ws-diff-mix { background: color-mix(in srgb, var(--t-accent) 6%, transparent); box-shadow: inset 2px 0 0 color-mix(in srgb, var(--t-accent) 55%, transparent); padding-block: 3px; margin-block: 2px; }
+.ws-diff-add-ink { color: var(--t-good); } .ws-diff-del-ink { color: var(--t-bad); }
+.ws-diff-fold { display: block; width: 100%; margin: 6px 0; padding: 4px 20px; text-align: left; font-family: "Inter Variable", sans-serif; font-size: 11.5px; color: var(--t-mute);
+  background: color-mix(in srgb, var(--t-fg) 3.5%, transparent); border-block: 1px dashed var(--t-line); }
+.ws-diff-fold:hover { color: var(--t-fg); }
+.ws-minimap button { background: color-mix(in srgb, var(--t-accent) 55%, transparent); }
+.ws-minimap button:hover { background: var(--t-accent); }
+
+/* the media drawer */
+.ws-drawer { background: color-mix(in srgb, var(--t-bg2) 94%, transparent); backdrop-filter: blur(18px) saturate(1.1); border-left: 1px solid var(--t-line);
+  box-shadow: -18px 0 50px -30px rgba(0,0,0,.35); }
+@media (max-width: 767px) { .ws-drawer { background: var(--t-bg2); backdrop-filter: none; } }
+.ws-filter { height: 28px; padding: 0 11px; border-radius: 9999px; font-size: 12.5px; color: var(--t-dim); border: 1px solid var(--t-line); white-space: nowrap; transition: all 120ms; }
+.ws-filter:hover:not(:disabled) { color: var(--t-fg); border-color: var(--t-line2); }
+.ws-filter[aria-checked="true"] { background: var(--t-fg); color: var(--t-bg); border-color: var(--t-fg); }
+.ws-filter:disabled { opacity: .4; }
+.ws-thumb > span:first-child { box-shadow: 0 0 0 1px var(--t-line); transition: box-shadow 120ms; }
+.ws-thumb:hover > span:first-child { box-shadow: 0 0 0 1px var(--t-line2); }
+.ws-thumb[aria-current="true"] > span:first-child { box-shadow: 0 0 0 2px var(--t-accent); }
+.ws-badge { font-size: 10.5px; font-weight: 500; padding: 0 6px; border-radius: 9999px; line-height: 16px; border: 1px solid var(--t-line2); color: var(--t-dim); }
+.ws-badge-solid { background: var(--t-panel); }
+
 @media (prefers-reduced-motion: reduce) {
-  .ws-ring, .ws-live-dot, .ws-livebar, .ws-shimmer { animation: none; }
+  .ws-ring, .ws-live-dot, .ws-livebar, .ws-shimmer, .ws-artifact { animation: none; }
   .ws-shimmer { color: var(--t-dim); background: none; }
 }
 }
+
+/* OUTSIDE the layers, on purpose: Mantine's global reset (`input, button, textarea, select { font: inherit }`) is
+   unlayered, so it beats every LAYERED rule, and a text-[12.5px] on a button or a serif on the editor's textarea
+   silently did nothing. Inside the workspace, form controls roll back to the layered cascade (Tailwind's own preflight
+   still inherits; utilities and these components then apply as written). */
+.ws :where(button, input, textarea, select) { font: revert-layer; }
