@@ -34,7 +34,7 @@ export interface BriefFile {
 export interface BriefAgent {
   agent: string; turns: number; to_owner: number; to_agents: number; from_agents: number; last_ts: string | null
   said: BriefSaid[]; files: BriefFile[]; peers: { agent: string; n: number }[]
-  waiting: { id: number; thread: string | null; ts: string; surface: BriefSurface } | null
+  waiting: { id: number; thread: string | null; ts: string; surface: BriefSurface; ask?: string } | null   // ask: the question itself
   did: string
 }
 export interface Briefing {
