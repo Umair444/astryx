@@ -4,6 +4,7 @@ import '@fontsource/instrument-serif/400.css'
 import '@fontsource/instrument-serif/400-italic.css'
 import '@fontsource-variable/newsreader'
 import './workspace.css'
+import './presence.css'
 import { api, apiPost, displayName } from '../api'
 import { useStore } from '../store'
 import type { Msg, Step } from '../types'
@@ -36,6 +37,8 @@ import type { OpenRequest } from './artifacts/FileChip'
 import type { AnnotateCtx } from './artifacts/annotate/types'
 import type { ParsedAsk } from './artifacts/annotate/ask'
 import { I } from './icons'
+import { interruptAgent, loadHandoffs, useTabTitle, useUnread, type Handoff } from './live'
+import ListSeam, { useListWidth } from './shell/ListSeam'
 
 /* /chat, the WORKSPACE (plan-11884; rebuilt on feat/chat-workspace after homes/seed/chat-rebuild/DESIGN.md). Four
    columns: the AGENT RAIL (who is here, who is working), the CONVERSATION LIST (every conversation the owner has with
@@ -138,6 +141,10 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     }
   }, [current, listed, names])
   const listThreads = useMemo(() => (currentRow && !listed ? [currentRow, ...threads] : threads), [currentRow, listed, threads])
+  // replies the owner hasn't opened (per browser), and the tab's "(n) Chat · astryx"
+  const unread = useUnread(threads, current || null)
+  useTabTitle(unread.size)
+  const listW = useListWidth()
 
   const activeProject = proj.projects.find((p) => p.id === project) ?? null
   // who a message goes to: the thread's own agents (a desk's agent, a canvas chat's agent), then anyone who spoke;
@@ -160,6 +167,14 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     return () => { live = false }
   }, [pulse, current, newest]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setWork(null) }, [current])
+  // handoffs INTO this conversation (a turn answering here, started by another agent's message elsewhere)
+  const [handoffs, setHandoffs] = useState<Handoff[]>([])
+  useEffect(() => {
+    let live = true
+    if (!current) { setHandoffs([]); return }
+    loadHandoffs(current).then((h) => live && setHandoffs(h)).catch(() => live && setHandoffs([]))
+    return () => { live = false }
+  }, [current, newest])
   const laneSteps = useMemo(() => {
     if (!current) return steps
     const out: Record<string, Step[]> = {}
@@ -252,6 +267,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       const mod = e.metaKey || e.ctrlKey
       const typing = (e.target as HTMLElement)?.closest('textarea, input')
       if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette((p) => !p); return }
+      if (mod && e.key === '\\') { e.preventDefault(); listW.toggle(); return }
       if (mod && e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); newChat(); return }
       if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); setWorkforce((w) => !w); return }
       if (mod && e.shiftKey && e.key.toLowerCase() === 'e') { e.preventDefault(); setFilesOpen((f) => !f); return }
@@ -298,12 +314,17 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       onProject={(id) => { setProject(id); go(null) }}
       onPin={(t) => setMeta(t, { pinned: !t.pinned })} onRename={(t, title) => setMeta(t, { title })}
       onClose={phone ? () => setDrawer(false) : undefined}
-      className={phone ? '!w-[86vw] max-w-[340px]' : `max-md:hidden ${showPanel && layout === 'inline' && winW < 1440 ? '!hidden' : ''}`} />
+      unread={unread}
+      className={phone ? '!w-[86vw] max-w-[340px]' : `max-md:hidden ${listHidden ? '!hidden' : ''}`} />
   )
   const home = !current && !activeProject
   const layout: Layout = winW >= 1200 ? 'inline' : winW >= 768 ? 'sheet' : 'full'
   const showPanel = !!current && panel.tabs.length > 0 && !workforce
   const files = media ?? []
+  // the drawer docks beside the panel where there is room for rail + chat + panel + drawer; narrower it floats
+  const docked = winW >= 1320
+  // the list steps aside for the panel below 1440, and for panel + docked drawer below 1720 (⌘\ hides it any time)
+  const listHidden = listW.collapsed || (showPanel && layout === 'inline' && (winW < 1440 || (filesOpen && !!current && docked && winW < 1720)))
   const openFile = (r: OpenRequest) => { setWorkforce(false); panel.open(r); if (winW < 1200) setFilesOpen(false) }
   // a quoted ask in the chat: open its file (by name, from this thread's files) at the highlight it came from
   const openAsk = (a: ParsedAsk) => {
@@ -318,10 +339,11 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     ask: async (agent, body) => { const m = await send(agent, body, current); reload(); return m },
   }
   return (
-    <div className="ws h-dvh flex ws-backdrop text-ink overflow-hidden">
+    <div className="ws h-dvh flex ws-backdrop text-ink overflow-hidden" style={{ ['--ws-list' as string]: `${listW.width}px` }}>
       <AgentRail agents={names} status={status} lines={lines} current={current || null} onPick={openAgent}
         onHome={() => { setProject(null); go(null) }} onPalette={() => setPalette(true)} onKeys={() => setHelp(true)} />
       {list(false)}
+      {!listHidden && <ListSeam list={listW} />}
 
       {/* ── the conversation, and beside it the artifact panel ─────────────────────────────── */}
       <div className="flex-1 min-w-0 flex">
@@ -337,13 +359,13 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
             files={files.length} media={filesOpen}
             onRename={(t) => currentRow && setMeta(currentRow, { title: t })}
             onWorkforce={() => setWorkforce((w) => !w)} onMedia={() => setFilesOpen((f) => !f)}
-            onMenu={() => setDrawer(true)} onAgent={openAgent} />
+            onMenu={() => setDrawer(true)} onAgent={openAgent} names={names} lines={lines} />
         )}
         <div className="flex-1 min-h-0 overflow-y-auto">
           {home && <TeamHome names={names} status={status} lines={lines} agents={team} threads={threads} composer={box(true)} onAgent={openAgent} onGo={go} />}
           {!current && activeProject && <ProjectHome p={activeProject} threads={threads} go={go} run={() => runProject(activeProject)}
             onBrief={(brief) => saveProject({ ...activeProject, brief })} onRemove={() => { saveProject(activeProject, true); setProject(null) }} />}
-          {current && <Turns rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null}
+          {current && <Turns rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} onStop={interruptAgent}
             onOpenFile={openFile} onOpenAsk={openAsk} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
             empty={<FreshThread agents={inChat} status={status} roles={roles} lines={lines} />} />}
         </div>
@@ -352,7 +374,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
 
         {/* the media drawer: over the conversation's right edge, under the top bar (the whole screen on a phone) */}
         <AnimatePresence>
-          {filesOpen && current && (
+          {filesOpen && current && !docked && (
             <motion.div key="files" className="absolute right-0 top-12 bottom-0 z-20 w-[360px] max-w-full max-md:fixed max-md:inset-0 max-md:w-full max-md:z-50"
               initial={reduce ? false : { opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={reduce ? undefined : { opacity: 0, x: 16 }}
               transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}>
@@ -365,6 +387,14 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
 
       {showPanel && <Panel panel={panel} layout={layout} onAttach={(u) => composer.current?.attach(u)} onDirty={setDirty} annotate={annotate} />}
       </div>
+
+      {/* wide: the media drawer DOCKS as a column beside the artifact panel (the panel's row narrows; nothing floats
+          over the conversation) */}
+      {filesOpen && current && docked && (
+        <div className="ws-dock w-[340px] shrink-0">
+          <MediaDrawer items={files} loading={media === null} onOpen={openFile} onClose={() => setFilesOpen(false)} openKey={showPanel ? panel.active : null} />
+        </div>
+      )}
 
       {/* ── the workforce ────────────────────────────────────────────────────────────────── */}
       <AnimatePresence initial={false}>
@@ -393,6 +423,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       </AnimatePresence>
 
       {palette && <Palette threads={listThreads} names={names} status={status} projects={proj.projects} commands={commands} onClose={() => setPalette(false)}
+        lines={lines} files={files} unread={unread} live={live} onOpenFile={(f) => { setPalette(false); openFile(f) }}
         go={(t) => { setPalette(false); setProject(null); go(t) }}
         openProject={(id) => { setPalette(false); setProject(id); go(null) }}
         openAgent={(n) => { setPalette(false); openAgent(n) }} />}

@@ -4,9 +4,11 @@ import { agentColor, displayName, fmtDay, fmtTime } from '../../api'
 import type { Msg, Step } from '../../types'
 import AgentFace from '../../components/AgentFace'
 import Prose from './Prose'
-import { embeds, stepLine, stripEmbeds, type Turn as WTurn, type Work } from '../model'
+import { embeds, stripEmbeds, type Turn as WTurn, type Work } from '../model'
 import FileChip, { type OpenRequest } from '../artifacts/FileChip'
-import LiveActivity, { type Pending } from './LiveActivity'
+import LiveActivity, { type Pending, type StopFn } from './LiveActivity'
+import Replay from './Replay'
+import { handoffLabel, type Handoff as WHandoff } from '../live'
 import AskChip from '../artifacts/annotate/AskChip'
 import { parseAsk, type ParsedAsk } from '../artifacts/annotate/ask'
 
@@ -14,7 +16,9 @@ import { parseAsk, type ParsedAsk } from '../artifacts/annotate/ask'
    answers read as a page: face + name + role + time, then prose at a reading measure; consecutive answers from the
    same agent drop the header. The owner's words sit right in a lightly tinted block (one block for a message sent to
    several agents, which the wire stores as one row per recipient). A message from one AGENT to another is a HANDOFF:
-   the one meaningful rule, "seed → db", its body folded beneath. Under the last turn, the live activity line. */
+   the one meaningful rule, "seed → db", its body folded beneath. So is a turn that answered HERE but was started by
+   another agent's message elsewhere (GET /api/ws/handoffs): "db → seed · owner-txn-status" above that answer, opening
+   to the message that passed the work (the payload). Under the last turn, the live activity line. */
 
 /* D4 (plan-11884): each agent answer carries the TURN that produced it (messages.turn_id) and that turn's steps,
    never steps guessed from a time window. A turn this thread touched but did not get its answer (it answered on
@@ -44,12 +48,17 @@ type Block =
   | { kind: 'day'; key: string; label: string }
   | { kind: 'mine'; key: string; msg: Msg; to: string[] }
   | { kind: 'theirs'; key: string; msg: Msg; turn: WTurn | null; cont: boolean }
-  | { kind: 'handoff'; key: string; msg: Msg }
+  | { kind: 'handoff'; key: string; h: HandoffView }
   | { kind: 'note'; key: string; msg: Msg }
   | { kind: 'elsewhere'; key: string; turn: WTurn }
 
-export function blocksOf(items: Row[], roster: Set<string>): Block[] {
+/* a handoff as the divider draws it: an in-thread agent→agent row (thread null: it is HERE), or an outside message
+   that opened the turn answering here */
+export interface HandoffView { from: string; to: string; ts: string; body: string; thread: string | null; intent: string | null; id: number }
+
+export function blocksOf(items: Row[], roster: Set<string>, handoffs: WHandoff[] = []): Block[] {
   const out: Block[] = []
+  const into = new Map(handoffs.map((h) => [h.turn_id, h]))
   let day = ''
   let prev: Msg | null = null
   for (const { msg, turn } of items) {
@@ -65,8 +74,14 @@ export function blocksOf(items: Row[], roster: Set<string>): Block[] {
     } else if (!roster.has(msg.from)) {
       out.push({ kind: 'note', key: `m${msg.id}`, msg })
     } else if (msg.to && msg.to !== 'owner' && roster.has(msg.to)) {
-      out.push({ kind: 'handoff', key: `m${msg.id}`, msg })
+      out.push({ kind: 'handoff', key: `m${msg.id}`, h: { from: msg.from, to: msg.to, ts: msg.ts, body: msg.body, thread: null, intent: msg.intent, id: msg.id } })
     } else {
+      const h = turn ? into.get(turn.id) : undefined
+      if (h) {                                     // once, above the first answer that turn wrote here
+        into.delete(turn!.id)
+        out.push({ kind: 'handoff', key: `h${h.turn_id}`, h: { ...h.msg, to: h.agent } })
+        prev = null
+      }
       const cont = !!prev && prev.from === msg.from && prev.to === msg.to && !turn?.steps.length && Date.parse(msg.ts) - Date.parse(prev.ts) < 10 * 60_000
       out.push({ kind: 'theirs', key: `m${msg.id}`, msg, turn, cont })
     }
@@ -75,8 +90,10 @@ export function blocksOf(items: Row[], roster: Set<string>): Block[] {
   return out
 }
 
-export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty }: {
+export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty, handoffs, onStop }: {
   rows: Msg[]
+  handoffs?: WHandoff[]
+  onStop?: StopFn
   work: Work | null
   pending: Pending[]
   roster: string[]
@@ -89,7 +106,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
 }) {
   const reduce = useReducedMotion()
   const end = useRef<HTMLDivElement>(null)
-  const blocks = useMemo(() => blocksOf(rowsOf(rows, work), new Set(roster)), [rows, work, roster])
+  const blocks = useMemo(() => blocksOf(rowsOf(rows, work), new Set(roster), handoffs), [rows, work, roster, handoffs])
   const last = rows.at(-1)?.id ?? 0
   useEffect(() => { end.current?.scrollIntoView({ block: 'end', behavior: reduce ? 'auto' : 'smooth' }) }, [last, pending.length, reduce])
 
@@ -106,12 +123,12 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
           case 'day': return <div key={b.key} className="text-center text-[11.5px] text-ink-mute pt-4 pb-2">{b.label}</div>
           case 'mine': return <Mine key={b.key} m={b.msg} to={b.to} onEdit={onEdit} onOpenFile={onOpenFile} onOpenAsk={onOpenAsk} />
           case 'theirs': return <Theirs key={b.key} m={b.msg} turn={b.turn} cont={b.cont} role={roles[b.msg.from]} onOpenFile={onOpenFile} />
-          case 'handoff': return <Handoff key={b.key} m={b.msg} />
+          case 'handoff': return <Handoff key={b.key} h={b.h} />
           case 'note': return <Note key={b.key} m={b.msg} />
           case 'elsewhere': return <Elsewhere key={b.key} turn={b.turn} />
         }
       })}
-      {pending.length > 0 && <div className="pt-5"><LiveActivity pending={pending} /></div>}
+      {pending.length > 0 && <div className="pt-5"><LiveActivity pending={pending} onStop={onStop} /></div>}
       <div ref={end} />
     </div>
   )
@@ -161,7 +178,7 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
         </div>
       )}
       <div className="md:pl-[32px]">
-        {turn && turn.steps.length > 0 && <WorkTrace steps={turn.steps} elsewhere={turn.elsewhere} agent={m.from} />}
+        {turn && turn.steps.length > 0 && <WorkTrace steps={turn.steps} elsewhere={turn.elsewhere} agent={m.from} end={turn.ended_at} />}
         {text && <Prose text={text} />}
         {files.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} onOpen={onOpenFile} />)}</div>}
       </div>
@@ -169,21 +186,43 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
   )
 }
 
-/* the one meaningful rule: work passing from one agent to another on this thread */
-function Handoff({ m }: { m: Msg }) {
+/* the one meaningful rule: work passing from one agent to another. A hairline across the column, the label centred
+   ("Seed → Db · plan-412 · 14:02"); a click opens the PAYLOAD, the message that passed the work, as the receiving
+   agent read it, with where it came from. */
+function Handoff({ h }: { h: HandoffView }) {
   const [open, setOpen] = useState(false)
-  const text = stripEmbeds(m.body)
+  const [more, setMore] = useState(false)
+  const text = stripEmbeds(h.body)
+  const label = handoffLabel(h)
+  const long = text.length > 900
   return (
-    <div className="mt-7">
-      <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="ws-handoff w-full group">
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-[3px] bg-[var(--t-bg)] group-hover:border-line-2 group-hover:text-ink-dim transition-colors">
-          <span className="w-1.5 h-1.5 rounded-full" style={{ background: agentColor(m.from) }} aria-hidden />{displayName(m.from)}
-          <span aria-hidden>→</span>
-          <span className="w-1.5 h-1.5 rounded-full" style={{ background: agentColor(m.to ?? '') }} aria-hidden />{displayName(m.to ?? '')}
-          <span className="text-ink-mute">· {fmtTime(m.ts)}</span>
+    <div className="mt-7 ws-handoff-wrap" style={{ ['--ws-from' as string]: agentColor(h.from), ['--ws-to' as string]: agentColor(h.to) }}>
+      <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="ws-handoff w-full group"
+        title={open ? 'Hide what was handed over' : 'Show what was handed over'}>
+        <span className="ws-handoff-pill">
+          <AgentFace name={h.from} size={16} />
+          <span className="text-ink-dim">{displayName(h.from)}</span>
+          <svg viewBox="0 0 24 16" className="w-[18px] h-[12px] ws-handoff-arrow" aria-hidden><path d="M1 8h19M15 3l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          <AgentFace name={h.to} size={16} />
+          <span className="text-ink-dim">{displayName(h.to)}</span>
+          {label && <span className="text-ink-mute max-sm:hidden">· <span className="font-mono text-[11px]">{label}</span></span>}
+          <span className="text-ink-mute">· {fmtTime(h.ts)}</span>
+          <span className={`text-ink-mute transition-transform duration-150 ${open ? 'rotate-90' : ''}`} aria-hidden>›</span>
         </span>
       </button>
-      {open && <div className="mt-2 mx-auto max-w-[600px] text-[13px] leading-relaxed text-ink-dim whitespace-pre-wrap border-l-2 border-line pl-3">{text}</div>}
+      {open && (
+        <div className="ws-payload mt-2.5 mx-auto max-w-[620px]">
+          <div className="flex items-center gap-2 text-[11.5px] text-ink-mute mb-1.5 flex-wrap">
+            <span>What {displayName(h.from)} handed {displayName(h.to)}</span>
+            {h.thread && <a href={`#/wire/${encodeURIComponent(h.thread)}`} className="font-mono hover:text-ink underline-offset-2 hover:underline">on {h.thread}</a>}
+            {h.intent && h.intent !== 'chat' && <span className="border border-line rounded-full px-1.5">{h.intent}</span>}
+          </div>
+          <div className={`text-[13.5px] ${long && !more ? 'max-h-[14em] overflow-hidden [mask-image:linear-gradient(#000_72%,transparent)]' : ''}`}>
+            <Prose text={text} />
+          </div>
+          {long && <button onClick={() => setMore((x) => !x)} className="mt-1 text-[12px] text-ink-mute hover:text-ink">{more ? 'Show less' : 'Show all'}</button>}
+        </div>
+      )}
     </div>
   )
 }
@@ -205,13 +244,13 @@ function Elsewhere({ turn }: { turn: WTurn }) {
   return (
     <div className="mt-7">
       <div className="flex items-center gap-2.5 mb-1"><AgentFace name={turn.agent} size={22} /><span className="text-[13.5px] font-semibold text-ink">{displayName(turn.agent)}</span></div>
-      <div className="md:pl-[32px]"><WorkTrace steps={turn.steps} elsewhere={turn.elsewhere} agent={turn.agent} answered={false} /></div>
+      <div className="md:pl-[32px]"><WorkTrace steps={turn.steps} elsewhere={turn.elsewhere} agent={turn.agent} end={turn.ended_at} answered={false} /></div>
     </div>
   )
 }
 
-/* a turn's work: one line ("Worked 42s · 6 tool calls"), then the trace */
-function WorkTrace({ steps, elsewhere, agent, answered = true }: { steps: Step[]; elsewhere: string[]; agent: string; answered?: boolean }) {
+/* a turn's work: one line ("Worked 42s · 6 tool calls"), then its replay (thread/Replay.tsx) */
+function WorkTrace({ steps, elsewhere, agent, end, answered = true }: { steps: Step[]; elsewhere: string[]; agent: string; end: string | null; answered?: boolean }) {
   const [open, setOpen] = useState(false)
   const tools = steps.filter((s) => s.kind === 'tool').length
   const errs = steps.filter((s) => s.kind === 'error').length
@@ -229,15 +268,7 @@ function WorkTrace({ steps, elsewhere, agent, answered = true }: { steps: Step[]
           <a key={t} href={/^(chat|obs|cv):/.test(t) ? `#/chat/${encodeURIComponent(t)}` : `#/wire/${encodeURIComponent(t)}`} className="text-ink-dim hover:text-ink underline underline-offset-2 mr-1.5">{t}</a>))}
         </div>
       )}
-      {open && (
-        <ol className="mt-1 mb-2 ml-1 border-l-2 pl-3 flex flex-col gap-0.5 max-h-[320px] overflow-y-auto" style={{ borderColor: `color-mix(in srgb, ${agentColor(agent)} 35%, transparent)` }}>
-          {steps.map((s) => (
-            <li key={s.id} className={`font-mono text-[11.5px] leading-[1.6] ${s.kind === 'error' ? 'text-bad' : s.kind === 'tool' ? 'text-ink-dim' : 'text-ink-mute'}`}>
-              <span className="text-ink-mute mr-2 tabular-nums">{fmtTime(s.ts)}</span>{stepLine(s)}
-            </li>
-          ))}
-        </ol>
-      )}
+      {open && <Replay steps={steps} agent={agent} end={end} />}
     </div>
   )
 }

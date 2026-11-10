@@ -10,7 +10,8 @@ import { I } from '../icons'
    "agent · age"; a thread an agent is working on right now carries a 2px bar in that agent's colour. Pin and rename
    live in the row's menu (and rename on double-click), both stored server-side (PUT /api/ws/threads/meta). */
 
-export default function ConversationList({ threads, loaded, current, live, projects, project, onGo, onNew, onProject, onPin, onRename, onClose, className = '' }: {
+export default function ConversationList({ threads, loaded, current, live, projects, project, onGo, onNew, onProject, onPin, onRename, onClose, className = '', unread }: {
+  unread?: Set<string>                         // threads with an agent reply the owner hasn't opened (chat/live.ts)
   threads: WsThread[]
   loaded: boolean
   current: string | null
@@ -85,7 +86,7 @@ export default function ConversationList({ threads, loaded, current, live, proje
           <section key={g} className="mb-1">
             <div className="ws-label px-2.5 pt-3 pb-1">{g}</div>
             {rows.map((t) => (
-              <Row key={t.thread} t={t} current={t.thread === current} live={live[t.thread] ?? null}
+              <Row key={t.thread} t={t} current={t.thread === current} live={live[t.thread] ?? null} unread={!!unread?.has(t.thread)}
                 editing={editing === t.thread} menuOpen={menu === t.thread}
                 onGo={() => onGo(t.thread)} onMenu={() => setMenu((m) => (m === t.thread ? null : t.thread))}
                 onEdit={() => { setMenu(null); setEditing(t.thread) }}
@@ -105,8 +106,8 @@ export default function ConversationList({ threads, loaded, current, live, proje
   )
 }
 
-function Row({ t, current, live, editing, menuOpen, onGo, onMenu, onEdit, onPin, onRename, onCancel }: {
-  t: WsThread; current: boolean; live: string | null; editing: boolean; menuOpen: boolean
+function Row({ t, current, live, unread, editing, menuOpen, onGo, onMenu, onEdit, onPin, onRename, onCancel }: {
+  t: WsThread; current: boolean; live: string | null; unread: boolean; editing: boolean; menuOpen: boolean
   onGo: () => void; onMenu: () => void; onEdit: () => void; onPin: () => void; onRename: (title: string) => void; onCancel: () => void
 }) {
   const [v, setV] = useState(t.title)
@@ -131,7 +132,8 @@ function Row({ t, current, live, editing, menuOpen, onGo, onMenu, onEdit, onPin,
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-1.5">
               {t.pinned && <span className="text-ink-mute shrink-0" title="pinned">{I.pin('w-3 h-3')}</span>}
-              <span className={`block truncate text-[13.5px] leading-[1.3] ${current ? 'text-ink font-medium' : 'text-ink'}`}>{t.title}</span>
+              <span className={`block truncate text-[13.5px] leading-[1.3] ${current || unread ? 'text-ink font-medium' : 'text-ink'}`}>{t.title}</span>
+              {unread && <span className="ws-unread ml-auto" role="img" aria-label="new reply" title="New reply" />}
             </span>
             <span className="block truncate text-[11.5px] text-ink-mute leading-[1.4] mt-[1px]">
               {live ? <span className="text-cyan">{displayName(live)} is working</span> : <>{who} · {fmtAgo(t.last_ts)}</>}
