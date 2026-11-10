@@ -23,7 +23,29 @@ export interface WsThread {
 }
 export interface WsAgent { agent: string; role: string; last_ts: string | null; last_thread: string | null; last_said: string }
 
-export const loadWsThreads = () => api<{ etag: string; threads: WsThread[] }>('/ws/threads')
+/* "while you were away" (iteration 15, GET /api/ws/briefing): per agent, counts and its messages TO THE OWNER as
+   headlines (never bodies), its files, its top peers, and whether it waits on the owner; org-news headlines */
+export type BriefSurface = Surface | 'whatsapp' | 'other'
+export interface BriefSaid { id: number; thread: string | null; ts: string; headline: string; surface: BriefSurface }
+export interface BriefFile {
+  name: string; kind: string; thread: string | null; ts: string; msg_id: number; path: string; label: string | null
+  artifact: string | null; versions: number
+}
+export interface BriefAgent {
+  agent: string; turns: number; to_owner: number; to_agents: number; from_agents: number; last_ts: string | null
+  said: BriefSaid[]; files: BriefFile[]; peers: { agent: string; n: number }[]
+  waiting: { id: number; thread: string | null; ts: string; surface: BriefSurface } | null
+  did: string
+}
+export interface Briefing {
+  since: string; until: string; clamped: boolean
+  totals: { agents: number; to_owner: number; files: number; waiting: number; handoffs: number; turns: number }
+  agents: BriefAgent[]
+  news: { id: number; ts: string; from: string; headline: string }[]
+}
+export const loadBriefing = (since: string | null) => api<Briefing>(`/ws/briefing${since ? `?since=${encodeURIComponent(since)}` : ''}`)
+
+export const loadWsThreads = () =>api<{ etag: string; threads: WsThread[] }>('/ws/threads')
 export const loadWsAgents = () => api<WsAgent[]>('/ws/agents')
 export const saveThreadMeta = (thread: string, patch: { title?: string; pinned?: boolean }) =>
   apiSend<{ thread: string; title?: string; pinned?: boolean }>('PUT', '/ws/threads/meta', { thread, ...patch })

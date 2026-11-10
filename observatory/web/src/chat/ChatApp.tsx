@@ -28,6 +28,9 @@ import Composer, { type Command, type ComposerHandle } from './thread/Composer'
 import Turns from './thread/Turns'
 import { plainLine, type Pending } from './thread/LiveActivity'
 import TeamHome from './empty/TeamHome'
+import { useVisit } from './empty/visit'
+import type { BriefingActions } from './empty/Briefing'
+import type { Feature } from './empty/WhatsNew'
 import NewProject from './projects/NewProject'
 import { blank, moveThread, nextColor, patchOne, projectOf, removeOne, upsert, useProjects } from './projects/model'
 import { projectContext } from './projects/context'
@@ -36,7 +39,7 @@ import Workforce from './shell/Workforce'
 import Panel, { type Layout } from './artifacts/Panel'
 import { usePanel } from './artifacts/usePanel'
 import MediaDrawer from './artifacts/MediaDrawer'
-import { byId, createArtifact, distinctMedia, loadMedia, mediaOfRows, type MediaItem } from './artifacts/api'
+import { byId, createArtifact, distinctMedia, loadMedia, mediaOfRows, openArtifact, type MediaItem } from './artifacts/api'
 import { preferChart } from './tables/DataView'
 import { ChipCtx, useChipAwareness } from './artifacts/versions/awareness'
 import { quoteText, TurnActionsCtx, type TurnActionsValue } from './thread/TurnActions'
@@ -140,6 +143,10 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const go = useCallback((t: string | null) => { setDrawer(false); nav(t) }, [nav])
   // a canvas belongs to where it was opened: moving to another conversation or page closes it
   useEffect(() => { setCanvasOpen(canvasNext.current); canvasNext.current = null }, [thread])
+  // iteration 15: the owner's visit (what "while you were away" covers), and a file the briefing opens once its
+  // conversation (or the library) is on screen, in THAT page's panel
+  const visit = useVisit()
+  const fileNext = useRef<{ at: string; req: OpenRequest } | null>(null)
   // a search hit opens its conversation AT that message (thread/focus.ts scrolls to it and pulses it once)
   const [jump, setJump] = useState<Jump | null>(null)
   const onJump = useCallback((h: MessageHit) => { setPalette(false); setJump({ thread: h.thread, id: h.msg_id, n: Date.now() }); go(h.thread) }, [go])
@@ -228,6 +235,10 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   // iteration 7: a chip knows its version ("v3 · updated"); the stored list refreshes when a panel tab's head moves
   const openRef = useRef<(r: OpenRequest) => void>(() => {})
   const chipAware = useChipAwareness(current, rows, panel.tabs.map((t) => t.art?.head ?? '').join(','), useCallback((r: OpenRequest) => openRef.current(r), []))
+  useEffect(() => {          // the briefing's file, once its page is the one on screen (openRef = this render's openFile)
+    const f = fileNext.current
+    if (f && f.at === (thread ?? '')) { fileNext.current = null; openRef.current(f.req) }
+  }, [thread])
   // the owner's messages on their way: shown at once, kept with Retry when a send fails (thread/Outbox.tsx)
   const [outbox, setOutbox] = useState<Outgoing[]>([])
 
@@ -488,6 +499,40 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const listHidden = listW.collapsed || (canvasHere && layout === 'inline' && winW < 1600) || ((showPanel || canvasHere) && layout === 'inline' && (winW < 1440 || (filesOpen && !!current && docked && winW < 1720)))
   const openFile = (r: OpenRequest) => { setWorkforce(false); panel.open(r); if (winW < 1200) setFilesOpen(false) }
   openRef.current = openFile
+  // the briefing's chips: a conversation AT the message (iteration 8's jump pulse); a file in its conversation's panel
+  // (as that message's chip would open it), or — from a conversation the workspace doesn't open (WhatsApp) — stored
+  // under its own thread first and shown in the library's panel
+  const brief: BriefingActions = {
+    onJump: (t, id) => { setJump({ thread: t, id, n: Date.now() }); go(t) },
+    onAgent: openAgent,
+    onSeen: visit.markSeen,
+    onFile: async (agent, f) => {
+      const msg = { id: f.msg_id, ts: f.ts }
+      const req: OpenRequest = { path: f.path, label: f.label ?? f.name, from: agent, msg }
+      if (f.thread && /^(chat|obs|cv):/.test(f.thread)) {
+        fileNext.current = { at: f.thread, req }
+        setJump({ thread: f.thread, id: f.msg_id, n: Date.now() }); go(f.thread)
+        return
+      }
+      try {
+        const a = f.artifact ? { id: f.artifact, name: f.name } : await openArtifact(f.path, f.thread ?? 'library', agent, f.label ?? f.name, msg)
+        fileNext.current = { at: 'library', req: { path: a.id.startsWith('file:') ? f.path : byId(a.id), label: a.name, from: agent } }
+        go('library')
+      } catch (e) { toast(friendly(e, `Opening ${f.name}`)) }
+    },
+  }
+  const onShow = (k: Feature) => {
+    if (k === 'projects') go('projects')
+    else if (k === 'search') setPalette(true)
+    else if (k === 'keys') setHelp(true)
+    else if (k === 'map') dispatchEvent(new KeyboardEvent('keydown', { key: 'm', metaKey: true, ctrlKey: true, shiftKey: true }))
+    else if (k === 'stop') { const t = threads[0]?.thread; if (t) go(t); setNote('While an agent works, the line under the conversation names it, with Stop beside it.') }
+    else if (k === 'phone') {
+      const url = `${location.origin}${location.pathname}#/chat`
+      void navigator.clipboard?.writeText(url).then(() => toast('Link copied. Open it on your phone, then Share → Add to Home Screen.', { kind: 'info' }),
+        () => toast('Open this page on your phone, then Share → Add to Home Screen.', { kind: 'info' }))
+    } else go('library')
+  }
   // a turn's actions: quote into the composer (to whoever said it, when several share the thread); open as a document
   const turnActsNow: TurnActionsValue = {
     quote: (text, m) => composer.current?.insert(quoteText(text, m.from !== 'owner' && inChat.length > 1 ? m.from : null)),
@@ -554,7 +599,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
               onToggle: () => { setWorkforce(false); setCanvasOpen((o) => (o === threadCanvas ? null : threadCanvas)) } } : null} />
         )}
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {home && <TeamHome names={names} status={status} lines={lines} agents={team} threads={threads} composer={box(true)} onAgent={openAgent} onGo={go} />}
+          {home && <TeamHome names={names} status={status} lines={lines} agents={team} threads={threads} composer={box(true)} onAgent={openAgent} onGo={go}
+            since={visit.since} brief={brief} onShow={onShow} />}
           <Suspense fallback={null}>
           {view === 'library' && <Library projects={proj.projects} activeId={canvasHere ? null : storedActive} onOpen={(id, it) => { setCanvasOpen(null); openStored(id, it) }} onThread={go}
             activeCanvas={canvasHere ? canvasOpen : null} onCanvas={(id) => openCanvas(id, false)}

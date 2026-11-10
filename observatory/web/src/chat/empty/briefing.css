@@ -1,0 +1,28 @@
+/* "while you were away" + "new in your workspace" (empty/Briefing.tsx, empty/WhatsNew.tsx, iteration 15). Calm:
+   no card soup — the briefing is a section on the page, rows separated by space and one hairline per row; colour
+   only for the agent (its face) and the one state that asks something of the owner (waiting on you, the accent). */
+.ws-brief-row { display: flex; gap: 12px; padding: 12px 0; border-top: 1px solid color-mix(in srgb, var(--t-line) 70%, transparent); }
+.ws-brief-row:first-child { border-top: 0; padding-top: 4px; }
+.ws-brief-wait { font-size: 11px; font-weight: 500; line-height: 1; padding: 4px 7px; border-radius: 999px; white-space: nowrap;
+  color: var(--t-accent); background: color-mix(in srgb, var(--t-accent) 11%, transparent);
+  border: 1px solid color-mix(in srgb, var(--t-accent) 24%, transparent); }
+.ws-brief-waitword { color: var(--t-accent); font-weight: 500; }
+.ws-brief-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; height: 26px; padding: 0 9px; border-radius: 9px;
+  font-size: 12px; color: var(--t-dim); border: 1px solid var(--t-line); background: color-mix(in srgb, var(--t-panel) 70%, transparent);
+  transition: border-color 120ms ease-out, background-color 120ms ease-out, color 120ms ease-out; }
+.ws-brief-chip:hover:not(.is-static) { color: var(--t-fg); border-color: var(--t-line2); background: var(--t-panel); }
+.ws-brief-chip.is-static { border-style: dashed; background: transparent; cursor: default; }
+.ws-brief-chip:focus-visible, .ws-brief-seen:focus-visible, .ws-new-show:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent); outline-offset: 1px; }
+.ws-brief-seen { font-size: 12px; color: var(--t-mute); padding: 4px 8px; border-radius: 8px; transition: color 120ms ease-out, background-color 120ms ease-out; }
+.ws-brief-seen:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 5%, transparent); }
+.ws-brief-skel { height: 12px; border-radius: 6px; background: linear-gradient(90deg, color-mix(in srgb, var(--t-fg) 5%, transparent) 0%,
+  color-mix(in srgb, var(--t-fg) 10%, transparent) 50%, color-mix(in srgb, var(--t-fg) 5%, transparent) 100%); background-size: 200% 100%;
+  animation: ws-brief-skel 1.6s ease-in-out infinite; }
+@keyframes ws-brief-skel { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+/* the one-time card: a quiet panel, its list in two columns where there is room */
+.ws-new { border: 1px solid var(--t-line); border-radius: 16px; background: color-mix(in srgb, var(--t-panel) 62%, transparent); padding: 16px 18px 14px; }
+.ws-new-item { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; min-width: 0; }
+.ws-new-show { font-size: 12px; color: var(--t-accent); white-space: nowrap; border-radius: 6px; }
+.ws-new-show:hover { text-decoration: underline; text-underline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .ws-brief-skel { animation: none; } }
