@@ -585,7 +585,10 @@ async def agents(request: Request):
 
 @app.get("/api/messages")
 async def messages(request: Request, limit: int = 100, before_id: int | None = None,
-                   thread: str | None = None, agent: str | None = None):
+                   thread: str | None = None, agent: str | None = None, after_id: int | None = None):
+    # after_id (chat workspace, iteration 14 "stamina"): a client that was away (laptop asleep, network gone, API
+    # restarted) asks for what it missed: the OLDEST `limit` rows past the newest id it holds, ascending, so it can page
+    # forward until it is level. Same filters, same anonymous rule as every other read here.
     limit = min(limit, 500)
     cond, args = [], []
     if not is_owner(request):
@@ -597,12 +600,18 @@ async def messages(request: Request, limit: int = 100, before_id: int | None = N
         cond.append(anonymous_can_see_sql(f"${len(args)}"))
     if before_id:
         args.append(before_id); cond.append(f"id < ${len(args)}")
+    if after_id is not None:
+        args.append(after_id); cond.append(f"id > ${len(args)}")
     if thread:
         args.append(thread); cond.append(f"thread = ${len(args)}")
     if agent:
         args.append(agent); cond.append(
             f"(from_agent = ${len(args)} OR to_agent = ${len(args)})")
     where = ("WHERE " + " AND ".join(cond)) if cond else ""
+    if after_id is not None:
+        rows = await pool.fetch(
+            f"SELECT * FROM messages {where} ORDER BY id ASC LIMIT {limit}", *args)
+        return [msg(r) for r in rows]
     rows = await pool.fetch(
         f"SELECT * FROM messages {where} ORDER BY id DESC LIMIT {limit}", *args)
     return [msg(r) for r in reversed(rows)]
@@ -3526,14 +3535,19 @@ async def events(request: Request):
         q: asyncio.Queue = asyncio.Queue()
         sse_clients.add(q)
         try:
-            yield ": hello\n\n"
+            # the hello is a named ping too: from its first byte the client knows this server pings, so its watchdog
+            # is armed at once (a proxy that holds the socket open after the API died answers nothing ever again)
+            yield "event: ping\ndata: {}\n\n"
             while True:
                 try:
                     data = await asyncio.wait_for(q.get(), timeout=25)
                     if await visible(data):
                         yield f"data: {json.dumps(data)}\n\n"
                 except asyncio.TimeoutError:
-                    yield ": ping\n\n"
+                    # a NAMED event, not a comment: EventSource never surfaces comments, so a client could not tell a
+                    # quiet stream from a half-dead socket (a laptop that slept, a changed network). A named event
+                    # fires no onmessage (old clients ignore it); the workspace's watchdog hears it (store.tsx).
+                    yield "event: ping\ndata: {}\n\n"
                 if await request.is_disconnected():
                     return
         finally:

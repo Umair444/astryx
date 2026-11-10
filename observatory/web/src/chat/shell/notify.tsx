@@ -26,12 +26,20 @@ function choice(): Choice {
 }
 const subs = new Set<() => void>()
 let version = 0
-const bump = () => { version++; subs.forEach((f) => f()) }
+/* Notification.permission is a SYNCHRONOUS round trip to the browser process (~0.4 ms, more under load), and the state
+   is read on every render of the workspace: profiled as the chat's top idle cost (iteration 14). It is read once and
+   re-read only when it can have changed: after we ask, when the tab comes back (the owner may have changed it in the
+   browser's settings), and when the Permissions API says so. */
+let perm: NotificationPermission | null = null
+const permNow = (): NotificationPermission => (perm ??= Notification.permission)
+const bump = () => { perm = null; version++; subs.forEach((f) => f()) }
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { if (!document.hidden && perm !== null && supported() && Notification.permission !== perm) bump() })
+try { void navigator.permissions?.query({ name: 'notifications' as PermissionName }).then((st) => { st.onchange = bump }).catch(() => {}) } catch { /* no Permissions API */ }
 function stateNow(): NotifyState {
   if (!supported()) return 'unsupported'
-  if (Notification.permission === 'denied') return 'denied'
+  if (permNow() === 'denied') return 'denied'
   const c = choice()
-  if (c === 'on') return Notification.permission === 'granted' ? 'on' : 'ask'
+  if (c === 'on') return permNow() === 'granted' ? 'on' : 'ask'
   return c === 'off' ? 'off' : c === 'later' ? 'later' : 'ask'
 }
 export function useNotifyState(): NotifyState {

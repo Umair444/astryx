@@ -33,7 +33,11 @@ export function useMediaSrc<T extends MediaEl>(blob: Blob | null): (el: T | null
   useEffect(() => {
     if (!el || !blob) return
     showMedia(el, blob)
-    return () => { if (el.src.startsWith('blob:')) URL.revokeObjectURL(el.src); el.removeAttribute('src') }
+    // the element is detached by the time an unmount's cleanup runs: touching its src THEN makes Blink re-select the
+    // image source and register a viewport listener on the document that is never removed (it is removed only when an
+    // element leaves the tree, which already happened), and that listener held the whole page around it alive, a
+    // library page per visit (iteration 14, heap snapshot). So: revoke the URL always, clear src only while attached.
+    return () => { if (el.src.startsWith('blob:')) URL.revokeObjectURL(el.src); if (el.isConnected) el.removeAttribute('src') }
   }, [el, blob])
   return setEl
 }

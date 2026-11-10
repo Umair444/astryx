@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useReducedMotion } from 'motion/react'
 import { agentColor, displayName, fmtDay, fmtTime } from '../../api'
 import type { Msg, Step } from '../../types'
@@ -95,8 +95,10 @@ export function blocksOf(items: Row[], roster: Set<string>, handoffs: WHandoff[]
   return out
 }
 
-export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty, handoffs, onStop, focus = null }: {
+export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty, handoffs, onStop, focus = null, older = false, onOlder }: {
   rows: Msg[]
+  older?: boolean                              // the server holds rows older than the first one here (a long thread)
+  onOlder?: () => Promise<void>                // …and this loads the page before them
   focus?: Focus | null                         // open AT this message (a search hit): thread/focus.ts
   handoffs?: WHandoff[]
   onStop?: StopFn
@@ -116,6 +118,22 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   const last = rows.at(-1)?.id ?? 0
   // a long thread renders its newest window ("Show earlier" above); a jump widens it and lands on its message
   const win = useWindowed(blocks, focus, !loading, () => end.current?.parentElement?.parentElement ?? null)
+  // the conversation's hands, held still (iteration 14): a block re-renders when ITS content changes, never because
+  // the workspace above re-rendered (a step event, the clock) and handed down a new callback
+  const cbRef = useRef({ onOpenFile, onOpenAsk, onEdit })
+  cbRef.current = { onOpenFile, onOpenAsk, onEdit }
+  const cb = useMemo<BlockCb>(() => ({
+    openFile: (r) => cbRef.current.onOpenFile(r),
+    openAsk: (a) => cbRef.current.onOpenAsk?.(a),
+    edit: (m) => cbRef.current.onEdit(m),
+  }), [])
+  const [fetching, setFetching] = useState(false)
+  const earlier = async () => {
+    if (win.hidden > 0 || !onOlder) return win.earlier()
+    setFetching(true)
+    try { await onOlder() } finally { setFetching(false) }
+    win.earlier()                                  // the page just loaded sits above the window: open it, holding the place
+  }
   useEffect(() => { if (!win.jumping()) end.current?.scrollIntoView({ block: 'end', behavior: reduce ? 'auto' : 'smooth' }) }, [last, pending.length, reduce]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return (
@@ -126,26 +144,44 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   return (
     <div className="mx-auto w-full max-w-[720px] px-5 md:px-6 pt-8 pb-6 flex flex-col" role="log" aria-label="conversation">
       {blocks.length === 0 && empty}
-      {win.hidden > 0 && (
-        <button onClick={win.earlier} className="ws-earlier w-full mb-2 py-2 hover:text-ink">
-          Show earlier · {win.hidden} more
+      {(win.hidden > 0 || (older && !!onOlder)) && (
+        <button onClick={() => void earlier()} disabled={fetching} className="ws-earlier w-full mb-2 py-2 hover:text-ink">
+          {fetching ? 'Loading earlier…' : win.hidden > 0 ? `Show earlier · ${win.hidden} more` : 'Show earlier'}
         </button>
       )}
-      {win.shown.map((b) => <Fragment key={b.key}>{blockMsg(b.key) !== null && <span data-msg={blockMsg(b.key)!} hidden />}{(() => {
-        switch (b.kind) {
-          case 'day': return <div key={b.key} className="text-center text-[11.5px] text-ink-mute pt-4 pb-2">{b.label}</div>
-          case 'mine': return <Mine key={b.key} m={b.msg} to={b.to} onEdit={onEdit} onOpenFile={onOpenFile} onOpenAsk={onOpenAsk} />
-          case 'theirs': return <Theirs key={b.key} m={b.msg} turn={b.turn} cont={b.cont} role={roles[b.msg.from]} onOpenFile={onOpenFile} />
-          case 'handoff': return <Handoff key={b.key} h={b.h} />
-          case 'note': return <Note key={b.key} m={b.msg} />
-          case 'elsewhere': return <Elsewhere key={b.key} turn={b.turn} />
-        }
-      })()}</Fragment>)}
+      {win.shown.map((b) => <Fragment key={b.key}>{blockMsg(b.key) !== null && <span data-msg={blockMsg(b.key)!} hidden />}
+        <BlockView b={b} role={b.kind === 'theirs' ? roles[b.msg.from] : undefined} cb={cb} asks={!!onOpenAsk} /></Fragment>)}
       {pending.length > 0 && <div className="pt-5"><LiveActivity pending={pending} onStop={onStop} /></div>}
       <div ref={end} />
     </div>
   )
 }
+
+/* one block, memoized on its CONTENT: blocksOf() builds fresh block objects each time, but a block whose message,
+   turn and neighbours are unchanged renders nothing new (the prose's markdown, its tables' measuring, its chips) */
+interface BlockCb { openFile: (r: OpenRequest) => void; openAsk: (a: ParsedAsk) => void; edit: (m: Msg) => void }
+const turnSig = (t: WTurn | null) => (t ? `${t.id}|${t.steps.length}|${t.ended_at ?? ''}|${t.elsewhere.join(',')}` : '')
+function sameBlock(a: Block, b: Block): boolean {
+  if (a.kind !== b.kind || a.key !== b.key) return false
+  switch (a.kind) {
+    case 'day': return a.label === (b as typeof a).label
+    case 'mine': { const y = b as typeof a; return a.msg === y.msg && a.to.join() === y.to.join() }
+    case 'theirs': { const y = b as typeof a; return a.msg === y.msg && a.cont === y.cont && turnSig(a.turn) === turnSig(y.turn) }
+    case 'handoff': { const y = b as typeof a; return a.h.id === y.h.id && a.h.to === y.h.to && a.h.body === y.h.body && a.h.ts === y.h.ts }
+    case 'note': return a.msg === (b as typeof a).msg
+    case 'elsewhere': return turnSig(a.turn) === turnSig((b as typeof a).turn)
+  }
+}
+const BlockView = memo(function BlockView({ b, role, cb, asks }: { b: Block; role?: string; cb: BlockCb; asks: boolean }) {
+  switch (b.kind) {
+    case 'day': return <div className="text-center text-[11.5px] text-ink-mute pt-4 pb-2">{b.label}</div>
+    case 'mine': return <Mine m={b.msg} to={b.to} onEdit={cb.edit} onOpenFile={cb.openFile} onOpenAsk={asks ? cb.openAsk : undefined} />
+    case 'theirs': return <Theirs m={b.msg} turn={b.turn} cont={b.cont} role={role} onOpenFile={cb.openFile} />
+    case 'handoff': return <Handoff h={b.h} />
+    case 'note': return <Note m={b.msg} />
+    case 'elsewhere': return <Elsewhere turn={b.turn} />
+  }
+}, (x, y) => x.role === y.role && x.cb === y.cb && x.asks === y.asks && sameBlock(x.b, y.b))
 
 /* the canvas shell prefixes what the owner typed there with its context ("[canvas #1 "Dash" v3]"): a chip, not text */
 const CANVAS_CTX = /^\[canvas #(\d+)(?: "([^"\]]*)")?(?: v(\d+))?\]\s*/
