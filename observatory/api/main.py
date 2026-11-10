@@ -362,6 +362,12 @@ from observatory.api import chat as _chat  # noqa: E402
 _chat.bind(lambda: pool, ESTATE, ESTATE / "media", REPO, roster=lambda: set(agent_meta()))   # media/: every channel's inbound files
 app.include_router(_chat.router)
 
+# feat/chat-workspace: the workspace's unified conversation list (chat:, obs:, cv:) and its pins/titles; owner-only by
+# omission from PUBLIC, like /api/chat
+from observatory.api import workspace as _ws  # noqa: E402
+_ws.bind(lambda: pool, ESTATE, roster=lambda: set(agent_meta()), charter=lambda n: _charter_path(n))
+app.include_router(_ws.router)
+
 # the Room's speaker: agents answer the room with send(to='room'); spoken in their voice, or run on the screen
 from observatory.api import room as _room  # noqa: E402
 

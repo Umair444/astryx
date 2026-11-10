@@ -1,15 +1,16 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { displayName } from '../api'
-import AgentFace from '../components/AgentFace'
-import { startDictation, stopDictation, useDictation } from './dictate'
-import { mentions, upload, type McpTool, type Skill, type Uploaded } from './model'
+import { displayName } from '../../api'
+import AgentFace from '../../components/AgentFace'
+import { startDictation, stopDictation, useDictation } from '../dictate'
+import { mentions, upload, type McpTool, type Skill, type Uploaded } from '../model'
+import { I } from '../icons'
 
-/* The composer (plan-11884 C3). Everything is a key:
+/* The composer (plan-11884 C3; restyled for the workspace after canvas's Composer + Home). Everything is a key:
      Enter sends, Shift+Enter breaks a line, ↑ in an empty box brings back your last message,
      / opens commands (the org's real skills and MCP tools, plus /chat's own), @ mentions an agent,
      ⌘. or Ctrl+. dictates, Esc closes a menu.
-   A message goes to the agents it @mentions, or to everyone already in the chat. Nothing sends by itself:
-   dictation and attachments only ever fill the box. */
+   A message goes to the agents it @mentions, or to everyone already in the chat (shown as the "To" faces). Nothing
+   sends by itself: dictation and attachments only ever fill the box. `hero` is the empty state's big well. */
 
 export interface Command { key: string; label: string; hint: string; run: (arg: string) => void | string }
 export interface ComposerHandle { focus: () => void; insert: (text: string) => void; set: (text: string) => void; attach: (u: Uploaded) => void }
@@ -24,13 +25,17 @@ export default forwardRef<ComposerHandle, {
   commands: Command[]
   lastMine: () => string
   onSend: (text: string, files: Uploaded[], to: string[]) => Promise<void>
-}>(function ChatComposer({ roster, inChat, skills, tools, commands, lastMine, onSend }, ref) {
+  hero?: boolean
+  placeholder?: string
+}>(function Composer({ roster, inChat, skills, tools, commands, lastMine, onSend, hero = false, placeholder }, ref) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<Uploaded[]>([])
+  const [uploading, setUploading] = useState(0)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [sel, setSel] = useState(0)
   const [menuOff, setMenuOff] = useState(false)
+  const [drop, setDrop] = useState(false)
   const box = useRef<HTMLTextAreaElement>(null)
   const fileIn = useRef<HTMLInputElement>(null)
   const dict = useDictation()
@@ -51,13 +56,13 @@ export default forwardRef<ComposerHandle, {
     attach: (u) => setFiles((f) => [...f, u]),
   }))
 
-  // autosize, up to a third of the screen
+  // autosize: a hero well starts tall; the dock grows to 40% of the screen
   useEffect(() => {
     const el = box.current
     if (!el) return
     el.style.height = '0px'
-    el.style.height = Math.min(el.scrollHeight, Math.round(innerHeight / 3)) + 'px'
-  }, [text])
+    el.style.height = Math.max(hero ? 64 : 26, Math.min(el.scrollHeight, Math.round(innerHeight * 0.4))) + 'px'
+  }, [text, hero])
 
   // the token under the caret decides the menu: "/word" at the start, or "@word" anywhere
   const caret = box.current?.selectionStart ?? text.length
@@ -94,10 +99,10 @@ export default forwardRef<ComposerHandle, {
 
   const named = mentions(text, roster)
   const to = named.length ? named : inChat
-  const canSend = !busy && (text.trim() || files.length) && to.length > 0
+  const canSend = !busy && !uploading && (text.trim() || files.length) && to.length > 0
 
   async function send() {
-    if (!canSend) { if (!to.length) setErr('Mention an agent with @ to start this chat.'); return }
+    if (!canSend) { if (!to.length && (text.trim() || files.length)) setErr('Mention an agent with @ to start this chat.'); return }
     setBusy(true); setErr('')
     try {
       await onSend(text.trim(), files, to)
@@ -107,7 +112,8 @@ export default forwardRef<ComposerHandle, {
   async function addFiles(list: FileList | File[]) {
     setErr('')
     for (const f of Array.from(list)) {
-      try { const u = await upload(f, f.name || 'pasted.png'); setFiles((x) => [...x, u]) } catch (e) { setErr(String((e as Error).message ?? e)) }
+      setUploading((n) => n + 1)
+      try { const u = await upload(f, f.name || 'pasted.png'); setFiles((x) => [...x, u]) } catch (e) { setErr(String((e as Error).message ?? e)) } finally { setUploading((n) => n - 1) }
     }
   }
   const dictate = () => (dict.phase === 'live' || dict.phase === 'connecting' ? stopDictation() : startDictation((t) => insert(t)))
@@ -125,16 +131,18 @@ export default forwardRef<ComposerHandle, {
   }
 
   const live = dict.phase === 'live'
+  const hint = placeholder ?? (to.length ? `Message ${to.map(displayName).join(', ')}` : 'Mention an agent with @ to start')
   return (
-    <div className="mx-auto w-full max-w-[760px] px-6 pb-5">
-      <div className={`relative rounded-2xl border bg-deck-2 transition-colors ${live ? 'border-cyan/60' : 'border-line focus-within:border-line-2'}`}
-        onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault() }}
-        onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); addFiles(e.dataTransfer.files) } }}>
+    <div className={hero ? 'w-full' : 'mx-auto w-full max-w-[760px] px-4 md:px-6 pb-4 md:pb-5 pt-1'}>
+      <div className="ws-composer relative" data-drop={drop}
+        onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDrop(true) } }}
+        onDragLeave={() => setDrop(false)}
+        onDrop={(e) => { setDrop(false); if (e.dataTransfer.files.length) { e.preventDefault(); addFiles(e.dataTransfer.files) } }}>
         {items.length > 0 && (
-          <ul role="listbox" aria-label={slash ? 'commands' : 'agents'} className="absolute left-0 right-0 bottom-full mb-2 max-h-[300px] overflow-y-auto rounded-xl border border-line bg-deck-2 shadow-2xl p-1 z-20">
+          <ul role="listbox" aria-label={slash ? 'commands' : 'agents'} className="ws-menu absolute left-0 right-0 bottom-full mb-2 max-h-[300px] overflow-y-auto p-1 z-20">
             {items.map((it, i) => (
               <li key={it.key} role="option" aria-selected={i === sel} onMouseDown={(e) => { e.preventDefault(); it.apply() }} onMouseEnter={() => setSel(i)}
-                className={`flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 cursor-pointer ${i === sel ? 'bg-deck-3' : ''}`}>
+                className={`flex items-center gap-2.5 rounded-[9px] px-2.5 py-1.5 cursor-pointer ${i === sel ? 'bg-[color-mix(in_srgb,var(--t-fg)_7%,transparent)]' : ''}`}>
                 {it.kind === 'agent' ? <AgentFace name={it.key.slice(1)} size={20} />
                   : <span className="w-5 text-center text-[11px] text-ink-mute" aria-hidden>{it.kind === 'cmd' ? '/' : it.kind === 'skill' ? '✦' : 'ƒ'}</span>}
                 <span className="text-[13px] text-ink shrink-0">{it.label}</span>
@@ -143,40 +151,45 @@ export default forwardRef<ComposerHandle, {
             ))}
           </ul>
         )}
-        {files.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-3 pt-3">
+        {(files.length > 0 || uploading > 0) && (
+          <div className="flex flex-wrap gap-1.5 px-3.5 pt-3">
             {files.map((f, i) => (
-              <span key={f.path} className="inline-flex items-center gap-1.5 rounded-lg bg-deck-3 border border-line pl-2 pr-1 py-0.5 text-[12px] text-ink-dim">
-                {f.name}
-                <button onClick={() => setFiles((x) => x.filter((_, j) => j !== i))} aria-label={`remove ${f.name}`} className="px-1 hover:text-ink">✕</button>
+              <span key={f.path} className="inline-flex items-center gap-1.5 rounded-[9px] bg-[color-mix(in_srgb,var(--t-fg)_6%,transparent)] pl-2 pr-1 py-1 text-[12px] text-ink-dim">
+                {I.clip('w-3 h-3')}<span className="max-w-[200px] truncate">{f.name}</span>
+                <button onClick={() => setFiles((x) => x.filter((_, j) => j !== i))} aria-label={`remove ${f.name}`} className="p-0.5 rounded hover:text-bad">{I.x('w-3 h-3')}</button>
               </span>
             ))}
+            {uploading > 0 && <span className="inline-flex items-center gap-1.5 text-[12px] text-ink-mute px-1"><span className="w-3 h-3 rounded-full border-2 border-ink-mute border-t-transparent animate-spin" aria-hidden />Uploading</span>}
           </div>
         )}
         <textarea ref={box} value={text} rows={1} aria-label="message"
           onChange={(e) => { setText(e.target.value); setMenuOff(false); setErr('') }}
           onKeyDown={onKey}
           onPaste={(e) => { const fs = Array.from(e.clipboardData.files); if (fs.length) { e.preventDefault(); addFiles(fs) } }}
-          placeholder={to.length ? `Message ${to.map(displayName).join(', ')}` : 'Mention an agent with @ to start'}
-          className="block w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[15px] leading-relaxed text-ink placeholder:text-ink-mute outline-none" />
+          placeholder={hint}
+          className={`block w-full resize-none bg-transparent px-4 outline-none text-ink placeholder:text-ink-mute ${hero ? 'pt-4 pb-1 text-[17px] leading-[1.55]' : 'pt-3.5 pb-1 text-[15px] leading-relaxed'}`} />
         {(live || dict.phase === 'connecting') && (
           <div className="px-4 pb-1 text-[12.5px] text-cyan flex items-center gap-2" role="status">
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan" style={{ transform: `scale(${1 + dict.level * 1.6})` }} aria-hidden />
             {dict.partial || (live ? 'Listening. Speech goes to OpenAI for transcription.' : 'Starting the microphone…')}
           </div>
         )}
-        <div className="flex items-center gap-1 px-2 pb-2">
+        <div className="flex items-center gap-0.5 px-2 pb-2 pt-1">
           <input ref={fileIn} type="file" multiple hidden onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = '' }} />
-          <button className="chat-tool" onClick={() => fileIn.current?.click()} title="Attach files (or paste, or drop)" aria-label="attach files">＋</button>
-          <button className={`chat-tool ${live ? 'text-cyan' : ''}`} onClick={dictate} title="Dictate (⌘.)" aria-pressed={live} aria-label="dictate">◉</button>
-          <div className="flex items-center gap-1 ml-1 min-w-0 overflow-hidden">
-            {to.slice(0, 5).map((n) => <span key={n} title={`to ${displayName(n)}`}><AgentFace name={n} size={18} /></span>)}
-          </div>
+          <button className="ws-icon" onClick={() => fileIn.current?.click()} title="Attach files (or paste, or drop)" aria-label="attach files">{I.clip()}</button>
+          <button className="ws-icon" onClick={dictate} title="Dictate (⌘.)" aria-pressed={live} aria-label="dictate">{live ? <span className="w-2.5 h-2.5 rounded-sm bg-bad animate-pulse" /> : I.mic()}</button>
+          {to.length > 0 && (
+            <div className="flex items-center gap-1.5 ml-1.5 min-w-0 overflow-hidden text-[12px] text-ink-mute" title={`To ${to.map(displayName).join(', ')}`}>
+              <span className="max-sm:hidden">To</span>
+              <span className="flex -space-x-1">{to.slice(0, 5).map((n) => <span key={n} className="rounded-full ring-2 ring-[var(--t-panel)]"><AgentFace name={n} size={18} /></span>)}</span>
+              {to.length === 1 && <span className="truncate text-ink-dim max-sm:hidden">{displayName(to[0])}</span>}
+            </div>
+          )}
           {err && <span className="ml-2 text-[12px] text-bad truncate" role="alert">{err}</span>}
           {dict.phase === 'error' && dict.error && !err && <span className="ml-2 text-[12px] text-bad truncate" role="alert">{dict.error}</span>}
-          <span className="ml-auto text-[11.5px] text-ink-mute hidden sm:inline">Enter to send</span>
-          <button onClick={send} disabled={!canSend} className="ml-2 rounded-lg px-3 py-1.5 text-[13px] font-medium bg-cyan text-on disabled:opacity-40">
-            {busy ? 'Sending' : 'Send'}
+          <span className="ml-auto mr-2 text-[11px] text-ink-mute hidden md:inline">{text ? 'Enter to send · Shift+Enter for a line' : '/ for commands · @ for agents'}</span>
+          <button onClick={send} disabled={!canSend} className="ws-send ws-sig max-md:ml-auto" aria-label={busy ? 'sending' : 'send'} title="Send (Enter)">
+            {busy ? <span className="w-3.5 h-3.5 rounded-full border-2 border-white/70 border-t-transparent animate-spin" /> : I.send('w-[18px] h-[18px]')}
           </button>
         </div>
       </div>

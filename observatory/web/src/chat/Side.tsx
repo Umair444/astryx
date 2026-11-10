@@ -4,6 +4,8 @@ import { useStore } from '../store'
 import type { Step } from '../types'
 import AgentFace from '../components/AgentFace'
 import { moodOf, nowLine } from '../ui/life'
+import { Presence } from './shell/AgentRail'
+import { plainLine } from './thread/LiveActivity'
 import { download, fetchFile, kindOf, showMedia, stepLine, upload, visible, type Uploaded } from './model'
 
 /* The side panel (plan-11884 C4/C5): whatever the conversation points at, opened beside it. A file (an upload or an
@@ -137,7 +139,7 @@ export function Workforce({ agents, steps, unlinked, title }: { agents: string[]
   return (
     <section className="h-full flex flex-col" aria-label="workforce">
       <header className="px-4 h-12 flex items-center border-b border-line shrink-0">
-        <span className="text-[13px] font-medium text-ink">{title}</span>
+        <span className="ws-display text-[21px] leading-none text-ink">{title}</span>
         <span className="ml-auto text-[12px] text-ink-mute tabular-nums">{agents.length} {agents.length === 1 ? 'agent' : 'agents'}</span>
       </header>
       <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2.5">
@@ -148,7 +150,7 @@ export function Workforce({ agents, steps, unlinked, title }: { agents: string[]
           const mood = row ? moodOf(row, p, now) : 'asleep'
           const nl = row ? nowLine(row, p, mood, now) : { where: '', line: '' }
           const recent = (steps[a] ?? []).filter(visible).slice(-5).reverse()
-          return <Lane key={a} agent={a} mood={mood} line={mood === 'asleep' ? `asleep, seen ${fmtAgo(row?.last_seen ?? null)}` : nl.line} recent={recent} unfiled={unlinked[a] ?? 0} />
+          return <Lane key={a} agent={a} mood={mood} line={mood === 'asleep' ? `asleep, seen ${fmtAgo(row?.last_seen ?? null)}` : plainLine(nl.line)} recent={recent} unfiled={unlinked[a] ?? 0} />
         })}
       </div>
     </section>
@@ -159,11 +161,11 @@ function Lane({ agent, mood, line, recent, unfiled }: { agent: string; mood: str
   const ref = useRef<HTMLDivElement>(null)
   const working = mood === 'working'
   return (
-    <div ref={ref} className={`rounded-xl border px-3 py-2.5 ${working ? 'border-cyan/50 bg-cyan/[0.06]' : 'border-line bg-deck-2'}`}>
+    <div ref={ref} className="ws-card px-3.5 py-3" style={{ ['--ws-pip-bg' as string]: 'var(--t-panel)' }}>
       <div className="flex items-center gap-2.5">
-        <span className="relative shrink-0"><AgentFace name={agent} size={26} dim={mood === 'asleep'} />{working && <span className="chat-halo absolute -inset-1 rounded-full pointer-events-none" aria-hidden />}</span>
+        <Presence agent={agent} status={working ? 'working' : mood === 'asleep' ? 'asleep' : 'awake'} size={26} />
         <span className="text-[13px] font-semibold text-ink">{displayName(agent)}</span>
-        <span className={`ml-auto text-[11.5px] ${working ? 'text-cyan' : mood === 'awake' ? 'text-good' : 'text-ink-mute'}`}>{mood}</span>
+        <span className={`ml-auto text-[11.5px] ${working ? 'text-cyan' : 'text-ink-mute'}`}>{mood === 'awake' ? 'idle' : mood}</span>
       </div>
       {line && <div className="mt-1.5 text-[12.5px] text-ink-dim leading-snug line-clamp-2">{line}</div>}
       {unfiled > 0 && <div className="mt-1.5 text-[11.5px] text-ink-mute">{unfiled} earlier {unfiled === 1 ? 'step' : 'steps'} never filed to a turn</div>}
