@@ -62,6 +62,7 @@ def main():
     C.bind(None, estate, media, REPO)
     S = A.Store(tmp / "store", max_bytes=1024 * 1024)
     T = "chat:20991231-abc"
+    ts0 = datetime(2099, 12, 30, tzinfo=timezone.utc)
 
     print("identity")
     arm("id is sha1(thread\\nname)[:16]",
@@ -141,6 +142,36 @@ def main():
     arm("newest first in the list", [x["id"] for x in S.list(T)][0] == img["id"])
     log = subprocess.run(["git", "-C", str(S.root), "log", "--format=%an <%ae>"], capture_output=True, text=True).stdout
     arm("commit authors are per-commit, @astryx.local", "db <db@astryx.local>" in log and "owner <owner@astryx.local>" in log)
+
+    print("library")
+    lib = S.list_all()
+    arm("every artifact, one git log, newest head first", [x["id"] for x in lib][:2] == [img["id"], a1["id"]], [x["name"] for x in lib])
+    one = next(x for x in lib if x["id"] == a1["id"])
+    full = S.artifact(a1["id"])
+    arm("the library's versions equal the artifact's own", one["versions"] == full["versions"] and one["head"] == full["head"])
+    arm("+ author (who made v1) and updated (the head's time)", one["author"] == "db" and one["updated"] == full["versions"][0]["ts"], one)
+    arm("the artifact shape plus author/updated only", set(one) == set(full) | {"author", "updated"}, set(one))
+    arm("an empty store lists nothing", A.Store(tmp / "nostore").list_all() == [])
+
+    print("export")
+    exp = S.export(img["id"], media)
+    arm("unchanged since import -> the source path itself (no copy)", exp == {"id": img["id"], "name": "chart.png", "path": str(up.resolve())}, exp)
+    ex1 = S.export(a1["id"], media)                       # head = v1's bytes (restored), its source holds 5% now
+    snap = Path(ex1["path"])
+    arm("an owner-made head -> a snapshot under media/upload, the head's bytes",
+        snap.parent == media / "upload" and snap.read_bytes() == S.content(a1["id"])[0] and snap.suffix == ".md", ex1)
+    arm("the snapshot passes the file gate (an agent and the chip can read it)", C.readable(ex1["path"]) is not None)
+    arm("the same head -> the same file, written once", S.export(a1["id"], media) == ex1)
+    arm("an unknown id -> 404", code_of(S.export, "0" * 16, media) == 404)
+
+    print("library media")
+    rows2 = [{"id": 1, "ts": ts0, "from_agent": "owner", "thread": T, "body": "[[file:/m/upload/ab.png]] (chart)"},
+             {"id": 4, "ts": ts0, "from_agent": "db", "thread": T, "body": "[[file:/m/upload/ab.png]] (chart)"},
+             {"id": 6, "ts": ts0, "from_agent": "db", "thread": "obs:db", "body": "[[file:/h/homes/db/new.csv]]"}]
+    lm = A.library_media(rows2, S.index())
+    arm("one entry per (thread, file), newest mention first", [(x["thread"], x["msg_id"]) for x in lm] == [("obs:db", 6), (T, 4)], lm)
+    arm("an embed the store holds names its artifact; one it doesn't is None",
+        lm[1]["artifact"] == img["id"] and lm[0]["artifact"] is None, lm)
 
     print("annotations")
     g = S.annotations(a1["id"])

@@ -58,7 +58,14 @@ export function nameOf(path: string, label?: string): string {
 let storeUp: boolean | null = null      // learned on the first open; a later success flips it back
 const missing = (e: unknown) => { const s = (e as { status?: number }).status ?? 0; return s === 404 || s === 405 || s >= 500 || s === 0 }
 
+/* `art:<id>` opens a STORED artifact by id (the library, a project's files): nothing is re-imported, so a file whose
+   source is gone still opens with its whole history */
+export const byId = (id: string) => `art:${id}`
 export async function openArtifact(path: string, thread: string, author: string, label?: string): Promise<Opened> {
+  if (path.startsWith('art:')) {
+    const a = await getArtifact(path.slice(4))
+    return { ...a, kind: a.kind === 'binary' ? kindOfName(a.name) : a.kind, source: path, store: true }
+  }
   const name = nameOf(path, label)
   if (storeUp !== false) {
     try {

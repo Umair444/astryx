@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import '@fontsource/instrument-serif/400.css'
 import '@fontsource/instrument-serif/400-italic.css'
@@ -12,8 +12,8 @@ import { canvasBase } from '../cog'
 import { nowLine } from '../ui/life'
 import { startDictation } from './dictate'
 import {
-  bodyFor, isChat, loadCommands, loadWork, loadProjects, newThread, participants, saveProjects, slug, stepsOf, stripEmbeds,
-  type McpTool, type Project, type Projects, type Skill, type Uploaded, type Work,
+  bodyFor, loadCommands, loadWork, newThread, participants, stepsOf, stripEmbeds,
+  type McpTool, type Project, type Skill, type Uploaded, type Work,
 } from './model'
 import {
   deskAgent, deskThread, liveAgentOf, loadWsAgents, saveThreadMeta, statusOf, surfaceOf, useNow, useWsThreads,
@@ -22,21 +22,29 @@ import {
 import AgentRail, { Presence } from './shell/AgentRail'
 import ConversationList from './shell/ConversationList'
 import TopBar from './shell/TopBar'
-import { Keys, NameProject, Palette } from './shell/Dialogs'
+import { Keys, Palette } from './shell/Dialogs'
 import Composer, { type Command, type ComposerHandle } from './thread/Composer'
 import Turns from './thread/Turns'
 import { plainLine, type Pending } from './thread/LiveActivity'
 import TeamHome from './empty/TeamHome'
-import ProjectHome from './empty/ProjectHome'
+import NewProject from './projects/NewProject'
+import { blank, moveThread, nextColor, patchOne, projectOf, removeOne, upsert, useProjects } from './projects/model'
+import { projectContext } from './projects/context'
+import type { View } from './projects/Sidebar'
 import Workforce from './shell/Workforce'
 import Panel, { type Layout } from './artifacts/Panel'
 import { usePanel } from './artifacts/usePanel'
 import MediaDrawer from './artifacts/MediaDrawer'
-import { distinctMedia, loadMedia, mediaOfRows, type MediaItem } from './artifacts/api'
+import { byId, distinctMedia, loadMedia, mediaOfRows, type MediaItem } from './artifacts/api'
 import type { OpenRequest } from './artifacts/FileChip'
 import type { AnnotateCtx } from './artifacts/annotate/types'
 import type { ParsedAsk } from './artifacts/annotate/ask'
 import { I } from './icons'
+
+// the library and the project pages load on first visit (their own chunk); the sidebar's project rows are eager
+const Library = lazy(() => import('./library/Library'))
+const ProjectHome = lazy(() => import('./projects/ProjectHome'))
+const ProjectsIndex = lazy(() => import('./projects/ProjectsIndex'))
 import { interruptAgent, loadHandoffs, useTabTitle, useUnread, type Handoff } from './live'
 import ListSeam, { useListWidth } from './shell/ListSeam'
 
@@ -89,17 +97,20 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const [palette, setPalette] = useState(false)
   const [help, setHelp] = useState(false)
   const [cmds, setCmds] = useState<{ skills: Skill[]; tools: McpTool[] }>({ skills: [], tools: [] })
-  const [proj, setProj] = useState<Projects>({ etag: '', projects: [] })
-  const [project, setProject] = useState<string | null>(null)
-  const [asking, setAsking] = useState<null | 'project'>(null)
+  const [asking, setAsking] = useState<null | 'project' | 'new'>(null)
   const [note, setNote] = useState('')
+  // iteration 5: the route also names the workspace's own pages — #/chat/library, #/chat/projects, #/chat/project:<id>
+  const proj = useProjects(setNote)
+  const view: View = thread === 'library' ? 'library' : thread === 'projects' ? 'projects' : thread?.startsWith('project:') ? 'project' : 'thread'
+  const project = view === 'project' ? thread!.slice(8) : null
+  const [listFilter, setListFilter] = useState<string | null>(null)     // the list focused on one project's conversations
   const [annFocus, setAnnFocus] = useState<AnnotateCtx['focus']>(null)
   const composer = useRef<ComposerHandle>(null)
-  const current = thread ?? ''
-  const panel = usePanel(current)
+  const current = view === 'thread' ? thread ?? '' : ''
+  const panel = usePanel(view === 'thread' ? current : thread ?? '')    // the library and a project keep their own tabs
   const go = useCallback((t: string | null) => { setDrawer(false); nav(t) }, [nav])
 
-  useEffect(() => { loadCommands().then(setCmds); loadProjects().then(setProj).catch(() => {}); loadWsAgents().then(setTeam).catch(() => {}) }, [])
+  useEffect(() => { loadCommands().then(setCmds); loadWsAgents().then(setTeam).catch(() => {}) }, [])
 
   // the thread: its history once, then the live feed, merged by id
   useEffect(() => {
@@ -154,7 +165,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     for (const a of participants(rows, names)) if (!out.includes(a)) out.push(a)
     return out
   }, [currentRow, rows, names])
-  const recipients = current ? inChat : activeProject ? activeProject.agents : names.includes('seed') ? ['seed'] : []
+  const seedOnly = names.includes('seed') ? ['seed'] : []
+  const recipients = current ? inChat : activeProject?.agents.length ? activeProject.agents : seedOnly
   const lanes = activeProject && !current ? activeProject.agents : inChat
 
   // D4: in a chat, the work comes filed by turn (/api/chat/work), refetched when the thread moves or one of its
@@ -208,29 +220,28 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   async function onSend(text: string, files: Uploaded[], to: string[]) {
     const t = current || newThread()
     const body = [text, ...files.map((f) => `[[file:${f.path}]] (${f.name})`)].filter(Boolean).join('\n')
-    for (const a of to) await send(a, bodyFor(body, to, a), t)        // R4: one row per recipient, one thread
+    // a project chat's FIRST message carries the project's instructions and files (projects/context.ts)
+    const pj = !current && activeProject ? activeProject : projectOf(t, proj.projects)
+    const ctx = pj && (!current || !rows.some((m) => m.from === 'owner')) ? await projectContext(pj) : ''
+    for (const a of to) await send(a, ctx + bodyFor(body, to, a), t)        // R4: one row per recipient, one thread
+    if (!current && activeProject) await proj.mutate(moveThread(t, activeProject.id))
     if (!current) go(t)
-    if (activeProject && isChat(t) && !activeProject.threads.includes(t)) await saveProject({ ...activeProject, threads: [...activeProject.threads, t] })
     reload()
   }
 
-  async function saveProject(p: Project, remove = false) {
-    const list = remove ? proj.projects.filter((x) => x.id !== p.id) : proj.projects.some((x) => x.id === p.id)
-      ? proj.projects.map((x) => (x.id === p.id ? p : x)) : [...proj.projects, p]
-    try { setProj(await saveProjects(proj.etag, list)) } catch (e) {
-      const fresh = (e as { fresh?: Projects }).fresh
-      if (fresh) { setProj(fresh); setNote('Projects changed somewhere else; reloaded them. Try again.') } else setNote(String((e as Error).message))
-    }
-  }
-
   async function runProject(p: Project) {
-    if (!p.agents.length) { setNote('Add agents to this project first: open one of its chats and @mention them.'); return }
+    if (!p.agents.length) { setNote('Add agents to the project’s team first.'); return }
     const t = `chat:project-${p.id}`
-    const kick = `Project "${p.name}" is running.${p.brief ? `\nBrief: ${p.brief}` : ''}\nWork it together and autonomously: split it between you, say who takes what on this thread, and post progress and results here as you go. Ask me only what you can't decide.`
-    for (const a of p.agents) await send(a, bodyFor(kick, p.agents, a), t)
-    if (!p.threads.includes(t)) await saveProject({ ...p, threads: [t, ...p.threads] })
+    const ctx = await projectContext(p)
+    const kick = `Project "${p.name}" is running.\nWork it together and autonomously: split it between you, say who takes what on this thread, and post progress and results here as you go. Ask me only what you can't decide.`
+    for (const a of p.agents) await send(a, ctx + bodyFor(kick, p.agents, a), t)
+    if (!p.threads.includes(t)) await proj.mutate(moveThread(t, p.id))
     go(t); setWorkforce(true)
   }
+  const openProject = (id: string) => go(`project:${id}`)
+  // a stored artifact (the library, a project's files) opens by id in this page's own panel: nothing re-imports
+  const openStored = (id: string, it: { name: string; author: string }) => { setWorkforce(false); panel.open({ path: byId(id), label: it.name, from: it.author }) }
+  const storedActive = panel.active?.startsWith('art:') ? panel.active.slice(4) : null
 
   // a title or a pin: optimistic on the row, then the server's list
   async function setMeta(t: WsThread, p: { title?: string; pinned?: boolean }) {
@@ -239,12 +250,14 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     reload()
   }
 
-  const openAgent = (a: string) => { setProject(null); go(deskThread(a)) }
-  const newChat = () => { setProject(null); go(null); requestAnimationFrame(() => composer.current?.focus()) }
+  const openAgent = (a: string) => go(deskThread(a))
+  const newChat = () => { go(null); requestAnimationFrame(() => composer.current?.focus()) }
 
   const commands: Command[] = [
     { key: 'new', label: 'New chat', hint: 'start an empty chat', run: newChat },
     { key: 'project', label: 'Make this a project', hint: 'name it; its agents work it together', run: () => { setAsking('project') } },
+    { key: 'newproject', label: 'New project', hint: 'instructions, a team, files, its own chats (g n)', run: () => setAsking('new') },
+    { key: 'library', label: 'Library', hint: 'every file, every version (g l)', run: () => go('library') },
     { key: 'run', label: 'Run the project', hint: 'its agents start working it on their own', run: () => (activeProject ? void runProject(activeProject) : 'Open a project first (⌘K).') },
     { key: 'workforce', label: 'Workforce', hint: 'show the agents at work', run: () => setWorkforce(true) },
     { key: 'files', label: 'Files', hint: 'every file in this conversation (⌘⇧E)', run: () => setFilesOpen(true) },
@@ -262,6 +275,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
 
   // ------------------------------------------------------------------------------------------------- keys
   const chatIds = listThreads.map((t) => t.thread)
+  const gAt = useRef(0)
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey
@@ -285,6 +299,16 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         return
       }
       if (!typing && !mod && e.key === '/') { e.preventDefault(); composer.current?.focus(); composer.current?.set('/') }
+      // g then l / p / n: the library, the projects, a new project (Linear's go-to chords; never while typing)
+      if (!typing && !mod && !e.altKey && !(e.target as HTMLElement)?.closest('select')) {
+        const k2 = e.key.toLowerCase()
+        if (gAt.current && Date.now() - gAt.current < 1200 && ['l', 'p', 'n'].includes(k2)) {
+          e.preventDefault(); gAt.current = 0
+          if (k2 === 'l') go('library'); else if (k2 === 'p') go('projects'); else setAsking('new')
+          return
+        }
+        gAt.current = k2 === 'g' && !e.shiftKey ? Date.now() : 0
+      }
     }
     addEventListener('keydown', k)
     return () => removeEventListener('keydown', k)
@@ -302,24 +326,25 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
 
   const roles = Object.fromEntries(team.map((a) => [a.agent, a.role]))
   const title = currentRow?.title ?? (activeProject ? activeProject.name : 'New chat')
-  const box = (hero: boolean) => (
+  const box = (hero: boolean, placeholder?: string) => (
     <Composer ref={composer} hero={hero} roster={names} inChat={recipients} skills={cmds.skills} tools={cmds.tools}
       commands={commands} onSend={onSendOrCommand}
-      placeholder={hero ? 'Ask the team anything. @mention who should take it; seed routes the rest.' : undefined}
+      placeholder={placeholder ?? (hero ? 'Ask the team anything. @mention who should take it; seed routes the rest.' : undefined)}
       lastMine={() => stripEmbeds([...rows].reverse().find((m) => m.from === 'owner')?.body ?? '')} />
   )
   const list = (phone: boolean) => (
     <ConversationList threads={listThreads} loaded={loaded} current={current || null} live={live} projects={proj.projects} project={project}
-      onGo={(t) => { setProject(null); go(t) }} onNew={newChat}
-      onProject={(id) => { setProject(id); go(null) }}
+      onGo={(t) => go(t)} onNew={newChat} onProject={openProject}
+      view={view} filter={listFilter} onFilter={setListFilter} onLibrary={() => go('library')} onProjects={() => go('projects')}
+      onNewProject={() => setAsking('new')} onMove={(t, to) => void proj.mutate(moveThread(t.thread, to))}
       onPin={(t) => setMeta(t, { pinned: !t.pinned })} onRename={(t, title) => setMeta(t, { title })}
       onClose={phone ? () => setDrawer(false) : undefined}
       unread={unread}
       className={phone ? '!w-[86vw] max-w-[340px]' : `max-md:hidden ${listHidden ? '!hidden' : ''}`} />
   )
-  const home = !current && !activeProject
+  const home = view === 'thread' && !current
   const layout: Layout = winW >= 1200 ? 'inline' : winW >= 768 ? 'sheet' : 'full'
-  const showPanel = !!current && panel.tabs.length > 0 && !workforce
+  const showPanel = (!!current || view === 'library' || view === 'project') && panel.tabs.length > 0 && !workforce
   const files = media ?? []
   // the drawer docks beside the panel where there is room for rail + chat + panel + drawer; narrower it floats
   const docked = winW >= 1320
@@ -341,20 +366,21 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   return (
     <div className="ws h-dvh flex ws-backdrop text-ink overflow-hidden" style={{ ['--ws-list' as string]: `${listW.width}px` }}>
       <AgentRail agents={names} status={status} lines={lines} current={current || null} onPick={openAgent}
-        onHome={() => { setProject(null); go(null) }} onPalette={() => setPalette(true)} onKeys={() => setHelp(true)} />
+        onHome={() => { setListFilter(null); go(null) }} onPalette={() => setPalette(true)} onKeys={() => setHelp(true)} />
       {list(false)}
       {!listHidden && <ListSeam list={listW} />}
 
       {/* ── the conversation, and beside it the artifact panel ─────────────────────────────── */}
       <div className="flex-1 min-w-0 flex">
       <main className="flex-1 min-w-[420px] max-md:min-w-0 flex flex-col relative">
-        {home ? (
+        {home || view !== 'thread' ? (
           <div className="h-12 shrink-0 flex items-center px-3 md:hidden">
             <button className="ws-icon" onClick={() => setDrawer(true)} aria-label="conversations">{I.menu()}</button>
           </div>
         ) : (
           <TopBar title={title} canRename={!!currentRow} surface={currentRow?.surface ?? null}
-            project={(currentRow?.project && proj.projects.find((p) => p.id === currentRow.project)?.name) || (activeProject && !current ? 'Projects' : null)}
+            project={projectOf(current, proj.projects)?.name ?? null}
+            onProject={() => { const p = projectOf(current, proj.projects); if (p) openProject(p.id) }}
             agents={current ? inChat : activeProject?.agents ?? []} status={status} workforce={workforce}
             files={files.length} media={filesOpen}
             onRename={(t) => currentRow && setMeta(currentRow, { title: t })}
@@ -363,14 +389,25 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         )}
         <div className="flex-1 min-h-0 overflow-y-auto">
           {home && <TeamHome names={names} status={status} lines={lines} agents={team} threads={threads} composer={box(true)} onAgent={openAgent} onGo={go} />}
-          {!current && activeProject && <ProjectHome p={activeProject} threads={threads} go={go} run={() => runProject(activeProject)}
-            onBrief={(brief) => saveProject({ ...activeProject, brief })} onRemove={() => { saveProject(activeProject, true); setProject(null) }} />}
+          <Suspense fallback={null}>
+          {view === 'library' && <Library projects={proj.projects} activeId={storedActive} onOpen={openStored} onThread={go}
+            onAddToProject={(pid, aid) => void proj.mutate(patchOne(pid, (x) => (x.files.includes(aid) ? x : { ...x, files: [...x.files, aid] })))} />}
+          {view === 'projects' && <ProjectsIndex projects={proj.projects} threads={threads} loaded={proj.loaded} onOpen={openProject} onNew={() => setAsking('new')} />}
+          {view === 'project' && activeProject && <ProjectHome key={activeProject.id} p={activeProject} threads={threads} names={names} status={status} roles={roles}
+            composer={box(true, `New chat in ${activeProject.name}…`)} activeId={storedActive} go={go} onAgent={openAgent} onOpenFile={openStored}
+            edit={(f) => proj.mutate(patchOne(activeProject.id, f))} onRun={() => void runProject(activeProject)} onAll={() => go('projects')} onNote={setNote}
+            onRemoveThread={(t) => void proj.mutate(moveThread(t, null))}
+            onDelete={() => { void proj.mutate(removeOne(activeProject.id)); setListFilter(null); go('projects') }} />}
+          {view === 'project' && !activeProject && proj.loaded && (
+            <div className="pt-[18vh] text-center text-[14px] text-ink-dim">This project is gone. <button className="underline underline-offset-2" onClick={() => go('projects')}>All projects</button></div>
+          )}
+          </Suspense>
           {current && <Turns rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} onStop={interruptAgent}
             onOpenFile={openFile} onOpenAsk={openAsk} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
             empty={<FreshThread agents={inChat} status={status} roles={roles} lines={lines} />} />}
         </div>
         {note && <div className="mx-auto max-w-[760px] w-full px-6 pb-1 text-[12.5px] text-ink-dim cursor-pointer" role="status" onClick={() => setNote('')}>{note}</div>}
-        {!home && box(false)}
+        {view === 'thread' && !home && box(false)}
 
         {/* the media drawer: over the conversation's right edge, under the top bar (the whole screen on a phone) */}
         <AnimatePresence>
@@ -385,7 +422,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         </AnimatePresence>
       </main>
 
-      {showPanel && <Panel panel={panel} layout={layout} onAttach={(u) => composer.current?.attach(u)} onDirty={setDirty} annotate={annotate} />}
+      {showPanel && <Panel panel={panel} layout={layout} onDirty={setDirty} annotate={current ? annotate : undefined}
+        onAttach={(u) => { if (view === 'library') { newChat(); setTimeout(() => composer.current?.attach(u), 80) } else composer.current?.attach(u) }} />}
       </div>
 
       {/* wide: the media drawer DOCKS as a column beside the artifact panel (the panel's row narrows; nothing floats
@@ -424,16 +462,18 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
 
       {palette && <Palette threads={listThreads} names={names} status={status} projects={proj.projects} commands={commands} onClose={() => setPalette(false)}
         lines={lines} files={files} unread={unread} live={live} onOpenFile={(f) => { setPalette(false); openFile(f) }}
-        go={(t) => { setPalette(false); setProject(null); go(t) }}
-        openProject={(id) => { setPalette(false); setProject(id); go(null) }}
+        go={(t) => { setPalette(false); go(t) }}
+        openProject={(id) => { setPalette(false); openProject(id) }}
         openAgent={(n) => { setPalette(false); openAgent(n) }} />}
       {help && <Keys onClose={() => setHelp(false)} />}
-      {asking === 'project' && <NameProject onClose={() => setAsking(null)} onSave={async (name) => {
-        setAsking(null)
-        const id = slug(name)
-        await saveProject({ id, name, brief: '', agents: inChat, threads: isChat(current) ? [current] : [] })
-        setProject(id); setNote(`Project "${name}" made with ${inChat.length ? inChat.map(displayName).join(', ') : 'no agents yet'}.`)
-      }} />}
+      {asking && <NewProject suggest={nextColor(proj.projects)} onClose={() => setAsking(null)}
+        seedAgents={asking === 'project' && current ? inChat : []} seedThread={asking === 'project' && current ? title : null}
+        onCreate={async (d) => {
+          const seeded = asking === 'project' && !!current
+          setAsking(null)
+          const p = blank(d.name, proj.projects, { instructions: d.instructions, color: d.color, emoji: d.emoji, agents: seeded ? inChat : [] })
+          if (await proj.mutate((list) => (seeded ? moveThread(current, p.id)(upsert(p)(list)) : upsert(p)(list)))) openProject(p.id)
+        }} />}
     </div>
   )
 }

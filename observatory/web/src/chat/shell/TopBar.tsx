@@ -10,13 +10,14 @@ import TeamMap, { useMapPopover } from './TeamMap'
    media drawer, with the conversation's file count) and the workforce toggle (⌘J). On a phone it also opens the conversation drawer.
    Hovering the strip (or clicking it, which pins it; ⌘⇧M) opens the LIVE TEAM MAP beneath it (shell/TeamMap.tsx). */
 
-export default function TopBar({ title, canRename, surface, project, agents, status, workforce, files, media, onRename, onWorkforce, onMedia, onMenu, onAgent, names, lines }: {
+export default function TopBar({ onProject, title, canRename, surface, project, agents, status, workforce, files, media, onRename, onWorkforce, onMedia, onMenu, onAgent, names, lines }: {
   names: string[]
   lines: Record<string, string>
   title: string
   canRename: boolean
   surface: Surface | null
   project: string | null
+  onProject?: () => void                      // the crumb opens the project's home
   agents: string[]
   status: Record<string, Status>
   workforce: boolean
@@ -37,7 +38,7 @@ export default function TopBar({ title, canRename, surface, project, agents, sta
     <header className="h-12 shrink-0 flex items-center gap-2 px-3 md:px-5 border-b border-line/70 bg-[color-mix(in_srgb,var(--t-bg)_55%,transparent)] backdrop-blur-md relative z-10">
       <button className="ws-icon md:hidden -ml-1" onClick={onMenu} aria-label="conversations">{I.menu()}</button>
       <div className="min-w-0 flex items-center gap-2 flex-1">
-        {project && <><span className="text-[13px] text-ink-mute truncate max-w-[30%] max-sm:hidden">{project}</span><span className="text-ink-mute max-sm:hidden" aria-hidden>/</span></>}
+        {project && <><button onClick={onProject} title={`Open the project ${project}`} className="text-[13px] text-ink-mute hover:text-ink truncate max-w-[30%] max-sm:hidden transition-colors">{project}</button><span className="text-ink-mute max-sm:hidden" aria-hidden>/</span></>}
         {edit ? (
           <input autoFocus value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} maxLength={80} aria-label="conversation title"
             onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setV(title); setEdit(false) } }}

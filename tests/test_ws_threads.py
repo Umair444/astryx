@@ -115,6 +115,12 @@ def main():
 
     print("preview")
     arm("clean drops embeds and folds", W.clean("[[file:/a/b.pdf]] (b.pdf)\n  see   attached ") == "see attached")
+    pj = "[project: Q4 close]\nKeep it short.\n---\nFiles: [[file:/m/upload/ab.pdf]] (plan.pdf)\n[/project]\n[chat with @db — everyone here reads this thread; reply on it]\nWhat moved in October?"
+    arm("a project chat's context block is hidden from the preview", W.clean(pj) == "What moved in October?", W.clean(pj))
+    arm("... and from the title (custom > first line)", W.derive_title("chat:1-a", None, pj, None, ["db"]) == "What moved in October?")
+    arm("a block cut short (no close) hides entirely, never leaks instructions", W.clean("[project: Q4]\nsecret-ish brief") == "")
+    arm("a body that merely mentions [project: x] mid-text is untouched", W.clean("see [project: x]\nok") == "see [project: x] ok")
+    arm("the SQL cuts the block before the 400-char clip", "[/project]" in W.THREADS_SQL and "+ 12" in W.THREADS_SQL)
 
     print("meta route (in-process, a temp estate; skipped without fastapi)")
     try:

@@ -79,20 +79,24 @@ def surface_of(thread: str | None) -> str | None:
 
 _EMBED = re.compile(r"\[\[file:[^\]\n]+\]\](?: \([^)\n]{1,120}\))?|\[\[ann:[^\]\n]{1,120}\]\]")   # + an ask-the-margin marker
 _TEAM = re.compile(r"^\[chat with [^\]\n]*\]\n?")                  # model.bodyFor's first line
+# a project chat's first message opens with the project's context (web/src/chat/projects/context.ts):
+# "[project: <name>]\n<instructions + pinned files>\n[/project]\n" — the agents', never the reader's; a body cut
+# short before the close (a 400-char preview) loses the whole block
+_PROJECT = re.compile(r"^\[project: [^\]\n]{1,80}\]\n(?:[\s\S]*?\n\[/project\]\n?|[\s\S]*$)")
 _CANVAS = re.compile(r"^\[canvas #\d+[^\]\n]*\]\s*")               # the canvas shell's context prefix
 _BRIEF = re.compile(r'^NEW CANVAS #\d+\s*\W\s*"([^"]{1,80})"')     # the canvas bridge's first message to a painter
 
 
 def clean(body: str | None) -> str:
     """A body as a person reads it in a list: no file embeds, no routing prefixes, whitespace folded."""
-    s = _EMBED.sub("", body or "")
+    s = _PROJECT.sub("", _EMBED.sub("", body or "").lstrip())
     s = _TEAM.sub("", s.lstrip())
     s = _CANVAS.sub("", s)
     return re.sub(r"\s+", " ", s).strip()
 
 
 def first_line(body: str | None) -> str:
-    s = _TEAM.sub("", _EMBED.sub("", body or "").lstrip())
+    s = _TEAM.sub("", _PROJECT.sub("", _EMBED.sub("", body or "").lstrip()).lstrip())
     s = _CANVAS.sub("", s)
     for line in s.splitlines():
         if line.strip():
@@ -278,10 +282,14 @@ def _pool(request: Request):
 
 
 # ------------------------------------------------------------------------------------------------------ routes
-THREADS_SQL = """
+# a project chat's context block is cut off in SQL, before the 400-char clip, so the title and the preview are the
+# owner's own words however long the project's instructions run
+_BODY = "CASE WHEN strpos(body, E'\\n[/project]\\n') > 0 AND body LIKE '[project: %' " \
+        "THEN substr(body, strpos(body, E'\\n[/project]\\n') + 12) ELSE body END"
+THREADS_SQL = f"""
 SELECT thread, count(*) AS count, max(ts) AS last_ts,
-       (array_agg(left(body, 400) ORDER BY id) FILTER (WHERE from_agent = 'owner'))[1] AS first_owner,
-       (array_agg(left(body, 400) ORDER BY id DESC))[1] AS last_body,
+       (array_agg(left({_BODY}, 400) ORDER BY id) FILTER (WHERE from_agent = 'owner'))[1] AS first_owner,
+       (array_agg(left({_BODY}, 400) ORDER BY id DESC))[1] AS last_body,
        (array_agg(from_agent ORDER BY id DESC))[1] AS last_from,
        array_agg(DISTINCT from_agent) || array_agg(DISTINCT to_agent) AS parties
   FROM messages

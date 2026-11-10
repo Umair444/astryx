@@ -224,6 +224,50 @@ def main(tmp: Path, url: str):
         back.get("etag") == tag and back.get("projects", [{}])[0].get("missing") == ["gone-agent"], back)
     arm("D6' `missing` is never stored", "missing" not in before, before)
 
+    # ── iteration 5: a project = instructions + team + conversations of any surface + pinned files ─────────────
+    import json as _json
+    cur = cl.get("/api/chat/projects", headers=O).json()
+    legacy = chat.projects_file().read_text()
+    arm("P5 an old project (brief, no files) reads as the new shape: brief -> instructions, files [], stamps None",
+        cur["projects"][0].get("instructions") == "" and cur["projects"][0].get("files") == [] and "brief" not in cur["projects"][0], cur)
+    rich = [{"id": "zeta-launch", "name": "  Zeta launch ", "brief": "Ship the zeta report by Friday.", "agents": ["zeta"],
+             "threads": ["chat:20990101-abc123", "obs:zeta", "cv:0a1b2c3d"], "files": ["0123456789abcdef"],
+             "color": "teal", "emoji": "🚀", "created": "1999-01-01T00:00:00Z", "updated": "1999-01-01T00:00:00Z"}]
+    w5 = cl.put("/api/chat/projects", json=rich, headers={**O, "if-match": cur["etag"]})
+    got = w5.json().get("projects", [{}])[0] if w5.status_code == 200 else {}
+    arm("P5 any owner surface is a project's (chat:, obs:, cv:), files, colour and emoji land", w5.status_code == 200
+        and got.get("threads") == rich[0]["threads"] and got.get("files") == ["0123456789abcdef"]
+        and got.get("color") == "teal" and got.get("emoji") == "🚀", w5.text)
+    arm("P5 a legacy `brief` on a write becomes `instructions`; brief is never stored; the name is trimmed",
+        got.get("instructions") == "Ship the zeta report by Friday." and got.get("name") == "Zeta launch"
+        and '"brief"' not in chat.projects_file().read_text(), got)
+    arm("P5 created/updated are the server's, never the client's", (got.get("created") or "1999")[:4] != "1999"
+        and (got.get("updated") or "1999")[:4] != "1999", got)
+    stored = _json.loads(chat.projects_file().read_text())["projects"][0]
+    first_created = stored["created"]
+    back5 = cl.get("/api/chat/projects", headers=O).json()
+    same = cl.put("/api/chat/projects", json=back5["projects"], headers={**O, "if-match": back5["etag"]}).json()
+    arm("P5 a write that changes nothing keeps created AND updated",
+        same["projects"][0]["created"] == first_created and same["projects"][0]["updated"] == stored["updated"], same)
+    import time as _time
+    _time.sleep(1.1)
+    moved = cl.put("/api/chat/projects", json=[{**same["projects"][0], "instructions": "New brief."}],
+                   headers={**O, "if-match": same["etag"]}).json()
+    arm("P5 an edit moves updated, never created",
+        moved["projects"][0]["created"] == first_created and moved["projects"][0]["updated"] > stored["updated"], moved)
+    before5 = chat.projects_file().read_text()
+    base = moved["projects"][0]
+    for label, bad_list in (("a WhatsApp thread", [{**base, "threads": ["wa:x"]}]),
+                            ("a bare prefix", [{**base, "threads": ["chat:"]}]),
+                            ("one conversation in two projects", [base, {**base, "id": "other", "threads": ["obs:zeta"]}]),
+                            ("a file that is not an artifact id", [{**base, "files": ["../../etc/passwd"]}]),
+                            ("an unknown colour", [{**base, "color": "#ff0000"}]),
+                            ("an 'emoji' that is markup", [{**base, "emoji": "<b>"}]),
+                            ("instructions past the cap", [{**base, "instructions": "x" * 20001}])):
+        r = cl.put("/api/chat/projects", json=bad_list, headers={**O, "if-match": moved["etag"]})
+        arm(f"P5 {label} is 400, nothing written", r.status_code == 400 and chat.projects_file().read_text() == before5, r.status_code)
+    chat.projects_file().write_text(legacy)          # the arms below read the legacy file as they always have
+
     # ── D4 the work ──────────────────────────────────────────────────────────────────────────────────────────
     T, (a, b, c, d, q) = seed_work(url)
     wk = cl.get("/api/chat/work", params={"thread": T}, headers=O)
