@@ -67,7 +67,7 @@ def surface_of(thread: str | None) -> str | None:
     return None
 
 
-_EMBED = re.compile(r"\[\[file:[^\]\n]+\]\](?: \([^)\n]{1,120}\))?")
+_EMBED = re.compile(r"\[\[file:[^\]\n]+\]\](?: \([^)\n]{1,120}\))?|\[\[ann:[^\]\n]{1,120}\]\]")   # + an ask-the-margin marker
 _TEAM = re.compile(r"^\[chat with [^\]\n]*\]\n?")                  # model.bodyFor's first line
 _CANVAS = re.compile(r"^\[canvas #\d+[^\]\n]*\]\s*")               # the canvas shell's context prefix
 _BRIEF = re.compile(r'^NEW CANVAS #\d+\s*\W\s*"([^"]{1,80})"')     # the canvas bridge's first message to a painter
