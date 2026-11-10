@@ -5,6 +5,7 @@ import AgentFace from '../../components/AgentFace'
 import { THEMES, useTheme } from '../../theme'
 import type { Status } from '../data'
 import { I } from '../icons'
+import { Shelf } from '../projects/Sidebar'
 import TeamMap, { useMapPopover } from './TeamMap'
 
 /* THE AGENT RAIL (DESIGN.md layout): every agent, seed first then the agents/ tree's order, as a face with a status
@@ -70,6 +71,7 @@ export default function AgentRail({ agents, status, lines, current, onPick, onHo
             </div>
           )}
         </div>
+        <a className="ws-icon" href="#/chat/library" title="Library: every file, every version (g then l)" aria-label="the library"><Shelf /></a>
         <button className="ws-icon" onClick={onPalette} title="Search everything (⌘K)" aria-label="search">{I.search()}</button>
         <button className="ws-icon" onClick={flip} title={theme.dark ? 'Light theme (T cycles all)' : 'Dark theme (T cycles all)'} aria-label="switch theme">{theme.dark ? I.sun() : I.moon()}</button>
         <button className="ws-icon" onClick={onKeys} title="Keyboard (⌘/)" aria-label="keyboard shortcuts">{I.keys()}</button>

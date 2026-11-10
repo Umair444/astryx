@@ -97,7 +97,7 @@ const Funnel = () => (
     <path d="M4 5h16l-6.2 7.4V19l-3.6-1.8v-4.8z" />
   </svg>
 )
-const Shelf = () => (
+export const Shelf = () => (
   <svg viewBox="0 0 24 24" className="w-[17px] h-[17px]" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <path d="M4 4.5v15M8.5 4.5v15M13 5.5l4.2 13.6M20 19.5H3" />
   </svg>
