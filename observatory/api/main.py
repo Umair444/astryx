@@ -2093,8 +2093,8 @@ async def agent_avatar(name: str):
         ch = None
     pic = next((ch.parent / f"avatar{x}" for x in _AVATAR_TYPES
                 if ch and ch.parent.name == ch.stem and (ch.parent / f"avatar{x}").is_file()), None)
-    if not pic:
-        return Response(status_code=404)
+    if not pic:                                     # no face drawn yet: a quiet, cacheable miss (the <img> falls
+        return Response(status_code=204, headers={"cache-control": "public, max-age=300"})   # back to the portrait)
     return FileResponse(pic, media_type=_AVATAR_TYPES[pic.suffix], headers={
         "cache-control": "public, max-age=300", "x-content-type-options": "nosniff",
         "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox"})

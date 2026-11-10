@@ -21,6 +21,7 @@ it at a scratch dir). `git init` on first write; never a remote. Each commit nam
 every git call has a timeout. Files land through hostfile.atomic_write (the observatory's one host writer).
 
     <store>/.index.json                    {id: {thread, name, path}}: how an id finds its file
+    <store>/.sources.json                  {id: {source path: sha256}}: what each source held when last imported
     <store>/<thread dir>/<name>            the artifact (thread ':' -> '_', unsafe chars stripped)
     <store>/<thread dir>/<name>.annotations.json
 
@@ -55,6 +56,7 @@ router = APIRouter()
 MAX_BYTES = 50 * 1024 * 1024                       # 50 MB per file (the contract's cap)
 GIT_TIMEOUT = 30                                   # seconds per git call
 INDEX = ".index.json"
+SOURCES = ".sources.json"                          # {id: {resolved source path: sha256 of its bytes at last import}}
 ANN = ".annotations.json"
 OWNER = "owner"
 
@@ -312,17 +314,38 @@ class Store:
         return self.git("show", f"{v['rev']}:{e['path']}").stdout, e["name"], v
 
     # -- writes
-    def put(self, thread: str, name: str, data: bytes, author: str, message: str | None = None) -> dict:
-        """Import bytes as (thread, name): new artifact -> v1; changed bytes -> a new version by `author`;
-        identical bytes -> the existing artifact, untouched."""
+    def sources(self) -> dict:
+        try:
+            raw = json.loads((self.root / SOURCES).read_text())
+            return raw if isinstance(raw, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def put(self, thread: str, name: str, data: bytes, author: str, message: str | None = None,
+            source: str | None = None) -> dict:
+        """Import bytes as (thread, name): new artifact -> v1 by `author`. Re-importing adds a version ONLY when the
+        SOURCE changed since it was last imported (its sha256 is recorded per artifact and source path), never because
+        the head differs: an owner edit stays current when the owner reopens an untouched source. A source path not
+        seen before for this artifact is new only if its bytes match no source this artifact ever imported (an upload
+        of the same file again is not news). Without `source`, identical-to-head bytes are the only no-op."""
         if len(data) > self.max_bytes:
             raise StoreError(413, f"the file is over {self.max_bytes // (1024 * 1024)} MB")
         aid = artifact_id(thread, name)
+        sha = hashlib.sha256(data).hexdigest()
         with self.lock:
             self.ensure()
             idx = self.index()
             e = idx.get(aid)
             new = e is None
+            srcs = self.sources()
+            seen = srcs.get(aid) if isinstance(srcs.get(aid), dict) else {}
+            if not new and source and seen:
+                if (seen.get(source) or sha) == sha and sha in seen.values():
+                    if seen.get(source) != sha:          # the same bytes from a new path: remember it, no version
+                        srcs[aid] = {**seen, source: sha}
+                        atomic_write(self.root / SOURCES, json.dumps(srcs, indent=1, sort_keys=True) + "\n", mode=0o640)
+                        self.commit([SOURCES], f"source of {name}", author)
+                    return self.artifact(aid)
             if new:
                 taken = {x.get("path") for x in idx.values()}
                 path = f"{thread_dir(thread)}/{name}"
@@ -334,6 +357,10 @@ class Store:
             if new:
                 atomic_write(self.root / INDEX, json.dumps(idx, indent=1, sort_keys=True) + "\n", mode=0o640)
                 paths.append(INDEX)
+            if source:
+                srcs[aid] = {**seen, source: sha}
+                atomic_write(self.root / SOURCES, json.dumps(srcs, indent=1, sort_keys=True) + "\n", mode=0o640)
+                paths.append(SOURCES)
             msg = message or (f"import {name}" if new else f"new version of {name}")
             self.commit(paths, msg, author)
             return self.artifact(aid)
@@ -393,7 +420,7 @@ def import_source(store: Store, path: str, thread: str, author: str = OWNER, lab
         raise StoreError(403, "that file can't be opened here")
     if p.stat().st_size > store.max_bytes:
         raise StoreError(413, f"the file is over {store.max_bytes // (1024 * 1024)} MB")
-    return store.put(thread, artifact_name(str(path), label), p.read_bytes(), author)
+    return store.put(thread, artifact_name(str(path), label), p.read_bytes(), author, source=str(p))
 
 
 # ------------------------------------------------------------------------------------------------------ routes

@@ -4,9 +4,11 @@ homes/seed/chat-rebuild/ARTIFACTS_API.md). The store is a temp dir, the sources 
 into chat.readable's gate; no database and no app.
   - IDENTITY: id = sha1(thread + "\\n" + name)[:16], deterministic; names reduced to a safe charset, a label keeps
     the source's extension; thread dirs carry no ':' and no '..'.
-  - VERSIONS: import -> v1 by the posting agent; the same bytes again -> no new version; changed bytes -> v2 by that
+  - VERSIONS: import -> v1 by the posting agent; the same SOURCE again -> no new version; a changed source -> v2 by that
     agent; an owner save -> v3 by owner; an unchanged save -> 409; restore v1 -> v4 holding v1's bytes, message
     "restore <short> (v1)", history never rewritten; content by rev returns each version's bytes.
+    RE-OPEN never reverts an owner edit: an unchanged source (or its bytes from a new path) is a no-op whatever the
+    head holds; only a source that changed since its last import adds a version, by the agent.
   - ANNOTATIONS: empty etag first; a PUT with it lands and is committed; a stale etag is 412; an absent If-Match on an
     existing file is 412; a malformed annotation is 400; annotation commits are not versions.
   - MEDIA: every [[file:]] embed, with and without a label, oldest first, sender and kind attached.
@@ -109,6 +111,26 @@ def main():
     arm("newest first, numbered", [v["n"] for v in a4["versions"]] == [4, 3, 2, 1])
     arm("a rev of no version -> 404", code_of(S.content, a1["id"], "deadbeef") == 404)
     arm("restore to the head's bytes -> 409", code_of(S.restore, a1["id"], a4["head"]) == 409)
+    a5 = A.import_source(S, str(src), T, "db")
+    arm("owner edit kept: re-open with the source unchanged since import -> no new version, head stays",
+        a5["head"] == a4["head"] and len(a5["versions"]) == 4 and S.content(a1["id"])[0] == b"# Q3\nrevenue up\n",
+        a5["versions"][0])
+    a5s = S.save(a1["id"], "# Q3\nowner's own words\n")
+    a5b = A.import_source(S, str(src), T, "db")
+    arm("re-open after a save -> head is still the owner's edit", a5b["head"] == a5s["head"]
+        and a5b["versions"][0]["author"] == "owner" and S.content(a1["id"])[0] == b"# Q3\nowner's own words\n")
+    alias = home / "alias" / "report.md"
+    alias.parent.mkdir()
+    alias.write_bytes(b"# Q3\nrevenue up 4%\n")                  # bytes this artifact already imported, a new path
+    a5c = A.import_source(S, str(alias), T, "db")
+    arm("an already-imported source's bytes from a new path -> no version", a5c["head"] == a5s["head"])
+    src.write_bytes(b"# Q3\nrevenue up 5%\n")
+    a6 = A.import_source(S, str(src), T, "db")
+    arm("the source changed -> a new version by the agent", len(a6["versions"]) == 6
+        and a6["versions"][0]["author"] == "db" and S.content(a1["id"])[0] == b"# Q3\nrevenue up 5%\n", a6["versions"][0])
+    a6b = A.import_source(S, str(src), T, "db")
+    arm("and again unchanged -> no-op", a6b["head"] == a6["head"])
+    a4 = S.restore(a1["id"], v1["short"])                        # back to v1's bytes for the arms below
     arm("listed for its thread", [x["id"] for x in S.list(T)] == [a1["id"]] and S.list("chat:other") == [])
     up = media / "upload" / "1f2e.png"
     up.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 40)
@@ -133,7 +155,7 @@ def main():
     arm("the current etag lands, new etag", len(p2["items"]) == 2 and p2["etag"] != p1["etag"])
     arm("the old etag is now stale -> 412", code_of(S.put_annotations, a1["id"], ann, p1["etag"]) == 412)
     arm("malformed -> 400", code_of(S.put_annotations, a1["id"], [{"id": "x", "kind": "scribble"}], p2["etag"]) == 400)
-    arm("annotation commits are not versions", len(S.artifact(a1["id"])["versions"]) == 4)
+    arm("annotation commits are not versions", len(S.artifact(a1["id"])["versions"]) == 7)
     log1 = subprocess.run(["git", "-C", str(S.root), "log", "-1", "--format=%an|%s"], capture_output=True, text=True)
     arm("committed by owner as 'annotate'", log1.stdout.strip() == "owner|annotate", log1.stdout)
 
