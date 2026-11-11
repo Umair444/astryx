@@ -90,10 +90,14 @@ def main() -> None:
     if charter.parent == AGENTS or charter.parent.name != agent:
         home = charter.parent / agent
         home.mkdir(exist_ok=True)
-        subprocess.run(["git", "mv", charter.name if charter.parent == AGENTS
-                        else str(charter.relative_to(AGENTS)),
-                        str((home / charter.name).relative_to(AGENTS))],
-                       cwd=AGENTS, check=True, capture_output=True)
+        src = str(charter.relative_to(AGENTS))
+        # A gitignored charter is untracked, so `git mv` exits 128 and every flat charter's first self_edit crashed,
+        # leaving the new folder behind (medic 11-12). Same layout test as the commit step below: move it on disk.
+        if subprocess.run(["git", "check-ignore", src], cwd=AGENTS, capture_output=True).returncode == 0:
+            charter.rename(home / charter.name)
+        else:
+            subprocess.run(["git", "mv", src, str((home / charter.name).relative_to(AGENTS))],
+                           cwd=AGENTS, check=True, capture_output=True)
         charter = home / charter.name
     home = charter.parent
 
