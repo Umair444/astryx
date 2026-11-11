@@ -539,6 +539,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     const firstLine = (b: string) => stripEmbeds(b).split('\n').find((l) => l.trim())?.replace(/\s+/g, ' ').trim().slice(0, 100) ?? ''
     registerChat({
       agent: () => L().recipients[0] ?? null,
+      recipients: () => [...L().recipients],
       title: () => ((L().view === 'thread' && L().current) || L().view === 'project' ? L().title : null),
       view: () => (L().view === 'thread' ? (L().current ? 'thread' : 'home') : L().view),
       threads: () => L().threads.map((t) => ({ thread: t.thread, title: t.title })),
@@ -572,7 +573,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     else if (i?.kind === 'search') { setPaletteQ(i.query); setPalette(true) }
     return () => registerChat(null)
   }, [go])
-  useEffect(() => { chatChanged() }, [current, view, palette, rows.length, panel.active])
+  useEffect(() => { chatChanged() }, [current, view, palette, rows.length, panel.active, recipients.join(',')])
 
   // signed out, offline and a rotated key are the gate's (chat/Gate.tsx): this renders only for the owner
   if (!who.owner) return null

@@ -8,6 +8,7 @@ export interface ChatThreadRef { thread: string; title: string }
 export interface ChatFileRef { name: string }
 export interface ChatCtl {
   agent: () => string | null                       // who the open chat writes to (its first recipient)
+  recipients: () => string[]                       // EVERY agent a message from this box goes to (the tap prompt shows them)
   title: () => string | null                       // the open conversation's title (null on the home or a page)
   view: () => string                               // 'thread' | 'home' | 'library' | 'projects' | 'project'
   threads: () => ChatThreadRef[]

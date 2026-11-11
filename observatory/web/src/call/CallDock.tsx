@@ -4,7 +4,7 @@ import AgentFace from '../components/AgentFace'
 import { ConfirmPrompt } from '../components/VoiceOrb'
 import { displayName } from '../api'
 import { pilot, usePilotPending } from '../pilot'
-import { bindPilotConfirm, claimConfirm } from '../pilot/Confirm'
+import { bindPilotConfirm, claimConfirm, ToRow, useSendTo } from '../pilot/Confirm'
 import { setMuted, useVoice, type VoiceState } from '../pilot/voice'
 import { endCall, setExpanded, useExpanded } from './state'
 import { avatar } from '../pilot/avatarBus'
@@ -83,6 +83,7 @@ export default function CallDock() {
   }, [open])
 
   const who = displayName(v.agent)
+  const to = useSendTo(pending?.action ?? '')
   return (
     <MotionConfig reducedMotion="user">
       <div className="call-dock-wrap" data-call-layer>
@@ -115,7 +116,8 @@ export default function CallDock() {
                 {v.error && v.phase === 'live' && <p className="text-[12px] text-bad truncate">{v.error}</p>}
               </div>
 
-              {pending && <div className="px-4 pt-3"><ConfirmPrompt key={pending.nonce} confirm={pending} bind={bindPilotConfirm} onDismiss={pilot.dismiss} /></div>}
+              {pending && <div className="px-4 pt-3"><ConfirmPrompt key={`${pending.nonce}|${to?.join(',') ?? ''}`} confirm={pending} bind={bindPilotConfirm} onDismiss={pilot.dismiss}
+                to={to ? <ToRow to={to} /> : null} /></div>}
 
               <footer className="flex items-center gap-2 px-4 pt-3 pb-4">
                 <button onClick={() => setMuted(!v.muted)} disabled={v.phase !== 'live'} title={v.muted ? 'Unmute' : 'Mute your mic'} aria-pressed={v.muted}
