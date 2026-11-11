@@ -355,6 +355,7 @@ run "astryx cli: verbs dispatch, user errors calm, secrets never printed" "$PY" 
 # The pulse's astryx-import canary: a shim with no src/astryx (mid-checkout) disables nothing and alarms once.
 # Fixture DB. Mutants: tests/mutants_pulse_import_canary.py.
 run "pulse canary: astryx won't import -> one alarm, every trigger stays enabled" "$PY" tests/test_pulse_import_canary.py
+run "pulse double-fire: a claimed cron slot re-arms strictly past itself (goal 18, restored 11-12)" "$PY" tests/test_pulse_double_fire.py
 # devtools/merge_check.sh: the merged-tree chain before a merge request, base resolved ONCE (merge parent == control),
 # a conflict refused (never a wrong tree), transient links removed. Hermetic. Mutants: tests/mutants_merge_check.py.
 run "merge_check: one base read, conflicts refused, links removed" "$PY" tests/test_merge_check.py
