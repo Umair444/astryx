@@ -28,8 +28,12 @@
 # merged tree AND for the base (the control) at the SAME sha. It judges nothing beyond that: a FAILED set still has
 # to be read against main's own (a set that is "the same as every tree" is a claim; measure its members live).
 #
+#   5. A DROPPED TEST IS A REFUSAL (medic 11-12): a merge whose tree loses a file under tests/ that the base has exits
+#      4, naming it, before anything runs. The 11-10 upstream merge (prefer-incoming) deleted the goal-18 double-fire
+#      test with no conflict, and the fix it guarded went with it; the pulse double-fired fleet-wide two nights later.
+#      A deliberate removal is declared: MERGE_CHECK_ALLOW_DROP="tests/a.py tests/b.py".
 # Env: MERGE_CHECK_FULL=0 skips the full check (pushed-tree only); MERGE_CHECK_CHECK / MERGE_CHECK_PTC override the
-# two commands (the oracle's stubs). Exit: 0 ran (read the report), 2 conflict / bad ref, 3 a link survived.
+# two commands (the oracle's stubs). Exit: 0 ran (read the report), 2 conflict / bad ref, 3 a link survived, 4 drops a test.
 set -uo pipefail
 # LIVE is the MAIN working tree (it holds the estate), even when this copy runs from a linked worktree: git's common
 # dir is the main repo's .git, and its parent is the live tree.
@@ -50,6 +54,14 @@ fi
 TREE=$(echo "$out" | head -1)
 T=$(git commit-tree "$TREE" -p "$M" -p "$B" -m "merge_check: $BR into $BASE_REF@${M:0:7}") || exit 2
 echo "merge_check: base $BASE_REF=$M  branch $BR=$B  merged=$T"
+dropped=$(git diff --diff-filter=D --name-only "$M" "$TREE" -- tests/ | while IFS= read -r f; do
+  case " ${MERGE_CHECK_ALLOW_DROP:-} " in *" $f "*) ;; *) echo "$f" ;; esac; done)
+if [ -n "$dropped" ]; then
+  echo "merge_check: $BR DROPS test file(s) that $BASE_REF@${M:0:7} has, refusing (no tree is checked):"
+  echo "$dropped" | sed 's/^/  /'
+  echo "  a deliberate removal: MERGE_CHECK_ALLOW_DROP=\"<paths>\" (the fix a dropped test guarded goes silent with it)"
+  exit 4
+fi
 WT=$(mktemp -d "${TMPDIR:-/tmp}/merge-check.XXXXXX")/tree
 CHECK=${MERGE_CHECK_CHECK:-"bash devtools/check.sh"}
 PTC=${MERGE_CHECK_PTC:-"bash $LIVE/devtools/pushed_tree_check.sh"}
