@@ -43,6 +43,8 @@ def main():
         (r / ".gitignore").write_text(".env\nagents/secret/\n")
         (r / "agents").mkdir()
         (r / "agents" / "tracked.md").write_text("tracked\n")              # a TRACKED dir…
+        (r / "tests").mkdir()
+        (r / "tests" / "test_kept.py").write_text("# a regression test the base carries\n")
         git(r, "add", "-A")
         git(r, "commit", "-qm", "base")
         (r / ".env").write_text("ASTRYX_DSN=x\n")                           # a live-estate file to link
@@ -65,6 +67,10 @@ def main():
         git(r, "checkout", "-q", "main")
         (r / "f.txt").write_text("main moved\n")
         git(r, "commit", "-qam", "main moves")
+        git(r, "checkout", "-qb", "dropper")                                # a merge that silently loses a test
+        git(r, "rm", "-q", "tests/test_kept.py")
+        git(r, "commit", "-qm", "drop a test")
+        git(r, "checkout", "-q", "main")
         base0 = git(r, "rev-parse", "main")
         rec = t / "rec.log"
         # the stub check: records the cwd's link state AND MOVES main (a concurrent merge landing mid-run)
@@ -139,6 +145,18 @@ def main():
         check("A CONFLICT IS A REFUSAL: exit 2, the conflicting path named, and NO check or pushed check ran",
               p.returncode == 2 and "CONFLICTS" in p.stdout and "f.txt" in p.stdout and log == "",
               f"rc={p.returncode} {p.stdout[-200:]} log={log!r}")
+        rec.unlink(missing_ok=True)
+        p = subprocess.run(["bash", str(r / "devtools" / "merge_check.sh"), "dropper"], cwd=r, env=env,
+                           capture_output=True, text=True, timeout=120)
+        log = rec.read_text() if rec.exists() else ""
+        check("D1 A DROPPED TEST IS A REFUSAL (medic 11-12): exit 4, the test named, and NO check or pushed check ran",
+              p.returncode == 4 and "DROPS" in p.stdout and "tests/test_kept.py" in p.stdout and log == "",
+              f"rc={p.returncode} {p.stdout[-200:]} log={log!r}")
+        p = subprocess.run(["bash", str(r / "devtools" / "merge_check.sh"), "dropper"], cwd=r,
+                           env={**env, "MERGE_CHECK_ALLOW_DROP": "tests/test_kept.py", "MERGE_CHECK_FULL": "0"},
+                           capture_output=True, text=True, timeout=120)
+        check("D2 ...a DECLARED removal (MERGE_CHECK_ALLOW_DROP) is checked as usual: exit 0, no refusal",
+              p.returncode == 0 and "DROPS" not in p.stdout, f"rc={p.returncode} {p.stdout[-200:]}")
         p = subprocess.run(["bash", str(r / "devtools" / "merge_check.sh"), "no-such-branch"], cwd=r, env=env,
                            capture_output=True, text=True, timeout=60)
         check("an unknown branch exits 2, naming it", p.returncode == 2 and "no-such-branch" in p.stdout, p.stdout)
