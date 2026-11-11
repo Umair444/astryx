@@ -137,7 +137,13 @@ def persona(agent: str) -> tuple[str, str] | None:
     line = (f"you speak as {agent}, one of the org's agents: {role}" if role else f"you speak as {agent}, one of the org's agents.")
     if agent == "seed":
         line = f"you speak as seed, the org's founding agent and the owner's line to it. {role}".strip()
-    return line + " Stay in that character, briefly; you still drive the screen for him.", R.voice_of(agent)
+    v = R.voice_of(agent)
+    return line + " Stay in that character, briefly; you still drive the screen for him.", (v if v in REALTIME_VOICES else "")
+
+
+# the voices OpenAI realtime accepts (its 400 lists them); a Room voice outside this set (e.g. 'fable', a TTS-only
+# voice) made the mint fail 400 for that agent (11-11), so it falls back to VOICE instead
+REALTIME_VOICES = {"alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"}
 
 
 class SessionReq(BaseModel):
