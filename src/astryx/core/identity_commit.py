@@ -90,10 +90,14 @@ def main() -> None:
     if charter.parent == AGENTS or charter.parent.name != agent:
         home = charter.parent / agent
         home.mkdir(exist_ok=True)
-        subprocess.run(["git", "mv", charter.name if charter.parent == AGENTS
-                        else str(charter.relative_to(AGENTS)),
-                        str((home / charter.name).relative_to(AGENTS))],
-                       cwd=AGENTS, check=True, capture_output=True)
+        src = str(charter.relative_to(AGENTS))
+        # A gitignored charter is untracked, so `git mv` exits 128 and every flat charter's first self_edit crashed,
+        # leaving the new folder behind (medic 11-12). Same layout test as the commit step below: move it on disk.
+        if subprocess.run(["git", "check-ignore", src], cwd=AGENTS, capture_output=True).returncode == 0:
+            charter.rename(home / charter.name)
+        else:
+            subprocess.run(["git", "mv", src, str((home / charter.name).relative_to(AGENTS))],
+                           cwd=AGENTS, check=True, capture_output=True)
         charter = home / charter.name
     home = charter.parent
 
@@ -133,6 +137,14 @@ def main() -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(content)
     rel = str(target.relative_to(AGENTS))
+    # agents/ may be gitignored in the SHARED repo (charters kept private by .gitignore rather than a
+    # repo of their own). There is then no repo to commit identity into: `git add` of an ignored path
+    # exits non-zero and crashes the self_edit, while `git add -f` would stage a private charter into
+    # the pushable tree. The write above IS the commit there: stay working-tree-only.
+    if subprocess.run(["git", "check-ignore", rel], cwd=AGENTS,
+                      capture_output=True).returncode == 0:
+        print(f"committed: {rel} (working-tree-only; agents/ is gitignored, no repo to commit into)")
+        return
     author = "owner <owner@astryx.local>" if owner_act else f"{agent} <{agent}@astryx.local>"
     subprocess.run(["git", "add", rel], cwd=AGENTS, check=True, capture_output=True)
     r = subprocess.run(["git", "commit", "--author", author, "-m",
