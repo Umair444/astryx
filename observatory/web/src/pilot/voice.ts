@@ -16,14 +16,21 @@
    short system item, on connect and whenever the page changes (debounced, deduped): collectScreen() → the egress
    projection (masked, capped to SCREEN_BUDGET) → screenLine(); nothing else about the page leaves. A write the model
    asks for parks for the owner's tap; when the tap (or "Not now") settles it, the model is told which, so it never
-   claims a send that didn't happen. */
+   claims a send that didn't happen.
+
+   ASKS (11-11): ask_agent in an open chat is an owner message on THAT thread (chatctl.ask), so the answer lands in the
+   chat; elsewhere it goes to the room's wire (/api/room/ask). Either way the ask stays open (pilot/asks.ts) and the
+   agent's reply, heard on the store's stream ('ax:event'), is read back to the model to say. A room_say is read back
+   only when no RoomLayer is mounted to play it in the agent's own voice (roomEar), so it's never said twice. An open
+   ask holds off the idle hangup, up to its window. */
 import { useSyncExternalStore } from 'react'
 import { apiPost } from '../api'
 import { onPilotPending, pilot } from '.'
 import { functionOutput, project, screenLine } from './egress'
 import type { Json } from './core'
 import { collectScreen } from './screenDom'
-import { onChatChange } from './chatctl'
+import { chatCtl, onChatChange } from './chatctl'
+import { answer, live, openAsk, readBack, type Ask } from './asks'
 import { avatar } from './avatarBus'
 
 export type Phase = 'idle' | 'connecting' | 'live' | 'error'
@@ -52,6 +59,7 @@ let connectedAt = 0
 let lastActive = 0
 let beat: ReturnType<typeof setInterval> | null = null
 let responding = false
+let owed = false                                     // a system item landed mid-response: answer it once that one ends
 const done = new Set<string>()
 
 /** The ONE path from this page to the provider. */
@@ -94,6 +102,33 @@ function watchScreen(on: boolean) {
 }
 const touch = () => { lastActive = Date.now() }
 
+/* ---- the asks: an agent's reply, read back to the model */
+let asks: Ask[] = []
+let roomEars = 0
+/** RoomLayer is mounted (it plays room_say in the agent's own voice): the call doesn't say it again. */
+export function roomEar(on: boolean) { roomEars = Math.max(0, roomEars + (on ? 1 : -1)) }
+function tell(text: string) {
+  toProvider({ type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text }] } })
+  if (!responding) toProvider({ type: 'response.create' })
+  else owed = true
+}
+function onWire(e: Event) {
+  if (st.phase !== 'live' || !asks.length) return
+  const ev = (e as CustomEvent).detail
+  if (!ev || typeof ev.type !== 'string') return
+  const r = answer(asks, ev, Date.now())
+  asks = r.asks
+  if (!r.ask) return
+  touch()
+  if (r.ask.via === 'room' && roomEars) return        // the room plays it in their own voice
+  tell(readBack(r.ask.agent, r.text, r.ack))
+}
+function watchAsks(on: boolean) {
+  removeEventListener('ax:event', onWire)
+  asks = []
+  if (on) addEventListener('ax:event', onWire)
+}
+
 function rms(an: AnalyserNode | null) {
   if (!an) return 0
   const b = new Uint8Array(an.fftSize)
@@ -133,7 +168,7 @@ export async function connect(arg?: string | ConnectOpts): Promise<void> {
     stubLine.onEvent((ev) => onEvent(ev))
     connectedAt = Date.now(); touch()
     patch({ phase: 'live', mood: 'listening', since: connectedAt })
-    watchScreen(true)
+    watchScreen(true); watchAsks(true)
     return
   }
   try {
@@ -167,7 +202,7 @@ export async function connect(arg?: string | ConnectOpts): Promise<void> {
     dc.onopen = () => {
       connectedAt = Date.now(); touch()
       patch({ phase: 'live', mood: 'listening', since: connectedAt })
-      watchScreen(true)
+      watchScreen(true); watchAsks(true)
       const brief = o.brief
       if (brief) {                                    // a room agent handed over: open the live voice already briefed
         toProvider({ type: 'conversation.item.create', item: { type: 'message', role: 'system',
@@ -176,7 +211,7 @@ export async function connect(arg?: string | ConnectOpts): Promise<void> {
       }
       beat = setInterval(() => {
         reportUsage()
-        if (Date.now() - lastActive > IDLE_MS && !responding) hangup('closed after a minute of quiet')
+        if (Date.now() - lastActive > IDLE_MS && !responding && !live(asks, Date.now()).length) hangup('closed after a minute of quiet')
       }, 10_000)
     }
     pc.onconnectionstatechange = () => { if (pc && ['failed', 'closed'].includes(pc.connectionState)) hangup('the connection dropped') }
@@ -212,7 +247,7 @@ function onPageHide() {
 }
 
 function cleanup() {
-  watchScreen(false)
+  watchScreen(false); watchAsks(false)
   try { stubLine?.close() } catch { /* closing */ }
   stubLine = null
   offPending?.(); offPending = null
@@ -225,7 +260,7 @@ function cleanup() {
   try { ctx?.close() } catch { /* closing */ }
   if (audio) audio.srcObject = null
   pc = null; dc = null; mic = null; ctx = null; micAn = null; outAn = null; audio = null
-  responding = false
+  responding = false; owed = false
   done.clear()
 }
 
@@ -259,13 +294,24 @@ async function runTool(callId: string, name: string, raw: string) {
   let args: unknown = {}
   try { args = raw ? JSON.parse(raw) : {} } catch { args = null }
   patch({ mood: 'working', acting: name })
-  if (name === 'ask_agent' && args && typeof args === 'object') {   // the room: a request to an agent, on the wire
+  if (name === 'ask_agent' && args && typeof args === 'object') {   // a request to an agent: the open chat's thread, else the room
     const a = args as { agent?: string; message?: string }
-    let ok = true
-    if (!a.agent) a.agent = st.agent
-    try { await apiPost('/room/ask', { agent: a.agent, message: a.message }) } catch { ok = false }
-    toProvider({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId,
-      output: JSON.stringify(ok ? { ok: true, note: `asked ${a.agent}; their answer will be spoken in the room in their own voice` } : { ok: false, error: 'could not reach the room' }) } })
+    const agent = a.agent || st.agent
+    const c = chatCtl(), thread = c?.thread() ?? null
+    let out: object
+    try {
+      if (c && thread) {
+        await c.ask(agent, String(a.message ?? ''))
+        asks = openAsk(asks, { agent, via: 'chat', thread, at: Date.now() })
+        out = { ok: true, note: `asked ${agent} on this chat; the answer will be shown in the chat and read back to you when it comes` }
+      } else {
+        await apiPost('/room/ask', { agent, message: a.message })
+        asks = openAsk(asks, { agent, via: 'room', thread: null, at: Date.now() })
+        out = { ok: true, note: roomEars ? `asked ${agent}; they will answer aloud in the room in their own voice, so don't repeat it`
+          : `asked ${agent}; the answer will be read back to you when it comes` }
+      }
+    } catch { out = { ok: false, error: c && thread ? 'could not post to the chat' : 'could not reach the room' } }
+    toProvider({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(out) } })
     patch({ acting: '' })
     return
   }
@@ -306,10 +352,13 @@ function onEvent(ev: { type: string; [k: string]: any }) {
       const calls = (ev.response?.output ?? []).filter((it: any) => it.type === 'function_call')
       if (calls.length) {
         Promise.all(calls.map((c: any) => runTool(c.call_id, c.name, c.arguments))).then(() => {
-          patch({ acting: '' })
+          patch({ acting: '' }); owed = false
           toProvider({ type: 'response.create' })
         })
-      } else if (st.mood !== 'speaking') patch({ mood: 'listening' })
+      } else {
+        if (owed) { owed = false; toProvider({ type: 'response.create' }) }    // a read-back that came mid-response
+        else if (st.mood !== 'speaking') patch({ mood: 'listening' })
+      }
       break
     }
     case 'error':

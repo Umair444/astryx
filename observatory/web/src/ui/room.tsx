@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import AgentFace from '../components/AgentFace'
 import { displayName, obsKey } from '../api'
 import { pilot } from '../pilot'
-import { connect as connectLive, useVoice } from '../pilot/voice'
+import { connect as connectLive, roomEar, useVoice } from '../pilot/voice'
 import { useBlobSpot } from '../call/state'
 
 /* THE ROOM (owner brief, 2026-10-11): one voice for the whole org, and the org visibly in the room on every tab.
@@ -112,6 +112,7 @@ export default function RoomLayer() {
       }
     }
     window.addEventListener('ax:event', on)
+    roomEar(true)                                           // the call leaves room_say to this layer (pilot/voice.ts)
     const t = setInterval(() => tick((n) => n + 1), 1000)
     let raf = 0
     const pulse = () => {                                   // the speaking face glows to the sound, every frame
@@ -120,7 +121,7 @@ export default function RoomLayer() {
       raf = requestAnimationFrame(pulse)
     }
     raf = requestAnimationFrame(pulse)
-    return () => { window.removeEventListener('ax:event', on); clearInterval(t); cancelAnimationFrame(raf) }
+    return () => { window.removeEventListener('ax:event', on); roomEar(false); clearInterval(t); cancelAnimationFrame(raf) }
   }, [])
 
   const now = Date.now()

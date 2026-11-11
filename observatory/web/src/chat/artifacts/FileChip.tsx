@@ -28,6 +28,19 @@ export function originFrom(el: Element) {
   document.documentElement.style.setProperty('--ws-from-y', `${Math.round(r.top + r.height / 2)}px`)
 }
 
+/* what opening an embed asks the panel for: the version the carrying message held, with its history (a chip and the
+   same file drawn inline in the text open alike) */
+export function useOpenRequest(path: string, label: string | undefined, from: string, msg?: Msg) {
+  const aware = useContext(ChipCtx)
+  const ver = msg && aware ? aware.info(msg, path, label) : null
+  const req: OpenRequest = {
+    path, label, from,
+    ...(msg ? { msg: { id: msg.id, ts: msg.ts }, carrier: ver?.carrier ?? { id: msg.id, ts: msg.ts } } : {}),
+    ...(ver?.history.length ? { history: ver.history } : {}),
+  }
+  return { aware, ver, req }
+}
+
 export default function FileChip({ path, label, from, active, onOpen, msg }: {
   path: string
   label?: string
@@ -36,15 +49,9 @@ export default function FileChip({ path, label, from, active, onOpen, msg }: {
   onOpen: (r: OpenRequest) => void
   msg?: Msg                  // the carrying message (version awareness); absent outside a conversation
 }) {
-  const aware = useContext(ChipCtx)
+  const { aware, ver, req } = useOpenRequest(path, label, from, msg)
   const name = nameOf(path, label)
   const kind = kindOfName(name)
-  const ver = msg && aware ? aware.info(msg, path, label) : null
-  const req: OpenRequest = {
-    path, label, from,
-    ...(msg ? { msg: { id: msg.id, ts: msg.ts }, carrier: ver?.carrier ?? { id: msg.id, ts: msg.ts } } : {}),
-    ...(ver?.history.length ? { history: ver.history } : {}),
-  }
   const tag = ver ? [ver.n ? `v${ver.n}` : '', ver.updated ? 'updated' : ''].filter(Boolean).join(' · ') : ''
   return (
     <span className={`ws-chip-wrap inline-flex items-stretch max-w-[340px] ${ver?.updated ? 'is-updated' : ''}`}>

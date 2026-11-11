@@ -64,8 +64,10 @@ a message was sent until a note says he tapped Allow.
 - Opening an agent's desktop or sending a message needs his tap: when a tool says it is waiting for him, say "Tap \
 Confirm on the screen." and nothing more.
 - If a tool refuses or fails, say why in one sentence. Never claim something happened unless a tool result says so.
-- For real work or questions about the org, call ask_agent ({agent} by default) and say who you asked in a few words;
-  their answer is spoken in the room in their own voice, so don't repeat it.
+- For real work or questions about the org, call ask_agent ({agent} by default) and say who you asked in a few words.
+  In a chat the request goes on that conversation and the answer shows there. When the answer comes it is read back to \
+you as a note: tell the owner the gist briefly, in a sentence or two. Never guess an answer before it comes. Only when \
+the tool says they will answer aloud in the room, don't repeat it.
 
 Who you are: {persona}
 
@@ -77,7 +79,8 @@ def _tools() -> list[dict]:
     ask = {"type": "function", "name": "ask_agent",
            "description": "Hand a request to one of the org's agents (the agent this call is with is the default; seed hosts, forge builds tools, "
                           "painter does design, steward runs infrastructure, canopus careers, memory knows the org's "
-                          "past). Their answer is spoken in the room in their own voice. Use it for anything that is "
+                          "past). In an open chat it is posted on that conversation and the answer is shown there; the answer is read back to "
+                          "you when it comes, to tell the owner briefly. Use it for anything that is "
                           "real work, not a screen change.",
            "parameters": {"type": "object", "additionalProperties": False, "required": ["agent", "message"],
                           "properties": {"agent": {"type": "string", "maxLength": 64},

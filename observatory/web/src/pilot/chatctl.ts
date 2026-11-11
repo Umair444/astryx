@@ -10,6 +10,7 @@ export interface ChatCtl {
   agent: () => string | null                       // who the open chat writes to (its first recipient)
   recipients: () => string[]                       // EVERY agent a message from this box goes to (the tap prompt shows them)
   title: () => string | null                       // the open conversation's title (null on the home or a page)
+  thread: () => string | null                      // the open conversation's thread (null on the home or a page)
   view: () => string                               // 'thread' | 'home' | 'library' | 'projects' | 'project'
   threads: () => ChatThreadRef[]
   open: (thread: string) => void
@@ -18,6 +19,7 @@ export interface ChatCtl {
   draft: (text: string, mode: 'replace' | 'append') => void
   hasDraft: () => boolean
   send: (text: string) => Promise<void>            // ONLY through the executor's confirm (send_message is class write)
+  ask: (agent: string, text: string) => Promise<void>  // the call's ask_agent: an owner message to that agent on the open thread
   files: () => ChatFileRef[]
   openFile: (name: string) => boolean
   search: (query: string) => void
