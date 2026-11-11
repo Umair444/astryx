@@ -4,6 +4,10 @@
     POST /api/pilot/voice/session   mint an EPHEMERAL client secret; the browser does the WebRTC exchange itself
     POST /api/pilot/voice/usage     cumulative connected seconds for one session (heartbeat + hangup)
 
+THE CALL (iteration 17): the session body may name an agent ({"agent": "db"}; default seed). The voice then speaks AS
+that agent: its own room voice (room.voice_of) and its charter's one-line role (workspace.role_of), masked for digit
+runs and capped. An unknown or malformed name is a 400 before anything is minted. Nothing else of a charter leaves.
+
 OWNER-ONLY BY OMISSION: none of these paths is in main.PUBLIC_PATHS, so the observatory's default-deny middleware
 answers 403 to anyone without the obs key before a handler runs (the guests flag of canvas does not exist here,
 since :8090 listens on 0.0.0.0; C4). Spend is the shared ledger and cap in src/astryx/hearing/voice_mint.py.
@@ -15,9 +19,10 @@ here executes a tool, and no agent prose is reachable from this voice in S2 (C1:
 """
 from __future__ import annotations
 
+import re
 import time
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -43,16 +48,26 @@ How you sound: warm, brisk, never verbose. One or two short spoken sentences. No
 out IDs, URLs or code.
 
 What you do:
-- When he asks to see or change something on screen (a view, an agent, a thread, the theme, scrolling), call the \
-tool AT ONCE, then confirm in a few words ("Done, Nord."). Never describe what you are about to do first.
-- When he asks what is on screen, call get_view_state.
+- When he asks to see or change something on screen (a view, an agent, a thread, a chat conversation, a file, the \
+theme, scrolling, a search), call the tool AT ONCE, then confirm in a few words ("Done, Nord."). Never describe what \
+you are about to do first.
+- You can SEE his screen: system notes headed "The owner's screen now" tell you the page, its headings, the open \
+conversation and its last lines, kept current as he moves. Use them to understand "this", "that chart", "here". \
+For a fresh look call read_screen. Numbers shown as [number] are masked for privacy: never guess them.
+- When you talk about something on screen, call point_at with its visible words so your figure goes there.
+- In a chat you may draft into the message box (type_in_composer) and switch who the chat is with (switch_agent). \
+Sending is send_message: it waits for his tap on Confirm, so say "Tap Confirm to send." and nothing more. Never claim \
+a message was sent until a note says he tapped Allow.
+- If he asks you to dance, or something he wanted just worked and he's pleased, you may call dance.
 - For token or plan usage, call get_usage and say the 5-hour and 7-day percentages and when they reset.
 - For goals, call list_goals and give the count and one or two titles.
-- Opening an agent's desktop needs his tap: when a tool says it is waiting for him, say "Tap Allow on the \
-screen." and nothing more.
+- Opening an agent's desktop or sending a message needs his tap: when a tool says it is waiting for him, say "Tap \
+Confirm on the screen." and nothing more.
 - If a tool refuses or fails, say why in one sentence. Never claim something happened unless a tool result says so.
-- For real work or questions about the org, call ask_agent (seed by default) and say who you asked in a few words;
+- For real work or questions about the org, call ask_agent ({agent} by default) and say who you asked in a few words;
   their answer is spoken in the room in their own voice, so don't repeat it.
+
+Who you are: {persona}
 
 Privacy: the owner's personal matters (career, family, money, health, credentials, location) stay out of this \
 conversation; it runs on an outside service."""
@@ -60,7 +75,7 @@ conversation; it runs on an outside service."""
 
 def _tools() -> list[dict]:
     ask = {"type": "function", "name": "ask_agent",
-           "description": "Hand a request to one of the org's agents (seed is the default host; forge builds tools, "
+           "description": "Hand a request to one of the org's agents (the agent this call is with is the default; seed hosts, forge builds tools, "
                           "painter does design, steward runs infrastructure, canopus careers, memory knows the org's "
                           "past). Their answer is spoken in the room in their own voice. Use it for anything that is "
                           "real work, not a screen change.",
@@ -96,9 +111,46 @@ async def status(request: Request):
             "cap": V.cap_minutes(), "model": MODEL}
 
 
+NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_DIGITS = re.compile(r"(?:\+?\d[\s\-.()]{0,2}){7,}")
+
+
+def persona(agent: str) -> tuple[str, str] | None:
+    """(the persona line, the voice) for `agent`, or None when no such agent exists. The line is the charter's one-line
+    role only (workspace.role_of), masked for digit runs and capped: nothing else of a charter reaches the provider."""
+    if not NAME.match(agent or ""):
+        return None
+    try:
+        from astryx.core.charter import resolve
+        path = resolve(agent)
+    except Exception:
+        return None
+    if not path:
+        return None
+    from observatory.api import workspace as W
+    from observatory.api import room as R
+    try:
+        role = W.role_of(path.read_text())
+    except Exception:
+        role = ""
+    role = _DIGITS.sub("[number]", role or "")[:200].strip()
+    line = (f"you speak as {agent}, one of the org's agents: {role}" if role else f"you speak as {agent}, one of the org's agents.")
+    if agent == "seed":
+        line = f"you speak as seed, the org's founding agent and the owner's line to it. {role}".strip()
+    return line + " Stay in that character, briefly; you still drive the screen for him.", R.voice_of(agent)
+
+
+class SessionReq(BaseModel):
+    agent: str = "seed"
+
+
 @router.post("/api/pilot/voice/session")
-async def session(request: Request):
+async def session(request: Request, body: SessionReq | None = Body(default=None)):
     pool = _pool(request)
+    agent = (body.agent if body else "seed").strip().lower() or "seed"
+    who = persona(agent)
+    if who is None:
+        return deny(400, f"no agent named {agent[:64]}")
     why = await V.unavailable(pool)
     if why:
         return deny(429 if "cap" in why else 503, why)
@@ -111,7 +163,7 @@ async def session(request: Request):
         "session": {
             "type": "realtime",
             "model": MODEL,
-            "instructions": INSTRUCTIONS.format(reply_lang=REPLY_LANG),
+            "instructions": INSTRUCTIONS.format(reply_lang=REPLY_LANG, agent=agent, persona=who[0]),
             "audio": {
                 "input": {
                     "transcription": {"model": TRANSCRIBE},
@@ -120,7 +172,7 @@ async def session(request: Request):
                                        "interrupt_response": True},
                     "noise_reduction": {"type": "near_field"},
                 },
-                "output": {"voice": VOICE},
+                "output": {"voice": who[1] or VOICE},
             },
             "tools": _tools(),
             "tool_choice": "auto",
@@ -135,7 +187,7 @@ async def session(request: Request):
     _mints.append(now)
     usage_id = await V.record(pool, USER, MODEL)
     return {"value": out["value"], "expires_at": out.get("expires_at"), "model": MODEL, "usage_id": usage_id,
-            "minutes_today": await V.minutes_today(pool), "cap": V.cap_minutes(), "calls_url": V.CALLS_URL}
+            "minutes_today": await V.minutes_today(pool), "cap": V.cap_minutes(), "calls_url": V.CALLS_URL, "agent": agent}
 
 
 class Usage(BaseModel):

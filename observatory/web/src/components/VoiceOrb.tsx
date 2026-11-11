@@ -202,7 +202,7 @@ function Faces({ agents }: { agents: OrbAgent[] }) {
 // ------------------------------------------------------------------ the confirm
 const human = (s: string) => s.replace(/[_-]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
 
-function ConfirmPrompt({ confirm, bind, onDismiss }: {
+export function ConfirmPrompt({ confirm, bind, onDismiss }: {
   confirm: OrbConfirm
   bind: OrbBind
   onDismiss: (nonce: string) => void

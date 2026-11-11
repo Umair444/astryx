@@ -15,7 +15,8 @@ import { AnimatePresence } from 'motion/react'
 import VegaChat from './components/VegaChat'
 import PulseStrip from './components/PulseStrip'
 import EarControl from './components/EarControl'
-import VoicePilot from './components/VoicePilot'
+import CallButton from './call/CallButton'
+import CallLayer from './call/CallLayer'
 import RoomLayer from './ui/room'
 import Palette from './components/Palette'
 import { PilotHost } from './pilot'
@@ -274,12 +275,23 @@ function Shell() {
   // The creature face is a MODE, not a tab: fullscreen, no chrome — the whole
   // phone becomes the robot's face (it does its own key gate).
   if (route.tab === 'face') return <Suspense fallback={null}><FaceView /></Suspense>
+  // THE CALL (iteration 17): the pilot's host, its confirm and the call layer sit BESIDE whichever surface is up, at
+  // the same place in the tree for the chat workspace and the observatory, so a live call survives moving between
+  // them (a remount would hang up). The chat workspace is a fullscreen route, so before this none of it was there.
+  const beside = (
+    <>
+      <PilotHost route={route} agentOpen={agentOpen} setAgentOpen={setAgentOpen} />
+      {who.owner && <PilotConfirm />}
+      {who.owner && <CallLayer selected={talking ?? agentOpen} />}
+    </>
+  )
   // /chat is a WORKSPACE, not a tab (plan-11884): fullscreen, its own rail, its own keys
-  if (route.tab === 'chat') return <ChatGate thread={route.thread ?? null} go={(t) => nav({ tab: 'chat', thread: t ?? undefined })} />
+  if (route.tab === 'chat') return <>{<ChatGate thread={route.thread ?? null} go={(t) => nav({ tab: 'chat', thread: t ?? undefined })} />}{beside}</>
   const page = authPage()
   if (page) return page
 
   return (
+    <>
     <AppShell
       header={{ height: 48 }}
       navbar={{ width: 264, breakpoint: 'sm', collapsed: { mobile: !navOpened, desktop: !deskNav } }}
@@ -307,7 +319,7 @@ function Shell() {
                 </span>
               </>
             )}
-            {who.owner && <VoicePilot hidden />}
+            {who.owner && <CallButton />}
             {who.owner && <EarControl view={route.tab} />}
             {Auth && <Suspense fallback={null}><Auth.Account /></Suspense>}
             <KeyBadge />
@@ -352,6 +364,7 @@ function Shell() {
           {tabs.map((t) => (
             <button
               key={t.key}
+              data-tab={t.key}
               ref={(el) => {
                 if (el && route.tab === t.key) el.scrollIntoView({ inline: 'center', block: 'nearest' })
               }}
@@ -365,9 +378,7 @@ function Shell() {
         </div>
       </AppShell.Footer>
 
-      <PilotHost route={route} agentOpen={agentOpen} setAgentOpen={setAgentOpen} />
       <Palette />
-      {who.owner && <PilotConfirm />}
       <AnimatePresence>
         {who.owner && talking && (
           <ChatSheet key={talking} name={talking} onClose={() => setTalking(null)} onProfile={() => setAgentOpen(talking)} />
@@ -383,6 +394,8 @@ function Shell() {
           private tab is redundant, not merely mispositioned. */}
       {route.tab !== 'memory' && !(route.tab === 'wire' && who.owner) && <VegaChat />}
     </AppShell>
+    {beside}
+    </>
   )
 }
 
