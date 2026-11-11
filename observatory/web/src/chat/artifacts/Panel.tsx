@@ -3,6 +3,7 @@ import { displayName } from '../../api'
 import AgentFace from '../../components/AgentFace'
 import { download, upload, type Uploaded } from '../model'
 import { I } from '../icons'
+import { useSwipeClose } from '../shell/phone'
 import { contentOf, EDITABLE, extOf, isProse, restoreArtifact, saveArtifact, textOf, type Opened } from './api'
 import { bytes, KindIcon, KIND_WORD } from './kinds'
 import type { PanelState, Tab } from './usePanel'
@@ -61,6 +62,9 @@ export default function Panel({ panel, layout, onAttach, onDirty, annotate }: {
 
   // ── width: a remembered px width, clamped to [480, 60% of the row] ───────────────────────────────────────────
   const self = useRef<HTMLDivElement>(null)
+  // a phone: the full-screen panel is a sheet: a downward pull on its header closes it (iteration 16)
+  const closeRef = useRef<() => void>(() => {})
+  const swipe = useSwipeClose(self, () => closeRef.current())
   const [w, setW] = useState<number | null>(() => { try { return Number(localStorage.getItem(W_KEY)) || null } catch { return null } })
   const [row, setRow] = useState(0)
   useLayoutEffect(() => {
@@ -107,12 +111,13 @@ export default function Panel({ panel, layout, onAttach, onDirty, annotate }: {
 
   const closeTab = (k: string) => { if (dirty(k) && !confirm('Discard your unsaved changes?')) return; close(k) }
   const closePanel = () => { if (anyDirty && !confirm('Discard your unsaved changes?')) return; setFull(false); closeAll() }
+  closeRef.current = closePanel
 
   if (!tab) return null
   const art = tab.art
   const fullscreen = full || layout === 'full'
   const shell = fullscreen
-    ? 'fixed inset-0 z-50 bg-[var(--t-bg)]'
+    ? 'fixed inset-0 z-50 bg-[var(--t-bg)] ws-sheet-open ws-safe-bottom'
     : layout === 'sheet'
       ? `fixed right-0 top-0 bottom-0 z-40 ${extra ? 'w-[min(1040px,94vw)]' : 'w-[min(760px,94vw)]'} shadow-[-24px_0_60px_-30px_rgba(0,0,0,.45)] bg-[var(--t-bg)] border-l border-line`
       : 'relative shrink-0 border-l border-line bg-[color-mix(in_srgb,var(--t-bg)_70%,var(--t-bg2))]'
@@ -128,16 +133,17 @@ export default function Panel({ panel, layout, onAttach, onDirty, annotate }: {
         )}
 
         {/* the tabs, and the panel's own controls */}
-        <div className="h-12 shrink-0 flex items-end gap-1 pl-2 pr-2 border-b border-line">
+        <div className={`ws-bar-top h-12 shrink-0 flex items-end gap-1 pl-2 pr-2 border-b border-line relative`} {...(layout === 'full' ? swipe : {})}>
+          {layout === 'full' && <span className="ws-grab" aria-hidden />}
           <div className="flex-1 min-w-0 flex items-end gap-0.5 overflow-x-auto ws-noscroll" role="tablist" aria-label="open files">
             {tabs.map((t) => (
               <TabButton key={t.key} t={t} active={t.key === tab.key} dirty={dirty(t.key)} onClick={() => activate(t.key)} onClose={() => closeTab(t.key)} />
             ))}
           </div>
           <div className="flex items-center gap-0.5 self-center">
-            <button className="ws-icon" onClick={() => setFull((f) => !f)} aria-pressed={full} title={full ? 'Leave full screen (Esc)' : 'Open full (⌘⇧F)'} aria-label="full screen">
+            {layout !== 'full' && <button className="ws-icon" onClick={() => setFull((f) => !f)} aria-pressed={full} title={full ? 'Leave full screen (Esc)' : 'Open full (⌘⇧F)'} aria-label="full screen">
               {full ? <Shrink /> : <Expand />}
-            </button>
+            </button>}
             <button className="ws-icon" onClick={closePanel} title="Close the panel" aria-label="close the panel">{I.x()}</button>
           </div>
         </div>

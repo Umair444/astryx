@@ -47,7 +47,7 @@ export function Toasts() {
   }, [list])
   if (!list.length) return null
   return (
-    <div className="fixed z-[70] left-1/2 -translate-x-1/2 bottom-[132px] max-md:bottom-[120px] w-[min(460px,calc(100vw-32px))] flex flex-col gap-2 pointer-events-none" aria-live="polite">
+    <div className="ws-toasts fixed z-[70] left-1/2 -translate-x-1/2 bottom-[132px] max-md:bottom-[calc(120px+env(safe-area-inset-bottom))] w-[min(460px,calc(100vw-32px))] flex flex-col gap-2 pointer-events-none" aria-live="polite">
       {list.map((t) => (
         <div key={t.id} role={t.kind === 'error' ? 'alert' : 'status'} data-kind={t.kind}
           className="ws-toast pointer-events-auto flex items-start gap-3 pl-4 pr-2 py-2.5 text-[13px] leading-[1.45]">

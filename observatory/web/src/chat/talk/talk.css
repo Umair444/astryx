@@ -8,7 +8,7 @@
   background: radial-gradient(42% 36% at 50% 40%, color-mix(in srgb, var(--t-accent) 13%, transparent), transparent 70%),
     radial-gradient(30% 26% at 62% 58%, color-mix(in srgb, var(--t-accent2) 9%, transparent), transparent 70%); }
 .ws-talk-top { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 18px 20px 0 22px; }
+  padding: calc(18px + env(safe-area-inset-top)) 20px 0 22px; }
 .ws-talk-x { width: 44px; height: 44px; border-radius: 16px; display: grid; place-items: center; color: var(--t-dim);
   background: color-mix(in srgb, var(--t-panel) 70%, transparent); border: 1px solid var(--t-line); transition: color 120ms, background-color 120ms; }
 .ws-talk-x:hover { color: var(--t-fg); background: var(--t-panel); }
@@ -44,7 +44,7 @@
 .ws-talk-foot a:hover { color: var(--t-fg); }
 
 @media (max-width: 640px) {
-  .ws-talk { justify-content: flex-start; padding-top: 96px; }
+  .ws-talk { justify-content: flex-start; padding-top: calc(96px + env(safe-area-inset-top)); }
   .ws-talk-stage { width: 260px; height: 260px; transform: scale(.88); }
   .ws-talk-words { margin-top: 8px; min-height: 120px; }
   .ws-talk-foot { position: relative; bottom: auto; left: auto; right: auto; margin-top: 18px; }

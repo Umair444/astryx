@@ -15,7 +15,8 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: 'all', label: 'All' }, { id: 'images', label: 'Images' }, { id: 'docs', label: 'Docs' }, { id: 'data', label: 'Data' }, { id: 'code', label: 'Code' },
 ]
 
-export default function MediaDrawer({ items, loading, onOpen, onClose, openKey }: {
+export default function MediaDrawer({ items, loading, onOpen, onClose, openKey, swipe }: {
+  swipe?: React.HTMLAttributes<HTMLElement>     // a phone: the header pulls the full-screen sheet down (shell/phone.ts)
   items: MediaItem[]
   loading: boolean
   onOpen: (r: OpenRequest) => void
@@ -34,8 +35,9 @@ export default function MediaDrawer({ items, loading, onOpen, onClose, openKey }
   const open = (m: MediaItem) => onOpen({ path: m.path, label: m.label ?? undefined, from: m.from })
 
   return (
-    <aside className="ws-drawer h-full flex flex-col" aria-label="files in this conversation">
-      <header className="h-12 shrink-0 flex items-center gap-2 pl-4 pr-2 border-b border-line">
+    <aside className={`ws-drawer h-full flex flex-col ${swipe ? 'ws-safe-bottom' : ''}`} aria-label="files in this conversation">
+      <header {...swipe} className={`h-12 shrink-0 flex items-center gap-2 pl-4 pr-2 border-b border-line relative ${swipe ? 'ws-bar-top' : ''}`}>
+        {swipe && <span className="ws-grab" aria-hidden />}
         <span className="ws-display text-[21px] leading-none text-ink">Files</span>
         <span className="text-[12px] text-ink-mute tabular-nums">{items.length}</span>
         <button className="ws-icon ml-auto" onClick={onClose} aria-label="close the files" title="Close (Esc)">{I.x()}</button>

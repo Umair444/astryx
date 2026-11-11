@@ -14,5 +14,5 @@
 .ws-conn[data-conn="back"] .ws-conn-dot { background: var(--t-good, #3fae6a); }
 @keyframes ws-conn-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @keyframes ws-conn-breathe { 50% { opacity: .35; } }
-@media (max-width: 767px) { .ws-conn { top: 52px; } }
+@media (max-width: 767px) { .ws-conn { top: calc(52px + env(safe-area-inset-top)); } }
 @media (prefers-reduced-motion: reduce) { .ws-conn-pill, .ws-conn-dot { animation: none !important; } .ws-conn[data-conn="reconnecting"] .ws-conn-pill { opacity: 1; } }

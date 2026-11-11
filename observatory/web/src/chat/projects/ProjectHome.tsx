@@ -97,10 +97,10 @@ export default function ProjectHome({ p, threads, names, status, roles, composer
 
       <div className="mt-8 grid gap-x-10 gap-y-8 @4xl:grid-cols-[minmax(0,1fr)_340px] @4xl:grid-rows-[auto_1fr] items-start">
         <motion.div {...rise(0.06)} className="min-w-0 @4xl:col-start-1 @4xl:row-start-1">
-          <div className="flex items-center gap-2 mb-2.5 text-[12.5px] text-ink-mute">
-            <span>New chat in <span className="text-ink">{p.name}</span></span>
-            <span aria-hidden>·</span>
-            <span className="inline-flex items-center gap-1.5">goes to
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-2.5 text-[12.5px] text-ink-mute">
+            <span className="whitespace-nowrap truncate max-w-full">New chat in <span className="text-ink">{p.name}</span></span>
+            <span aria-hidden className="max-sm:hidden">·</span>
+            <span className="inline-flex items-center gap-1.5 min-w-0 whitespace-nowrap">goes to
               <span className="flex -space-x-1">{team.slice(0, 5).map((a) => <span key={a} className="rounded-full ring-2 ring-[var(--t-bg)]"><AgentFace name={a} size={16} /></span>)}</span>
               <span className="text-ink-dim truncate max-w-[200px]">{team.map(displayName).join(', ')}</span>
             </span>

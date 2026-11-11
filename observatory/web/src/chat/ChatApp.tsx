@@ -5,6 +5,7 @@ import '@fontsource/instrument-serif/400-italic.css'
 import '@fontsource-variable/newsreader'
 import './workspace.css'
 import './presence.css'
+import './phone.css'
 import { api, apiPost, displayName } from '../api'
 import { mergeMsgs, useStore } from '../store'
 import type { Msg, Step } from '../types'
@@ -64,6 +65,7 @@ import ListSeam, { useListWidth } from './shell/ListSeam'
 import MoreMenu from './shell/MoreMenu'
 import { NotifyPrompt, useReplyNotifications } from './shell/notify'
 import { useInstallable } from './shell/pwa'
+import { useEdgeSwipe, useKeyboardViewport, useStickToEnd, useSwipeClose } from './shell/phone'
 import { exportConversation } from './thread/exportMd'
 
 /* /chat, the WORKSPACE (plan-11884; rebuilt on feat/chat-workspace after homes/seed/chat-rebuild/DESIGN.md). Four
@@ -111,6 +113,12 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   // is installable (manifest + icons in <head> only while it is on screen)
   useReplyNotifications(messages, threads, names, useCallback((t: string) => nav(t), [nav]))
   useInstallable()
+  // iteration 16, phone-first: the keyboard, the thread's end, the edge swipe (shell/phone.ts)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const drawerRef = useRef<HTMLDivElement>(null)
+  const filesRef = useRef<HTMLDivElement>(null)
+  useKeyboardViewport(rootRef)
   const [team, setTeam] = useState<WsAgent[]>([])
   const [history, setHistory] = useState<Msg[] | null>(null)
   const [steps, setSteps] = useState<Record<string, Step[]>>({})
@@ -263,6 +271,10 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const unread = useUnread(threads, current || null)
   useTabTitle(unread.size)
   const listW = useListWidth()
+  useStickToEnd(scrollRef, view === 'thread' && current ? current : null)     // a conversation only: never the home or a page
+  useEdgeSwipe(winW < 768 && !drawer && !palette && !talk, () => setDrawer(true))
+  const drawerSwipe = useSwipeClose(drawerRef, () => setDrawer(false), 'left')
+  const filesSwipe = useSwipeClose(filesRef, () => setFilesOpen(false), 'down')
 
   const activeProject = proj.projects.find((p) => p.id === project) ?? null
   // who a message goes to: the thread's own agents (a desk's agent, a canvas chat's agent), then anyone who spoke;
@@ -568,7 +580,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     ask: async (agent, body) => { const m = await send(agent, body, current); reload(); return m },
   }
   return (
-    <div className="ws h-dvh flex ws-backdrop text-ink overflow-hidden" style={{ ['--ws-list' as string]: `${listW.width}px` }}>
+    <div ref={rootRef} className="ws h-dvh flex ws-backdrop text-ink overflow-hidden" style={{ ['--ws-list' as string]: `${listW.width}px` }}>
       {/* the first Tab stop: past the rail's agents and the list, straight to the box (a hash link would route) */}
       <button onClick={() => composer.current?.focus()}
         className="sr-only focus:not-sr-only focus:fixed focus:z-[80] focus:left-3 focus:top-3 ws-btn !bg-[var(--t-panel)]">Skip to the message box</button>
@@ -582,8 +594,10 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       <main className="flex-1 min-w-[420px] max-md:min-w-0 flex flex-col relative">
         <ConnStatus />
         {home || view !== 'thread' ? (
-          <div className="h-12 shrink-0 flex items-center px-3 md:hidden">
+          <div className="ws-bar-top h-12 shrink-0 flex items-center justify-between px-1.5 md:hidden">
             <button className="ws-icon" onClick={() => setDrawer(true)} aria-label="conversations">{I.menu()}</button>
+            {/* a phone has no ⌘K: the palette's own door */}
+            <button className="ws-icon" onClick={() => setPalette(true)} aria-label="search" title="Search everything">{I.search('w-[18px] h-[18px]')}</button>
           </div>
         ) : (
           <TopBar title={title} canRename={!!currentRow} surface={currentRow?.surface ?? null}
@@ -594,11 +608,11 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
             onRename={(t) => currentRow && setMeta(currentRow, { title: t })}
             onWorkforce={() => setWorkforce((w) => !w)} onMedia={() => setFilesOpen((f) => !f)}
             onMenu={() => setDrawer(true)} onAgent={openAgent} names={names} lines={lines}
-            more={<MoreMenu onExport={() => exportConversation(rows, title, current, names)} />}
+            more={<MoreMenu onExport={() => exportConversation(rows, title, current, names)} onSearch={() => setPalette(true)} />}
             canvas={threadCanvas ? { version: canvases?.find((c) => c.id === threadCanvas)?.version ?? 0, open: canvasOpen === threadCanvas,
               onToggle: () => { setWorkforce(false); setCanvasOpen((o) => (o === threadCanvas ? null : threadCanvas)) } } : null} />
         )}
-        <div className="flex-1 min-h-0 overflow-y-auto">
+        <div ref={scrollRef} className={`flex-1 min-h-0 overflow-y-auto ${home || view !== 'thread' ? 'ws-safe-bottom' : ''}`}>
           {home && <TeamHome names={names} status={status} lines={lines} agents={team} threads={threads} composer={box(true)} onAgent={openAgent} onGo={go}
             since={visit.since} brief={brief} onShow={onShow} />}
           <Suspense fallback={null}>
@@ -637,11 +651,13 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         {/* the media drawer: over the conversation's right edge, under the top bar (the whole screen on a phone) */}
         <AnimatePresence>
           {filesOpen && current && !docked && (
-            <motion.div key="files" className="absolute right-0 top-12 bottom-0 z-20 w-[360px] max-w-full max-md:fixed max-md:inset-0 max-md:w-full max-md:z-50"
+            <motion.div key="files" className="absolute right-0 top-12 bottom-0 z-20 w-[360px] max-w-full max-md:fixed max-md:inset-0 max-md:w-full max-md:z-50 ws-sheet-open"
               initial={reduce ? false : { opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={reduce ? undefined : { opacity: 0, x: 16 }}
               transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}>
-              <MediaDrawer items={files} loading={media === null} onOpen={openFile} onClose={() => setFilesOpen(false)}
-                openKey={showPanel ? panel.active : null} />
+              <div ref={filesRef} className="h-full">
+                <MediaDrawer items={files} loading={media === null} onOpen={openFile} onClose={() => setFilesOpen(false)}
+                  openKey={showPanel ? panel.active : null} swipe={winW < 768 ? filesSwipe : undefined} />
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -676,7 +692,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       <AnimatePresence>
         {drawer && (
           <motion.div className="fixed inset-0 z-40 md:hidden flex" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-            <motion.div className="h-full flex flex-col bg-[var(--t-bg2)] shadow-2xl" initial={reduce ? false : { x: -40 }} animate={{ x: 0 }} exit={reduce ? undefined : { x: -40 }} transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}>
+            <motion.div ref={drawerRef} {...drawerSwipe} className="h-full flex flex-col bg-[var(--t-bg2)] shadow-2xl ws-safe-top ws-safe-bottom" initial={reduce ? false : { x: -40 }} animate={{ x: 0 }} exit={reduce ? undefined : { x: -40 }} transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}>
               <div className="flex gap-1.5 px-3 pt-3 pb-1 overflow-x-auto w-[86vw] max-w-[340px]" aria-label="agents">
                 {names.map((a) => <button key={a} onClick={() => openAgent(a)} aria-label={`open a chat with ${displayName(a)}`} className="shrink-0 p-1 rounded-xl" style={{ ['--ws-pip-bg' as string]: 'var(--t-bg2)' }}><Presence agent={a} status={status[a]} size={34} /></button>)}
               </div>

@@ -4,6 +4,7 @@ import AgentFace from '../../components/AgentFace'
 import { startDictation, stopDictation, useDictation } from '../dictate'
 import { mentions, upload, type McpTool, type Skill, type Uploaded } from '../model'
 import { I } from '../icons'
+import { touchFirst } from '../shell/phone'
 
 /* The composer (plan-11884 C3; restyled for the workspace after canvas's Composer + Home). Everything is a key:
      Enter sends, Shift+Enter breaks a line, ↑ in an empty box brings back your last message,
@@ -153,7 +154,9 @@ export default forwardRef<ComposerHandle, {
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); items[sel]?.apply(); return }
       if (e.key === 'Escape') { e.preventDefault(); setMenuOff(true); return }
     }
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); return }
+    // a phone's Enter is a new line (iteration 16): its keyboard has no Shift+Enter, and a message goes out only by the
+    // send button, as in WhatsApp. A hardware keyboard (a desktop, a tablet with keys) sends on Enter.
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !touchFirst()) { e.preventDefault(); send(); return }
     if (e.key === 'ArrowUp' && !text) { const l = lastMine(); if (l) { e.preventDefault(); setText(l) } return }
     if (e.key === '.' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); dictate() }
   }
@@ -161,7 +164,7 @@ export default forwardRef<ComposerHandle, {
   const live = dict.phase === 'live'
   const hint = placeholder ?? (to.length ? `Message ${to.map(displayName).join(', ')}` : 'Mention an agent with @ to start')
   return (
-    <div className={hero ? 'w-full' : 'mx-auto w-full max-w-[760px] px-4 md:px-6 pb-4 md:pb-5 pt-1'}>
+    <div className={hero ? 'w-full' : 'ws-dock-bottom mx-auto w-full max-w-[760px] px-3 sm:px-4 md:px-6 pt-1'}>
       <div className="ws-composer relative" data-drop={drop}
         onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDrop(true) } }}
         onDragLeave={() => setDrop(false)}
@@ -202,7 +205,7 @@ export default forwardRef<ComposerHandle, {
             {dict.partial || (live ? 'Listening. Speech goes to OpenAI for transcription.' : 'Starting the microphone…')}
           </div>
         )}
-        <div className="flex items-center gap-0.5 px-2 pb-2 pt-1">
+        <div className="flex items-center gap-0.5 px-2 pb-2 pt-1 max-sm:px-1 max-sm:pb-1">
           <input ref={fileIn} type="file" multiple hidden onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = '' }} />
           <button className="ws-icon" onClick={() => fileIn.current?.click()} title="Attach files (or paste, or drop)" aria-label="attach files">{I.clip()}</button>
           <button className="ws-icon" onClick={dictate} title="Dictate (⌘.)" aria-pressed={live} aria-label="dictate">{live ? <span className="w-2.5 h-2.5 rounded-sm bg-bad animate-pulse" /> : I.mic()}</button>
@@ -219,7 +222,7 @@ export default forwardRef<ComposerHandle, {
           {err && <span className="ml-2 text-[12px] text-bad truncate" role="alert">{err}</span>}
           {dict.phase === 'error' && dict.error && !err && <span className="ml-2 text-[12px] text-bad truncate" role="alert">{dict.error}</span>}
           <span className="flex-1 min-w-2" aria-hidden />
-          <span className="ws-composer-hint mr-2 text-[11px] text-ink-mute hidden md:inline">{text ? 'Enter to send · Shift+Enter for a line' : '/ for commands · @ for agents'}</span>
+          {!touchFirst() && <span className="ws-composer-hint mr-2 text-[11px] text-ink-mute hidden md:inline">{text ? 'Enter to send · Shift+Enter for a line' : '/ for commands · @ for agents'}</span>}
           <button onClick={send} disabled={!canSend} className="ws-send ws-sig shrink-0" aria-label={busy ? 'sending' : 'send'} title="Send (Enter)">
             {busy ? <span className="w-3.5 h-3.5 rounded-full border-2 border-white/70 border-t-transparent animate-spin" /> : I.send('w-[18px] h-[18px]')}
           </button>

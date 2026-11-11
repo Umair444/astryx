@@ -134,7 +134,14 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     try { await onOlder() } finally { setFetching(false) }
     win.earlier()                                  // the page just loaded sits above the window: open it, holding the place
   }
-  useEffect(() => { if (!win.jumping()) end.current?.scrollIntoView({ block: 'end', behavior: reduce ? 'auto' : 'smooth' }) }, [last, pending.length, reduce]) // eslint-disable-line react-hooks/exhaustive-deps
+  // the FIRST landing on a conversation is instant (iteration 16: a smooth scroll aimed at an end that kept moving as
+  // its tables and images laid out stopped short of the latest message); a new message after that glides
+  const landed = useRef(false)
+  useEffect(() => {
+    if (win.jumping()) return
+    end.current?.scrollIntoView({ block: 'end', behavior: reduce || !landed.current ? 'auto' : 'smooth' })
+    if (!loading && end.current) landed.current = true
+  }, [last, pending.length, reduce, loading]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return (
     <div className="mx-auto w-full max-w-[720px] px-6 pt-10 flex flex-col gap-5" aria-busy>
@@ -210,7 +217,7 @@ function Mine({ m, to, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; 
       </div>
       <div className="flex items-center gap-2 text-[11px] text-ink-mute pr-1">
         {!ch && <TurnActions m={m} text={text} inline />}
-        <button onClick={() => onEdit(m)} className="opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-ink" title="Send again, edited (↑ in an empty composer)">Edit</button>
+        <button onClick={() => onEdit(m)} className="ws-editbtn opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-ink" title="Send again, edited (↑ in an empty composer)">Edit</button>
         {to.length > 0 && <span>to {to.map(displayName).join(', ')}</span>}
         <span>{fmtTime(m.ts)}</span>
       </div>
