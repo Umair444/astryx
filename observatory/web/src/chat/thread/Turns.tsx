@@ -15,7 +15,7 @@ import { parseChanges } from '../artifacts/versions/changes'
 import ChangesCard from './ChangesCard'
 import TurnActions from './TurnActions'
 import { blockMsg, useWindowed, type Focus } from './focus'
-import { useThreadTitles } from '../data'
+import { useThreadTitles, type Switch } from '../data'
 
 /* The conversation (plan-11884 C2, reshaped for the workspace per DESIGN.md "turns: flat, not bubbles"). Agents'
    answers read as a page: face + name + role + time, then prose at a reading measure; consecutive answers from the
@@ -23,7 +23,10 @@ import { useThreadTitles } from '../data'
    several agents, which the wire stores as one row per recipient). A message from one AGENT to another is a HANDOFF:
    the one meaningful rule, "seed → db", its body folded beneath. So is a turn that answered HERE but was started by
    another agent's message elsewhere (GET /api/ws/handoffs): "db → seed · owner-txn-status" above that answer, opening
-   to the message that passed the work (the payload). Under the last turn, the live activity line. */
+   to the message that passed the work (the payload). Under the last turn, the live activity line.
+   A SWITCH (the owner handed the chat to other agents, PUT /api/ws/threads/meta {switch_to}) is a BOUNDARY: a solid
+   rule in the new agent's colour, "Now with Finance", above the first row after it (at the bottom while nothing has
+   been said since). What sits above it was the previous agent's; the new one never received it. */
 
 /* D4 (plan-11884): each agent answer carries the TURN that produced it (messages.turn_id) and that turn's steps,
    never steps guessed from a time window. A turn this thread touched but did not get its answer (it answered on
@@ -56,18 +59,43 @@ type Block =
   | { kind: 'handoff'; key: string; h: HandoffView }
   | { kind: 'note'; key: string; msg: Msg }
   | { kind: 'elsewhere'; key: string; turn: WTurn }
+  | { kind: 'switch'; key: string; sw: Switch; from: string[] }
 
 /* a handoff as the divider draws it: an in-thread agent→agent row (thread null: it is HERE), or an outside message
    that opened the turn answering here */
 export interface HandoffView { from: string; to: string; ts: string; body: string; thread: string | null; intent: string | null; id: number }
 
-export function blocksOf(items: Row[], roster: Set<string>, handoffs: WHandoff[] = []): Block[] {
+/* switches land by TIME: each before the first message stamped after it. Several with nothing said between them
+   collapse to the last (the owner changed their mind; only where the chat ended up is a boundary). Before the first
+   message there is nothing to divide, so a switch on an empty chat only set the recipient and draws nothing. `from`
+   = who the owner talked with since the last boundary (else the agents it named), for the label's "Seed → Finance". */
+export function blocksOf(items: Row[], roster: Set<string>, handoffs: WHandoff[] = [], switches: Switch[] = []): Block[] {
   const out: Block[] = []
   const into = new Map(handoffs.map((h) => [h.turn_id, h]))
+  const sws = [...switches].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts))
+  let si = 0
+  let said = false                                 // a message is above: a switch now divides something
+  const spoke: string[] = []                       // who the owner talked with since the last boundary
+  let drawn: Switch | null = null                  // the boundary drawn last
+  const boundary = (until: number) => {
+    let last: Switch | null = null
+    while (si < sws.length && Date.parse(sws[si].ts) < until) last = sws[si++]
+    if (!last || !said) return
+    const to = last.agents
+    const from = (spoke.length ? spoke : drawn?.agents ?? []).filter((a) => !to.includes(a))
+    out.push({ kind: 'switch', key: `s${last.ts}`, sw: last, from })
+    drawn = last; spoke.length = 0
+  }
   let day = ''
   let prev: Msg | null = null
   for (const { msg, turn } of items) {
     if (!msg) { out.push({ kind: 'elsewhere', key: `t${turn!.id}`, turn: turn! }); prev = null; continue }
+    const before = out.length
+    boundary(Date.parse(msg.ts))
+    if (out.length > before) prev = null
+    said = true
+    const party = msg.from === 'owner' ? msg.to : msg.to === 'owner' ? msg.from : null
+    if (party && roster.has(party) && !spoke.includes(party)) spoke.push(party)
     const d = new Date(msg.ts).toDateString()
     if (d !== day) { day = d; out.push({ kind: 'day', key: `d${msg.id}`, label: fmtDay(msg.ts) }); prev = null }
     const last = out.at(-1)
@@ -92,11 +120,13 @@ export function blocksOf(items: Row[], roster: Set<string>, handoffs: WHandoff[]
     }
     prev = msg
   }
+  boundary(Infinity)                               // switched since the last message: the boundary sits at the bottom
   return out
 }
 
-export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty, handoffs, onStop, focus = null, older = false, onOlder }: {
+export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty, handoffs, switches, onStop, focus = null, older = false, onOlder }: {
   rows: Msg[]
+  switches?: Switch[]                          // the owner's switches of this chat's agents: a boundary at each
   older?: boolean                              // the server holds rows older than the first one here (a long thread)
   onOlder?: () => Promise<void>                // …and this loads the page before them
   focus?: Focus | null                         // open AT this message (a search hit): thread/focus.ts
@@ -114,8 +144,9 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
 }) {
   const reduce = useReducedMotion()
   const end = useRef<HTMLDivElement>(null)
-  const blocks = useMemo(() => blocksOf(rowsOf(rows, work), new Set(roster), handoffs), [rows, work, roster, handoffs])
+  const blocks = useMemo(() => blocksOf(rowsOf(rows, work), new Set(roster), handoffs, switches), [rows, work, roster, handoffs, switches])
   const last = rows.at(-1)?.id ?? 0
+  const lastSwitch = switches?.at(-1)?.ts ?? ''
   // a long thread renders its newest window ("Show earlier" above); a jump widens it and lands on its message
   const win = useWindowed(blocks, focus, !loading, () => end.current?.parentElement?.parentElement ?? null)
   // the conversation's hands, held still (iteration 14): a block re-renders when ITS content changes, never because
@@ -141,7 +172,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     if (win.jumping()) return
     end.current?.scrollIntoView({ block: 'end', behavior: reduce || !landed.current ? 'auto' : 'smooth' })
     if (!loading && end.current) landed.current = true
-  }, [last, pending.length, reduce, loading]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [last, pending.length, reduce, loading, lastSwitch]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return (
     <div className="mx-auto w-full max-w-[720px] px-6 pt-10 flex flex-col gap-5" aria-busy>
@@ -177,6 +208,7 @@ function sameBlock(a: Block, b: Block): boolean {
     case 'handoff': { const y = b as typeof a; return a.h.id === y.h.id && a.h.to === y.h.to && a.h.body === y.h.body && a.h.ts === y.h.ts }
     case 'note': return a.msg === (b as typeof a).msg
     case 'elsewhere': return turnSig(a.turn) === turnSig((b as typeof a).turn)
+    case 'switch': { const y = b as typeof a; return a.sw.agents.join() === y.sw.agents.join() && a.from.join() === y.from.join() }
   }
 }
 const BlockView = memo(function BlockView({ b, role, cb, asks }: { b: Block; role?: string; cb: BlockCb; asks: boolean }) {
@@ -187,6 +219,7 @@ const BlockView = memo(function BlockView({ b, role, cb, asks }: { b: Block; rol
     case 'handoff': return <Handoff h={b.h} />
     case 'note': return <Note m={b.msg} />
     case 'elsewhere': return <Elsewhere turn={b.turn} />
+    case 'switch': return <SwitchLine sw={b.sw} from={b.from} />
   }
 }, (x, y) => x.role === y.role && x.cb === y.cb && x.asks === y.asks && sameBlock(x.b, y.b))
 
@@ -288,6 +321,31 @@ function Handoff({ h }: { h: HandoffView }) {
           {long && <button onClick={() => setMore((x) => !x)} className="mt-1 text-[12px] text-ink-mute hover:text-ink">{more ? 'Show less' : 'Show all'}</button>}
         </div>
       )}
+    </div>
+  )
+}
+
+/* a SWITCH: the boundary between two agents' parts of one chat. Unlike a handoff (a hairline that fades out at both
+   ends, a pill you open), it is a solid rule in the NEW agent's colour edge to edge, the pill tinted with it, and a
+   line under it saying what the boundary means: the agent below never received what is above. */
+function SwitchLine({ sw, from }: { sw: Switch; from: string[] }) {
+  const names = sw.agents.map(displayName)
+  const who = names.length > 2 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names.join(' and ')
+  const one = sw.agents.length === 1
+  return (
+    <div className="ws-switch-wrap mt-9 mb-1" role="separator" aria-label={`Now with ${who}`} style={{ ['--ws-to' as string]: agentColor(sw.agents[0]) }}>
+      <div className="ws-switch">
+        <span className="ws-switch-pill">
+          {from.length > 0 && <span className="flex -space-x-1 opacity-60 max-sm:hidden">{from.slice(0, 3).map((n) => <AgentFace key={n} name={n} size={16} />)}</span>}
+          {from.length > 0 && <svg viewBox="0 0 24 16" className="w-[16px] h-[11px] text-ink-mute max-sm:hidden" aria-hidden><path d="M1 8h19M15 3l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+          <span className="flex -space-x-1">{sw.agents.slice(0, 4).map((n) => <AgentFace key={n} name={n} size={18} />)}</span>
+          <span className="text-ink font-medium">Now with {who}</span>
+          <span className="text-ink-mute">· {fmtTime(sw.ts)}</span>
+        </span>
+      </div>
+      <div className="mt-1.5 text-center text-[11.5px] text-ink-mute">
+        {one ? `${who} starts here; earlier messages aren’t sent to it` : `${who} start here; earlier messages aren’t sent to them`}
+      </div>
     </div>
   )
 }
