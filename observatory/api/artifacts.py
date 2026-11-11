@@ -60,7 +60,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 
-from astryx.security.serve import CSP, sniff
+from astryx.security.serve import CSP, SVG_CSP, SVG_TYPE, is_svg, sniff
 from observatory.api import chat as _chat
 from observatory.api.hostfile import atomic_write, etag
 
@@ -86,7 +86,7 @@ EDITABLE = ("text", "table", "code")
 OOXML = {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
          "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
 TEXT_TYPES = {"csv": "text/csv", "tsv": "text/tab-separated-values", "md": "text/markdown",
-              "markdown": "text/markdown", "svg": "image/svg+xml"}
+              "markdown": "text/markdown"}
 
 # the client's FILE_EMBED (observatory/web/src/chat/model.ts), the same semantics: a path, then an optional label
 FILE_EMBED = re.compile(r"\[\[file:([^\]\n]+)\]\](?: \(([^)\n]{1,120})\))?")
@@ -167,11 +167,14 @@ def parse_media(rows: list[dict]) -> list[dict]:
 
 def content_type(name: str, data: bytes) -> str:
     """The served type: the BYTES decide (serve.sniff), the extension only refines a type the bytes already proved —
-    a text file is shown as text (csv/markdown/svg named as such, html never a document), an OOXML zip as itself."""
+    a text file is shown as text (csv/markdown named as such, html never a document), an .svg that IS one as
+    image/svg+xml (served under SVG_CSP), an OOXML zip as itself."""
     ext = PurePosixPath(name).suffix.lower().lstrip(".")
     if ext in OOXML and data[:4] == b"PK\x03\x04":
         return OOXML[ext]
     kind = sniff(data[:4096])
+    if ext == "svg" and is_svg(data[:4096]):
+        return SVG_TYPE
     if kind and kind.startswith("text/"):
         return f"{TEXT_TYPES.get(ext, 'text/plain')}; charset=utf-8"
     return kind or "application/octet-stream"
@@ -722,8 +725,9 @@ async def art_content(aid: str, request: Request, rev: str | None = None):
         return got
     data, name, _ = got
     ascii_name = re.sub(r'[^A-Za-z0-9 ._()-]', "_", name)
-    return Response(data, media_type=content_type(name, data), headers={
-        "X-Content-Type-Options": "nosniff", "Content-Security-Policy": CSP,
+    ctype = content_type(name, data)
+    return Response(data, media_type=ctype, headers={
+        "X-Content-Type-Options": "nosniff", "Content-Security-Policy": SVG_CSP if ctype == SVG_TYPE else CSP,
         "Content-Disposition": f'inline; filename="{ascii_name}"',
         "Cache-Control": "private, max-age=31536000, immutable" if rev else "no-store"})
 

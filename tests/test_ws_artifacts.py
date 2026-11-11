@@ -14,7 +14,9 @@ into chat.readable's gate; no database and no app.
   - MEDIA: every [[file:]] embed, with and without a label, oldest first, sender and kind attached.
   - SAFETY: a path outside the gate (an outside file, a '..' escape, a dot-path, an .env) is 403 and nothing lands;
     a non-hex id is 404; an oversize source is 413; a binary artifact refuses a save (415).
-  - SERVING: the bytes decide the content type (an .html is text/plain; a .png is image/png).
+  - SERVING: the bytes decide the content type (an .html is text/plain; a .png is image/png); an .svg whose bytes ARE
+    an SVG is image/svg+xml under SVG_CSP (sandbox, nothing fetched or run); an agent home's Claude scratchpad is
+    readable through the gate, as bridges/embed_root lets it attach from there.
   - PROVENANCE (iteration 7): an import naming its message records source/msg/msg_ts on the version (trailers); a
     version without one answers nulls; bytes from a message OLDER than a recorded one never become the head
     (superseded); restore takes a message (a revert names whose change it undoes).
@@ -24,6 +26,7 @@ ART_SRC names another artifacts.py (a mutant) to run the same arms against."""
 import hashlib
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -40,6 +43,7 @@ A = importlib.util.module_from_spec(spec)
 sys.modules["art_subject"] = A          # pydantic resolves the models' annotations through it
 spec.loader.exec_module(A)
 from observatory.api import chat as C  # noqa: E402 — the gate the subject reads through
+from astryx.security.serve import SVG_CSP  # noqa: E402
 
 fails = 0
 
@@ -342,6 +346,58 @@ def main():
     arm("a .png that's text stays text", A.content_type("a.png", b"<svg onload=1>").startswith("text/plain"))
     arm("docx zip -> its OOXML type", A.content_type("a.docx", b"PK\x03\x04rest").endswith("wordprocessingml.document"))
     arm("unknown bytes -> octet-stream", A.content_type("a.bin", b"\x00\x01\xff") == "application/octet-stream")
+
+    print("svg (11-11: the owner's avatar.svg never drew)")
+    SVG = (b'<?xml version="1.0"?>\n<!-- a chart -->\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">'
+           b'<style>rect{fill:#3a6}</style><rect width="8" height="8"/><script>alert(1)</script></svg>')
+    arm("an .svg that IS one -> image/svg+xml (an <img> can draw it)", A.content_type("logo.svg", SVG) == "image/svg+xml",
+        A.content_type("logo.svg", SVG))
+    arm("an .svg that isn't one stays text/plain", A.content_type("x.svg", b"<html><script>1</script>").startswith("text/plain"))
+    arm("svg bytes NOT named .svg stay text/plain", A.content_type("x.txt", SVG).startswith("text/plain"))
+    arm("svg bytes named .png stay text/plain", A.content_type("x.png", SVG).startswith("text/plain"))
+    sv = home / "chart.svg"
+    sv.write_bytes(SVG)
+    asv = A.import_source(S, str(sv), T, "db")
+    page = home / "page.html"
+    page.write_text("<script>alert(1)</script>")
+    ahtml = A.import_source(S, str(page), T, "db")
+
+    class Req:
+        query_params: dict = {}
+    real_store, A.store = A.store, (lambda: S)
+    try:
+        r = asyncio.run(A.art_content(asv["id"], Req(), None))
+        rh = asyncio.run(A.art_content(ahtml["id"], Req(), None))
+    finally:
+        A.store = real_store
+    csp = r.headers.get("content-security-policy", "")
+    arm("the content route serves the svg as image/svg+xml", r.headers.get("content-type") == "image/svg+xml" and r.body == SVG,
+        dict(r.headers))
+    arm("its CSP is the svg one: a sandbox, nothing fetched or run, inline style allowed",
+        csp == SVG_CSP and csp.startswith("sandbox;") and "default-src 'none'" in csp and "script-src" not in csp
+        and "style-src 'unsafe-inline'" in csp, csp)
+    arm("nosniff on the svg", r.headers.get("x-content-type-options") == "nosniff", dict(r.headers))
+    arm("an .html keeps the plain sandbox CSP, text/plain", rh.headers.get("content-security-policy") == A.CSP
+        and rh.headers.get("content-type", "").startswith("text/plain"), dict(rh.headers))
+
+    print("scratchpads (11-11: db attached avatar.svg from its Claude scratchpad; the panel answered 404)")
+    scratch = C.scratch_root(home)
+    other = C.scratch_root(estate / "not-a-home")
+    try:
+        (scratch / "sess" / "scratchpad").mkdir(parents=True)
+        (scratch / "sess" / ".claude").mkdir(parents=True)
+        (other / "sess").mkdir(parents=True)
+        ok = scratch / "sess" / "scratchpad" / "avatar.svg"
+        ok.write_bytes(SVG)
+        (scratch / "sess" / ".claude" / "s.json").write_text("{}")
+        (other / "sess" / "x.svg").write_bytes(SVG)
+        arm("an agent home's scratchpad is readable", C.readable(str(ok)) == ok.resolve())
+        arm("a dot-path in a scratchpad is not", C.readable(str(scratch / "sess" / ".claude" / "s.json")) is None)
+        arm("a scratchpad of no agent home is not", C.readable(str(other / "sess" / "x.svg")) is None)
+        arm("the open imports it", code_of(A.import_source, S, str(ok), T, "db") == 200)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+        shutil.rmtree(other, ignore_errors=True)
 
     print(f"\n{'ALL PASS' if not fails else f'{fails} FAILED'}")
     return 1 if fails else 0
