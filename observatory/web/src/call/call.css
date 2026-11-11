@@ -98,3 +98,21 @@ nav .call-why { left: calc(100% + 12px); right: auto; top: auto; bottom: 0; }
   .is-pulse, .call-arc, .call-spin, .call-sparks i { animation: none !important; }
   .call-ring { transform: none; }
 }
+
+/* ---- the blob (CallBlob.tsx): canvas's VoiceDock orb, at rest low on the right. The wrapper is only the circle's own
+   box and takes no pointer; the circle does. Under every chat sheet, drawer and dialog (z 30+), over the page. */
+.call-blob-wrap { position: fixed; z-index: 25; pointer-events: none; }
+.call-blob {
+  position: absolute; inset: 0; pointer-events: auto; border-radius: 9999px; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--t-bg2) 80%, transparent); backdrop-filter: blur(18px) saturate(1.2);
+  border: 1px solid var(--t-line); box-shadow: 0 14px 30px -12px rgba(0,0,0,.4);
+}
+.call-blob:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 70%, transparent); outline-offset: 3px; }
+.call-blob::after { content: ''; position: absolute; inset: -6px; border-radius: 9999px; }   /* finger-sized, still only the circle */
+.call-blob.is-blocked { opacity: .6; filter: saturate(.55); }
+.call-blob-tip {
+  position: absolute; right: calc(100% + 10px); top: 50%; translate: 0 -50%; white-space: nowrap; max-width: min(300px, 70vw);
+  overflow: hidden; text-overflow: ellipsis; padding: 6px 10px; border-radius: 12px; font-size: 12px; color: var(--t-dim);
+  background: color-mix(in srgb, var(--t-bg2) 88%, transparent); backdrop-filter: blur(14px); border: 1px solid var(--t-line);
+  box-shadow: 0 10px 30px -14px rgba(0,0,0,.45); pointer-events: none;
+}

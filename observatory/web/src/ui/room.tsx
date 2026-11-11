@@ -5,6 +5,7 @@ import AgentFace from '../components/AgentFace'
 import { displayName, obsKey } from '../api'
 import { pilot } from '../pilot'
 import { connect as connectLive, useVoice } from '../pilot/voice'
+import { useBlobSpot } from '../call/state'
 
 /* THE ROOM (owner brief, 2026-10-11): one voice for the whole org, and the org visibly in the room on every tab.
 
@@ -14,7 +15,7 @@ import { connect as connectLive, useVoice } from '../pilot/voice'
    can drive the screen (room_screen → the pilot's AGENT principal) or hand the room to the realtime voice for a live
    back-and-forth (room_live → the voice orb, briefed).
 
-   Who floats: seed always (the room's host), plus every agent addressed or heard in the last 5 minutes. The active
+   Who floats: seed always (the room's host; at rest it yields to the call's blob, which holds the corner), plus every agent addressed or heard in the last 5 minutes. The active
    one flies to the stage (bottom centre, large) through listening → thinking → speaking; the rest drift on the bench
    (bottom right). Pointer-transparent except the faces, so it never blocks a tab underneath. */
 
@@ -70,12 +71,13 @@ class Speaker {
 }
 
 export default function RoomLayer() {
-  const [members, setMembers] = useState<Record<string, Member>>({ seed: { agent: 'seed', mood: 'idle', since: Date.now() } })
+  const [members, setMembers] = useState<Record<string, Member>>({ seed: { agent: 'seed', mood: 'idle', since: 0 } })   // the host, unheard yet: no 5-minute stay
   const [, tick] = useState(0)
   // a live call with agent X has its own figure on screen (call/CallAvatar.tsx): X's resting face leaves the bench
   // while the call is up, and comes back on hang-up, so the page never shows the same agent twice
   const voice = useVoice()
   const onCall = voice.phase === 'live' || voice.phase === 'connecting' ? voice.agent : null
+  const blobUp = !!useBlobSpot()                            // the call's blob holds the corner: an idle seed needn't sit by it
   const speaker = useRef<Speaker | null>(null)
   const glow = useRef<HTMLDivElement | null>(null)
 
@@ -124,7 +126,7 @@ export default function RoomLayer() {
   const now = Date.now()
   const list = Object.values(members)
     .map((m) => (m.mood === 'thinking' && now - m.since > THINK_TIMEOUT_MS ? { ...m, mood: 'idle' as Mood } : m))
-    .filter((m) => m.agent === 'seed' || m.mood !== 'idle' || now - m.since < STAY_MS)
+    .filter((m) => (m.agent === 'seed' && !blobUp) || m.mood !== 'idle' || now - m.since < STAY_MS)
   const active = list.filter((m) => m.mood !== 'idle').sort((a, b) => b.since - a.since)[0]
   const bench = list.filter((m) => m !== active && m.agent !== onCall)
   const W = typeof window !== 'undefined' ? window.innerWidth : 1200
