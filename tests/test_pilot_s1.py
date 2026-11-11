@@ -9,7 +9,8 @@
       app's tabs minus the fullscreen face mode (App.tsx Route);
   (d) the MCP list for agents is cut from the matrix: exactly the actions agent may run, all of class view,
       never read/write/actuate;
-  (e) the executor's gate, run by node on the real catalog (tests/pilot_core_test.ts).
+  (e) the executor's gate, run by node on the real catalog (tests/pilot_core_test.ts), and the egress projection
+      with the call's screen mask (tests/pilot_egress_test.ts).
 No DB, no network, no browser.
 """
 import importlib.util
@@ -97,9 +98,14 @@ node = shutil.which("node")
 if not node:
     arm("node is installed (the executor's gate runs under it)", False)
 else:
-    r = subprocess.run([node, str(REPO / "tests/pilot_core_test.ts"), str(CAT)], capture_output=True, text=True, timeout=60)
-    print(r.stdout.rstrip())
-    arm("the executor's gate (node)", r.returncode == 0, r.stderr.strip()[-400:])
+    sys.path.insert(0, str(REPO / "tests"))
+    from node_ts import run_ts                     # node < 22.6 can't load .ts: bundled first (tests/node_ts.py)
+    rc, out, err = run_ts(REPO / "tests/pilot_core_test.ts", CAT)
+    print(out.rstrip())
+    arm("the executor's gate (node)", rc == 0, err.strip()[-400:])
+    rc, out, err = run_ts(REPO / "tests/pilot_egress_test.ts", CAT)
+    print(out.rstrip())
+    arm("what leaves for the provider: the egress projection and the screen mask (node)", rc == 0, err.strip()[-400:])
 
 print("ALL PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

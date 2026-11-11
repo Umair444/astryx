@@ -61,7 +61,7 @@ export default function Sidebar({ route, onOpenAgent }: { route: Route; onOpenAg
             {links.map((l) => {
               const on = route.tab === l.tab
               return (
-                <button key={l.tab} onClick={() => nav({ tab: l.tab } as Route)}
+                <button key={l.tab} data-tab={l.tab} onClick={() => nav({ tab: l.tab } as Route)}
                   className={`relative w-full flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] transition-colors ${on ? 'text-ink' : 'text-ink-dim hover:text-ink hover:bg-deck-3/60'}`}>
                   {on && <motion.span layoutId="nav-on" className="absolute inset-0 rounded-lg"
                     style={{ background: 'color-mix(in srgb, var(--t-accent) 14%, var(--t-panel2))', boxShadow: 'inset 2px 0 0 var(--t-accent)' }}
@@ -90,7 +90,7 @@ export default function Sidebar({ route, onOpenAgent }: { route: Route; onOpenAg
                 {cast.map(({ a, mood }) => {
                   const { line } = nowLine(a, presence[a.agent], mood, now)
                   return (
-                    <button key={a.agent} onClick={() => onOpenAgent(a.agent)}
+                    <button key={a.agent} data-agent={a.agent} onClick={() => onOpenAgent(a.agent)}
                       className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-deck-3/60 transition-colors group">
                       <AgentFace name={a.agent} size={24} dim={mood === 'asleep'} />
                       <span className="min-w-0 flex-1">

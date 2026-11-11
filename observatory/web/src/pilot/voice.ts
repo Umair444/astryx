@@ -9,19 +9,30 @@
    spend   cumulative connected seconds → /api/pilot/voice/usage every 30s and on hangup (shared cap, C3/C4);
            the session closes itself after IDLE_MS with no speech and no response (the token-eating guard), and
            when the server says today's cap is spent.
-   It opens only from the owner's tap (a trusted click starts connect(): C3's transient activation). */
+   It opens only from the owner's tap (a trusted click starts connect(): C3's transient activation).
+
+   THE CALL (iteration 17): one call, from every page and the chat. connect({agent}) mints the session in that agent's
+   persona and voice (the server reads its charter's one-line role). While live, the screen is told to the model as a
+   short system item, on connect and whenever the page changes (debounced, deduped): collectScreen() → the egress
+   projection (masked, capped to SCREEN_BUDGET) → screenLine(); nothing else about the page leaves. A write the model
+   asks for parks for the owner's tap; when the tap (or "Not now") settles it, the model is told which, so it never
+   claims a send that didn't happen. */
 import { useSyncExternalStore } from 'react'
 import { apiPost } from '../api'
-import { pilot } from '.'
-import { functionOutput } from './egress'
+import { onPilotPending, pilot } from '.'
+import { functionOutput, project, screenLine } from './egress'
 import type { Json } from './core'
+import { collectScreen } from './screenDom'
+import { onChatChange } from './chatctl'
+import { avatar } from './avatarBus'
 
 export type Phase = 'idle' | 'connecting' | 'live' | 'error'
 export type Mood = 'idle' | 'listening' | 'thinking' | 'speaking' | 'working'
-export interface VoiceState { phase: Phase; mood: Mood; error: string; minutes: number; cap: number; heard: string; said: string; acting: string }
+export interface VoiceState { phase: Phase; mood: Mood; error: string; minutes: number; cap: number; heard: string; said: string; acting: string; agent: string; since: number; muted: boolean }
 
 const IDLE_MS = 60_000
-let st: VoiceState = { phase: 'idle', mood: 'idle', error: '', minutes: 0, cap: 60, heard: '', said: '', acting: '' }
+let st: VoiceState = { phase: 'idle', mood: 'idle', error: '', minutes: 0, cap: 60, heard: '', said: '', acting: '', agent: 'seed', since: 0, muted: false }
+export const voiceState = () => st
 const subs = new Set<() => void>()
 const patch = (p: Partial<VoiceState>) => { st = { ...st, ...p }; subs.forEach((f) => f()) }
 /** The live voice owns the room while it's on: the ear holds its uploads (components/EarControl.tsx), so one
@@ -44,7 +55,43 @@ let responding = false
 const done = new Set<string>()
 
 /** The ONE path from this page to the provider. */
-function toProvider(ev: object) { if (dc?.readyState === 'open') dc.send(JSON.stringify(ev)) }
+function toProvider(ev: object) {
+  if (stubLine) { stubLine.send(ev); return }
+  if (dc?.readyState === 'open') dc.send(JSON.stringify(ev))
+}
+
+/* ---- the screen, told to the model (iteration 17) */
+let lastScreen = ''
+let screenTimer: ReturnType<typeof setTimeout> | null = null
+let offScreen: (() => void) | null = null
+const viewName = () => (location.hash.replace(/^#\/?/, '').split(/[/?]/)[0] || 'floor')
+function pushScreen() {
+  screenTimer = null
+  if (st.phase !== 'live') return
+  const line = screenLine(project('read_screen', collectScreen(viewName()) as unknown as Json))   // masked + capped (egress)
+  if (!line || line === lastScreen) return
+  lastScreen = line
+  toProvider({ type: 'conversation.item.create', item: { type: 'message', role: 'system',
+    content: [{ type: 'input_text', text: `The owner's screen now (personal numbers masked): ${line}` }] } })
+}
+/** Something on the page changed: tell the model, once things settle. */
+export function screenChanged(now = false) {
+  if (st.phase !== 'live') return
+  if (screenTimer) clearTimeout(screenTimer)
+  screenTimer = setTimeout(pushScreen, now ? 50 : 1200)
+}
+function watchScreen(on: boolean) {
+  offScreen?.(); offScreen = null
+  if (screenTimer) clearTimeout(screenTimer)
+  screenTimer = null
+  lastScreen = ''
+  if (!on) return
+  const f = () => screenChanged()
+  addEventListener('hashchange', f)
+  const off = onChatChange(f)
+  offScreen = () => { removeEventListener('hashchange', f); off() }
+  screenChanged(true)
+}
 const touch = () => { lastActive = Date.now() }
 
 function rms(an: AnalyserNode | null) {
@@ -55,20 +102,51 @@ function rms(an: AnalyserNode | null) {
   for (const v of b) { const x = (v - 128) / 128; s += x * x }
   return Math.min(1, Math.sqrt(s / b.length) * 3.2)
 }
-export const levels = { mic: () => rms(micAn), out: () => rms(outAn) }
+export const levels = {
+  mic: () => (stubLine?.levels ? stubLine.levels.mic() : st.muted ? 0 : rms(micAn)),
+  out: () => (stubLine?.levels ? stubLine.levels.out() : rms(outAn)),
+}
+/** Mute the mic for this call (the session stays; the model hears silence). */
+export function setMuted(on: boolean) {
+  mic?.getTracks().forEach((t) => { t.enabled = !on })
+  patch({ muted: on })
+}
 
-interface Minted { value: string; model: string; usage_id: number; minutes_today: number; cap: number; calls_url: string }
+interface Minted { value: string; model: string; usage_id: number; minutes_today: number; cap: number; calls_url: string; agent?: string }
+export interface ConnectOpts { agent?: string; brief?: string }
 
-export async function connect(brief?: string): Promise<void> {
+/** The WebRTC layer, swappable in a DEV build only (the call's screenshots and browser tests stub it: no mic, no
+ *  mint, no spend). A production build never reads the hook. */
+type Stub = { connect: (o: ConnectOpts) => { onEvent: (f: (ev: any) => void) => void; send: (ev: object) => void; close: () => void; levels?: { mic: () => number; out: () => number } } }
+const stubbed = (): Stub | undefined =>
+  ((import.meta as unknown as { env: { DEV: boolean } }).env.DEV ? (window as unknown as { __callStub?: Stub }).__callStub : undefined)
+let stubLine: ReturnType<Stub['connect']> | null = null
+
+export async function connect(arg?: string | ConnectOpts): Promise<void> {
   if (st.phase === 'connecting' || st.phase === 'live') return
-  patch({ phase: 'connecting', mood: 'thinking', error: '', heard: '', said: '', acting: '' })
+  const o: ConnectOpts = typeof arg === 'string' ? { brief: arg } : arg ?? {}
+  const agent = o.agent || 'seed'
+  patch({ phase: 'connecting', mood: 'thinking', error: '', heard: '', said: '', acting: '', agent, muted: false })
+  const stub = stubbed()
+  if (stub) {                                         // a DEV build's stub: the same events, no mic, no mint
+    stubLine = stub.connect({ ...o, agent })
+    stubLine.onEvent((ev) => onEvent(ev))
+    connectedAt = Date.now(); touch()
+    patch({ phase: 'live', mood: 'listening', since: connectedAt })
+    watchScreen(true)
+    return
+  }
   try {
     // the mic first: if the owner refuses it, nothing is minted (no spend for a session that can't hear)
-    mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+    try {
+      mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+    } catch (e) {
+      throw new Error(e instanceof DOMException && e.name === 'NotAllowedError' ? 'the microphone is blocked for this page' : 'no microphone could be opened')
+    }
     let m: Minted
-    try { m = await apiPost<Minted>('/pilot/voice/session', {}) } catch (e) {
+    try { m = await apiPost<Minted>('/pilot/voice/session', { agent }) } catch (e) {
       const code = String(e).match(/: (\d+)$/)?.[1]
-      throw new Error(code === '429' ? "today's voice minutes are used up" : code === '403' ? 'voice is owner-only' : 'the voice service refused to start')
+      throw new Error(code === '429' ? "today's voice minutes are used up" : code === '403' ? 'voice is owner-only' : code === '503' ? 'no OpenAI key is configured' : code === '400' ? `no agent named ${agent}` : 'the voice service refused to start')
     }
     usageId = m.usage_id
     patch({ minutes: m.minutes_today, cap: m.cap })
@@ -88,7 +166,9 @@ export async function connect(brief?: string): Promise<void> {
     dc.onmessage = (e) => { try { onEvent(JSON.parse(e.data)) } catch { /* a malformed frame is dropped */ } }
     dc.onopen = () => {
       connectedAt = Date.now(); touch()
-      patch({ phase: 'live', mood: 'listening' })
+      patch({ phase: 'live', mood: 'listening', since: connectedAt })
+      watchScreen(true)
+      const brief = o.brief
       if (brief) {                                    // a room agent handed over: open the live voice already briefed
         toProvider({ type: 'conversation.item.create', item: { type: 'message', role: 'system',
           content: [{ type: 'input_text', text: `An agent in the room handed you this conversation. Their brief: ${brief}` }] } })
@@ -132,6 +212,10 @@ function onPageHide() {
 }
 
 function cleanup() {
+  watchScreen(false)
+  try { stubLine?.close() } catch { /* closing */ }
+  stubLine = null
+  offPending?.(); offPending = null
   if (beat) clearInterval(beat)
   beat = null
   removeEventListener('pagehide', onPageHide)
@@ -149,7 +233,23 @@ export function hangup(note = '') {
   const had = st.phase === 'live' || st.phase === 'connecting'
   if (had) { lastReport = -1e9; reportUsage().finally(() => { usageId = 0; connectedAt = 0 }) }
   cleanup()
-  patch({ phase: note && had ? 'idle' : st.phase === 'error' ? 'error' : 'idle', mood: 'idle', error: note && had ? note : st.error })
+  patch({ phase: note && had ? 'idle' : st.phase === 'error' ? 'error' : 'idle', mood: 'idle', error: note && had ? note : st.error, since: 0, muted: false })
+  avatar.home()
+}
+
+/* a write the model asked for is parked for the owner's tap: when the tap (or "Not now") settles it, say which */
+let offPending: (() => void) | null = null
+function watchConfirm(action: string, t0: number) {
+  offPending?.()
+  const settle = () => {
+    if (pilot.pending()) return                     // still waiting (or replaced: the newer one is watched instead)
+    offPending?.(); offPending = null
+    const ran = pilot.ran().some((r) => r.action === action && r.at >= t0)
+    toProvider({ type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text',
+      text: ran ? `The owner tapped Allow: ${action.replace(/_/g, ' ')} ran.` : `The owner did not allow ${action.replace(/_/g, ' ')}; nothing was done.` }] } })
+    if (!responding) toProvider({ type: 'response.create' })
+  }
+  offPending = onPilotPending(() => setTimeout(settle, 0))
 }
 
 async function runTool(callId: string, name: string, raw: string) {
@@ -162,6 +262,7 @@ async function runTool(callId: string, name: string, raw: string) {
   if (name === 'ask_agent' && args && typeof args === 'object') {   // the room: a request to an agent, on the wire
     const a = args as { agent?: string; message?: string }
     let ok = true
+    if (!a.agent) a.agent = st.agent
     try { await apiPost('/room/ask', { agent: a.agent, message: a.message }) } catch { ok = false }
     toProvider({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId,
       output: JSON.stringify(ok ? { ok: true, note: `asked ${a.agent}; their answer will be spoken in the room in their own voice` } : { ok: false, error: 'could not reach the room' }) } })
@@ -171,6 +272,13 @@ async function runTool(callId: string, name: string, raw: string) {
   const out = args === null
     ? ({ status: 'refused', action: name, reason: 'arguments were not valid JSON' } as const)
     : await pilot.room.run(name, args)
+  if (out.status === 'pending_owner_confirm') {
+    watchConfirm(name, Date.now() - 1000)
+    // the figure steps back home and says what it waits for: parked ON the prompt it would hide the words to be sent
+    avatar.point(null, 'waiting for your tap on Confirm')
+  }
+  else if (out.status === 'done' && !['read_screen', 'get_view_state', 'get_usage', 'list_goals', 'point_at', 'dance'].includes(name)) avatar.cheer()
+  if (out.status === 'done' && name !== 'read_screen') screenChanged()
   toProvider({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(functionOutput(out) as Json) } })
 }
 
@@ -183,11 +291,13 @@ function onEvent(ev: { type: string; [k: string]: any }) {
     case 'conversation.item.input_audio_transcription.completed':
       patch({ heard: String(ev.transcript ?? '').slice(0, 300) }); break
     case 'response.created':
-      responding = true; touch(); break
+      responding = true; touch(); patch({ said: '' }); break
     case 'output_audio_buffer.started':
       touch(); patch({ mood: 'speaking' }); break
     case 'output_audio_buffer.stopped':
       touch(); patch({ mood: 'listening' }); break
+    case 'response.output_audio_transcript.delta':
+      patch({ said: (st.said + String(ev.delta ?? '')).slice(-300) }); break
     case 'response.output_audio_transcript.done':
       patch({ said: String(ev.transcript ?? '').slice(0, 300) }); break
     case 'response.done': {
@@ -217,4 +327,5 @@ if ((import.meta as unknown as { env: { DEV: boolean } }).env.DEV) (window as un
     toProvider({ type: 'response.create' })
   },
   hangup: () => hangup(),
+  event: (ev: { type: string }) => onEvent(ev),
 }

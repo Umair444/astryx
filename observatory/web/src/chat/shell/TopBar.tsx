@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import CallButton from '../../call/CallButton'
 import { agentColor, displayName } from '../../api'
 import { SURFACE_LABEL, type Status, type Surface } from '../data'
 import { I } from '../icons'
@@ -88,6 +89,7 @@ export default function TopBar({ onProject, title, canRename, surface, project, 
           {I.clip('w-4 h-4')}{files > 0 && <span className="text-[12px] tabular-nums font-medium">{files}</span>}
         </button>
         <button className="ws-icon max-lg:hidden" onClick={onWorkforce} aria-pressed={workforce} title="The workforce (⌘J)" aria-label="the workforce">{I.side()}</button>
+        <CallButton variant="icon" className="md:hidden" />
         {more}
       </div>
     </header>

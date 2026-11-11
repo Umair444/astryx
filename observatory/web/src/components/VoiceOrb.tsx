@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import AgentFace from './AgentFace'
 import { useTheme } from '../theme'
@@ -202,10 +202,11 @@ function Faces({ agents }: { agents: OrbAgent[] }) {
 // ------------------------------------------------------------------ the confirm
 const human = (s: string) => s.replace(/[_-]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
 
-function ConfirmPrompt({ confirm, bind, onDismiss }: {
+export function ConfirmPrompt({ confirm, bind, onDismiss, to = null }: {
   confirm: OrbConfirm
   bind: OrbBind
   onDismiss: (nonce: string) => void
+  to?: ReactNode                                             // who a send goes to: a row from app state, never model prose
 }) {
   const btn = useRef<HTMLButtonElement>(null)
   const [entered, setEntered] = useState(false)                    // the entrance has finished; bind from here
@@ -227,6 +228,7 @@ function ConfirmPrompt({ confirm, bind, onDismiss }: {
       className="rounded-2xl border border-line bg-deck-2 px-4 py-3.5">
       <div className="text-[11px] uppercase tracking-[.08em] text-ink-mute">Needs your tap</div>
       <div className="lib-display text-[22px] leading-tight text-ink mt-1">{human(confirm.action)}</div>
+      {to}
       {args.length > 0 && (
         <dl className="mt-2 flex flex-wrap gap-1.5">
           {args.map(([k, v]) => (

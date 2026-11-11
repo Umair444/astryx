@@ -148,7 +148,7 @@ function Row({ t, current, live, unread, editing, menuOpen, move, onGo, onMenu, 
             className="flex-1 min-w-0 bg-transparent outline-none text-[13.5px] text-ink border-b border-line-2" />
         </form>
       ) : (
-        <button onClick={() => { if (press.current?.fired) { press.current = null; return } onGo() }} onDoubleClick={onEdit} aria-current={current} {...longPress}
+        <button data-thread={t.thread} onClick={() => { if (press.current?.fired) { press.current = null; return } onGo() }} onDoubleClick={onEdit} aria-current={current} {...longPress}
           className="ws-row w-full flex items-center gap-2.5 rounded-[10px] pl-2.5 pr-8 py-[7px] text-left">
           <Faces agents={t.agents} />
           <span className="min-w-0 flex-1">

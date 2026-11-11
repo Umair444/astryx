@@ -28,6 +28,7 @@ export const KEYS: [string, string][] = [
   ['G then N', 'New project'],
   ['⌘.', 'Dictate into the message box'],
   ['⌘⇧.', 'Talk: a voice conversation with the agent here'],
+  ['⌘⇧L', 'Call: a live voice that sees this screen and drives it'],
   ['/', 'Commands, skills and tools (in the box), or focus the box'],
   ['@', 'Mention an agent: it joins the chat'],
   ['↑', 'In an empty box: your last message, to edit and send again'],
@@ -75,14 +76,15 @@ function Marked({ text, hits }: { text: string; hits: number[] }) {
   return <>{out}</>
 }
 
-export function Palette({ threads, names, status, projects, commands, onClose, go, openProject, openAgent, lines = {}, files = [], unread, live = {}, onOpenFile, onJump, canvases = [], onCanvas }: {
+export function Palette({ threads, names, status, projects, commands, onClose, go, openProject, openAgent, lines = {}, files = [], unread, live = {}, onOpenFile, onJump, canvases = [], onCanvas, initial = '' }: {
   threads: WsThread[]; names: string[]; status: Record<string, Status>; projects: Project[]; commands: Command[]
   onClose: () => void; go: (t: string) => void; openProject: (id: string) => void; openAgent: (n: string) => void
   lines?: Record<string, string>; files?: MediaItem[]; unread?: Set<string>; live?: Record<string, string>; onOpenFile?: (r: OpenRequest) => void
   onJump?: (h: MessageHit) => void
   canvases?: CanvasRow[]; onCanvas?: (id: number) => void      // iteration 13: the live pages agents paint
+  initial?: string                                              // iteration 17: the call's search opens it with words
 }) {
-  const [q, setQ] = useState('')
+  const [q, setQ] = useState(initial)
   const found = useMessageSearch(onJump ? q : '', CAP.Messages)
   const [sel, setSel] = useState(0)
   const list = useRef<HTMLUListElement>(null)

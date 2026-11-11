@@ -51,6 +51,8 @@ import type { ParsedAsk } from './artifacts/annotate/ask'
 import { I } from './icons'
 import type { Jump, MessageHit } from './search'
 import { friendly, toast } from './toast'
+import { chatChanged, registerChat, takeChatIntent } from '../pilot/chatctl'
+import CallButton from '../call/CallButton'
 
 // the library and the project pages load on first visit (their own chunk); the sidebar's project rows are eager
 const Library = lazy(() => import('./library/Library'))
@@ -524,6 +526,55 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     return () => removeEventListener('keydown', k)
   }, [palette, help, workforce, filesOpen, drawer, current, dirty, panel.tabs.length, chatIds.join('|'), recipients.join(','), view]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // THE CALL (iteration 17): the voice reaches this workspace through ONE registered controller (pilot/chatctl.ts),
+  // read through a ref so it always sees this render's state. send() is reachable only from send_message, a class
+  // write the executor parks for the owner's tap (pilot/core.ts): nothing here sends on the voice's word alone.
+  const [paletteQ, setPaletteQ] = useState('')
+  const callRef = useRef({ current, view, title: null as string | null, threads: listThreads, names, recipients, rows, files: [] as MediaItem[] })
+  callRef.current = { current, view, title: currentRow?.title ?? (activeProject ? activeProject.name : null), threads: listThreads, names, recipients, rows, files: media ?? [] }
+  const sendRef = useRef(onSend); sendRef.current = onSend
+  const switchRef = useRef(switchTo); switchRef.current = switchTo
+  useEffect(() => {
+    const L = () => callRef.current
+    const firstLine = (b: string) => stripEmbeds(b).split('\n').find((l) => l.trim())?.replace(/\s+/g, ' ').trim().slice(0, 100) ?? ''
+    registerChat({
+      agent: () => L().recipients[0] ?? null,
+      recipients: () => [...L().recipients],
+      title: () => ((L().view === 'thread' && L().current) || L().view === 'project' ? L().title : null),
+      view: () => (L().view === 'thread' ? (L().current ? 'thread' : 'home') : L().view),
+      threads: () => L().threads.map((t) => ({ thread: t.thread, title: t.title })),
+      open: (t) => go(t),
+      agents: () => L().names,
+      switchAgent: (a) => switchRef.current([a]),
+      draft: (text, mode) => {
+        const c = composer.current
+        if (!c) throw new Error('no message box on screen')
+        c.set(mode === 'append' && c.get().trim() ? `${c.get().trimEnd()} ${text}` : text)
+      },
+      hasDraft: () => !!composer.current?.get().trim(),
+      send: async (text) => {
+        const to = L().recipients
+        if (!to.length) throw new Error('nobody to send to')
+        await sendRef.current(text, [], to)
+        if (composer.current?.get().trim() === text.trim()) composer.current.set('')
+      },
+      files: () => L().files.map((f) => ({ name: f.name })),
+      openFile: (name) => {
+        const f = L().files.find((x) => x.name === name)
+        if (!f) return false
+        openRef.current({ path: f.path, label: f.label, from: f.from })
+        return true
+      },
+      search: (q) => { setPaletteQ(q); setPalette(true) },
+      lines: () => L().current ? L().rows.slice(-4).map((m) => `${m.from === 'owner' ? 'owner' : displayName(m.from)}: ${firstLine(m.body)}`) : [],
+    })
+    const i = takeChatIntent()               // a call on an observatory page asked for this (open a conversation, search)
+    if (i?.kind === 'open') go(i.thread)
+    else if (i?.kind === 'search') { setPaletteQ(i.query); setPalette(true) }
+    return () => registerChat(null)
+  }, [go])
+  useEffect(() => { chatChanged() }, [current, view, palette, rows.length, panel.active, recipients.join(',')])
+
   // signed out, offline and a rotated key are the gate's (chat/Gate.tsx): this renders only for the owner
   if (!who.owner) return null
 
@@ -651,7 +702,10 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
           <div className="ws-bar-top h-12 shrink-0 flex items-center justify-between px-1.5 md:hidden">
             <button className="ws-icon" onClick={() => setDrawer(true)} aria-label="conversations">{I.menu()}</button>
             {/* a phone has no ⌘K: the palette's own door */}
-            <button className="ws-icon" onClick={() => setPalette(true)} aria-label="search" title="Search everything">{I.search('w-[18px] h-[18px]')}</button>
+            <span className="flex items-center gap-1">
+              <CallButton variant="icon" />
+              <button className="ws-icon" onClick={() => setPalette(true)} aria-label="search" title="Search everything">{I.search('w-[18px] h-[18px]')}</button>
+            </span>
           </div>
         ) : (
           <TopBar title={title} canRename={!!currentRow} surface={currentRow?.surface ?? null}
@@ -666,7 +720,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
             canvas={threadCanvas ? { version: canvases?.find((c) => c.id === threadCanvas)?.version ?? 0, open: canvasOpen === threadCanvas,
               onToggle: () => { setWorkforce(false); setCanvasOpen((o) => (o === threadCanvas ? null : threadCanvas)) } } : null} />
         )}
-        <div ref={scrollRef} className={`flex-1 min-h-0 overflow-y-auto ${home || view !== 'thread' ? 'ws-safe-bottom' : ''}`}>
+        <div ref={scrollRef} data-chat-scroll className={`flex-1 min-h-0 overflow-y-auto ${home || view !== 'thread' ? 'ws-safe-bottom' : ''}`}>
           {home && <TeamHome names={names} status={status} lines={lines} agents={team} threads={threads} composer={box(true)} onAgent={openAgent} onGo={go}
             since={visit.since} brief={brief} onShow={onShow} />}
           <Suspense fallback={null}>
@@ -757,7 +811,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         )}
       </AnimatePresence>
 
-      {palette && <Palette threads={listThreads} names={names} status={status} projects={proj.projects} commands={commands} onClose={() => setPalette(false)}
+      {palette && <Palette key={paletteQ} initial={paletteQ} threads={listThreads} names={names} status={status} projects={proj.projects} commands={commands} onClose={() => { setPalette(false); setPaletteQ('') }}
         lines={lines} files={files} unread={unread} live={live} onOpenFile={(f) => { setPalette(false); openFile(f) }} onJump={onJump}
         canvases={canvases ?? []} onCanvas={(id) => { setPalette(false); openCanvas(id, true) }}
         go={(t) => { setPalette(false); go(t) }}
