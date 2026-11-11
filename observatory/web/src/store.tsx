@@ -24,9 +24,20 @@ export interface Conn { state: ConnState; since: number; resync: number }
 
 /* one merge for every way a row arrives (the initial page, SSE, a backfill after a reconnect, "load older", the
    owner's own send): by id, ascending, never twice — whatever order they come in */
+/* …with ONE exception to "the first copy wins": the stream's copy of an agent's row is the INSERT's, turn_id still null
+   (the Stop hook back-fills it when the turn ends), and a later read of the same row names its turn. That copy
+   replaces the held one in place, or the reply could never be paired with its "Worked … · N tool calls" (11-11). */
+export const fillsTurn = (held: Msg | undefined, m: Msg) => !!held && !held.turn_id && !!m.turn_id
 export function mergeMsgs(cur: Msg[], add: Msg[]): Msg[] {
   if (!add.length) return cur
-  const seen = new Set(cur.map((m) => m.id))
+  const at = new Map(cur.map((m, i) => [m.id, i]))
+  let up: Msg[] | null = null
+  for (const m of add) {
+    const i = at.get(m.id)
+    if (i !== undefined && fillsTurn((up ?? cur)[i], m)) (up ??= [...cur])[i] = m
+  }
+  if (up) cur = up
+  const seen = new Set(at.keys())
   const fresh = add.filter((m) => !seen.has(m.id) && (seen.add(m.id), true))
   if (!fresh.length) return cur
   const last = cur.length ? cur[cur.length - 1].id : -Infinity
@@ -244,6 +255,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setPresence((cur) => ({ ...cur, [p.agent]: p as Presence }))
         return
       }
+      if (e.type === 'resync') {          // the server's LISTEN tap was down: rows inserted meanwhile never came
+        void backfill()
+        return
+      }
       if (e.type === 'dag') {
         setDagEvent({ ...e }) // fresh identity every pulse so effects re-fire
         return
@@ -309,8 +324,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (document.hidden) { hiddenAt = Date.now(); return }
       const away = hiddenAt ? Date.now() - hiddenAt : 0
       hiddenAt = 0
-      // back after a long hide: the browser may have throttled or frozen the tab; catch up whatever the stream says
-      if (away > 30_000) { void backfill(); resume() }
+      // back after a hide: the browser may have throttled or frozen the tab; catch up whatever the stream says (one
+      // after_id read when nothing was missed; the open thread refetches its own tail on the resync)
+      if (away > 5_000) { void backfill(); resume() }
     }
     const watch = setInterval(() => {
       if (dead || !es || !pinged) return

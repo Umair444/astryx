@@ -41,6 +41,16 @@ export function useCallStatus(): CallStatus {
   return useSyncExternalStore(sub, () => status)
 }
 
+/* The blob's resting spot (CallBlob.tsx publishes it, viewport px): the call's figure rises from it and rests there
+   between acts (CallAvatar.tsx), and the Room's idle seed yields to it (ui/room.tsx). null = no blob on screen. */
+export interface Spot { x: number; y: number; size: number }
+let blobSpot: Spot | null = null
+export function setBlobSpot(s: Spot | null) {
+  if (s === blobSpot || (s && blobSpot && s.x === blobSpot.x && s.y === blobSpot.y && s.size === blobSpot.size)) return
+  blobSpot = s; tell()
+}
+export function useBlobSpot(): Spot | null { return useSyncExternalStore(sub, () => blobSpot) }
+
 export function useExpanded(): boolean { return useSyncExternalStore(sub, () => expanded) }
 export function setExpanded(v: boolean) { expanded = v; tell() }
 

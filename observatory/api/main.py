@@ -282,8 +282,14 @@ sse_clients: set[asyncio.Queue] = set()
 
 # ---------------------------------------------------------------- live feed
 async def listen_task():
-    """One LISTEN connection fans out to every SSE client. Reconnects forever."""
+    """One LISTEN connection fans out to every SSE client. Reconnects forever.
+    A NOTIFY sent while no LISTEN is open is gone for good, and the browsers' streams stayed open through the gap (their
+    pings kept coming), so nothing told them to catch up: a reply inserted in that gap reached no tab until a reload.
+    So every re-LISTEN after the first tells each open stream {"type": "resync"}, and the workspace backfills
+    (store.tsx) exactly as after a reconnect of its own."""
+    lost = False
     while True:
+        conn = None
         try:
             conn = await asyncpg.connect(DSN)
             q: asyncio.Queue = asyncio.Queue()
@@ -291,6 +297,9 @@ async def listen_task():
                 await conn.add_listener(
                     ch, lambda c, p, chan, payload: q.put_nowait((chan, payload)))
             conn.add_termination_listener(lambda c: q.put_nowait(("__dead__", "")))
+            if lost:
+                lost = False
+                _fanout({"type": "resync"})
             while True:
                 try:
                     chan, payload = await asyncio.wait_for(q.get(), timeout=60)
@@ -330,6 +339,12 @@ async def listen_task():
                     for cq in list(sse_clients):
                         cq.put_nowait(data)
         except Exception:
+            lost = True
+            if conn is not None and not conn.is_closed():
+                try:
+                    conn.terminate()          # the old connection's listeners would keep filling a queue nobody reads
+                except Exception:
+                    pass
             await asyncio.sleep(5)
 
 
@@ -3524,6 +3539,8 @@ async def events(request: Request):
     async def visible(data: dict) -> bool:
         if owner:
             return True
+        if data.get("type") == "resync":
+            return True               # carries nothing: "the tap was down, catch up" (listen_task)
         # Same ONE rule as /api/messages — see anonymous_can_see(). This site previously
         # carried its own copy of the predicate and kept the old, leaking version after
         # the SQL side was fixed; it now has no copy to keep.

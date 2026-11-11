@@ -4,7 +4,7 @@ import AgentFace from '../components/AgentFace'
 import { displayName } from '../api'
 import { avatar, type AvatarCue } from '../pilot/avatarBus'
 import { levels, useVoice } from '../pilot/voice'
-import { endCall } from './state'
+import { endCall, useBlobSpot } from './state'
 
 /* THE CALL's figure (iteration 17, owner: "just like canvas an agent avatar should appear on screen; moving, dancing
    and doing stuff"). Canvas's crew avatars fly to the element they work on (canvas/web/src/CanvasView.tsx, the
@@ -47,6 +47,7 @@ export default function CallAvatar() {
   const [bubble, setBubble] = useState('')
   const [act, setAct] = useState<AvatarCue['act']>('idle')
   const ring = useRef<HTMLDivElement>(null)
+  const blob = useBlobSpot()
 
   // a cue: follow the element while it settles (it may scroll or animate in), then hold, then go home
   useEffect(() => {
@@ -82,7 +83,10 @@ export default function CallAvatar() {
 
   // where: by the target's top-right corner (clamped on screen), else home at the right edge
   // home: low on the right, clear of the dock above it, the composer's send button and the room's own bench below
-  const home = phone ? { x: vp.w - SIZE - 14, y: vp.h - SIZE - 168 } : { x: vp.w - SIZE - 36, y: vp.h - SIZE - 150 }
+  // the blob's spot when it is up (CallBlob.tsx): the figure rises from where the blob was and rests there, so the two
+  // never stand side by side
+  const home = blob ? { x: blob.x + (blob.size - SIZE) / 2, y: blob.y + (blob.size - SIZE) / 2 }
+    : phone ? { x: vp.w - SIZE - 14, y: vp.h - SIZE - 168 } : { x: vp.w - SIZE - 36, y: vp.h - SIZE - 150 }
   const spot = target
     ? { x: Math.min(Math.max(target.x + target.w - SIZE * 0.35, 8), vp.w - SIZE - 8), y: Math.min(Math.max(target.y - SIZE * 0.8, 8), vp.h - SIZE - 8) }
     : home
@@ -113,7 +117,7 @@ export default function CallAvatar() {
       <AnimatePresence>
         {live && (
           <motion.div key="fig" className="call-figure" data-call-figure data-act={act} data-mood={mood}
-            initial={{ opacity: 0, scale: 0.6, x: home.x, y: home.y + 30 }}
+            initial={{ opacity: 0, scale: 0.6, x: home.x, y: blob ? home.y : home.y + 30 }}
             animate={{ opacity: 1, scale: 1, x: spot.x, y: spot.y }}
             exit={{ opacity: 0, scale: 0.6, transition: { duration: 0.2 } }}
             transition={reduce ? { duration: 0 } : { type: 'spring', damping: 18, stiffness: 90, mass: 1.1 }}
