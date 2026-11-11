@@ -17,7 +17,7 @@ import { touchFirst } from '../shell/phone'
    same picker. */
 
 export interface Command { key: string; label: string; hint: string; run: (arg: string) => void | string }
-export interface ComposerHandle { focus: () => void; insert: (text: string) => void; set: (text: string) => void; attach: (u: Uploaded) => void; pick: () => void }
+export interface ComposerHandle { focus: () => void; insert: (text: string) => void; set: (text: string) => void; get: () => string; attach: (u: Uploaded) => void; pick: () => void }
 
 interface Item { key: string; label: string; hint: string; kind: 'cmd' | 'skill' | 'tool' | 'agent'; apply: () => void }
 
@@ -87,6 +87,7 @@ export default forwardRef<ComposerHandle, {
     focus: () => box.current?.focus(),
     insert,
     set: (s) => { setText(s); requestAnimationFrame(() => { box.current?.focus(); box.current?.setSelectionRange(s.length, s.length) }) },
+    get: () => text,
     attach: (u) => setFiles((f) => [...f, u]),
     pick: () => openPicker(),
   }))
@@ -219,7 +220,7 @@ export default forwardRef<ComposerHandle, {
             {uploading > 0 && <span className="inline-flex items-center gap-1.5 text-[12px] text-ink-mute px-1"><span className="w-3 h-3 rounded-full border-2 border-ink-mute border-t-transparent animate-spin" aria-hidden />Uploading</span>}
           </div>
         )}
-        <textarea ref={box} value={text} rows={1} aria-label="message"
+        <textarea ref={box} value={text} rows={1} aria-label="message" data-composer
           onChange={(e) => { setText(e.target.value); setMenuOff(false); setPicker(false); setErr('') }}
           onKeyDown={onKey}
           onBlur={() => setPicker(false)}

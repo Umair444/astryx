@@ -48,7 +48,7 @@ export default function FileChip({ path, label, from, active, onOpen, msg }: {
   const tag = ver ? [ver.n ? `v${ver.n}` : '', ver.updated ? 'updated' : ''].filter(Boolean).join(' · ') : ''
   return (
     <span className={`ws-chip-wrap inline-flex items-stretch max-w-[340px] ${ver?.updated ? 'is-updated' : ''}`}>
-      <button onClick={(e) => { originFrom(e.currentTarget); onOpen(req) }} title={`Open ${name}${tag ? ` (${tag})` : ''} beside the chat`} aria-pressed={active}
+      <button data-file-name={name} onClick={(e) => { originFrom(e.currentTarget); onOpen(req) }} title={`Open ${name}${tag ? ` (${tag})` : ''} beside the chat`} aria-pressed={active}
         className="ws-chip group inline-flex items-center gap-2.5 min-w-0 rounded-[12px] pl-2 pr-3 py-1.5 text-left">
         <span className="ws-chip-icon shrink-0 grid place-items-center w-8 h-8 rounded-[9px]"><KindIcon kind={kind} className="w-[17px] h-[17px]" /></span>
         <span className="min-w-0 flex flex-col leading-tight">
