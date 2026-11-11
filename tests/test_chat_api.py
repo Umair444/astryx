@@ -53,6 +53,7 @@ def arm(name, ok, detail=""):
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"\n        {detail}"))
 
 
+REPLIES: dict[str, int] = {}                   # seed_work's answer rows, by turn letter (the msgs arms)
 QUIET_THREAD = "chat:20990101-quiet"
 EMPTY_THREAD = "chat:20990101-nobody-wrote-here"
 
@@ -79,11 +80,11 @@ def seed_work(url: str):
         a = turn(m1, 60, 55)                                  # A: opened here, answered here
         step("tool", "Bash: read the fixture", a, 58)
         step("tool_done", "Bash done", a, 57)
-        msg("zeta", "owner", T, a)
+        REPLIES["a"] = msg("zeta", "owner", T, a)
         m3 = msg("owner", "zeta", "wa:fixture-other")
         b = turn(m3, 50, 45)                                  # B: opened ELSEWHERE, answered HERE
         step("tool", "Bash: the cross-thread work", b, 48)
-        msg("zeta", "owner", T, b)
+        REPLIES["b"] = msg("zeta", "owner", T, b)
         m5 = msg("owner", "zeta", T)
         cc = turn(m5, 40, 35)                                 # C: opened here, answered ELSEWHERE
         step("milestone", "answered on the plan thread", cc, 37)
@@ -291,6 +292,11 @@ def main(tmp: Path, url: str):
         b in got and got[b]["elsewhere"] == ["wa:fixture-other"], got.get(b))
     arm("D4 a turn opened here that answered elsewhere names that thread", c in got and got[c]["elsewhere"] == ["plan-fixture"], got.get(c))
     arm("D4 an unrelated turn never appears", d not in got, sorted(got))
+    # 11-11: a tab's live copy of a reply is the INSERT's (turn_id null until the Stop hook back-fills it), so each turn
+    # names THIS thread's rows it wrote, the workspace's way to pair them (and to see a row the stream never brought)
+    arm("D4 msgs: a turn names the rows it wrote HERE (A and B their answers; C answered elsewhere, none here)",
+        a in got and got[a].get("msgs") == [REPLIES["a"]] and b in got and got[b].get("msgs") == [REPLIES["b"]]
+        and c in got and got[c].get("msgs") == [], {k: got[k].get("msgs") for k in got})
     arm("D4 the done-marks are dropped, the work kept", a in got and [s["kind"] for s in got[a]["steps"]] == ["tool"], got.get(a))
     live = body.get("live", {}).get("zeta", [])
     arm("D4 the newest unlinked step is the live lane", [s["content"] for s in live] == ["Bash: working right now"], live)

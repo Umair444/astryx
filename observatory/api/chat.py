@@ -297,7 +297,11 @@ async def work(request: Request, thread: str = ""):
     threads it touched, never split by step. Steps are linked to their turn only when the turn ends (the Stop hook
     back-fills steps.turn_id), so an agent's newest unlinked steps are its LIVE lane, "current work (any thread)", and
     the unlinked steps older than its last turn end are COUNTED (never dropped). Residual, named: a message read
-    mid-turn and not answered leaves no marker, so that turn isn't filed here."""
+    mid-turn and not answered leaves no marker, so that turn isn't filed here.
+    `msgs` (11-11): the ids of THIS thread's rows the turn wrote. The Stop hook back-fills messages.turn_id only when
+    the turn ENDS, but each row was inserted (and NOTIFY'd to every open tab) mid-turn with turn_id NULL, so a tab's
+    live copy never names its turn: the workspace pairs reply and turn by these ids, and an id it does not hold is a
+    row the stream never brought it (it fetches the thread past it)."""
     if not thread or len(thread) > 200:
         return JSONResponse({"error": "thread required"}, status_code=400)
     pool = _pool(request)
@@ -308,7 +312,8 @@ async def work(request: Request, thread: str = ""):
            SELECT t.id, t.agent, t.started_at, t.ended_at, t.input_msg_id,
                   ARRAY(SELECT DISTINCT x FROM (SELECT thread AS x FROM messages WHERE turn_id = t.id AND thread IS NOT NULL
                                                  UNION SELECT thread FROM messages WHERE id = t.input_msg_id AND thread IS NOT NULL) q
-                        WHERE x <> $1) AS elsewhere
+                        WHERE x <> $1) AS elsewhere,
+                  ARRAY(SELECT m.id FROM messages m WHERE m.turn_id = t.id AND m.thread = $1 ORDER BY m.id) AS msgs
              FROM turns t JOIN ids ON ids.id = t.id ORDER BY t.ended_at LIMIT 300""", thread)
     tids = [r["id"] for r in turns]
     steps = await pool.fetch(
@@ -335,7 +340,8 @@ async def work(request: Request, thread: str = ""):
             "AND ts >= coalesce($3, now())", a, end, first))["n"] if end else 0
     return {"turns": [{"id": r["id"], "agent": r["agent"], "started_at": _iso(r["started_at"]),
                        "ended_at": _iso(r["ended_at"]), "input_msg_id": r["input_msg_id"],
-                       "elsewhere": list(r["elsewhere"]), "steps": by_turn.get(r["id"], [])} for r in turns],
+                       "elsewhere": list(r["elsewhere"]), "msgs": list(r["msgs"]),
+                       "steps": by_turn.get(r["id"], [])} for r in turns],
             "live": live, "unlinked": unlinked}
 
 

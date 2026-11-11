@@ -7,7 +7,7 @@ import './workspace.css'
 import './presence.css'
 import './phone.css'
 import { api, apiPost, displayName } from '../api'
-import { mergeMsgs, useStore } from '../store'
+import { fillsTurn, mergeMsgs, useStore } from '../store'
 import type { Msg, Step } from '../types'
 import { canvasBase } from '../cog'
 import { nowLine } from '../ui/life'
@@ -223,7 +223,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const rows = useMemo(() => {
     const by = new Map<number, Msg>()
     for (const m of history ?? []) by.set(m.id, m)
-    for (const m of messages) if (m.thread === current && !by.has(m.id)) by.set(m.id, m)
+    for (const m of messages) if (m.thread === current && (!by.has(m.id) || fillsTurn(by.get(m.id), m))) by.set(m.id, m)
     const next = [...by.values()].sort((a, b) => a.id - b.id)
     const prev = rowsPrev.current
     if (prev.length === next.length && next.every((m, i) => prev[i] === m)) return prev
@@ -320,6 +320,23 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     return () => { live = false }
   }, [pulse, current, newest]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setWork(null) }, [current])
+  // SELF-HEAL (11-11): a finished turn names the rows it wrote on this thread (work's `msgs`); one this tab doesn't hold
+  // (and that isn't above the loaded page) is a row the stream never brought it: a LISTEN gap, a frozen tab. Its turn
+  // drew as "Worked 8 min · 8 tool calls" with no reply under it until a reload. Fetch the thread past it, once per id
+  // (a failed read retries on the next refetch of the work); merged by id, so nothing doubles.
+  const healed = useRef(new Set<number>())
+  useEffect(() => { healed.current = new Set() }, [current])
+  useEffect(() => {
+    const thread = current, have = rowsRef.current
+    if (!thread || !work || history === null) return
+    const held = new Set(have.map((m) => m.id)), floor = have[0]?.id ?? 0
+    const miss = work.turns.flatMap((t) => t.msgs ?? []).filter((id) => id > floor && !held.has(id) && !healed.current.has(id))
+    if (!miss.length) return
+    for (const id of miss) healed.current.add(id)
+    api<Msg[]>(`/messages?thread=${encodeURIComponent(thread)}&after_id=${Math.min(...miss) - 1}&limit=500`)
+      .then((got) => { if (histFor.current === thread && got.length) setHistory((cur) => mergeMsgs(cur ?? [], got)) })
+      .catch(() => { for (const id of miss) healed.current.delete(id) })
+  }, [work, current]) // eslint-disable-line react-hooks/exhaustive-deps
   // handoffs INTO this conversation (a turn answering here, started by another agent's message elsewhere)
   const [handoffs, setHandoffs] = useState<Handoff[]>([])
   useEffect(() => {

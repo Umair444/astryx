@@ -33,12 +33,18 @@ import { useThreadTitles, type Switch } from '../data'
    another thread) is a row of its own, after the message that opened it, naming where it answered. */
 export interface Row { msg: Msg | null; turn: WTurn | null; after: number }
 
+/* A row is paired with its turn by the row's turn_id, OR by the turn's own list of the rows it wrote here (work's
+   `msgs`): the copy a tab got live over the stream is the INSERT's, turn_id null until the Stop hook back-fills it,
+   and unpaired its turn drew as a bare "Worked 8 min · 8 tool calls" at the bottom, the reply above it with no trace,
+   until a reload re-read the row (11-11). */
 export function rowsOf(rows: Msg[], work: Work | null): Row[] {
   const byId = new Map((work?.turns ?? []).map((t) => [t.id, t]))
+  const byMsg = new Map<number, WTurn>()
+  for (const t of work?.turns ?? []) for (const id of t.msgs ?? []) byMsg.set(id, t)
   const used = new Set<number>()
   const out: Row[] = []
   for (const m of rows) {
-    const t = m.from !== 'owner' && m.turn_id ? byId.get(m.turn_id) ?? null : null
+    const t = m.from === 'owner' ? null : (m.turn_id ? byId.get(m.turn_id) : undefined) ?? byMsg.get(m.id) ?? null
     if (t) used.add(t.id)
     out.push({ msg: m, turn: t, after: m.id })
   }

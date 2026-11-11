@@ -406,6 +406,7 @@ export type WireEvent =
   | ({ type: 'message' } & Msg)
   | { type: 'step'; id: number; agent: string; kind: string }
   | DagEvent
+  | { type: 'resync' }            // the server's LISTEN tap was down: what it missed never came, so catch up
 
 /* GET /api/system — host stats for the Monitor tab */
 export interface SysInfo {
