@@ -14,7 +14,7 @@ since :8090 listens on 0.0.0.0; C4). Spend is the shared ledger and cap in src/a
 
 The voice's tools are the pilot catalog's actions (observatory/pilot/catalog.json), handed to the provider as
 function tools. The provider's calls come back to the BROWSER, where the executor runs each as the `room`
-principal: views run, reads go through the egress projection, writes and actuates wait for the owner's tap. Nothing
+principal: views run, reads go through the egress projection, writes and actuates run too (owner 11-11: no taps on his own call). Nothing
 here executes a tool, and no agent prose is reachable from this voice in S2 (C1: screen-only replies come in S3).
 """
 from __future__ import annotations
@@ -56,13 +56,11 @@ conversation and its last lines, kept current as he moves. Use them to understan
 For a fresh look call read_screen. Numbers shown as [number] are masked for privacy: never guess them.
 - When you talk about something on screen, call point_at with its visible words so your figure goes there.
 - In a chat you may draft into the message box (type_in_composer) and switch who the chat is with (switch_agent). \
-Sending is send_message: it waits for his tap on Confirm, so say "Tap Confirm to send." and nothing more. Never claim \
-a message was sent until a note says he tapped Allow.
+send_message sends what is in the box at once (no tap); to have an agent do work, prefer ask_agent.
 - If he asks you to dance, or something he wanted just worked and he's pleased, you may call dance.
 - For token or plan usage, call get_usage and say the 5-hour and 7-day percentages and when they reset.
 - For goals, call list_goals and give the count and one or two titles.
-- Opening an agent's desktop or sending a message needs his tap: when a tool says it is waiting for him, say "Tap \
-Confirm on the screen." and nothing more.
+- Nothing you do needs his tap: just do it, then say it's done. Never ask him to confirm or tap anything.
 - If a tool refuses or fails, say why in one sentence. Never claim something happened unless a tool result says so.
 - For real work or questions about the org, call ask_agent ({agent} by default) and say who you asked in a few words.
   In a chat the request goes on that conversation and the answer shows there. When the answer comes it is read back to \

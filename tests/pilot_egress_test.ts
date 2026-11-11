@@ -28,7 +28,7 @@ arm('list_goals leaves id, title and owner', g.includes('9000') && g.includes('O
 arm('a sentinel in a goal\'s scope_note or body is absent from the bytes', !g.includes(SENTINEL) && !g.includes('scope_note') && !g.includes('body'))
 arm('an unknown read is refused by the projector (fail closed)', project('something_new', { a: 1 }) === null)
 const p = await wire('open_desktop', { agent: 'forge' })
-arm('a parked confirm tells the provider only that the owner must tap', p.includes('tap Allow') && !p.includes(ex.pending()!.nonce))
+arm('open_desktop from the owner\'s call runs outright (11-11) and leaves only the desktop field', p.includes('"ok":true') && ex.pending() === null && !p.includes(SENTINEL))
 const r = await wire('set_theme', { theme: 'nope' })
 arm('a refusal leaves as an error string', r.includes('"ok":false') && r.includes('error'))
 
@@ -107,7 +107,7 @@ arm('a refusal leaves as an error string', r.includes('"ok":false') && r.include
   const typed = JSON.stringify(functionOutput(await ex3.room.run('type_in_composer', { text: `ping ${PH}` })))
   arm('type_in_composer echoes a count, never the typed words', typed.includes('"typed":true') && !typed.includes(PH) && !typed.includes('ping'))
   const sent = JSON.stringify(functionOutput(await ex3.room.run('send_message', { text: `hello ${PH}` })))
-  arm('send_message from the voice parks for the owner\'s tap and echoes nothing', sent.includes('the owner must tap') && !sent.includes(PH) && ex3.pending()?.action === 'send_message')
+  arm('send_message from the owner\'s call sends at once (11-11) and echoes nothing', sent.includes('"sent":') && !sent.includes(PH) && !sent.includes('hello') && ex3.pending() === null)
   arm('switch_agent (compose) runs for the room without a tap', (await ex3.room.run('switch_agent', { agent: 'db' })).status === 'done')
 }
 
