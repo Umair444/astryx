@@ -125,7 +125,7 @@ export function Palette({ threads, names, status, projects, commands, onClose, g
   useEffect(() => setSel(0), [q])
   useEffect(() => { list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }) }, [sel])
   return (
-    <div className="fixed inset-0 z-50 ws-scrim flex justify-center items-start pt-[20vh] max-sm:pt-[10vh] px-4" onMouseDown={onClose}>
+    <div className="ws-palette-wrap fixed inset-0 z-50 ws-scrim flex justify-center items-start pt-[20vh] max-sm:pt-[10vh] px-4" onMouseDown={onClose}>
       <div role="dialog" aria-label="jump to" className="ws-menu ws-palette w-full max-w-[640px] !rounded-[18px] overflow-hidden" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-5 border-b border-line">
           <span className="text-ink-mute" aria-hidden><svg viewBox="0 0 24 24" className="w-[18px] h-[18px]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.2-4.2" /></svg></span>
@@ -139,6 +139,8 @@ export function Palette({ threads, names, status, projects, commands, onClose, g
             }}
             className="flex-1 min-w-0 bg-transparent py-4 text-[16px] outline-none text-ink placeholder:text-ink-mute" />
           <span className="ws-kbd max-sm:hidden">esc</span>
+          {/* a phone has no Esc: the full-screen sheet says how to leave */}
+          <button className="sm:hidden -mr-2 h-11 px-2 text-[15px] text-[var(--t-accent)] font-medium" onClick={onClose}>Cancel</button>
         </div>
         <ul ref={list} id="ws-palette-list" className="max-h-[min(56vh,520px)] overflow-y-auto p-1.5" role="listbox" style={{ ['--ws-pip-bg' as string]: 'var(--t-panel)' }}>
           {items.length === 0 && <li className="px-3 py-6 text-center text-[13px] text-ink-mute">Nothing matches “{q}”.</li>}

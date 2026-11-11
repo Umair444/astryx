@@ -90,9 +90,9 @@ function Line({ p, now, onStop }: { p: Pending; now: number; onStop?: StopFn }) 
           className="absolute inset-0 rounded-[12px] disabled:cursor-default" />
         <span className={`pointer-events-none ${halted ? 'opacity-60 transition-opacity' : ''}`}><Presence agent={p.agent} status={halted ? 'awake' : 'working'} size={24} ring={!halted} /></span>
         <span className="min-w-0 flex-1 flex items-baseline gap-2 text-[13.5px] pointer-events-none">
-          <span className="shrink-0 text-ink"><span className="font-medium">{name}</span> <span className="text-ink-dim">{
+          <span className="min-w-0 truncate sm:shrink-0 text-ink"><span className="font-medium">{name}</span> <span className="text-ink-dim">{
             stop === 'stopping' ? 'is stopping…' : stop === 'stopped' ? 'stopped its turn' : `is ${verb}`}</span></span>
-          {detail && !halted && <span className="ws-shimmer font-mono text-[12px] truncate">{detail}</span>}
+          {detail && !halted && <span className="ws-shimmer font-mono text-[12px] truncate max-sm:hidden">{detail}</span>}
         </span>
         {stop === 'confirm' ? (
           <span className="relative shrink-0 flex items-center gap-1.5 text-[12.5px] ws-stop-ask" role="group" aria-label="confirm stop">

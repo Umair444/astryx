@@ -1,3 +1,4 @@
+import { useSwipeClose } from '../../shell/phone'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { agentColor, displayName } from '../../../api'
 import AgentFace from '../../../components/AgentFace'
@@ -126,14 +127,16 @@ export function Sheet({ items, place, order, active, answers, h, draft, onClose 
   const list = items.filter((a) => !a.resolved).sort((a, b) => order(a) - order(b))
   const resolved = items.filter((a) => a.resolved)
   const box = useRef<HTMLDivElement>(null)
+  const sheet = useRef<HTMLDivElement>(null)
+  const swipe = useSwipeClose(sheet, onClose)       // a phone: pull the sheet down to close it (iteration 16)
   useEffect(() => { if (active) box.current?.querySelector(`[data-card="${CSS.escape(active)}"]`)?.scrollIntoView({ block: 'nearest' }) }, [active])
   return (
-    <div className="ax-sheet absolute inset-x-0 bottom-0 z-30 max-h-[58%] flex flex-col" role="dialog" aria-label="annotations">
-      <div className="shrink-0 flex items-center gap-2 px-4 pt-2.5 pb-2">
+    <div ref={sheet} className="ax-sheet absolute inset-x-0 bottom-0 z-30 max-h-[58%] flex flex-col" role="dialog" aria-label="annotations">
+      <div className="shrink-0 flex items-center gap-2 px-4 pt-2.5 pb-2" {...swipe}>
         <span className="ax-handle" aria-hidden />
         <span className="text-[13px] font-medium text-ink">Notes</span>
         <span className="text-[12px] text-ink-mute">{list.length}</span>
-        <button className="ws-icon ml-auto !w-8 !h-8" onClick={onClose} aria-label="close the notes">
+        <button className="ws-icon ml-auto !w-8 !h-8 pointer-coarse:!w-11 pointer-coarse:!h-11" onClick={onClose} aria-label="close the notes">
           <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
       </div>

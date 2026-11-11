@@ -4,6 +4,7 @@ import { SURFACE_LABEL, type Status, type Surface } from '../data'
 import { I } from '../icons'
 import { Presence, STATUS_WORD } from './AgentRail'
 import TeamMap, { useMapPopover } from './TeamMap'
+import { touchFirst } from './phone'
 import '../canvas/canvas.css'
 
 /* THE TOP BAR (48px): the conversation's title (click to rename; stored server-side), the surface it lives on and
@@ -38,8 +39,8 @@ export default function TopBar({ onProject, title, canRename, surface, project, 
   const commit = () => { setEdit(false); if (v.trim() !== title) onRename(v.trim()) }
   const map = useMapPopover()
   return (
-    <header className="h-12 shrink-0 flex items-center gap-2 px-3 md:px-5 border-b border-line/70 bg-[color-mix(in_srgb,var(--t-bg)_55%,transparent)] backdrop-blur-md relative z-10">
-      <button className="ws-icon md:hidden -ml-1" onClick={onMenu} aria-label="conversations">{I.menu()}</button>
+    <header className="ws-bar-top h-12 shrink-0 flex items-center gap-1 sm:gap-2 pl-1.5 pr-1.5 md:px-5 border-b border-line/70 bg-[color-mix(in_srgb,var(--t-bg)_55%,transparent)] backdrop-blur-md relative z-10">
+      <button className="ws-icon md:hidden" onClick={onMenu} aria-label="conversations">{I.menu()}</button>
       <div className="min-w-0 flex items-center gap-2 flex-1">
         {project && <><button onClick={onProject} title={`Open the project ${project}`} className="text-[13px] text-ink-mute hover:text-ink truncate max-w-[30%] max-sm:hidden transition-colors">{project}</button><span className="text-ink-mute max-sm:hidden" aria-hidden>/</span></>}
         {edit ? (
@@ -67,7 +68,7 @@ export default function TopBar({ onProject, title, canRename, surface, project, 
         <div className="relative mr-1" {...map.hover}>
         <div className="flex items-center -space-x-1 cursor-pointer" aria-label="agents in this conversation" onClick={map.toggle}>
           {agents.slice(0, 6).map((a) => (
-            <button key={a} onClick={(e) => { e.stopPropagation(); onAgent(a) }} title={`${displayName(a)} · ${STATUS_WORD[status[a] ?? 'down']}`}
+            <button key={a} onClick={(e) => { e.stopPropagation(); if (touchFirst()) map.toggle(); else onAgent(a) }} title={`${displayName(a)} · ${STATUS_WORD[status[a] ?? 'down']}`}
               aria-label={`${displayName(a)}, ${STATUS_WORD[status[a] ?? 'down']}: open their desk`}
               className="rounded-full ring-2 ring-[var(--t-bg)] hover:z-10 relative" style={{ ['--ws-agent' as string]: agentColor(a), ['--ws-pip-bg' as string]: 'var(--t-bg)' }}>
               <Presence agent={a} status={status[a]} size={24} />
@@ -78,7 +79,7 @@ export default function TopBar({ onProject, title, canRename, surface, project, 
             onClick={(e) => { e.stopPropagation(); map.toggle() }}>{I.people('w-[15px] h-[15px]')}</button>
         </div>
         {map.open && (
-          <div className="ws-menu ws-pop-in absolute right-0 top-[calc(100%+8px)] z-40 max-sm:fixed max-sm:left-3 max-sm:right-3 max-sm:top-14" role="dialog" aria-label="the live team map">
+          <div className="ws-menu ws-pop-in absolute right-0 top-[calc(100%+8px)] z-40 max-sm:fixed max-sm:left-3 max-sm:right-3 max-sm:top-[calc(env(safe-area-inset-top)+56px)] max-sm:max-h-[70dvh] max-sm:overflow-y-auto" role="dialog" aria-label="the live team map">
             <TeamMap names={names} status={status} lines={lines} here={agents} onAgent={(a) => { map.close(); onAgent(a) }} />
           </div>
         )}

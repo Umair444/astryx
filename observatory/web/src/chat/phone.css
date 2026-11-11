@@ -1,0 +1,89 @@
+/* ── PHONE-FIRST (iteration 16) ──────────────────────────────────────────────────────────────────────────────────
+   The behaviour is in shell/phone.ts; this is the look. Three rules carry most of it:
+   1. a finger gets 44px: every control in the workspace has a 44px hit area on a coarse pointer. Icon buttons GROW to
+      44 (their glyph stays the same size); text controls that must stay visually small (chips, filters, the actions
+      under a turn) keep their look and get an invisible hit-slop (::after) that reaches 44 in both directions.
+   2. the notch and the home indicator: in the installed app (viewport-fit=cover, a translucent status bar) the top
+      bars pad by the top inset, the composer and every full-screen sheet by the bottom one.
+   3. the app does not bounce: no pull-to-refresh or rubber-band behind the shell; scrollers contain their own. */
+
+/* the document under the chat: still (only while the chat is on screen: phone.ts adds .ws-app) */
+html.ws-app, html.ws-app body { overscroll-behavior: none; }
+
+@layer components {
+.ws { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+.ws .overflow-y-auto, .ws .overflow-auto, .ws .overflow-x-auto { overscroll-behavior: contain; }
+
+/* the notch: a bar keeps its 48px of content and pads ABOVE it, its background reaching under the status bar */
+.ws-safe-top { padding-top: env(safe-area-inset-top); }
+.ws-bar-top { padding-top: env(safe-area-inset-top); height: calc(48px + env(safe-area-inset-top)) !important; }
+/* the tablet's columns (the rail, the list): clear of the status bar and the home indicator */
+.ws-listcol { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+/* the home indicator */
+.ws-safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.ws-dock-bottom { padding-bottom: max(12px, calc(env(safe-area-inset-bottom) + 4px)); }
+@media (min-width: 768px) { .ws-dock-bottom { padding-bottom: max(20px, env(safe-area-inset-bottom)); } }
+
+/* a full-screen sheet on a phone (the artifact panel, the files, the palette): the grab handle says it can be pulled
+   down; it is only drawn where the sheet really is full screen and the pointer is a finger */
+.ws-grab { display: none; }
+@media (pointer: coarse) and (max-width: 767px) {
+  .ws-grab { display: block; position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 5px); width: 36px; height: 4px; margin-left: -18px;
+    border-radius: 9999px; background: color-mix(in srgb, var(--t-fg) 18%, transparent); pointer-events: none; }
+}
+
+@media (pointer: coarse) {
+  /* 1a. icon buttons and the send button grow to the finger */
+  .ws .ws-icon { width: 44px; height: 44px; border-radius: 12px; }
+  .ws .ws-send { width: 44px; height: 44px; border-radius: 14px; }
+  .ws .ws-btn { height: 44px; }
+  .ws .ws-stop { min-height: 36px; }
+  /* 1b. everything else that is tapped: an invisible hit-slop up to 44px (zero specificity, so a component's own
+     position or pseudo-element always wins; the few that draw with ::after are left out) */
+  :where(.ws, .ws-toasts, .ws-door) :where(button, [role="button"], [role="option"], [role="menuitem"], summary, a[href]:not(.ws-prose a)) { position: relative; isolation: isolate; }
+  /* the slop paints UNDER the control's own content (z-index -1 inside its isolated context): a row that wraps a
+     button (a palette row, a picker option) never has its slop swallow the tap meant for what it holds */
+  :where(.ws, .ws-toasts, .ws-door) :where(button, [role="button"], [role="option"], [role="menuitem"], summary, a[href]:not(.ws-prose a)):not(.ax-swatch, .ws-earlier, .auth-seat)::after {
+    content: ""; position: absolute; z-index: -1;
+    top: min(0px, calc(50% - 22px)); bottom: min(0px, calc(50% - 22px));
+    left: min(0px, calc(50% - 22px)); right: min(0px, calc(50% - 22px));
+  }
+  /* a composer menu row (@ agents, / commands): a full finger row */
+  .ws [role="listbox"] > [role="option"] { min-height: 44px; }
+  /* a field's row (the list's search, the library's) is a finger tall; a panel tab too */
+  .ws label:has(> input:not([type="checkbox"]):not([type="radio"])) { min-height: 46px; }
+  .ws label:has(> input:not([type="checkbox"]):not([type="radio"])) > input { align-self: stretch; }
+  .ws select { min-height: 44px; }
+  .ws .ws-tab { height: 44px; }
+  /* the more-menu's and a row menu's items */
+  .ws [role="menu"] [role="menuitem"] { min-height: 44px; }
+}
+
+/* 1c. no hover (a phone): what hides behind hover is shown, quietly */
+@media (hover: none) {
+  /* a turn's actions sit under the answer: 44px buttons whose box overlaps the gap around them (no taller turns) */
+  .ws .ws-turn > .ws-turn-acts, .ws .ws-turn-acts.is-inline { margin-block: -9px; }
+  .ws .ws-turn-acts button, .ws .ws-turn-acts.is-inline button { height: 44px; min-width: 44px; justify-content: center; }
+  /* a conversation row's menu: visible (and the row also opens it on a long press) */
+  .ws .ws-rowmore { opacity: .55 !important; }
+  .ws .ws-rowmore[aria-expanded="true"] { opacity: 1 !important; }
+  /* a tab's close button on every tab, not only the active one */
+  .ws .ws-tab-x { opacity: .7; }
+  /* nothing is selectable by accident on a long press of a control */
+  .ws button, .ws [role="option"], .ws [role="menuitem"] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  .ws { -webkit-tap-highlight-color: transparent; }
+}
+
+/* the palette on a phone: a full-screen sheet with its field at the top, the list filling the rest */
+@media (max-width: 639px) {
+  .ws-palette-wrap { padding: 0 !important; align-items: stretch !important; }
+  .ws-palette-wrap > .ws-palette { max-width: none; height: 100%; border-radius: 0 !important; border: 0; display: flex; flex-direction: column;
+    padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .ws-palette-wrap > .ws-palette > [role="listbox"], .ws-palette-wrap > .ws-palette #ws-palette-list { max-height: none !important; flex: 1; min-height: 0; }
+}
+}
+@media (pointer: coarse) { .ws-palette [role="option"] > div:last-child { min-height: 44px; } }
+/* iOS zooms the page into any field under 16px when it takes focus: on a finger, every field is at least 16px */
+@media (pointer: coarse) { .ws input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), .ws textarea, .ws select { font-size: 16px !important; } }
+/* the owner's "Edit" (send again, edited) hid behind hover: on a phone it sits beside the turn's other actions */
+@media (hover: none) { .ws .ws-editbtn { opacity: .75 !important; min-height: 44px; padding-inline: 6px; margin-block: -9px; } }

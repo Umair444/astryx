@@ -41,7 +41,7 @@ export default function AgentRail({ agents, status, lines, current, onPick, onHo
   const list = useRef<HTMLDivElement>(null)
   useHandoffRing(list)
   return (
-    <nav className="ws-rail w-[var(--ws-rail)] shrink-0 h-full flex flex-col items-center border-r border-line py-3 gap-1 max-md:hidden" aria-label="agents"
+    <nav className="ws-rail w-[var(--ws-rail)] shrink-0 h-full flex flex-col items-center border-r border-line pt-[calc(12px+env(safe-area-inset-top))] pb-[calc(12px+env(safe-area-inset-bottom))] gap-1 max-md:hidden" aria-label="agents"
       style={{ ['--ws-pip-bg' as string]: 'var(--t-bg2)' }}>
       <button onClick={onHome} title="Home: the team" aria-label="home"
         className="w-9 h-9 rounded-[12px] ws-sig grid place-items-center mb-2 shadow-[0_6px_20px_-8px_var(--t-accent)] hover:brightness-110 transition">

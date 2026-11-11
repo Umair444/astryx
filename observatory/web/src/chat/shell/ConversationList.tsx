@@ -66,7 +66,7 @@ export default function ConversationList({ threads, loaded, current, live, proje
 
   const any = groups.length > 0 || !!found.hits?.length || found.busy
   return (
-    <nav className={`ws-chrome w-[var(--ws-list)] shrink-0 h-full flex flex-col border-r border-line ${className}`} aria-label="conversations">
+    <nav className={`ws-chrome w-[var(--ws-list)] shrink-0 h-full flex flex-col border-r border-line ${onClose ? '' : 'ws-listcol'} ${className}`} aria-label="conversations">
       <div className="h-14 shrink-0 flex items-center gap-2 pl-4 pr-2.5">
         <span className="ws-display text-[24px] leading-none tracking-tight text-ink">Chats</span>
         <span className="ml-auto" />
@@ -122,6 +122,18 @@ function Row({ t, current, live, unread, editing, menuOpen, move, onGo, onMenu, 
   // a row near the bottom opens its menu UPWARD: below it the menu was cut off, and scrolling the list to reach it
   // closes it (iteration 11: the phone drawer's last rows could not be pinned, renamed or moved)
   const [up, setUp] = useState(false)
+  const openMenu = (el: Element) => { const r = el.getBoundingClientRect(); setUp(innerHeight - r.bottom < 300 && r.top > innerHeight - r.bottom); onMenu() }
+  // a phone: a LONG PRESS on the row opens its menu, as in WhatsApp (iteration 16); the tap that ends it opens nothing
+  const press = useRef<{ t: number; fired: boolean } | null>(null)
+  const longPress = {
+    onTouchStart: (e: React.TouchEvent) => {
+      const el = e.currentTarget
+      press.current = { fired: false, t: window.setTimeout(() => { if (press.current) { press.current.fired = true; navigator.vibrate?.(8); openMenu(el) } }, 460) }
+    },
+    onTouchMove: () => { if (press.current && !press.current.fired) { clearTimeout(press.current.t); press.current = null } },
+    onTouchEnd: () => { if (press.current && !press.current.fired) { clearTimeout(press.current.t); press.current = null } },
+    onContextMenu: (e: React.MouseEvent) => { if (press.current || matchMedia('(hover: none)').matches) e.preventDefault() },
+  }
   const lead = t.agents[0]
   const who = t.agents.length > 1 ? `${displayName(lead)} +${t.agents.length - 1}` : lead ? displayName(lead) : SURFACE_LABEL[t.surface]
   return (
@@ -136,7 +148,7 @@ function Row({ t, current, live, unread, editing, menuOpen, move, onGo, onMenu, 
             className="flex-1 min-w-0 bg-transparent outline-none text-[13.5px] text-ink border-b border-line-2" />
         </form>
       ) : (
-        <button onClick={onGo} onDoubleClick={onEdit} aria-current={current}
+        <button onClick={() => { if (press.current?.fired) { press.current = null; return } onGo() }} onDoubleClick={onEdit} aria-current={current} {...longPress}
           className="ws-row w-full flex items-center gap-2.5 rounded-[10px] pl-2.5 pr-8 py-[7px] text-left">
           <Faces agents={t.agents} />
           <span className="min-w-0 flex-1">
@@ -153,8 +165,8 @@ function Row({ t, current, live, unread, editing, menuOpen, move, onGo, onMenu, 
         </button>
       )}
       {!editing && (
-        <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setUp(innerHeight - r.bottom < 300 && r.top > innerHeight - r.bottom); onMenu() }} aria-label={`more for ${t.title}`} aria-expanded={menuOpen}
-          className={`absolute right-1.5 top-1/2 -translate-y-1/2 ws-icon !w-7 !h-7 ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'}`}>
+        <button onClick={(e) => openMenu(e.currentTarget)} aria-label={`more for ${t.title}`} aria-expanded={menuOpen}
+          className={`ws-rowmore absolute right-1.5 top-1/2 -translate-y-1/2 ws-icon !w-7 !h-7 ${menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'}`}>
           {I.dots()}
         </button>
       )}

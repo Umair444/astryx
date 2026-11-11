@@ -5,6 +5,7 @@ import { DENIED, fetchWhoami, saveObsKey } from '../api'
 import { useStore } from '../store'
 import { Toasts, dismiss, toast } from './toast'
 import './gate.css'
+import './phone.css'
 
 /* /chat's GATE (iteration 8). The workspace is its own chunk (React.lazy): the floor never downloads it, and /chat
    never waits on the floor's views. Before it, around it and instead of it:
@@ -127,7 +128,7 @@ export function Door({ onIn, again = false }: { onIn: () => void | Promise<void>
 
   return (
     <div className="ws-gate ws-gate-bg h-dvh w-full grid place-items-center overflow-y-auto px-4 py-10 text-ink">
-      <form onSubmit={submit} className="w-full max-w-[360px] text-center" aria-describedby="ws-door-sub">
+      <form onSubmit={submit} className="ws-door w-full max-w-[360px] text-center" aria-describedby="ws-door-sub">
         <div className="ws-door-mark mx-auto mb-7" aria-hidden />
         <h1 className="ws-gate-serif text-[48px] leading-none tracking-tight text-ink">astryx <span className="italic ws-gate-sig pr-1">chat</span></h1>
         <p id="ws-door-sub" className="text-ink-dim text-[15px] leading-relaxed mt-3 mb-8">
