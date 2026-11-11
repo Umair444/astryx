@@ -11,8 +11,11 @@ three surfaces, each its own thread family on the ONE wire:
 WhatsApp groups (wa:*) and every agent-to-agent thread are NOT the owner's conversations here and never listed.
 A thread is listed only when the owner is a party of it (an invitee's canvas chat is theirs, not the owner's).
 
-    GET /api/ws/threads         the unified list: thread, title, agents, surface, last_ts, preview, count, pinned, project
-    PUT /api/ws/threads/meta    {thread, title?, pinned?}: a custom title / a pin, stored in <estate>/chat/threads.json
+    GET /api/ws/threads         the unified list: thread, title, agents, surface, last_ts, preview, count, pinned, project,
+                                switches (after a switch, `agents` is the switched-to agents)
+    PUT /api/ws/threads/meta    {thread, title?, pinned?, switch_to?}: a custom title / a pin / a SWITCH of the chat's
+                                agent(s) (appended to the thread's `switches`, each {ts, agents}), stored in
+                                <estate>/chat/threads.json
     GET /api/ws/agents          each agent's role (its charter's italic subtitle) and its last word to the owner
     GET /api/ws/handoffs        ?thread=: the turns that answered here but were STARTED by another agent's message
                                 (a handoff into the conversation), each with that message (the payload)
@@ -56,6 +59,9 @@ _owner = lambda request: False                     # noqa: E731 — main.owner_c
 SURFACES = {"chat:": "chat", "obs:": "floor", "cv:": "canvas"}
 TITLE_MAX = 80
 PREVIEW_MAX = 140
+SWITCH_AGENTS_MAX = 8                               # one switch names at most this many agents
+SWITCHES_MAX = 50                                   # a thread keeps its newest switches only (the dividers further back
+                                                    # than this read as ordinary history: their agents still answered)
 
 
 def bind(get_pool, estate: Path, roster=None, charter=None, owner=None) -> None:
@@ -203,10 +209,13 @@ def build_rows(aggs: list[dict], meta: dict, projects: list[dict], roster: set[s
         if cv.get("archived"):
             continue
         m = meta.get(t) or {}
+        sw = switches_of(m)
         # recipients = who exchanged messages WITH THE OWNER here (`partners`); an agent→agent row on an owner thread
         # (seed correcting finance) is history, never a recipient. Rows without `partners` (older callers) use parties
         partners = a.get("partners") if "partners" in a else parties
         agents = agents_of(t, list(partners or []), roster, cv.get("agent"))
+        if sw:                                      # a SWITCH: the chat is now with these, whoever spoke before it
+            agents = [n for n in sw[-1]["agents"] if not roster or n in roster] or agents
         out.append({
             "thread": t,
             "title": derive_title(t, m.get("title"), a.get("first_owner"), cv.get("title"), agents),
@@ -219,15 +228,44 @@ def build_rows(aggs: list[dict], meta: dict, projects: list[dict], roster: set[s
             "count": int(a.get("count") or 0),
             "pinned": bool(m.get("pinned")),
             "project": project_of(t, projects),
+            "switches": sw,
         })
     out.sort(key=lambda r: (r["last_ts"] or ""), reverse=True)
     out.sort(key=lambda r: not r["pinned"])         # stable: pinned first, each group newest first
     return out
 
 
-def apply_meta(meta: dict, thread: str, title=..., pinned=...) -> dict:
+def switches_of(m: dict) -> list[dict]:
+    """A thread's stored switches, oldest first, each {ts, agents}; anything malformed in the file is skipped."""
+    out = []
+    for s in (m.get("switches") if isinstance(m, dict) else None) or []:
+        if isinstance(s, dict) and isinstance(s.get("ts"), str) and isinstance(s.get("agents"), list) \
+                and s["agents"] and all(isinstance(a, str) for a in s["agents"]):
+            out.append({"ts": s["ts"], "agents": list(s["agents"])})
+    return out
+
+
+def switch_check(agents, roster: set[str]) -> tuple[list[str], str | None]:
+    """A switch's agents, validated: a list of 1..SWITCH_AGENTS_MAX live agent names (deduped, order kept). Returns
+    (agents, None) or ([], why). An unknown name is refused, never dropped: the owner meant someone."""
+    if not isinstance(agents, list) or not agents:
+        return [], "name at least one agent to switch to"
+    out: list[str] = []
+    for a in agents:
+        if not isinstance(a, str) or not AGENT_NAME.match(a) or a not in roster:
+            return [], f"not an agent: {str(a)[:40]!r}"
+        if a not in out:
+            out.append(a)
+    if len(out) > SWITCH_AGENTS_MAX:
+        return [], f"at most {SWITCH_AGENTS_MAX} agents in one switch"
+    return out, None
+
+
+def apply_meta(meta: dict, thread: str, title=..., pinned=..., switch=..., now: str | None = None) -> dict:
     """One thread's patch onto the stored meta (a new dict; the input is never mutated). `...` = leave as is;
-    a blank title clears it; an entry left with nothing in it is removed, so the file holds only what was set."""
+    a blank title clears it; an entry left with nothing in it is removed, so the file holds only what was set.
+    `switch` = a validated agent list appended as {ts: now, agents} (a switch to the agents already current is no
+    switch and adds nothing; the list keeps its newest SWITCHES_MAX)."""
     out = {k: dict(v) for k, v in meta.items() if isinstance(v, dict)}
     cur = out.get(thread, {})
     if title is not ...:
@@ -241,11 +279,21 @@ def apply_meta(meta: dict, thread: str, title=..., pinned=...) -> dict:
             cur["pinned"] = True
         else:
             cur.pop("pinned", None)
+    if switch is not ...:
+        sw = switches_of(cur)
+        if not sw or sw[-1]["agents"] != list(switch):
+            sw.append({"ts": now or _utcnow(), "agents": list(switch)})
+        cur["switches"] = sw[-SWITCHES_MAX:]
     if cur:
         out[thread] = cur
     else:
         out.pop(thread, None)
     return out
+
+
+def _utcnow() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 
 
 def valid_thread(thread: str) -> bool:
@@ -341,6 +389,7 @@ class Meta(BaseModel):
     thread: str
     title: str | None = None
     pinned: bool | None = None
+    switch_to: list[str] | None = None               # SWITCH the chat to these agents (appended, never replacing)
 
 
 @router.put("/api/ws/threads/meta")
@@ -348,13 +397,18 @@ async def ws_meta(body: Meta):
     if not valid_thread(body.thread):
         return JSONResponse({"error": "not a conversation thread"}, status_code=400)
     patch = body.model_dump(exclude_unset=True)
-    if "title" not in patch and "pinned" not in patch:
+    if "title" not in patch and "pinned" not in patch and "switch_to" not in patch:
         return JSONResponse({"error": "nothing to change"}, status_code=400)
+    switch = ...
+    if "switch_to" in patch:                         # a SWITCH: the chat's agents become these (the composer's "To")
+        switch, why = switch_check(patch["switch_to"], set(_roster()))
+        if why:
+            return JSONResponse({"error": why}, status_code=400)
     for _ in range(2):                              # a concurrent writer: re-read and re-apply once
         tag = etag(meta_file())
         new = apply_meta(read_meta(), body.thread,
                          title=patch["title"] if "title" in patch else ...,
-                         pinned=bool(patch["pinned"]) if "pinned" in patch else ...)
+                         pinned=bool(patch["pinned"]) if "pinned" in patch else ..., switch=switch)
         try:
             atomic_write(meta_file(), json.dumps({"threads": new}, indent=2, sort_keys=True) + "\n", if_match=tag)
             return {"thread": body.thread, **new.get(body.thread, {})}

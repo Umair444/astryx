@@ -25,6 +25,15 @@
 .ws-payload { border-left: 2px solid color-mix(in srgb, var(--ws-from) 50%, var(--t-line)); padding: 2px 0 2px 14px; animation: ws-fade-in 180ms var(--ws-ease); }
 .ws-payload .ws-prose { font-size: 13.5px; line-height: 1.55; color: var(--t-dim); }
 
+/* a SWITCH of the chat's agents: a boundary, not a passing of work. The handoff's hairline fades at both ends; this
+   rule is solid edge to edge in the new agent's colour, the pill tinted with it, so the eye reads "a new part" */
+.ws-switch { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+.ws-switch::before, .ws-switch::after { content: ""; flex: 1; height: 1.5px; border-radius: 2px;
+  background: color-mix(in srgb, var(--ws-to) 55%, var(--t-line)); }
+.ws-switch-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 11px 3px 4px; border-radius: 9999px; white-space: nowrap;
+  max-width: 100%; overflow: hidden; border: 1px solid color-mix(in srgb, var(--ws-to) 50%, var(--t-line));
+  background: color-mix(in srgb, var(--ws-to) 9%, var(--t-bg)); }
+
 /* replay: a spine in the agent's colour, a dot-icon per step, a duration bar on the turn's own scale */
 .ws-replay { position: relative; margin: 6px 0 10px 1px; padding: 2px 0; display: flex; flex-direction: column; animation: ws-fade-in 180ms var(--ws-ease); }
 .ws-replay::before { content: ""; position: absolute; left: 10px; top: 10px; bottom: 10px; width: 1.5px; border-radius: 2px;

@@ -18,7 +18,7 @@ import {
 } from './model'
 import {
   deskAgent, deskThread, liveAgentOf, loadWsAgents, saveThreadMeta, statusOf, surfaceOf, useNow, useWsThreads,
-  type Status, type WsAgent, type WsThread,
+  type Status, type Switch, type WsAgent, type WsThread,
 } from './data'
 import AgentRail, { Presence } from './shell/AgentRail'
 import ConversationList from './shell/ConversationList'
@@ -277,15 +277,28 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const filesSwipe = useSwipeClose(filesRef, () => setFilesOpen(false), 'down')
 
   const activeProject = proj.projects.find((p) => p.id === project) ?? null
+  // SWITCHES (the owner handed this chat to other agents): the server's list, or this page's own while its save (or
+  // the list's refetch) is on the way; a thread with no rows yet is not listed at all, so its switch lives here
+  const [localSw, setLocalSw] = useState<Record<string, Switch[]>>({})
+  const switches = useMemo(() => {
+    const server = listed?.switches ?? [], mine = localSw[current] ?? []
+    return mine.length > server.length ? mine : server
+  }, [listed, localSw, current])
+  const lastSwitch = switches.at(-1) ?? null
+  // the home's (or a project page's) box before its chat exists: a switch there only picks who the first message goes to
+  const [homeTo, setHomeTo] = useState<string[] | null>(null)
+  useEffect(() => { setHomeTo(null) }, [thread])
   // who a message goes to: the thread's own agents (a desk's agent, a canvas chat's agent), then anyone who spoke;
-  // a new chat defaults to seed, the owner's line to the org (an @mention always overrides)
+  // after a SWITCH, the switched-to agents and whoever the owner has talked with SINCE it (what came before belongs to
+  // the previous agent); a new chat defaults to seed, the owner's line to the org (an @mention always overrides)
   const inChat = useMemo(() => {
-    const out = [...(currentRow?.agents ?? [])]
-    for (const a of participants(rows, names)) if (!out.includes(a)) out.push(a)
-    return out
-  }, [currentRow, rows, names])
+    const since = lastSwitch ? Date.parse(lastSwitch.ts) : -Infinity
+    const out = lastSwitch ? lastSwitch.agents.filter((a) => names.includes(a)) : [...(currentRow?.agents ?? [])]
+    for (const a of participants(lastSwitch ? rows.filter((m) => Date.parse(m.ts) >= since) : rows, names)) if (!out.includes(a)) out.push(a)
+    return out.length || !lastSwitch ? out : [...(currentRow?.agents ?? [])]
+  }, [currentRow, rows, names, lastSwitch])
   const seedOnly = names.includes('seed') ? ['seed'] : []
-  const recipients = current ? inChat : activeProject?.agents.length ? activeProject.agents : seedOnly
+  const recipients = current ? inChat : homeTo ?? (activeProject?.agents.length ? activeProject.agents : seedOnly)
   const lanes = activeProject && !current ? activeProject.agents : inChat
   // Talk: with the agent this box writes to, on this conversation (a new one from the home or a project page)
   const openTalk = (agent?: string) => {
@@ -397,6 +410,37 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     reload()
   }
 
+  // SWITCH this chat to other agents: optimistic (the To faces, the list row's faces, the divider), then saved on the
+  // thread's meta. Nothing is sent to anyone: the new agent hears only what is written to it from here on.
+  async function switchTo(agents: string[]) {
+    const to = agents.filter((a, i) => names.includes(a) && agents.indexOf(a) === i)
+    if (!to.length) return
+    if (!current) { setHomeTo(to); return }
+    if (to.join() === inChat.join()) return
+    const t = current, prev = switches
+    const opt = [...prev, { ts: new Date().toISOString(), agents: to }]
+    setLocalSw((m) => ({ ...m, [t]: opt }))
+    patch(t, { agents: to, switches: opt })
+    try {
+      const r = await saveThreadMeta(t, { switch_to: to })
+      if (r.switches) setLocalSw((m) => ({ ...m, [t]: r.switches! }))
+    } catch (e) {
+      setLocalSw((m) => ({ ...m, [t]: prev }))
+      toast(friendly(e, 'Switching agents'))
+    }
+    reload()
+  }
+  // "/switch finance" (or "/switch @db lending"): agents by name or by the name the page shows ("Abstractor 1")
+  const switchArg = (arg: string): { agents: string[]; bad: string[] } => {
+    const words = arg.split(/[\s,]+/).map((w) => w.replace(/^@/, '').toLowerCase()).filter(Boolean)
+    const agents: string[] = [], bad: string[] = []
+    for (const w of words) {
+      const n = names.find((x) => x === w || displayName(x).toLowerCase() === w || displayName(x).toLowerCase().replace(/\s+/g, '') === w)
+      if (n) agents.push(n); else bad.push(w)
+    }
+    return { agents, bad }
+  }
+
   const openAgent = (a: string) => go(deskThread(a))
   const newChat = () => { go(null); requestAnimationFrame(() => composer.current?.focus()) }
 
@@ -412,6 +456,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     { key: 'talk', label: 'Talk', hint: 'a voice conversation with the agent here (⌘⇧.)', run: () => openTalk() },
     { key: 'remember', label: 'Remember', hint: 'propose the rest of the line to the memory agent', run: () => composer.current?.set('/remember ') },
     { key: 'canvas', label: 'Open in canvas', hint: 'build a page with the first agent here', run: () => void window.open(`${canvasBase()}#/new/${encodeURIComponent(inChat[0] ?? 'painter')}`, '_blank') },
+    { key: 'switch', label: 'Switch agent', hint: 'hand this chat to another agent (/switch finance); it starts fresh here', run: () => composer.current?.pick() },
     { key: 'keys', label: 'Keyboard', hint: 'every shortcut', run: () => setHelp(true) },
   ]
   // "/remember text" is sent to memory's proposal route, not to the chat
@@ -419,6 +464,14 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   // NEW chat's first message, /remember) keeps the draft on failure (the composer clears only on success), a toast says
   // what happened in the same words, and the box says "not sent" (chat/toast.tsx)
   async function onSendOrCommand(text: string, files: Uploaded[], to: string[]) {
+    const sw = /^\/switch(?:\s+([\s\S]*))?$/.exec(text.trim())
+    if (sw && !files.length) {                     // never sent: it switches who the chat is with
+      const { agents, bad } = switchArg(sw[1] ?? '')
+      if (bad.length) throw new Error(`No agent named ${bad.map((b) => `“${b}”`).join(', ')}`)
+      if (!agents.length) { composer.current?.pick(); throw new Error('Pick an agent to switch to') }
+      await switchTo(agents)
+      return
+    }
     try {
       const r = /^\/remember\s+([\s\S]+)/.exec(text)
       if (r) { await apiPost('/memory/propose', { text: r[1], nodes: [] }); setNote('Proposed to the memory agent.'); return }
@@ -480,7 +533,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     <Composer ref={composer} hero={hero} roster={names} inChat={recipients} skills={cmds.skills} tools={cmds.tools}
       commands={commands} onSend={onSendOrCommand} draftKey={view === 'thread' ? current : thread ?? ''}
       placeholder={placeholder ?? (hero ? 'Ask the team anything. @mention who should take it; seed routes the rest.' : undefined)}
-      lastMine={() => stripEmbeds([...rows].reverse().find((m) => m.from === 'owner')?.body ?? '')} onTalk={openTalk} />
+      lastMine={() => stripEmbeds([...rows].reverse().find((m) => m.from === 'owner')?.body ?? '')} onTalk={openTalk}
+      onSwitch={(a) => void switchTo(a)} roles={roles} />
   )
   const list = (phone: boolean) => (
     <ConversationList threads={listThreads} loaded={loaded} current={current || null} live={live} projects={proj.projects} project={project}
@@ -636,7 +690,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
               <button className="underline underline-offset-2 hover:text-ink" onClick={() => setHistTry((n) => n + 1)}>Retry now</button>
             </div>
           )}
-          {current && <Turns key={current} older={older} onOlder={loadOlderRows} focus={jump?.thread === current ? jump : null} rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} onStop={interruptAgent}
+          {current && <Turns key={current} older={older} onOlder={loadOlderRows} focus={jump?.thread === current ? jump : null} rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} switches={switches} onStop={interruptAgent}
             onOpenFile={openFile} onOpenAsk={openAsk} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
             empty={histErr ? null : <FreshThread agents={inChat} status={status} roles={roles} lines={lines} />} />}
           {current && <Outbox items={outbox.filter((o) => o.thread === current)} onRetry={(o) => void deliver(o)}

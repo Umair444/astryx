@@ -11,10 +11,13 @@ import { touchFirst } from '../shell/phone'
      / opens commands (the org's real skills and MCP tools, plus /chat's own), @ mentions an agent,
      ⌘. or Ctrl+. dictates, Esc closes a menu.
    A message goes to the agents it @mentions, or to everyone already in the chat (shown as the "To" faces). Nothing
-   sends by itself: dictation and attachments only ever fill the box. `hero` is the empty state's big well. */
+   sends by itself: dictation and attachments only ever fill the box. `hero` is the empty state's big well.
+   SWITCH: the "To" faces are a button; it opens the roster (the @ menu's look and keys) and picking an agent hands
+   the chat to it (`onSwitch`: from then on the default recipient; @mentions still add on top). /switch opens the
+   same picker. */
 
 export interface Command { key: string; label: string; hint: string; run: (arg: string) => void | string }
-export interface ComposerHandle { focus: () => void; insert: (text: string) => void; set: (text: string) => void; attach: (u: Uploaded) => void }
+export interface ComposerHandle { focus: () => void; insert: (text: string) => void; set: (text: string) => void; attach: (u: Uploaded) => void; pick: () => void }
 
 interface Item { key: string; label: string; hint: string; kind: 'cmd' | 'skill' | 'tool' | 'agent'; apply: () => void }
 
@@ -43,7 +46,9 @@ export default forwardRef<ComposerHandle, {
   placeholder?: string
   draftKey?: string           // the conversation the draft belongs to: each keeps its own (iteration 11)
   onTalk?: (agent: string) => void   // iteration 13: Talk, canvas's voice mode, with the agent this box writes to
-}>(function Composer({ roster, inChat, skills, tools, commands, lastMine, onSend, hero = false, placeholder, draftKey = '', onTalk }, ref) {
+  onSwitch?: (agents: string[]) => void   // hand the chat to these agents (the "To" faces' picker, /switch)
+  roles?: Record<string, string>
+}>(function Composer({ roster, inChat, skills, tools, commands, lastMine, onSend, hero = false, placeholder, draftKey = '', onTalk, onSwitch, roles = {} }, ref) {
   const [text, setText] = useState(() => draftOf(draftKey))
   const [files, setFiles] = useState<Uploaded[]>(() => FILES.get(draftKey) ?? [])
   // A DRAFT PER CONVERSATION: the box used to keep its words across a switch, so a line written to finance sat ready
@@ -62,6 +67,8 @@ export default forwardRef<ComposerHandle, {
   const [err, setErr] = useState('')
   const [sel, setSel] = useState(0)
   const [menuOff, setMenuOff] = useState(false)
+  const [picker, setPicker] = useState(false)          // the agent picker (switch), over the box like the @ menu
+  const menu = useRef<HTMLUListElement>(null)
   const [drop, setDrop] = useState(false)
   const box = useRef<HTMLTextAreaElement>(null)
   const fileIn = useRef<HTMLInputElement>(null)
@@ -81,7 +88,9 @@ export default forwardRef<ComposerHandle, {
     insert,
     set: (s) => { setText(s); requestAnimationFrame(() => { box.current?.focus(); box.current?.setSelectionRange(s.length, s.length) }) },
     attach: (u) => setFiles((f) => [...f, u]),
+    pick: () => openPicker(),
   }))
+  const openPicker = () => { if (!onSwitch) return; setPicker(true); setMenuOff(false); requestAnimationFrame(() => box.current?.focus()) }
 
   // autosize: a hero well starts tall; the dock grows to 40% of the screen
   useEffect(() => {
@@ -98,6 +107,13 @@ export default forwardRef<ComposerHandle, {
   const at = /(^|\s)@([\w-]*)$/.exec(head)
   const items: Item[] = useMemo(() => {
     if (menuOff) return []
+    if (picker && onSwitch) {           // the roster, the chat's current agent(s) first; picking one switches
+      const cur = inChat.filter((n) => roster.includes(n))
+      return [...cur, ...roster.filter((n) => !cur.includes(n))].map((n) => ({
+        key: '@' + n, label: displayName(n), hint: cur.includes(n) ? (cur.length === 1 ? 'this chat is with it now' : 'in this chat now') : roles[n] ?? '', kind: 'agent' as const,
+        apply: () => { setPicker(false); if (!(cur.length === 1 && cur[0] === n)) onSwitch([n]); requestAnimationFrame(() => box.current?.focus()) },
+      }))
+    }
     if (slash) {
       const q = slash[1].toLowerCase()
       const all: Item[] = [
@@ -121,8 +137,17 @@ export default forwardRef<ComposerHandle, {
       }))
     }
     return []
-  }, [slash?.[1], at?.[2], commands, skills, tools, roster, inChat, menuOff, text])  // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => setSel(0), [items.length, slash?.[1], at?.[2]])
+  }, [slash?.[1], at?.[2], commands, skills, tools, roster, inChat, menuOff, text, picker, roles])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => setSel(0), [items.length, slash?.[1], at?.[2], picker])
+  // the highlighted row stays in view as ↑/↓ move it (wrapping included): the list scrolls itself, never the page
+  // (scrollIntoView would also scroll the conversation and, on a phone, the window under the keyboard)
+  useEffect(() => {
+    const ul = menu.current, li = ul?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (!ul || !li) return
+    const top = li.offsetTop, bottom = top + li.offsetHeight, pad = 4
+    if (top - pad < ul.scrollTop) ul.scrollTop = Math.max(0, top - pad)
+    else if (bottom + pad > ul.scrollTop + ul.clientHeight) ul.scrollTop = bottom + pad - ul.clientHeight
+  }, [sel, items])
 
   const named = mentions(text, roster)
   const to = named.length ? named : inChat
@@ -152,7 +177,7 @@ export default forwardRef<ComposerHandle, {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => (s + 1) % items.length); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => (s - 1 + items.length) % items.length); return }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); items[sel]?.apply(); return }
-      if (e.key === 'Escape') { e.preventDefault(); setMenuOff(true); return }
+      if (e.key === 'Escape') { e.preventDefault(); if (picker) setPicker(false); else setMenuOff(true); return }
     }
     // a phone's Enter is a new line (iteration 16): its keyboard has no Shift+Enter, and a message goes out only by the
     // send button, as in WhatsApp. A hardware keyboard (a desktop, a tablet with keys) sends on Enter.
@@ -170,7 +195,8 @@ export default forwardRef<ComposerHandle, {
         onDragLeave={() => setDrop(false)}
         onDrop={(e) => { setDrop(false); if (e.dataTransfer.files.length) { e.preventDefault(); addFiles(e.dataTransfer.files) } }}>
         {items.length > 0 && (
-          <ul role="listbox" aria-label={slash ? 'commands' : 'agents'} className="ws-menu absolute left-0 right-0 bottom-full mb-2 max-h-[300px] overflow-y-auto p-1 z-20">
+          <ul ref={menu} role="listbox" aria-label={picker ? 'switch this chat to an agent' : slash ? 'commands' : 'agents'} className="ws-menu absolute left-0 right-0 bottom-full mb-2 max-h-[300px] overflow-y-auto p-1 z-20">
+            {picker && <li role="presentation" className="px-2.5 pt-1.5 pb-1 text-[11.5px] text-ink-mute">Switch this chat to… <span className="max-sm:hidden">the new agent starts fresh: earlier messages aren’t sent to it</span></li>}
             {items.map((it, i) => (
               <li key={it.key} role="option" aria-selected={i === sel} onMouseDown={(e) => { e.preventDefault(); it.apply() }} onMouseEnter={() => setSel(i)}
                 className={`flex items-center gap-2.5 rounded-[9px] px-2.5 py-1.5 cursor-pointer ${i === sel ? 'bg-[color-mix(in_srgb,var(--t-fg)_7%,transparent)]' : ''}`}>
@@ -194,8 +220,9 @@ export default forwardRef<ComposerHandle, {
           </div>
         )}
         <textarea ref={box} value={text} rows={1} aria-label="message"
-          onChange={(e) => { setText(e.target.value); setMenuOff(false); setErr('') }}
+          onChange={(e) => { setText(e.target.value); setMenuOff(false); setPicker(false); setErr('') }}
           onKeyDown={onKey}
+          onBlur={() => setPicker(false)}
           onPaste={(e) => { const fs = Array.from(e.clipboardData.files); if (fs.length) { e.preventDefault(); addFiles(fs) } }}
           placeholder={hint}
           className={`block w-full resize-none bg-transparent px-4 outline-none text-ink placeholder:text-ink-mute ${hero ? 'pt-4 pb-1 text-[17px] leading-[1.55]' : 'pt-3.5 pb-1 text-[15px] leading-relaxed'}`} />
@@ -213,11 +240,16 @@ export default forwardRef<ComposerHandle, {
             <button className="ws-icon ws-talk-open" onClick={() => onTalk(to[0])} title={`Talk with ${displayName(to[0])}: a voice conversation (⌘⇧.)`} aria-label={`talk with ${displayName(to[0])}`}>{I.wave()}</button>
           )}
           {to.length > 0 && (
-            <div className="flex items-center gap-1.5 ml-1.5 min-w-0 overflow-hidden text-[12px] text-ink-mute" title={`To ${to.map(displayName).join(', ')}`}>
+            // the faces ARE the switch (a button when the page can switch): a click opens the roster to hand the chat to
+            <button type="button" disabled={!onSwitch} onMouseDown={(e) => e.preventDefault()} onClick={() => (picker ? setPicker(false) : openPicker())}
+              aria-haspopup="listbox" aria-expanded={picker} aria-label={`To ${to.map(displayName).join(', ')}${onSwitch ? ': switch agent' : ''}`}
+              className="ws-to flex items-center gap-1.5 ml-1.5 min-w-0 text-[12px] text-ink-mute rounded-full pl-1 pr-2 py-0.5 enabled:hover:bg-[color-mix(in_srgb,var(--t-fg)_6%,transparent)] enabled:hover:text-ink-dim disabled:cursor-default"
+              title={`To ${to.map(displayName).join(', ')}${onSwitch ? ' · click to switch this chat to another agent' : ''}`}>
               <span className="max-sm:hidden">To</span>
               <span className="flex -space-x-1">{to.slice(0, 5).map((n) => <span key={n} className="rounded-full ring-2 ring-[var(--t-panel)]"><AgentFace name={n} size={18} /></span>)}</span>
               {to.length === 1 && <span className="truncate text-ink-dim max-sm:hidden">{displayName(to[0])}</span>}
-            </div>
+              {onSwitch && <span className={`text-[10px] transition-transform ${picker ? 'rotate-180' : ''}`} aria-hidden>▾</span>}
+            </button>
           )}
           {err && <span className="ml-2 text-[12px] text-bad truncate" role="alert">{err}</span>}
           {dict.phase === 'error' && dict.error && !err && <span className="ml-2 text-[12px] text-bad truncate" role="alert">{dict.error}</span>}

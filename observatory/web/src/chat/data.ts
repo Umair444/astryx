@@ -20,7 +20,11 @@ export interface WsThread {
   count: number
   pinned: boolean
   project: string | null
+  switches?: Switch[]            // the owner SWITCHED this chat's agents (oldest first); `agents` is then the last one's
 }
+/* a switch (PUT /api/ws/threads/meta {switch_to}): from `ts` on, the chat is with `agents`; what was said before it
+   never reaches them (each agent only reads the rows sent to it), so the thread draws a boundary there */
+export interface Switch { ts: string; agents: string[] }
 export interface WsAgent { agent: string; role: string; last_ts: string | null; last_thread: string | null; last_said: string }
 
 /* "while you were away" (iteration 15, GET /api/ws/briefing): per agent, counts and its messages TO THE OWNER as
@@ -47,8 +51,8 @@ export const loadBriefing = (since: string | null) => api<Briefing>(`/ws/briefin
 
 export const loadWsThreads = () =>api<{ etag: string; threads: WsThread[] }>('/ws/threads')
 export const loadWsAgents = () => api<WsAgent[]>('/ws/agents')
-export const saveThreadMeta = (thread: string, patch: { title?: string; pinned?: boolean }) =>
-  apiSend<{ thread: string; title?: string; pinned?: boolean }>('PUT', '/ws/threads/meta', { thread, ...patch })
+export const saveThreadMeta = (thread: string, patch: { title?: string; pinned?: boolean; switch_to?: string[] }) =>
+  apiSend<{ thread: string; title?: string; pinned?: boolean; switches?: Switch[] }>('PUT', '/ws/threads/meta', { thread, ...patch })
 
 /* the agent a thread is WITH before anyone has spoken on it: a desk thread names it (obs:<agent>) */
 export function deskAgent(thread: string, roster: string[]): string | null {
