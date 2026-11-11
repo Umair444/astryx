@@ -115,6 +115,8 @@ export function project(action: string, result: Json): Json | null {
   if (action === 'open_file') return { opened: r.opened === true, name: typeof r.name === 'string' ? mask(r.name).slice(0, 80) : null }
   if (action === 'dance') return { danced: r.danced === true }
   if (action === 'switch_agent') return { agent: str(r.agent, 64) }
+  if (action === 'send_message') return { sent: r.sent === true }
+  if (action === 'open_desktop') return { desktop: str(r.desktop, 64) }
   if (action === 'type_in_composer') return { typed: r.typed === true, chars: num(r.chars) }
   if (action === 'get_view_state') {
     const t = typeof r.thread === 'string' && ORG_THREAD.test(r.thread) ? r.thread : null

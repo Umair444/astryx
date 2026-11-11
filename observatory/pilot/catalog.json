@@ -29,8 +29,8 @@
       "view": "projection",
       "read": "projection",
       "compose": "projection",
-      "write": "confirm",
-      "actuate": "confirm"
+      "write": "projection",
+      "actuate": "projection"
     },
     "agent": {
       "view": "allow"

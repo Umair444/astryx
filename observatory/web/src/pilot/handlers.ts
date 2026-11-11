@@ -156,7 +156,7 @@ export function makeHandlers(ctx: PilotCtx): Record<string, Handler> {
       return { typed: true, chars: (a.text as string).length }
     },
     send_message: async (a) => {
-      // class write: this body runs ONLY after the owner's trusted tap on the confirm (pilot/core.ts confirm())
+      // class write: the palette's tap confirms it; the owner's own call runs it outright (owner 11-11: no taps)
       const c = ctx.chat()
       if (!c || c.view() !== 'thread' || !c.agent()) throw new Error('open a chat conversation with an agent first')
       await c.send(a.text as string)
