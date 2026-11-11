@@ -359,6 +359,7 @@ run "pulse double-fire: a claimed cron slot re-arms strictly past itself (goal 1
 # devtools/merge_check.sh: the merged-tree chain before a merge request, base resolved ONCE (merge parent == control),
 # a conflict refused (never a wrong tree), transient links removed. Hermetic. Mutants: tests/mutants_merge_check.py.
 run "merge_check: one base read, conflicts refused, links removed" "$PY" tests/test_merge_check.py
+run "identity scribe: a flat charter migrates to folder form on a gitignored agents/ (medic 11-12)" "$PY" tests/test_identity_commit_flat.py
 # devtools/review_range.sh: a review range is the MERGE-BASE..the branch head, both read from git; --check refuses the
 # merged-ONTO sha, an older base, a stale or unresolvable head (a4 night-review 10-12). Mutants: tests/mutants_review_range.py.
 run "review_range: base is the merge-base, head is the branch, typed shas refused" "$PY" tests/test_review_range.py
