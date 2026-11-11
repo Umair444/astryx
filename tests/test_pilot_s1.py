@@ -106,6 +106,9 @@ else:
     rc, out, err = run_ts(REPO / "tests/pilot_egress_test.ts", CAT)
     print(out.rstrip())
     arm("what leaves for the provider: the egress projection and the screen mask (node)", rc == 0, err.strip()[-400:])
+    rc, out, err = run_ts(REPO / "tests/pilot_asks_test.ts")
+    print(out.rstrip())
+    arm("the call's open asks: which reply is read back, and when an ask closes (node)", rc == 0, err.strip()[-400:])
 
 print("ALL PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

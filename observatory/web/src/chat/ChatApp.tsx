@@ -551,6 +551,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   callRef.current = { current, view, title: currentRow?.title ?? (activeProject ? activeProject.name : null), threads: listThreads, names, recipients, rows, files: media ?? [] }
   const sendRef = useRef(onSend); sendRef.current = onSend
   const switchRef = useRef(switchTo); switchRef.current = switchTo
+  const storeSendRef = useRef(send); storeSendRef.current = send
+  const reloadRef = useRef(reload); reloadRef.current = reload
   useEffect(() => {
     const L = () => callRef.current
     const firstLine = (b: string) => stripEmbeds(b).split('\n').find((l) => l.trim())?.replace(/\s+/g, ' ').trim().slice(0, 100) ?? ''
@@ -558,6 +560,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       agent: () => L().recipients[0] ?? null,
       recipients: () => [...L().recipients],
       title: () => ((L().view === 'thread' && L().current) || L().view === 'project' ? L().title : null),
+      thread: () => (L().view === 'thread' && L().current) || null,
       view: () => (L().view === 'thread' ? (L().current ? 'thread' : 'home') : L().view),
       threads: () => L().threads.map((t) => ({ thread: t.thread, title: t.title })),
       open: (t) => go(t),
@@ -574,6 +577,13 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         if (!to.length) throw new Error('nobody to send to')
         await sendRef.current(text, [], to)
         if (composer.current?.get().trim() === text.trim()) composer.current.set('')
+      },
+      // ask_agent (no tap: the room's own bridge): an ordinary owner row on this thread, marked as spoken
+      ask: async (agent, text) => {
+        const t = L().current
+        if (L().view !== 'thread' || !t) throw new Error('no conversation open')
+        await storeSendRef.current(agent, `🎙 ${text}`, t)
+        reloadRef.current()
       },
       files: () => L().files.map((f) => ({ name: f.name })),
       openFile: (name) => {
