@@ -512,6 +512,17 @@ def process(conn, due: list[dict], now, hot=_UNREAD):
                   file=sys.stderr)
 
 
+def _next_fire(schedule, now, prev_next_fire):
+    """The slot STRICTLY AFTER the one just claimed (goal 18; restored 11-12 after the 11-10 upstream merge dropped it).
+    `now` is the python clock read at tick() start, BEFORE reconcile() widens the gap to the DB clock the
+    `next_fire <= now()` claim uses, so at a cron boundary `now` can sit just BEFORE the slot the claim took, and
+    croniter(now) hands back that same slot: it fires again on the next tick. Flooring the base at the claimed
+    slot makes get_next move strictly past it. prev_next_fire comes back from timestamptz as UTC; .astimezone()
+    puts it in server-local tz like `now`, because croniter reads cron fields in the base's own tz."""
+    base = max(now, prev_next_fire.astimezone()) if prev_next_fire else now
+    return croniter(schedule, base).get_next(datetime)
+
+
 def tick():
     # LOCAL time, tz-aware: cron fields mean the server's own wall clock, so a
     # "3am review" is 3am wherever this org lives — never UTC (owner decree
@@ -543,7 +554,7 @@ def tick():
                     conn.execute("UPDATE triggers SET last_eval=%s WHERE id=%s", (now, t["id"]))   # retires it
                     continue
                 try:
-                    nxt = croniter(t["schedule"], now).get_next(datetime)
+                    nxt = _next_fire(t["schedule"], now, t["next_fire"])
                 except Exception:
                     conn.execute("UPDATE triggers SET off_reason='bad_schedule', enabled=false WHERE id=%s", (t["id"],))
                     say(t["agent"], f"[trigger {t['name']}] bad schedule "
