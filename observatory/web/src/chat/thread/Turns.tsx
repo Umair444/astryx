@@ -4,7 +4,9 @@ import { agentColor, displayName, fmtDay, fmtTime } from '../../api'
 import type { Msg, Step } from '../../types'
 import AgentFace from '../../components/AgentFace'
 import Prose from './Prose'
-import { embeds, PROJECT_BLOCK, stripEmbeds, type Turn as WTurn, type Work } from '../model'
+import { embeds, parts, PROJECT_BLOCK, stripEmbeds, type Turn as WTurn, type Work } from '../model'
+import { InlineFile } from './Inline'
+import { inlineParts } from './flow'
 import FileChip, { type OpenRequest } from '../artifacts/FileChip'
 import LiveActivity, { type Pending, type StopFn } from './LiveActivity'
 import Replay from './Replay'
@@ -243,6 +245,14 @@ function Mine({ m, to, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; 
   const raw = ask ? ask.question : ch ? '' : stripEmbeds(m.body)
   const ctx = CANVAS_CTX.exec(raw)
   const text = ctx ? raw.slice(ctx[0].length) : raw
+  // the owner's words with their uploads in place; a quote-ask or a changes card keeps its own shape
+  const flow = useMemo(() => {
+    if (ask || ch) return []
+    const ps = inlineParts(parts(m.body))
+    const t0 = ps[0]
+    if (ctx && t0 && 'text' in t0) ps[0] = { text: t0.text.slice(ctx[0].length) }
+    return ps.filter((p) => !('text' in p) || p.text)
+  }, [m.body, !!ask, !!ch, !!ctx]) // eslint-disable-line react-hooks/exhaustive-deps
   const long = text.length > LONG || text.split('\n').length > 9
   return (
     <div className="flex flex-col items-end gap-1 group mt-6 first:mt-0" data-turn>
@@ -250,7 +260,11 @@ function Mine({ m, to, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; 
       <div className="ws-mine max-w-[80%] rounded-[14px] px-4 py-2.5 text-[15px] leading-[1.55] text-ink whitespace-pre-wrap break-words">
         {ask && <AskChip ask={ask} onOpen={onOpenAsk} />}
         {ch && <ChangesCard ch={ch} />}
-        {!ch && <div className={long && !more ? 'max-h-[11.5em] overflow-hidden [mask-image:linear-gradient(#000_70%,transparent)]' : ''}>{text}</div>}
+        {!ch && <div className={long && !more ? 'max-h-[11.5em] overflow-hidden [mask-image:linear-gradient(#000_70%,transparent)]' : ''}>
+          {ask ? text : flow.map((p, i) => ('embed' in p
+            ? <InlineFile key={`f:${p.embed.path}`} e={p.embed} from={m.from} msg={m} onOpen={onOpenFile} />
+            : <div key={`t:${i}`}>{p.text}</div>))}
+        </div>}
         {long && <button onClick={() => setMore((x) => !x)} className="mt-1 text-[12px] text-ink-mute hover:text-ink">{more ? 'Show less' : 'Show all'}</button>}
         {files.length > 0 && <div className={`${text || ch ? 'mt-2' : ''} flex flex-wrap gap-1.5`}>{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} msg={m} onOpen={onOpenFile} />)}</div>}
       </div>
@@ -267,6 +281,7 @@ function Mine({ m, to, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; 
 function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | null; cont: boolean; role?: string; onOpenFile: (r: OpenRequest) => void }) {
   const files = embeds(m.body)
   const text = stripEmbeds(m.body)
+  const flow = useMemo(() => inlineParts(parts(m.body)), [m.body])      // the text with its files in place
   return (
     <div className={`ws-turn ${cont ? 'mt-3 is-cont' : 'mt-7 first:mt-0'}`} data-turn>
       {cont && <TurnActions m={m} text={text} />}
@@ -283,7 +298,9 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
       )}
       <div className="md:pl-[32px]">
         {turn && turn.steps.length > 0 && <WorkTrace steps={turn.steps} elsewhere={turn.elsewhere} agent={m.from} end={turn.ended_at} />}
-        {text && <Prose text={text} msg={m} />}
+        {flow.map((p, i) => ('embed' in p
+          ? <InlineFile key={`f:${p.embed.path}`} e={p.embed} from={m.from} msg={m} onOpen={onOpenFile} />
+          : <Prose key={`t:${i}`} text={p.text} msg={m} />))}
         {files.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} msg={m} onOpen={onOpenFile} />)}</div>}
       </div>
     </div>

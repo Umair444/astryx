@@ -21,7 +21,7 @@ const PDF_MAX = 15 * 1024 * 1024
 
 /* a PDF's first page on a canvas, ~2x the card's width (pdf.js is the panel's lazy chunk, loaded only when a PDF card
    scrolls into view); false when it can't */
-async function firstPage(b: Blob, el: HTMLCanvasElement | null, live: () => boolean): Promise<boolean> {
+export async function firstPage(b: Blob, el: HTMLCanvasElement | null, live: () => boolean): Promise<boolean> {
   if (!el) return false
   const { openPdf } = await import('../artifacts/viewers/pdf')
   const doc = await openPdf(b)
@@ -43,7 +43,7 @@ export function openedOf(it: Item): Opened {
     : { id: `file:${it.source!.path}`, thread: it.thread, name: it.name, kind: it.kind, path_in_store: '', size: 0, head: '', versions: [], source: it.source!.path, store: false }
 }
 
-function useVisible<T extends Element>() {
+export function useVisible<T extends Element>() {
   const ref = useRef<T>(null)
   const [seen, setSeen] = useState(false)
   useEffect(() => {

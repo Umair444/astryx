@@ -53,6 +53,22 @@ export function embeds(body: string): Embed[] { return [...body.matchAll(FILE_EM
 /* a project chat's first message opens with the project's context block (projects/context.ts): the agents', hidden here */
 export const PROJECT_BLOCK = /^\[project: [^\]\n]{1,80}\]\n(?:[\s\S]*?\n\[\/project\]\n?|[\s\S]*$)/
 export function stripEmbeds(body: string): string { return body.replace(FILE_EMBED, '').replace(/\s*\[\[ann:[\w.-]{1,80}\]\]/g, '').trimStart().replace(PROJECT_BLOCK, '').replace(/^\[chat with [^\]]*\]\n/, '').trim() }
+/* a body as it READS: its text runs and its [[file:]] embeds in place (thread/Inline.tsx draws a file where it was
+   embedded), cleaned exactly as stripEmbeds cleans: with no embed, the one text run IS stripEmbeds(body) */
+export type Part = { text: string } | { embed: Embed }
+export function parts(body: string): Part[] {
+  const clean = body.replace(/\s*\[\[ann:[\w.-]{1,80}\]\]/g, '').trimStart().replace(PROJECT_BLOCK, '').replace(/^\[chat with [^\]]*\]\n/, '')
+  const out: Part[] = []
+  let at = 0
+  const run = (s: string) => { const t = s.trim(); if (t) out.push({ text: t }) }
+  for (const m of clean.matchAll(FILE_EMBED)) {
+    run(clean.slice(at, m.index))
+    out.push({ embed: { path: m[1].trim(), label: m[2] } })
+    at = m.index! + m[0].length
+  }
+  run(clean.slice(at))
+  return out
+}
 export const fileUrl = (path: string) => `/api/chat/file?path=${encodeURIComponent(path)}`
 export function kindOf(path: string): 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'other' {
   const e = path.toLowerCase().split('.').pop() ?? ''
@@ -72,6 +88,16 @@ export async function fetchFile(path: string): Promise<Response> {
   const r = await fetch(fileUrl(path), { headers: { 'x-obs-key': obsKey() } })
   if (!r.ok) throw new Error(r.status === 404 ? 'that file is not readable from here' : `the file did not load (${r.status})`)
   return r
+}
+/* a file's size without its bytes: a one-byte Range read of the same gated route (Content-Range carries the total);
+   null when it can't tell */
+export async function fileSize(path: string): Promise<number | null> {
+  const r = await fetch(fileUrl(path), { headers: { 'x-obs-key': obsKey(), range: 'bytes=0-0' } })
+  if (r.status === 206) await r.arrayBuffer()                  // the one byte; a server that ignored the range: let go
+  else void r.body?.cancel().catch(() => {})
+  if (!r.ok) throw new Error(r.status === 404 ? 'that file is not readable from here' : `the file did not load (${r.status})`)
+  const n = Number(/\/(\d+)\s*$/.exec(r.headers.get('content-range') ?? '')?.[1] ?? (r.status === 200 ? r.headers.get('content-length') : NaN))
+  return Number.isFinite(n) ? n : null
 }
 /* An SVG (the server typed it image/svg+xml only after proving the bytes are one: serve.is_svg) is drawn from a data:
    URL, never a blob: one. Inside the <img> both are inert, but a blob: URL carries THIS page's origin, so "Open image
