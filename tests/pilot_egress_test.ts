@@ -2,7 +2,7 @@
 //   node tests/pilot_egress_test.ts <catalog.json>
 import { readFileSync } from 'node:fs'
 import { createExecutor, type Catalog, type Handler, type Json } from '../observatory/web/src/pilot/core.ts'
-import { functionOutput, project } from '../observatory/web/src/pilot/egress.ts'
+import { functionOutput, mask, project, projectScreen, screenLine, SCREEN_BUDGET } from '../observatory/web/src/pilot/egress.ts'
 import { makeHandlers, type PilotCtx } from '../observatory/web/src/pilot/handlers.ts'
 
 const catalog = JSON.parse(readFileSync(process.argv[2], 'utf8')) as Catalog
@@ -60,10 +60,55 @@ arm('a refusal leaves as an error string', r.includes('"ok":false') && r.include
   arm('an org plan thread key may leave', JSON.stringify(functionOutput(o2)).includes('plan-9000'))
   const nav = JSON.stringify(functionOutput(await createExecutor(catalog, makeHandlers(ctx), { project }).room.run('open_thread', { thread: THREAD })))
   arm('open_thread on a personal key does not echo it back', !nav.includes(THREAD))
-  for (const a of catalog.actions.filter((x) => x.class === 'view' || x.class === 'read')) {
+  for (const a of catalog.actions.filter((x) => x.class === 'view' || x.class === 'read' || x.class === 'compose')) {
     if (project(a.name, {}) === null) arm(`every room-reachable action has a projection entry: ${a.name}`, false)
   }
-  arm('every view and read action has a projection entry (no silent refusal)', true)
+  arm('every view, read and compose action has a projection entry (no silent refusal)', true)
+}
+
+// ---- the call (iteration 17): what the voice is told about the screen. SYNTHETIC numbers only (03XXXXXXXXX shape).
+{
+  const PHONES = ['03001234567', '0300-1234567', '+92 300 1234567', '0300 123 4567', '923001234567']
+  const ACCOUNT = '1234567890123456'
+  for (const ph of PHONES) {
+    const m = mask(`call ${ph} today`)
+    arm(`a phone-shaped run is masked: ${ph.replace(/\d/g, 'X')}`, !m.includes(ph) && m.includes('[number]') && m.replace(/\D/g, '').length === 0)
+  }
+  arm('an account/card-shaped run is masked', !mask(`acct ${ACCOUNT}`).includes(ACCOUNT) && !/\d{7}/.test(mask(`acct ${ACCOUNT}`)))
+  arm('a count, a percentage and a date survive the mask', mask('3,742 wallets, 42% up, on 2026-11-11') === '3,742 wallets, 42% up, on 2026-11-11')
+  arm('an e-mail is masked', !mask('mail a.b+c@example.com now').includes('example.com'))
+  arm('a bearer-ish token is masked', !mask('key sk-test-ABCDEFGH12345678 here').includes('ABCDEFGH') && !mask('ek_68e1c0ffee00aa11bb22').includes('c0ffee'))
+  arm('key=value secrets are masked', !mask('password: hunter2xyz').includes('hunter2') && !mask('token=abc123def').includes('abc123'))
+  arm('a URL keeps its path, never its query', mask('see https://x.example/a/b?obs_key=SECRETQ#frag') === 'see https://x.example/a/b')
+  arm('a long hex run is masked', !mask('hash 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08').includes('9f86d0'))
+
+  const PH = '03001234567'
+  const raw = {
+    surface: 'chat', view: 'thread', title: `Wallet ${PH} reconciliation`, agent: 'db',
+    headings: ['Daily actives', `Lookup for 0300-1234567`], captions: [`Top senders (${ACCOUNT})`],
+    lines: [`db: the number +92 300 1234567 has 3 txns`, 'owner: thanks'], dialog: null, draft: true,
+    body: SENTINEL, url: `http://h/#/chat?obs_key=${SENTINEL}`,
+  }
+  const h2: Record<string, Handler> = Object.fromEntries(catalog.actions.map((a) => [a.name, () => ({ ok: true })]))
+  h2.read_screen = () => raw as unknown as Json
+  h2.type_in_composer = (a) => ({ typed: true, chars: String(a.text).length, text: a.text } as unknown as Json)
+  const ex3 = createExecutor(catalog, h2, { project })
+  const scr = JSON.stringify(functionOutput(await ex3.room.run('read_screen', {})))
+  arm('read_screen reaches the provider (title words, agent, headings)', scr.includes('reconciliation') && scr.includes('"agent":"db"') && scr.includes('Daily actives'))
+  arm('no phone- or account-shaped digit run is in the read_screen bytes', !/\d[\d\s-]{6,}\d/.test(scr.replace(/"chars":\d+/g, '')) && !scr.includes(PH) && !scr.includes(ACCOUNT))
+  arm('a field the projection does not name (a body, a URL) never leaves', !scr.includes(SENTINEL) && !scr.includes('obs_key'))
+  arm('the draft leaves as a flag, never its words', scr.includes('"draft":true'))
+  const line = screenLine(projectScreen(raw))
+  arm('the pushed context line carries the screen and no digit run', line.includes('reconciliation') && !/\d{7}/.test(line.replace(/\D+/g, (m) => (m.length > 3 ? ' ' : ''))) && !line.includes(PH))
+  const big = { headings: Array.from({ length: 50 }, (_, i) => `Heading ${i} ` + 'x'.repeat(90)), captions: Array.from({ length: 50 }, () => 'c'.repeat(120)),
+    lines: Array.from({ length: 50 }, () => 'l'.repeat(200)), title: 't'.repeat(500) }
+  arm(`the screen is cut to the budget (${SCREEN_BUDGET} chars) as a whole`, JSON.stringify(projectScreen(big)).length <= SCREEN_BUDGET)
+  arm('a non-object screen projects to an empty shape, not a throw', JSON.stringify(projectScreen('nope')).length < 200)
+  const typed = JSON.stringify(functionOutput(await ex3.room.run('type_in_composer', { text: `ping ${PH}` })))
+  arm('type_in_composer echoes a count, never the typed words', typed.includes('"typed":true') && !typed.includes(PH) && !typed.includes('ping'))
+  const sent = JSON.stringify(functionOutput(await ex3.room.run('send_message', { text: `hello ${PH}` })))
+  arm('send_message from the voice parks for the owner\'s tap and echoes nothing', sent.includes('the owner must tap') && !sent.includes(PH) && ex3.pending()?.action === 'send_message')
+  arm('switch_agent (compose) runs for the room without a tap', (await ex3.room.run('switch_agent', { agent: 'db' })).status === 'done')
 }
 
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')
