@@ -20,6 +20,10 @@ makes the file BLIND, and a blind file can hide any name, so a name that would o
   - an in-repo-looking import that doesn't resolve, a relative import, or a star-import from an unresolvable module
   - a file that doesn't parse: its own `def N` lines count (textually), and it is blind for everything else
 `if __name__ == "__main__":` (no else) is skipped: under discover it never runs (runpy names the file <run_path>).
+The standalone-fallback idiom reads as a plain `from astryx import trigger`: a top-level `try:` whose body is exactly that
+import, no else/finally, and only `except ImportError`/`ModuleNotFoundError` handlers holding no import and no decorated
+def. Under discover astryx always imports, so the handler (a no-op `def trigger` for running the file standalone) never
+runs. Any other try stays blind.
 tests/test_trigger_names.py checks the model against discover() itself (parity) over the fixtures and the live corpus.
 
 STATES of (N, target agent), in this order:
@@ -178,6 +182,24 @@ def _path_inserts(s: ast.stmt, env: dict, file: Path) -> list[Path] | None:
     return None
 
 
+def _fallback_import(s: ast.stmt) -> ast.ImportFrom | None:
+    """`try: from astryx import trigger` / `except ImportError: <no-op def trigger>`: the import, else None. Under
+    discover astryx always imports, so only the try body runs; the handler exists for running the file standalone."""
+    if not (isinstance(s, ast.Try) and len(s.body) == 1 and s.handlers and not s.orelse and not s.finalbody):
+        return None
+    imp = s.body[0]
+    if not (isinstance(imp, ast.ImportFrom) and imp.module == "astryx" and not imp.level and len(imp.names) == 1
+            and imp.names[0].name == "trigger" and imp.names[0].asname is None):
+        return None
+    for h in s.handlers:
+        if not (isinstance(h.type, ast.Name) and h.type.id in ("ImportError", "ModuleNotFoundError")):
+            return None
+        if _uses(h, lambda n: isinstance(n, (ast.Import, ast.ImportFrom))
+                 or (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.decorator_list)):
+            return None
+    return imp
+
+
 def _main_guard(s: ast.stmt) -> bool:
     """`if __name__ == "__main__":` with no else. Under discover it never runs: runpy.run_path names the file
     "<run_path>", and an imported module is never __main__."""
@@ -252,6 +274,7 @@ def _read(path: Path, w: Walk, out: Read):
         out.blind.append(f"{rel}:{getattr(node, 'lineno', '?')}: {why}")
 
     for s in tree.body:
+        s = _fallback_import(s) or s                     # the standalone-fallback idiom IS the plain import
         if _main_guard(s):                               # never runs under discover: imported, or run as <run_path>
             continue
         ins = _path_inserts(s, env, path)

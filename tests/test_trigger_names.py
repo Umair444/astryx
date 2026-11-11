@@ -15,7 +15,7 @@ and is checked against the PULSE's own discover() (`pulse.py --names`), the sema
      fixture at 0 and ≥1 rows (sqlguard's RESPONSIVE witness for _python_rows, steward #50564)
   D  the table unreadable → would-be-absent names DEFER; installed ones still read installed
   E  import-safe with no .env and no ASTRYX_DSN (a4 #49617): it answers (deferred), never crashes
-  B  a1 BC-1: every construct the model doesn't positively understand makes the file BLIND → DEFERRED (17 fixtures,
+  B  a1 BC-1: every construct the model doesn't positively understand makes the file BLIND → DEFERRED (20 fixtures,
      one at a time, each named in the detail with its exits, a4 #50070; `names` exits 3), with a control beside them
   H  a cog org's triggers are its HOME's (the pulse's ESTATE): a name only its HOME defines reads installed under that
      HOME, one only the code tree defines reads absent, with no registry the tree is the estate (control), and a registry with no HOME carried defers (never a crash)
@@ -115,6 +115,8 @@ put("zzside/zzside_mod.py", TRIG + DEF.format("zz_side"))
 put("zzpkg/pathy.py", 'import sys\nfrom pathlib import Path\n\nHERE = Path(__file__).resolve().parents[1]\n'
                       'if str(HERE / "zzside") not in sys.path:\n    sys.path.insert(0, str(HERE / "zzside"))\n'
                       'import zzside_mod  # noqa: E402,F401\n')
+# the standalone-fallback idiom: a no-op decorator when the file runs outside the pulse (57 live files, 11-11)
+FALLBACK = 'try:\n    from astryx import trigger\nexcept ImportError:\n    def trigger(*_a, **_k):\n        return lambda f: f\n\n\n'
 GOOD = {
     "owner/anything_named.py": TRIG + DEF.format("zz_own"),
     "a_i/i.py": "from zzpkg.mod_i import zz_i1  # noqa: F401\n",
@@ -127,6 +129,7 @@ GOOD = {
     "a_main/m.py": TRIG + DEF.format("zz_main") + 'if __name__ == "__main__":\n    import zzpkg.never  # noqa\n',
     "umair/my_review.py": trigger_tree.shim("pr_review"),
     "memory/m.py": TRIG + DEF.format("zz_mem"),
+    "a_fb/fb.py": FALLBACK + DEF.format("zz_fb"),
 }
 for rel, body in GOOD.items():
     put(f"triggers/{rel}", body)
@@ -154,6 +157,10 @@ BLIND = {
     "b16 sys.path other than the idiom": 'import sys\nsys.path.append("/elsewhere")\nimport zzelsewhere  # noqa\n',
     "b17 the trigger used other than as a decorator": TRIG + 'def f(ctx):\n    return None\n\n\n'
                                                              'trigger("* * * * *")(f)\n',
+    "b18 the fallback idiom whose handler imports": FALLBACK.replace("    def trigger", "    import zzpkg.mod_i  # noqa\n    def trigger"),
+    "b19 the fallback idiom with a second statement in the try": FALLBACK.replace(
+        "    from astryx import trigger\n", "    from astryx import trigger\n    import zzpkg.mod_i  # noqa\n"),
+    "b20 the fallback idiom under a broad except": FALLBACK.replace("except ImportError:", "except Exception:"),
 }
 
 try:
@@ -174,7 +181,9 @@ try:
                      "triggers/a_path/p.py"),
                     ("C8 an `if __name__ == \"__main__\":` block is dead under discover, not blind", "zz_main",
                      "triggers/a_main/m.py"),
-                    ("C9 the init.sh shim under another agent and filename", "pr_review", "triggers/umair/my_review.py")):
+                    ("C9 the init.sh shim under another agent and filename", "pr_review", "triggers/umair/my_review.py"),
+                    ("C10 the standalone-fallback idiom (`try: from astryx import trigger` / `except ImportError`) is "
+                     "the plain import, not blind", "zz_fb", "triggers/a_fb/fb.py")):
                 rc, out, err = state(name, dsn=DSN)
                 want(f"{label} → installed (exit 0), naming {where}", rc == 0 and out == f"installed {where}",
                      f"rc={rc} {out} {err}")
