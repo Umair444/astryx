@@ -45,6 +45,7 @@ SURFACES = (
     ("canvas user", re.compile(r"^cv-[^\s@]+$"),            "bridges/canvas.py",   "to_agent LIKE 'cv-%'"),
     ("canvas page", re.compile(r"^canvas-\d+$"),            "bridges/canvas.py",   "to_agent LIKE 'canvas-%'"),
     ("room",        re.compile(r"^room$"),                  "observatory/api/room.py", "to_agent='room'"),
+    ("frontend",    re.compile(r"^fe-[^\s@]+$"),            "bridges/frontends.py", "to_agent LIKE 'fe-%'"),
 )
 
 
