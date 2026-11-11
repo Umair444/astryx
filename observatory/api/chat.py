@@ -25,6 +25,7 @@ non-file is 404, never a hint of what exists. R6: the OpenAI key is read by voic
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 import uuid
@@ -60,10 +61,29 @@ def bind(get_pool, estate: Path, media: Path, repo: Path, roster=None) -> None:
         _roster = roster
 
 
+SCRATCH_BASE = Path(f"/tmp/claude-{os.getuid()}")   # Claude Code's per-uid temp root (bridges/embed_root.py's)
+
+
+def scratch_root(home: Path) -> Path:
+    """Claude Code's scratchpad root for sessions started in `home`: /tmp/claude-<uid>/<home, non-alnum -> '-'>, the
+    same rule bridges/embed_root.scratch_root applies."""
+    return SCRATCH_BASE / re.sub(r"[^A-Za-z0-9]", "-", str(home))
+
+
 def roots() -> list[Path]:
-    """Where the side panel may read: the media dir (uploads, inbound channel media) and the agents' homes (their
-    artifacts). Resolved, so a symlinked root can't widen the set."""
-    return [p.resolve() for p in (MEDIA, (ESTATE / "homes") if ESTATE else None) if p is not None]
+    """Where the side panel may read: the media dir (uploads, inbound channel media), the agents' homes (their
+    artifacts) and each agent home's Claude scratchpads, the roots bridges/embed_root already lets an agent attach
+    from (11-11: db's avatar.svg, attached from its scratchpad, was a 404 here while WhatsApp would have carried it).
+    Resolved, so a symlinked root can't widen the set."""
+    out = [p.resolve() for p in (MEDIA, (ESTATE / "homes") if ESTATE else None) if p is not None]
+    if ESTATE and (ESTATE / "homes").is_dir():
+        for home in sorted((ESTATE / "homes").iterdir()):
+            if home.is_dir() and not home.name.startswith("."):
+                # a session's root is named after the path it STARTED in: the estate's spelling or the resolved one
+                for sr in {scratch_root(home), scratch_root(home.resolve())}:
+                    if sr.is_dir():
+                        out.append(sr.resolve())
+    return out
 
 
 def safe_name(name: str) -> str:
@@ -146,7 +166,7 @@ async def file(request: Request, path: str = ""):
     p = readable(path)
     if p is None:
         return Response(status_code=404)
-    return serve_untrusted(p, inline=True)
+    return serve_untrusted(p, inline=True, svg=True)      # an .svg that IS one: image/svg+xml under SVG_CSP
 
 
 # ----------------------------------------------------------------------------------------------------- projects

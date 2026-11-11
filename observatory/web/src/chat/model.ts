@@ -73,8 +73,20 @@ export async function fetchFile(path: string): Promise<Response> {
   if (!r.ok) throw new Error(r.status === 404 ? 'that file is not readable from here' : `the file did not load (${r.status})`)
   return r
 }
+/* An SVG (the server typed it image/svg+xml only after proving the bytes are one: serve.is_svg) is drawn from a data:
+   URL, never a blob: one. Inside the <img> both are inert, but a blob: URL carries THIS page's origin, so "Open image
+   in new tab" would run the SVG's script as a document beside the owner key; a data: document's origin is opaque. */
+const showing = new WeakMap<HTMLElement, Blob>()
 export function showMedia(el: HTMLImageElement | HTMLAudioElement | HTMLVideoElement, b: Blob) {
   if (el.src.startsWith('blob:')) URL.revokeObjectURL(el.src)
+  showing.set(el, b)
+  if (el instanceof HTMLImageElement && b.type.split(';')[0].trim() === 'image/svg+xml') {
+    el.removeAttribute('src')
+    const fr = new FileReader()
+    fr.onload = () => { if (showing.get(el) === b && typeof fr.result === 'string') el.src = fr.result }
+    fr.readAsDataURL(b)
+    return
+  }
   el.src = URL.createObjectURL(b)
 }
 export function download(b: Blob, name: string) {

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, apiPost, eventsUrl, fetchWhoami } from './api'
+import { api, apiPost, eventsUrl, fetchWhoami, noteServerTime, parseTs } from './api'
 import type { AgentRow, DagEvent, Goal, Msg, Overview, Peer, Presence, WhoAmI, WireEvent } from './types'
 
 /* one wire pulse — the network view animates the from→to edge for a moment.
@@ -92,7 +92,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // owner composer — optimistic append; SSE delivers the same row, dedupe by id
   const send = useCallback(async (to: string, body: string, thread?: string) => {
+    const t0 = Date.now()
     const m = await apiPost<Msg>('/messages', { to, body, thread: thread ?? null })
+    noteServerTime(parseTs(m.ts), 0, t0, Date.now())   // the row's stamp: the server's clock to the microsecond (api.ts)
     setMessages((cur) => capped(mergeMsgs(cur, [m])))
     return m
   }, []) // eslint-disable-line react-hooks/exhaustive-deps

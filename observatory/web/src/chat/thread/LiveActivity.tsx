@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { agentColor, displayName, fmtTime } from '../../api'
+import { agentColor, displayName, elapsedSince, fmtTime } from '../../api'
 import type { Step } from '../../types'
 import { clock, useNow } from '../data'
 import { stepLine, visible } from '../model'
@@ -11,7 +11,10 @@ import { Presence } from '../shell/AgentRail'
    the agent's live lane). Three at most, then "+2 working".
    STOP (iteration 6): the line's one action. It interrupts that agent's CURRENT TURN (POST /api/ws/agents/<a>/interrupt:
    one Escape into its pane, as the owner would press in tmux); the first use in a session asks once, inline, never a
-   modal. Optimistic: "Stopping…" at once, then "Stopped" until the agent's next word, or the reason it didn't. */
+   modal. Optimistic: "Stopping…" at once, then "Stopped" until the agent's next word, or the reason it didn't.
+   THE TIMER counts from the owner's ask (`since`, the server's stamp on that row) on the SERVER's clock: elapsedSince
+   adds the measured server-browser offset (api.ts). A bare `Date.now() - Date.parse(since)` froze at 00:00 for the
+   first ~3 minutes of every turn while the org host's clock ran ahead (11-11: +183 s), clock() clamping the negative. */
 
 export interface Pending { agent: string; since: string; steps: Step[] }
 
@@ -103,7 +106,7 @@ function Line({ p, now, onStop }: { p: Pending; now: number; onStop?: StopFn }) 
         ) : (
           <>
             {typeof stop === 'object' && stop && <span className="relative shrink-0 text-[12px] text-bad truncate max-w-[220px]" role="status" title={stop.err}>{stop.err}</span>}
-            {stop !== 'stopped' && <span className="shrink-0 font-mono text-[12px] tabular-nums text-ink-mute pointer-events-none">{clock(now - Date.parse(p.since))}</span>}
+            {stop !== 'stopped' && <span className="shrink-0 font-mono text-[12px] tabular-nums text-ink-mute pointer-events-none">{clock(elapsedSince(p.since, now))}</span>}
             {onStop && stop !== 'stopped' && (
               <button className="ws-stop relative" disabled={stop === 'stopping'} title={`Interrupt ${name}'s current turn`}
                 onClick={() => (confirmed() ? void fire() : setStop('confirm'))}>

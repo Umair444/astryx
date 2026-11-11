@@ -177,6 +177,18 @@ def main(tmp: Path, url: str):
     arm("G3 an agent's .html is plain TEXT under the sandbox, never a page",
         h.status_code == 200 and h.headers["content-type"].startswith("text/plain")
         and h.headers.get("content-security-policy", "").startswith("sandbox"), (h.status_code, dict(h.headers)))
+    svg = estate / "homes" / "fixture-agent" / "chart.svg"
+    svg.write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/><script>alert(1)</script></svg>')
+    sv = cl.get("/api/chat/file", params={"path": str(svg)}, headers=O)
+    arm("G3 an .svg that IS one is image/svg+xml (the panel's <img> draws it) under a sandbox CSP that runs nothing",
+        sv.status_code == 200 and sv.headers.get("content-type") == "image/svg+xml"
+        and sv.headers.get("content-security-policy", "").startswith("sandbox;") and "script-src" not in sv.headers.get("content-security-policy", "")
+        and sv.headers.get("x-content-type-options") == "nosniff", (sv.status_code, dict(sv.headers)))
+    fake_svg = estate / "homes" / "fixture-agent" / "page.svg"
+    fake_svg.write_text("<html><script>alert(1)</script></html>")
+    fs_ = cl.get("/api/chat/file", params={"path": str(fake_svg)}, headers=O)
+    arm("G3 an .svg whose bytes aren't an SVG stays plain text", fs_.headers.get("content-type", "").startswith("text/plain"),
+        dict(fs_.headers))
     blob = estate / "homes" / "fixture-agent" / "data.bin"
     blob.write_bytes(b"\x00\x01\x02binary")
     bb = cl.get("/api/chat/file", params={"path": str(blob)}, headers=O)

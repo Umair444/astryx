@@ -7,9 +7,45 @@ function denied(r: Response, key: string) {
   if (r.status === 403 && key) window.dispatchEvent(new CustomEvent(DENIED))
 }
 
+/* THE SERVER'S CLOCK. Every ts the API hands out (a message, a step) is stamped by the SERVER's clock, and a timer that
+   subtracts one from the browser's Date.now() is only right while the two clocks agree. They don't always: 11-11 the
+   org host ran ~183 s AHEAD of real time (no NTP daemon; the owner's laptop was on time), so the live-activity line's
+   `now - Date.parse(since)` was negative for the first three minutes of every turn and clock() clamped it to 00:00,
+   frozen for the length of a typical turn. So every API response is a clock reading: its Date header says the server
+   time (to the second) somewhere between the request leaving and the response arriving, which bounds the offset
+   (server - browser) to an interval; the intersection of recent intervals is the estimate, tight to well under a
+   second after a few requests. A reading that contradicts the rest (a clock was reset) restarts the estimate. */
+let skewLo = -Infinity, skewHi = Infinity
+export function noteServerTime(serverMs: number, resolutionMs: number, sentAt: number, gotAt: number) {
+  if (!Number.isFinite(serverMs)) return
+  const lo = serverMs - gotAt, hi = serverMs + resolutionMs - sentAt
+  if (lo > skewHi || hi < skewLo) { skewLo = lo; skewHi = hi; return }
+  skewLo = Math.max(skewLo, lo); skewHi = Math.min(skewHi, hi)
+}
+function noteDate(r: Response, sentAt: number) {
+  const d = r.headers.get('date')
+  // 2.1 s: the header is whole seconds AND uvicorn re-stamps its cached Date only once a second (Server.on_tick)
+  if (d) noteServerTime(Date.parse(d), 2100, sentAt, Date.now())
+}
+/* server minus browser, ms (0 until a response has been read) */
+export function serverSkew(): number {
+  return Number.isFinite(skewLo) && Number.isFinite(skewHi) ? (skewLo + skewHi) / 2 : 0
+}
+/* an API timestamp as epoch ms, read as UTC when it names no zone (a naive "2026-11-11T07:13:22" is the server's UTC,
+   never the browser's local time) */
+export function parseTs(ts: string): number {
+  return Date.parse(/(?:Z|[+-]\d\d:?\d\d)$/i.test(ts) || !/T\d/.test(ts) ? ts : ts + 'Z')
+}
+/* ms since a server timestamp, on the SERVER's clock (so a skewed host can't freeze or inflate a timer) */
+export function elapsedSince(ts: string, now = Date.now()): number {
+  return now + serverSkew() - parseTs(ts)
+}
+
 export async function api<T>(path: string): Promise<T> {
   const key = obsKey()
+  const t0 = Date.now()
   const r = await fetch('/api' + path, { headers: key ? { 'x-obs-key': key } : {} })
+  noteDate(r, t0)
   denied(r, key)
   if (!r.ok) throw new Error(`${path}: ${r.status}`)
   return r.json()
@@ -33,11 +69,13 @@ export function saveObsKey(key: string) {
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   const key = obsKey()
+  const t0 = Date.now()
   const r = await fetch('/api' + path, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(key ? { 'x-obs-key': key } : {}) },
     body: JSON.stringify(body),
   })
+  noteDate(r, t0)
   denied(r, key)
   if (!r.ok) throw new Error(`${path}: ${r.status}`)
   return r.json()
@@ -51,6 +89,7 @@ export class ApiError extends Error {
 
 export async function apiSend<T>(method: string, path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
   const key = obsKey()
+  const t0 = Date.now()
   const r = await fetch('/api' + path, {
     method,
     headers: {
@@ -60,6 +99,7 @@ export async function apiSend<T>(method: string, path: string, body?: unknown, h
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
+  noteDate(r, t0)
   denied(r, key)
   if (!r.ok) {
     let data: Record<string, unknown> | null = null
@@ -71,7 +111,9 @@ export async function apiSend<T>(method: string, path: string, body?: unknown, h
 
 export async function fetchWhoami(): Promise<WhoAmI> {
   const key = obsKey()
+  const t0 = Date.now()
   const r = await fetch('/api/whoami', { headers: key ? { 'x-obs-key': key } : {} })
+  noteDate(r, t0)
   if (!r.ok) throw new Error(`/whoami: ${r.status}`)
   return r.json()
 }
