@@ -27,6 +27,15 @@ def _strips(node: str) -> bool:
     return (major, minor) >= (22, 6)
 
 
+def ts_unavailable() -> str | None:
+    """Why no .ts suite can run on THIS checkout, or None. Only the absent bundler counts (a clean clone, no npm
+    ci): a missing node is a missing runtime the suites need, and stays the caller's FAIL."""
+    node = shutil.which("node")
+    if node and not _strips(node) and not ESBUILD.exists():
+        return f"node {node} can't load .ts and {ESBUILD} is missing (npm ci in observatory/web)"
+    return None
+
+
 def run_ts(suite: Path, *args, timeout: int = 60) -> tuple[int, str, str]:
     node = shutil.which("node")
     if not node:
