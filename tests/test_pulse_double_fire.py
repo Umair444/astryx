@@ -18,7 +18,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
-from astryx.pulse.pulse import _next_fire, croniter  # noqa: E402
+try:
+    from astryx.pulse.pulse import _next_fire, croniter  # noqa: E402
+except ModuleNotFoundError as e:                         # a dep absent → 77; pulse itself broken → still a FAIL
+    if e.name not in ("psycopg", "croniter"):
+        raise
+    print(f"SKIP: pulse's dependency {e.name} isn't installed here; nothing was verified")
+    sys.exit(77)
 
 fails = []
 
