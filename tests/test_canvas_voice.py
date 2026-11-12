@@ -55,8 +55,11 @@ def main(url):
         {"value": "ek_test", "expires_at": 9999999999}))[2]
     H = {"x-astryx": "1"}
     A = "/canvas/api"
-    private = next((a for a in ("canopus", "gemini", "memory") if not tier.is_content_public(a)), None)
-    public = next((a for a in ("painter", "forge", "scout") if tier.is_content_public(a)), None)
+    from astryx.core.charter import roster
+    names = [a for a in roster() if a != "seed"]           # this org's own agents, not one org's example names
+    private = next((a for a in names if not tier.is_content_public(a)), None)
+    public = next((a for a in names if tier.is_content_public(a)), None)
+    anyone = public or private or "seed"                    # /users refuses an agent the tree doesn't hold
     with TestClient(b.root, base_url="http://testserver") as cl:
         jars = {}
 
@@ -70,7 +73,7 @@ def main(url):
             jars[n] = {c.name: c.value for c in cl.cookies.jar}
 
         who("anon").post(f"{A}/login", json={"key": "test-owner-key"}, headers=H); keep("owner")
-        t = who("owner").post(f"{A}/users", json={"name": "vguest", "agents": [public or "painter"]}, headers=H).json()
+        t = who("owner").post(f"{A}/users", json={"name": "vguest", "agents": [anyone]}, headers=H).json()
         who("anon").post(f"{A}/login", json={"key": t["token"]}, headers=H); keep("guest")
 
         g = who("guest")
@@ -122,7 +125,7 @@ def main(url):
         o.post(f"{A}/canvases", json={"title": "Voice probe"}, headers=H)
         import psycopg
         with psycopg.connect(url) as c:
-            c.execute("INSERT INTO steps (agent, kind, content) VALUES (%s, 'tool', 'busy')", (public or "painter",))
+            c.execute("INSERT INTO steps (agent, kind, content) VALUES (%s, 'tool', 'busy')", (anyone,))
             c.commit()
         org = o.get(f"{A}/voice/org").json()
         blob = json.dumps(org)
