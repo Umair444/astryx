@@ -118,7 +118,17 @@ def main(url):
                 got == {"marked": [other]} and status(c, rel)[0] == "pending", (got, status(c, rel)))
 
 
+def clients():
+    """The route only helps where a pane CALLS it: each owner surface that renders replies must mark them (11-12: #/chat
+    never did, so every reply he read there stayed pending)."""
+    web = Path(__file__).resolve().parents[1] / "observatory/web/src"
+    for pane in ("components/ChatSheet.tsx", "components/WireView.tsx", "chat/ChatApp.tsx"):
+        src = (web / pane).read_text()
+        arm(f"CLIENT: {pane} marks the replies it shows read", "apiPost('/thread/read'" in src)
+
+
 if __name__ == "__main__":
+    clients()
     with fixture_db() as fx:
         os.environ["ASTRYX_DSN"] = fx["url"]
         os.environ["OBS_KEY"] = "test-owner-key"
