@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -98,12 +99,20 @@ arm("there is no owner_tap principal (a caller-assertable owner)", "owner_tap" n
 arm("a classless action reads as actuate", pc.cls({"name": "x"}, cat) == "actuate")
 
 # (e)
+sys.path.insert(0, str(REPO / "tests"))
+from node_ts import run_ts, ts_unavailable         # node < 22.6 can't load .ts: bundled first (tests/node_ts.py)
 node = shutil.which("node")
+unverified = ts_unavailable()                      # a clean clone (no npm ci): the node arms verify nothing, not red
 if not node:
     arm("node is installed (the executor's gate runs under it)", False)
+elif unverified:
+    print(f"  SKIP  the node arms: {unverified}")
 else:
-    sys.path.insert(0, str(REPO / "tests"))
-    from node_ts import run_ts                     # node < 22.6 can't load .ts: bundled first (tests/node_ts.py)
+    with tempfile.TemporaryDirectory() as d:
+        broken = Path(d) / "broken_test.ts"
+        broken.write_text("const n: number = 1;\nif (n) throw new Error('a broken suite');\n")
+        rc, _, _ = run_ts(broken)
+        arm("a broken .ts suite still FAILS where the bundler is present (the skip covers only its absence)", rc != 0, rc)
     rc, out, err = run_ts(REPO / "tests/pilot_core_test.ts", CAT)
     print(out.rstrip())
     arm("the executor's gate (node)", rc == 0, err.strip()[-400:])
@@ -114,5 +123,8 @@ else:
     print(out.rstrip())
     arm("the call's open asks: which reply is read back, and when an ask closes (node)", rc == 0, err.strip()[-400:])
 
+if not fails and unverified:
+    print(f"SKIP: the pure arms passed; the node arms verified nothing ({unverified})")
+    sys.exit(77)
 print("ALL PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)
