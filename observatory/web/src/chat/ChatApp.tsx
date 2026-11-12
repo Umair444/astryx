@@ -232,6 +232,18 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   }, [history, messages, current])
   const newest = rows.at(-1)?.id ?? 0
 
+  // the replies this thread shows are read once he can see them (the same explicit act as ChatSheet / the Wire's pane,
+  // /api/thread/read): only up to the newest agent row rendered, only while the tab is visible; the server never marks a
+  // row a bridge delivers. Without it every reply he read here stayed 'pending' (reach gate, 11-12)
+  const newestReply = view === 'thread' ? rows.filter((m) => m.from !== 'owner').at(-1)?.id ?? 0 : 0
+  useEffect(() => {
+    if (!current || !newestReply) return
+    const mark = () => { if (!document.hidden) apiPost('/thread/read', { thread: current, upto: newestReply }).catch(() => {}) }
+    mark()
+    document.addEventListener('visibilitychange', mark)
+    return () => document.removeEventListener('visibilitychange', mark)
+  }, [current, newestReply])
+
   // the thread's files: the store's list (GET /api/ws/media), else the embeds in the rows; refreshed as the thread moves
   const rowsRef = useRef(rows)
   rowsRef.current = rows
