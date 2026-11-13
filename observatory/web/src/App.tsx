@@ -56,7 +56,7 @@ const Auth = LOGIN ? {
 function authPage() {
   if (!Auth) return null
   const p = location.hash.replace(/^#\/?/, '').split(/[/?]/)[0]
-  const Page = p === 'sign-in' ? Auth.SignIn : p === 'signed-out' ? Auth.SignedOut : p === 'orgs' ? Auth.Orgs
+  const Page = p === 'sign-in' || p === 'sign-up' ? Auth.SignIn : p === 'signed-out' ? Auth.SignedOut : p === 'orgs' ? Auth.Orgs
     : p === 'accept' ? Auth.Accept : null
   return Page ? <Suspense fallback={<div className="min-h-dvh bg-deck" />}><Page /></Suspense> : null
 }
