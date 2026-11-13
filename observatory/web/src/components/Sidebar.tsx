@@ -11,7 +11,7 @@ import { LiveDot, Orb, useNow } from '../ui/kit'
 import { moodOf, nowLine } from '../ui/life'
 import { HandBadge } from '../ui/hands'
 import { canvasBase } from '../cog'
-import { useMe, whoLabel } from '../me'
+import { canAdmin, useMe, whoLabel } from '../me'
 
 export const LINKS: { tab: Route['tab']; label: string; icon: string; hint: string }[] = [
   { tab: 'floor', label: 'Floor', icon: '◉', hint: 'the org as a room' },
@@ -25,13 +25,17 @@ export const LINKS: { tab: Route['tab']; label: string; icon: string; hint: stri
   { tab: 'memory', label: 'Memory', icon: '⬢', hint: 'what the org knows' },
   { tab: 'growbot', label: 'GrowBot', icon: '❀', hint: 'the plant' },
   { tab: 'monitor', label: 'System', icon: '❐', hint: 'host, services, database' },
+  { tab: 'admin', label: 'Admin', icon: '⚙', hint: 'people, roles, invites' },
 ]
 
 export default function Sidebar({ route, onOpenAgent }: { route: Route; onOpenAgent: (n: string) => void }) {
   const { overview, agents, presence, who } = useStore()
   const me = useMe()             // signed in: your name and the org's in place of 'local' (owner 11-13)
   const now = useNow(5000)
-  const links = who.owner ? LINKS : LINKS.filter((l) => l.tab === 'network' || l.tab === 'floor')
+  // Admin: a signed-in owner or admin of this org only (its account panel; me.ts canAdmin)
+  const admin = canAdmin(me)
+  const links = (who.owner ? LINKS : LINKS.filter((l) => l.tab === 'network' || l.tab === 'floor' || l.tab === 'admin'))
+    .filter((l) => l.tab !== 'admin' || admin)
 
   // who is working first — the sidebar is a live roster, not an alphabet
   const cast = useMemo(() => {

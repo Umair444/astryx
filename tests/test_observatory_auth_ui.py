@@ -149,7 +149,7 @@ def main():
     gate = re.search(r"const Auth = LOGIN \? \{.*?\n\} : null\n", app, re.S)
     n = gate.group(0).count("lazy(() => import('./components/AuthScreens')") if gate else 0
     check("every AuthScreens import is a lazy import inside `const Auth = LOGIN ? {…} : null`",
-          n == 5 and app.count("import('./components/AuthScreens')") == 5, n)
+          n == 6 and app.count("import('./components/AuthScreens')") == 6, n)   # + AcceptScreen (the admin panel's links)
     named = [p.relative_to(SRC).as_posix() for p in SRC.rglob("*.ts*")
              if p.name not in ("auth.ts", "AuthScreens.tsx") and re.search(r"['\"`]/auth/", p.read_text())]
     check("no other module names /auth", named == [], named)

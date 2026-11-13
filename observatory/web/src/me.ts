@@ -4,7 +4,7 @@
    under node in tests/test_observatory_auth_ui.py). */
 import { useEffect, useState } from 'react'
 import { LOGIN, readMe } from './auth'
-import type { Me, MeState } from './auth'
+import type { AuthOrg, Me, MeState } from './auth'
 import { chosenOrg } from './cog'
 
 let mePromise: Promise<MeState> | null = null
@@ -20,9 +20,18 @@ export function useMe(): Me | null {
   return me
 }
 
+/* the org you are in, as your membership names it: the chosen one, else your only one */
+export function hereOrg(me: Me | null): AuthOrg | undefined {
+  if (!me) return undefined
+  const pick = chosenOrg()
+  return me.orgs.find((x) => x.org === pick) ?? (me.orgs.length === 1 ? me.orgs[0] : undefined)
+}
+
 export function whoLabel(me: Me | null, fallback: string): string {
   if (!me) return fallback
-  const pick = chosenOrg()
-  const o = me.orgs.find((x) => x.org === pick) ?? (me.orgs.length === 1 ? me.orgs[0] : undefined)
-  return `${me.user} · ${o?.name ?? fallback}`
+  return `${me.user} · ${hereOrg(me)?.name ?? fallback}`
 }
+
+/* THE ADMIN PANE's door: signed in as the owner or an admin of the org you are in (its backend's own answer, via
+   /auth/me). The owner key alone opens no account panel: accounts are the front's, and a key is no account. */
+export const canAdmin = (me: Me | null) => ['owner', 'admin'].includes(hereOrg(me)?.role ?? '')
