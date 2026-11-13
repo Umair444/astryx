@@ -27,7 +27,8 @@ names another), and the org's .env gets `ASTRYX_DSN` with user=org_<key>. The ve
 
     venv/bin/python devtools/cog_roles.py stash-super --env /opt/astryx/.env --to <file>   # copy the superuser DSN
     sudo install -o root -g root -m 0600 <file> /etc/astryx/pg-super.dsn && shred -u <file>
-    sudo venv/bin/python devtools/cog_roles.py apply                 # roles, schema.sql + sweep, every org's role
+    sudo venv/bin/python devtools/cog_roles.py apply --cogstore cogstore --harden   # roles, schema.sql + sweep,
+                                                                     # every org's role, the cog store, maintenance dbs
     sudo venv/bin/python devtools/cog_roles.py rotate org_astryx --env /opt/astryx/.env   # password -> the org's DSN
     sudo venv/bin/python devtools/cog_roles.py rotate astryx_test --env /opt/astryx/.env --key ASTRYX_TEST_DSN --db postgres
     sudo venv/bin/python devtools/cog_roles.py rotate astryx_cog --env /home/astryx/cog/.env --db cogstore
@@ -191,6 +192,30 @@ def ensure_org(conn, names: Names, key: str, parent: str | None = None, pw: str 
     return role
 
 
+def provision_cogstore(conn, names: Names) -> int:
+    """The cog's own database (cogstore: users, sessions, links; cog_schema.sql) becomes the cog role's: its schema
+    and every relation in it owned by astryx_cog, CONNECT for it alone. Run in that database as the provisioner.
+    Returns the relations moved."""
+    sql = _sql()
+    I = sql.Identifier
+    conn.execute(sql.SQL("ALTER SCHEMA public OWNER TO {}").format(I(names.cog)))
+    n = 0
+    for rel, kind in conn.execute(
+            "SELECT c.oid::regclass::text, c.relkind FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace "
+            "AND c.relkind IN ('r','p','v','m','S') AND c.relowner <> %s::regrole "
+            "AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid "
+            "AND d.deptype = 'e') AND NOT (c.relkind = 'S' AND EXISTS (SELECT 1 FROM pg_depend d WHERE "
+            "d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.refclassid = 'pg_class'::regclass "
+            "AND d.deptype IN ('a','i')))", (names.cog,)).fetchall():
+        what = {"v": "VIEW", "m": "MATERIALIZED VIEW", "S": "SEQUENCE"}.get(kind, "TABLE")
+        conn.execute(sql.SQL(f"ALTER {what} {{}} OWNER TO {{}}").format(sql.SQL(rel), I(names.cog)))
+        n += 1
+    db = I(conn.execute("SELECT current_database()").fetchone()[0])
+    conn.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM PUBLIC").format(db))
+    conn.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(db, I(names.cog)))
+    return n
+
+
 def harden_cluster(admin, names: Names, dbs=("postgres", "template1")) -> None:
     """No PUBLIC CONNECT on the maintenance databases (RLS.md §2). The test role keeps CONNECT on the first (it has to
     stand somewhere to CREATE DATABASE) and so does the monitor. The oracle passes a scratch database instead."""
@@ -334,6 +359,9 @@ def cmd_apply(a) -> int:
                     continue
                 role = ensure_org(c, names, key)
                 print(f"org {key}: role {role}")
+    if a.cogstore:
+        with psycopg.connect(_with_db(sdsn, a.cogstore), autocommit=True) as cs:
+            print(f"cog store {a.cogstore}: {provision_cogstore(cs, names)} relation(s) given to {names.cog}")
     with psycopg.connect(sdsn, autocommit=True) as admin:
         if a.harden:
             harden_cluster(admin, names)
@@ -414,6 +442,7 @@ def main(argv=None) -> int:
     p.add_argument("--org", default=None)
     p.add_argument("--db", default=None, help="the shared org database (default astryx)")
     p.add_argument("--harden", action="store_true", help="also revoke PUBLIC CONNECT on postgres and template1")
+    p.add_argument("--cogstore", default=None, help="also give this cog-store database to astryx_cog (e.g. cogstore)")
     p.set_defaults(fn=cmd_apply)
     p = sub.add_parser("rotate")
     p.add_argument("role")

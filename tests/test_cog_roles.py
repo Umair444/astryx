@@ -26,6 +26,7 @@ the roles switch, RLS still OFF. devtools/cog_roles.py run on a fixture database
                 no tracked runtime file hardcodes the bootstrap user
   R11 registry  orgs.load + config._check_pair with `role`: two orgs bound by role share one database; a DSN must log in
                 as its own org's role; another org's role is refused; two unroled orgs still can't share a database
+  R12 cog store provision_cogstore: every relation of the cog store is astryx_cog's, CONNECT for it alone
 Exit 0 · 1 · 77 (no database, or a provisioner that is neither superuser nor CREATEROLE).
 """
 import json
@@ -363,6 +364,27 @@ def r11_registry():
         check("R11 two orgs can't share a role", ok)
 
 
+def r12_cogstore(names):
+    from astryx.security.sqlguard.fixture import fixture_db
+    with fixture_db(extra=((REPO / "src/astryx/sql/cog_schema.sql").read_text(),)) as fx, \
+            psycopg.connect(fx["dsn"], autocommit=True) as cs:
+        n = cr.provision_cogstore(cs, names)
+        bad = cs.execute("SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind IN "
+                         "('r','v','S') AND relowner <> %s::regrole", (names.cog,)).fetchall()
+        priv = cs.execute("SELECT has_table_privilege(%s, 'users', 'SELECT') AND has_table_privilege(%s, 'links', "
+                          "'INSERT') AND has_database_privilege(%s, current_database(), 'CONNECT') AND NOT "
+                          "has_database_privilege('public', current_database(), 'CONNECT')",
+                          (names.cog, names.cog, names.cog)).fetchone()[0]
+        check(f"R12 provision_cogstore gives every cog-store relation ({n}) to the cog role, CONNECT to it alone",
+              n >= 3 and not bad and priv, str(bad[:5]))
+        cs.execute(sql_revoke(names.cog, fx["dbname"]))
+
+
+def sql_revoke(role, db):
+    from psycopg import sql
+    return sql.SQL("REVOKE ALL ON DATABASE {} FROM {}").format(sql.Identifier(db), sql.Identifier(role))
+
+
 def main() -> int:
     r11_registry()
     try:
@@ -385,6 +407,7 @@ def main() -> int:
             r8_reapply(c, names, orgs)
             r10_census(names, orgs)
             r9_credentials(c, names, orgs, fx, sup, admin_dsn)
+            r12_cogstore(names)
     except FixtureUnavailable as e:
         print(f"NOT SEARCHED: {e}")
         return 77
