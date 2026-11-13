@@ -336,7 +336,7 @@ def _org_keys() -> dict:
 
 def cmd_apply(a) -> int:
     import psycopg
-    names = Names()
+    names = Names(a.prefix)
     sdsn = super_dsn(a.super_file)
     with psycopg.connect(sdsn, autocommit=True) as admin:
         if not _is_super(admin):
@@ -437,6 +437,7 @@ def cmd_counts(a) -> int:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="cog_roles", description=__doc__.split("\n")[0])
     ap.add_argument("--super-file", default=None, help=f"the superuser DSN file (default {SUPER_FILE})")
+    ap.add_argument("--prefix", default="", help="role-name prefix: a rehearsal on a fixture (production passes none)")
     sub = ap.add_subparsers(dest="verb", required=True)
     p = sub.add_parser("apply")
     p.add_argument("--org", default=None)
