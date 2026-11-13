@@ -832,6 +832,10 @@ run "cog sign-in: the owner signs in and reaches his rooms with no key, the key 
 # one-org-cog control that must pass where they must not).
 run "cog one-org parity: one org behind the front loses nothing; no cog block is today (cog-rebuild P1)" "$PY" tests/test_cog_one_org_parity.py
 run "cog CLI: the one writer of accounts and memberships; the cog store's backup restores (U1+U2 D7 D8 D9)" "$PY" tests/test_cogauth_cli.py
+# cog-rebuild (owner 11-13: "an admin panel in observatory too for each org"): the org's admin API (members through
+# observatory/api/members.py, on either members shape) and the front's account half (one-time invite/reset links,
+# sign out everywhere), every guard: admins below owner, the last owner, cog-wide sessions, one use, expiry.
+run "cog admin panel: users, roles, invites, reset links, sign out everywhere, and every guard" "$PY" tests/test_admin_panel.py
 # plan-11859 U4: the owner sets this org's agent login from the observatory (a subscription token, a metered key only with
 # the billing confirmed, or neither), through the one .env writer, never a value back. Mutants: tests/mutants_org_login.py,
 # tests/mutants_config_unset.py.
