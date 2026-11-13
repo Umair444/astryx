@@ -75,9 +75,6 @@
   "observatory/api/main.py::agent_profile\u001fselect mode() within group (order by model) from turns where agent=? and model is not null and ended_at > now() - interval '2 days'": [
    "observatory: agents as people"
   ],
-  "observatory/api/main.py::people_answer\u001finsert into social_relation (org, pid, kind, closeness, confidence, updated_at) values (coalesce((select org from social_person where id=? limit 1), 'local'), ?, ?, ?, 'owner', now()) on conflict (org, pid) do update set kind=excluded.kind, closeness=excluded.closeness, confidence='owner', updated_at=now()": [
-   "observatory: agents as people"
-  ],
   "observatory/api/room.py::ask\u001finsert into messages (from_agent, to_agent, thread, intent, body) values ('room', ?, ?, 'chat', ?) returning id": [
    "the Room's SQL on a fixture schema: voiceprints, the router, the ear's speaker stamp, the speaker's claim/voice/ask"
   ],
@@ -336,9 +333,6 @@
    "people gate: details only to people_cleared, network to the resident (accident-grade)"
   ],
   "src/astryx/people/people_gate.py::grant_network_db\u001fselect 1 from pg_database where datname = ?": [
-   "people gate: details only to people_cleared, network to the resident (accident-grade)"
-  ],
-  "src/astryx/people/persona.py::apply_pg\u001finsert into social_relation (org,pid,kind,context,evidence,confidence) select org, id, ?, ?, ?, ? from social_person where org=? and id=? on conflict (org,pid) do update set evidence=excluded.evidence, kind=coalesce(excluded.kind,social_relation.kind), context=coalesce(excluded.context,social_relation.context), confidence=coalesce(excluded.confidence,social_relation.confidence), updated_at=now()": [
    "people gate: details only to people_cleared, network to the resident (accident-grade)"
   ],
   "src/astryx/people/persona.py::load_pg\u001fselect pid, kind, context, evidence, confidence from social_relation where org=?": [
@@ -623,7 +617,7 @@
    "RESPONSIVE": 32,
    "UNEXECUTED": 244
   },
-  "debt_rows": 294,
+  "debt_rows": 291,
   "estate_files": 160,
   "estate_hash": "6610f166a561e1b02c661c4e8e87a899aa64ee00b0e11c9236bc8ce0a8e578bf",
   "extractors_listed": 6,
@@ -1196,17 +1190,6 @@
    "debt": "UNEXECUTED",
    "reason": "seed",
    "tk": "sha256t:84fa0be01765fa5c7e1ab0585f15435c9fcaad3e8011355395effc3af59073e9"
-  },
-  "observatory/api/main.py::peers\u001fselect org, status, reputation from peers order by reputation desc": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:a3ffd1d8865f4fd6ad89dd1011fab3f5b1c91d7756ce0c1bb12db2a21be31ece"
-  },
-  "observatory/api/main.py::people_answer\u001finsert into social_relation (org, pid, kind, closeness, confidence, updated_at) values (coalesce((select org from social_person where id=? limit 1), 'local'), ?, ?, ?, 'owner', now()) on conflict (org, pid) do update set kind=excluded.kind, closeness=excluded.closeness, confidence='owner', updated_at=now()": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED",
-   "reason": "seed 10-09 people_answer promotes the owner's answer into social_relation (a2 #38791 B1): an INSERT \u2026 ON CONFLICT DO UPDATE always affects exactly one row (insert or update; both observed by tests/test_observatory_people.py), so a 0-row arm does not exist; asyncpg also caps it at FIXTURE-DDL.",
-   "tk": "sha256t:f9c72528fa0b53735c7fdb136df735f20a5b169b6bcad8c2a78e5edb0f4c4e69"
   },
   "observatory/api/main.py::steps\u001f*": {
    "debt": "UNEXECUTED",
@@ -1966,12 +1949,6 @@
    "debt": "EXECUTED",
    "reason": "people library 1a: a pg_catalog read (pg_roles/pg_database/pg_attribute), so RESPONSIVE is unreachable by the judge's relation rule; executed by test_people_gate / test_privilege_census",
    "tk": "sha256t:b2b9fa21fdbd4c96c019dfd9651607a9c4062aee11268ce3408b2cb0e0e6a9f0"
-  },
-  "src/astryx/people/persona.py::apply_pg\u001finsert into social_relation (org,pid,kind,context,evidence,confidence) select org, id, ?, ?, ?, ? from social_person where org=? and id=? on conflict (org,pid) do update set evidence=excluded.evidence, kind=coalesce(excluded.kind,social_relation.kind), context=coalesce(excluded.context,social_relation.context), confidence=coalesce(excluded.confidence,social_relation.confidence), updated_at=now()": {
-   "admitted": "2026-10-09",
-   "debt": "EXECUTED",
-   "reason": "people library 1a cutover: executed against the stamped fixture by test_people_gate's CUTOVER arms (apply_pg/load_pg round-trip and persona_llm's label/skip are asserted)",
-   "tk": "sha256t:f40e986c92ec4d2301846d8cbc3ab17f79d3d45fbdb6011021315cb798f03783"
   },
   "src/astryx/people/persona.py::load_pg\u001fselect pid, kind, context, evidence, confidence from social_relation where org=?": {
    "admitted": "2026-10-09",
