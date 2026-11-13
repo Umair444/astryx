@@ -103,6 +103,75 @@ def org_login(env: dict | None = None) -> dict:
             "note": "; ".join(notes) or None}
 
 
+# THE SPAWN BUDGET GATE (cog-rebuild Phase 3). An org that is not the cog's primary (a sign-up's org, any second org)
+# spawns NO resident until it has a token budget: its .env's ASTRYX_ORG_BUDGET_TOKENS, else the budget a cog admin
+# approved for it (the cog store's org_requests row, cogauth.py / front.py). And it never runs on the host owner's
+# Claude login: with no login of its own (an org key above, or the agent's runtime.json provider) the ambient
+# login would be the owner's, spent silently, so that refuses too. The primary, and a host of one org, pass as before.
+BUDGET = "ASTRYX_ORG_BUDGET_TOKENS"
+
+
+class NoBudget(RuntimeError):
+    pass
+
+
+def _positive(v) -> int | None:
+    try:
+        n = int(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def approved_budget(org: str, reg_env=None) -> int | None:
+    """The budget a cog admin approved for `org` (its newest approved request), or None: no cog block, no store, no
+    such row, or the store didn't answer (fail closed: no budget)."""
+    from astryx import orgs
+    c = orgs.cog(reg_env)
+    if c is None:
+        return None
+    try:
+        import psycopg
+        with psycopg.connect(config.dsn(c["home"] / ".env", env_first=False), connect_timeout=5) as conn:
+            row = conn.execute("SELECT budget_tokens FROM org_requests WHERE key = %s AND state = 'approved' "
+                               "ORDER BY decided_at DESC LIMIT 1", (org,)).fetchone()
+    except Exception as e:  # noqa: BLE001 — named by type only (a DSN can ride in a message)
+        print(f"runtime_env: the cog store gave no approved budget for {org} ({type(e).__name__})", file=sys.stderr)
+        return None
+    return _positive(row[0]) if row else None
+
+
+def budget_gate(agent: str, env: dict | None = None, reg_env=None) -> str:
+    """Why THIS org may spawn `agent` (one line), or NoBudget naming why not. See the block above."""
+    from astryx import orgs
+    if not orgs.multi(reg_env):
+        return "one org on this host: no budget gate"
+    home = paths.estate(__file__)
+    org = orgs.org_of(home, reg_env)
+    if org is None:
+        raise NoBudget(f"{home} is no registered org of this cog: no budget to spend")
+    if orgs.load(reg_env)[org]["primary"]:
+        return f"{org} is the cog's primary: no budget gate"
+    env = config.read_env(home / ".env") if env is None else env
+    budget, source = _positive(env.get(BUDGET)), f"its .env {BUDGET}"
+    if budget is None:
+        budget, source = approved_budget(org, reg_env), "its approved request"
+    if budget is None:
+        raise NoBudget(f"org {org} has no token budget ({BUDGET} in its .env, or a cog admin's approval): its "
+                       "residents are not spawned")
+    entry = {}
+    try:
+        cfg = json.loads((home / "runtime.json").read_text())
+        entry = cfg.get(agent) if isinstance(cfg.get(agent), dict) else {}
+    except (OSError, ValueError, AttributeError):
+        pass
+    own_provider = bool(entry.get("base_url") and entry.get("token_env") and env.get(entry["token_env"]))
+    if not (org_login(env)["key"] or own_provider):
+        raise NoBudget(f"org {org} has a budget but no Claude login of its own (CLAUDE_CODE_OAUTH_TOKEN, an opted-in "
+                       "key, or a runtime.json provider): it would run on this host's ambient login, the owner's")
+    return f"{org}: budget {budget} tokens ({source})"
+
+
 def fragment(agent: str) -> str:
     env = config.read_env(paths.estate(__file__) / ".env")
     login = org_login(env)
@@ -167,6 +236,13 @@ if __name__ == "__main__":
     if not agent:
         print("usage: runtime_env.py <agent>", file=sys.stderr)
         sys.exit(2)
+    if agent == "--gate":                        # spawn.sh: may THIS org spawn the agent? exit 0 yes · 4 no budget
+        try:
+            print(budget_gate(sys.argv[2] if len(sys.argv) > 2 else ""))
+        except NoBudget as e:
+            print(f"runtime_env: {e}", file=sys.stderr)
+            sys.exit(4)
+        sys.exit(0)
     if agent == "--org":                         # the org's login, NAMES only (observatory, an operator)
         print(json.dumps(org_login()))
         sys.exit(0)
