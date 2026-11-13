@@ -1,7 +1,8 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useReducedMotion } from 'motion/react'
 import { agentColor, displayName, fmtDay, fmtTime } from '../../api'
-import { isHuman, type Msg, type Step } from '../../types'
+import { humanName, isHuman, type Msg, type Step } from '../../types'
+import { placeHuman } from './sides'
 import AgentFace from '../../components/AgentFace'
 import Prose from './Prose'
 import { embeds, parts, PROJECT_BLOCK, stripEmbeds, type Turn as WTurn, type Work } from '../model'
@@ -62,7 +63,7 @@ export function rowsOf(rows: Msg[], work: Work | null): Row[] {
    within ten minutes is a continuation, a new day gets a quiet label */
 type Block =
   | { kind: 'day'; key: string; label: string }
-  | { kind: 'mine'; key: string; msg: Msg; to: string[] }
+  | { kind: 'mine'; key: string; msg: Msg; to: string[]; by: string | null }   // by: another human's (cog-gaps), null = the viewer's
   | { kind: 'theirs'; key: string; msg: Msg; turn: WTurn | null; cont: boolean }
   | { kind: 'handoff'; key: string; h: HandoffView }
   | { kind: 'note'; key: string; msg: Msg }
@@ -77,7 +78,7 @@ export interface HandoffView { from: string; to: string; ts: string; body: strin
    collapse to the last (the owner changed their mind; only where the chat ended up is a boundary). Before the first
    message there is nothing to divide, so a switch on an empty chat only set the recipient and draws nothing. `from`
    = who the owner talked with since the last boundary (else the agents it named), for the label's "Seed → Finance". */
-export function blocksOf(items: Row[], roster: Set<string>, handoffs: WHandoff[] = [], switches: Switch[] = []): Block[] {
+export function blocksOf(items: Row[], roster: Set<string>, handoffs: WHandoff[] = [], switches: Switch[] = [], me = 'owner'): Block[] {
   const out: Block[] = []
   const into = new Map(handoffs.map((h) => [h.turn_id, h]))
   const sws = [...switches].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts))
@@ -108,10 +109,8 @@ export function blocksOf(items: Row[], roster: Set<string>, handoffs: WHandoff[]
     if (d !== day) { day = d; out.push({ kind: 'day', key: `d${msg.id}`, label: fmtDay(msg.ts) }); prev = null }
     const last = out.at(-1)
     if (isHuman(msg.from)) {                       // a human's words: the owner's, or a member's (cog-who)
-      const body = stripEmbeds(msg.body)
-      if (last?.kind === 'mine' && stripEmbeds(last.msg.body) === body && Date.parse(msg.ts) - Date.parse(last.msg.ts) < 60_000) {
-        if (msg.to && !last.to.includes(msg.to)) last.to.push(msg.to)
-      } else out.push({ kind: 'mine', key: `m${msg.id}`, msg, to: msg.to ? [msg.to] : [] })
+      const b = placeHuman(last?.kind === 'mine' ? last : null, msg, me)     // ./sides.ts: whose side, merged fan-out
+      if (b) out.push({ kind: 'mine', key: `m${msg.id}`, ...b })
     } else if (!roster.has(msg.from)) {
       out.push({ kind: 'note', key: `m${msg.id}`, msg })
     } else if (msg.to && !isHuman(msg.to) && roster.has(msg.to)) {
@@ -132,8 +131,9 @@ export function blocksOf(items: Row[], roster: Set<string>, handoffs: WHandoff[]
   return out
 }
 
-export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty, handoffs, switches, onStop, focus = null, older = false, onOlder }: {
+export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty, handoffs, switches, onStop, focus = null, older = false, onOlder, me = 'owner' }: {
   rows: Msg[]
+  me?: string                                  // the viewer's wire handle (cog-gaps): whose words sit on the right
   switches?: Switch[]                          // the owner's switches of this chat's agents: a boundary at each
   older?: boolean                              // the server holds rows older than the first one here (a long thread)
   onOlder?: () => Promise<void>                // …and this loads the page before them
@@ -152,7 +152,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
 }) {
   const reduce = useReducedMotion()
   const end = useRef<HTMLDivElement>(null)
-  const blocks = useMemo(() => blocksOf(rowsOf(rows, work), new Set(roster), handoffs, switches), [rows, work, roster, handoffs, switches])
+  const blocks = useMemo(() => blocksOf(rowsOf(rows, work), new Set(roster), handoffs, switches, me), [rows, work, roster, handoffs, switches, me])
   const last = rows.at(-1)?.id ?? 0
   const lastSwitch = switches?.at(-1)?.ts ?? ''
   // a long thread renders its newest window ("Show earlier" above); a jump widens it and lands on its message
@@ -211,7 +211,7 @@ function sameBlock(a: Block, b: Block): boolean {
   if (a.kind !== b.kind || a.key !== b.key) return false
   switch (a.kind) {
     case 'day': return a.label === (b as typeof a).label
-    case 'mine': { const y = b as typeof a; return a.msg === y.msg && a.to.join() === y.to.join() }
+    case 'mine': { const y = b as typeof a; return a.msg === y.msg && a.to.join() === y.to.join() && a.by === y.by }
     case 'theirs': { const y = b as typeof a; return a.msg === y.msg && a.cont === y.cont && turnSig(a.turn) === turnSig(y.turn) }
     case 'handoff': { const y = b as typeof a; return a.h.id === y.h.id && a.h.to === y.h.to && a.h.body === y.h.body && a.h.ts === y.h.ts }
     case 'note': return a.msg === (b as typeof a).msg
@@ -222,7 +222,7 @@ function sameBlock(a: Block, b: Block): boolean {
 const BlockView = memo(function BlockView({ b, role, cb, asks }: { b: Block; role?: string; cb: BlockCb; asks: boolean }) {
   switch (b.kind) {
     case 'day': return <div className="text-center text-[11.5px] text-ink-mute pt-4 pb-2">{b.label}</div>
-    case 'mine': return <Mine m={b.msg} to={b.to} onEdit={cb.edit} onOpenFile={cb.openFile} onOpenAsk={asks ? cb.openAsk : undefined} />
+    case 'mine': return <Mine m={b.msg} to={b.to} by={b.by} onEdit={cb.edit} onOpenFile={cb.openFile} onOpenAsk={asks ? cb.openAsk : undefined} />
     case 'theirs': return <Theirs m={b.msg} turn={b.turn} cont={b.cont} role={role} onOpenFile={cb.openFile} />
     case 'handoff': return <Handoff h={b.h} />
     case 'note': return <Note m={b.msg} />
@@ -235,7 +235,7 @@ const BlockView = memo(function BlockView({ b, role, cb, asks }: { b: Block; rol
 const CANVAS_CTX = /^\[canvas #(\d+)(?: "([^"\]]*)")?(?: v(\d+))?\]\s*/
 const LONG = 560
 
-function Mine({ m, to, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; onEdit: (m: Msg) => void; onOpenFile: (r: OpenRequest) => void; onOpenAsk?: (a: ParsedAsk) => void }) {
+function Mine({ m, to, by = null, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; by?: string | null; onEdit: (m: Msg) => void; onOpenFile: (r: OpenRequest) => void; onOpenAsk?: (a: ParsedAsk) => void }) {
   const team = m.lead && to.includes(m.lead) ? [m.lead, ...to.filter((a) => a !== m.lead)] : to   // the lead first
   const [more, setMore] = useState(false)
   // a project chat's first message: the project's pinned files ride inside its hidden context block for the agents;
@@ -256,11 +256,13 @@ function Mine({ m, to, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; 
   }, [m.body, !!ask, !!ch, !!ctx]) // eslint-disable-line react-hooks/exhaustive-deps
   const long = text.length > LONG || text.split('\n').length > 9
   return (
-    <div className="flex flex-col items-end gap-1 group mt-4 first:mt-0" data-turn>
+    <div className={`flex flex-col ${by ? 'items-start' : 'items-end'} gap-1 group mt-4 first:mt-0`} data-turn data-by={by ?? undefined}>
+      {/* another human's words (cog-gaps): on the left, under their name; only the viewer's own sit right */}
+      {by && <span className="text-[11.5px] font-medium text-ink-dim">{humanName(by)}</span>}
       {ctx && <span className="text-[11px] text-ink-mute border border-line rounded-full px-2 py-[1px] mb-0.5">on canvas #{ctx[1]}{ctx[2] ? ` · ${ctx[2]}` : ''}{ctx[3] ? ` · v${ctx[3]}` : ''}</span>}
       {/* the meta sits BESIDE the bubble (owner 11-13: expert prompts, dense thread): who it went to, then when; on a
           phone it drops below */}
-      <div className="flex items-start justify-end gap-3 w-full max-sm:flex-col-reverse max-sm:items-end max-sm:gap-1">
+      <div className={`flex items-start gap-3 w-full max-sm:flex-col-reverse max-sm:gap-1 ${by ? 'flex-row-reverse justify-end max-sm:items-start' : 'justify-end max-sm:items-end'}`}>
       <div className="ws-mine-meta flex flex-col items-end gap-1 pt-1.5 text-[11px] text-ink-mute shrink-0 max-w-[30%] max-sm:max-w-none max-sm:flex-row max-sm:items-center max-sm:pt-0">
         {team.length > 0 && <span className="flex flex-wrap justify-end items-center gap-1" title={team.length > 1 ? `a team: ${team[0]} leads and replies` : undefined}>
           {team.map((a, i) => <span key={a} className={`inline-flex items-center gap-1 rounded-full border border-line px-1.5 py-[1px] ${i === 0 && team.length > 1 ? 'ws-lead' : ''}`}>
@@ -270,12 +272,12 @@ function Mine({ m, to, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; 
         <span className="flex items-center gap-2">
           <span className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 flex items-center gap-2">
             {!ch && <TurnActions m={m} text={text} inline />}
-            <button onClick={() => onEdit(m)} className="ws-editbtn hover:text-ink" title="Send again, edited (↑ in an empty composer)">Edit</button>
+            {!by && <button onClick={() => onEdit(m)} className="ws-editbtn hover:text-ink" title="Send again, edited (↑ in an empty composer)">Edit</button>}
           </span>
           <span>{fmtTime(m.ts)}</span>
         </span>
       </div>
-      <div className="ws-mine max-w-[80%] max-sm:max-w-[92%] rounded-[14px] px-4 py-2.5 text-[15px] leading-[1.55] text-ink whitespace-pre-wrap break-words">
+      <div className={`${by ? 'ws-other' : 'ws-mine'} max-w-[80%] max-sm:max-w-[92%] rounded-[14px] px-4 py-2.5 text-[15px] leading-[1.55] text-ink whitespace-pre-wrap break-words`}>
         {ask && <AskChip ask={ask} onOpen={onOpenAsk} />}
         {ch && <ChangesCard ch={ch} />}
         {!ch && <div className={long && !more ? 'max-h-[11.5em] overflow-hidden [mask-image:linear-gradient(#000_70%,transparent)]' : ''}>

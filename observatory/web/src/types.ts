@@ -399,6 +399,12 @@ export interface WhoAmI {
 export const talks = (w: WhoAmI) => w.owner || w.role === 'member' || w.role === 'admin'
 export const seesEveryone = (w: WhoAmI) => w.owner || w.role === 'admin'
 export const isHuman = (n: string | null | undefined): boolean => !!n && (n === 'owner' || n.startsWith('cv-'))
+/* cog-gaps: a human's words sit on the RIGHT only when they are the viewer's own (from === her handle); another
+   human's (the owner's in a member's view, a member's in the owner's) sit on the LEFT under their name. The name is
+   read off the handle: 'owner' -> 'Owner', cv-<label>.<uid> -> its label, cv-<guest> -> the guest's name. */
+export const ownWords = (from: string | null | undefined, me: string | null | undefined): boolean => !!from && from === (me || 'owner')
+export const humanName = (h: string): string => h === 'owner' ? 'Owner'
+  : h.replace(/^cv-/, '').replace(/\.\d+$/, '').replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
 /* /api/events SSE payloads */
 /* src/astryx/core/presence.py — where an agent's attention is right now (owner-only) */

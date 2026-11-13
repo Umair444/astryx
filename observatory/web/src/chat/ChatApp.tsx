@@ -796,7 +796,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
               <button className="underline underline-offset-2 hover:text-ink" onClick={() => setHistTry((n) => n + 1)}>Retry now</button>
             </div>
           )}
-          {current && <Turns key={current} older={older} onOlder={loadOlderRows} focus={jump?.thread === current ? jump : null} rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} switches={switches} onStop={interruptAgent}
+          {current && <Turns key={current} me={who.handle || 'owner'} older={older} onOlder={loadOlderRows} focus={jump?.thread === current ? jump : null} rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} switches={switches} onStop={interruptAgent}
             onOpenFile={openFile} onOpenAsk={openAsk} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
             empty={histErr ? null : <FreshThread agents={inChat} status={status} roles={roles} lines={lines} />} />}
           {current && <Outbox items={outbox.filter((o) => o.thread === current)} onRetry={(o) => void deliver(o)}
