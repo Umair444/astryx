@@ -251,6 +251,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setFlash({ key: m.id, from: m.from, to: m.to, from_org: m.from_org, to_org: m.to_org, thread: m.thread, body: m.body })
         return
       }
+      if (e.type === 'message_retracted') {     // a cancelled send (channel/server.mjs retractSend): never shown
+        const id = e.id
+        setMessages((cur) => (cur.some((m) => m.id === id) ? cur.filter((m) => m.id !== id) : cur))
+        return
+      }
       if (e.type === 'presence') {
         const { type: _t, ...p } = e
         setPresence((cur) => ({ ...cur, [p.agent]: p as Presence }))

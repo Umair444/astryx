@@ -389,9 +389,17 @@ async def listen_task():
                     if prow:
                         data = {"type": "presence", **_presence(prow)}
                 elif chan == "astryx_wire":
+                    try:
+                        mid = int(payload)
+                    except (TypeError, ValueError):
+                        continue                  # a malformed ring never takes the tap down
                     row = await conn.fetchrow(
-                        "SELECT * FROM messages WHERE id = $1", int(payload))
-                    if row:
+                        "SELECT * FROM messages WHERE id = $1", mid)
+                    if row and row["status"] == RETRACTED:
+                        # the sender's send was cancelled before the row left (channel/server.mjs retractSend
+                        # rings the id again): every screen drops it
+                        data = {"type": "message_retracted", "id": mid}
+                    elif row:
                         data = {"type": "message", **msg(row)}
                         if row["to_agent"] == "room":
                             _room.nudge()
@@ -526,6 +534,12 @@ async def privacy_gate(request: Request, call_next):
     if _DEV_NO_WIRE and m != "GET" and _WIRE_WRITE.match(p):
         return JSONResponse({"error": "dev server: wire writes are disabled (ASTRYX_DEV_NO_WIRE)"}, status_code=503)
     return await call_next(request)
+
+
+# A send whose tool call was cancelled before the row left (channel/server.mjs retractSend): never delivered, and
+# never shown — every history, list and preview here leaves it out; the live feed drops it (message_retracted).
+RETRACTED = "retracted"
+NOT_RETRACTED_SQL = "status IS DISTINCT FROM 'retracted'"
 
 
 # ---------------------------------------------------------------- shapers
@@ -718,7 +732,7 @@ async def messages(request: Request, limit: int = 100, before_id: int | None = N
     # restarted) asks for what it missed: the OLDEST `limit` rows past the newest id it holds, ascending, so it can page
     # forward until it is level. Same filters, same anonymous rule as every other read here.
     limit = min(limit, 500)
-    cond, args = [], []
+    cond, args = [NOT_RETRACTED_SQL], []
     if not (is_owner(request) or insider(request)):     # a member reads the wire as the owner does (cog-who)
         # The rule is EMITTED by the authority, not restated here — see
         # anonymous_can_see_sql(). Passing the peer set as a parameter (rather than an
@@ -751,7 +765,7 @@ async def threads():
         SELECT thread, count(*) AS count, min(ts) AS first_ts, max(ts) AS last_ts,
                (array_agg(from_agent ORDER BY id))[1]      AS starter,
                (array_agg(left(body, 140) ORDER BY id))[1] AS preview
-        FROM messages WHERE thread IS NOT NULL
+        FROM messages WHERE thread IS NOT NULL AND status IS DISTINCT FROM 'retracted'
         GROUP BY thread ORDER BY max(id) DESC LIMIT 200
     """)
     return [{**dict(r), "first_ts": r["first_ts"].isoformat(),
@@ -3370,7 +3384,7 @@ async def memory_chat_replies(thread: str, after: int = 0, request: Request = No
         return Response(status_code=400)          # estate, "ask memory about this person" (pid-keyed), the Library's desk
     rows = await pool.fetch(
         "SELECT id, from_agent, body, ts FROM messages WHERE thread=$1 AND to_agent='owner' AND to_org='local' "
-        "AND from_agent<>'owner' AND id > $2 ORDER BY id LIMIT 10", thread, after)
+        "AND from_agent<>'owner' AND id > $2 AND status IS DISTINCT FROM 'retracted' ORDER BY id LIMIT 10", thread, after)
     # TO the local owner, from anyone (memory→steward isn't his; owner@peer never left, so it isn't delivered here)
     if rows:
         # Serving the reply IS its delivery — this screen is the surface the thread

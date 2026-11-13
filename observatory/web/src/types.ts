@@ -414,6 +414,7 @@ export interface Presence {
 export type WireEvent =
   | ({ type: 'presence' } & Presence)
   | ({ type: 'message' } & Msg)
+  | { type: 'message_retracted'; id: number }   // the sender's send was cancelled before the row left: drop it
   | { type: 'step'; id: number; agent: string; kind: string }
   | DagEvent
   | { type: 'resync' }            // the server's LISTEN tap was down: what it missed never came, so catch up

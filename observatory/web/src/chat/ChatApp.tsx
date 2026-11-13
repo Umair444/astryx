@@ -8,7 +8,7 @@ import './presence.css'
 import './phone.css'
 import { api, apiPost, displayName } from '../api'
 import { fillsTurn, mergeMsgs, useStore } from '../store'
-import { seesEveryone, talks, type Msg, type Step } from '../types'
+import { seesEveryone, talks, type Msg, type Step, type WireEvent } from '../types'
 import { canvasBase } from '../cog'
 import { nowLine } from '../ui/life'
 import { startDictation } from './dictate'
@@ -201,6 +201,16 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     })().catch(() => { if (live) setHistTry((n) => n + 1) })
     return () => { live = false }
   }, [conn.resync]) // eslint-disable-line react-hooks/exhaustive-deps
+  // a cancelled send (message_retracted): the store drops it from the feed; the thread's own history drops it here
+  useEffect(() => {
+    const on = (ev: Event) => {
+      const e = (ev as CustomEvent<WireEvent>).detail
+      if (e?.type !== 'message_retracted') return
+      setHistory((cur) => (cur && cur.some((m) => m.id === e.id) ? cur.filter((m) => m.id !== e.id) : cur))
+    }
+    window.addEventListener('ax:event', on)
+    return () => window.removeEventListener('ax:event', on)
+  }, [])
   // a thread longer than one page: its older rows load a page at a time when "Show earlier" reaches the top
   const [older, setOlder] = useState(false)
   const loadOlderRows = useCallback(async () => {
