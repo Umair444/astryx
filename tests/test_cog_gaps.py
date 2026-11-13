@@ -186,6 +186,32 @@ def main(tmp: Path, url: str):
                  ("GET", "/api/federation/peers"), ("GET", "/api/people/asks"), ("GET", "/api/db/databases")):
         st = cl.request(m, p, headers=A()).status_code
         arm(f"T3 a member at {m} {p} is 403", st == 403, st)
+
+    # ── P1 the pipe to canvas carries the VERIFIED identity (canvas then verifies it again) ─────────────────────
+    print("P the observatory's pipe to canvas")
+    import httpx
+    seen = []
+
+    def upstream(req):
+        seen.append((req.url.path, req.headers.get(identity.HEADER)))
+        return httpx.Response(200, stream=httpx.ByteStream(b"{}"))      # unread: _pipe streams it
+    real_http, real_cog = obs._canvas_http, obs._COG
+    obs._canvas_http, obs._COG = httpx.AsyncClient(transport=httpx.MockTransport(upstream)), True
+    try:
+        ha = A()
+        cl.get("/canvas/api/me", headers=ha)
+        forged = {identity.HEADER: identity.mint(identity.load_signer(home), "7@fxcog", "another-org", name="alice")}
+        cl.get("/canvas/api/me", headers=forged)
+        cl.get("/canvas/api/me")
+        far = TestClient(obs.app, client=("10.9.9.9", 50000))
+        far.get("/canvas/api/me", headers=A())
+    finally:
+        obs._canvas_http, obs._COG = real_http, real_cog
+    got = [h for _, h in seen]
+    arm("P1 four requests reached canvas", len(seen) == 4, seen)
+    arm("P1 a token _who verified (from the front) is passed to canvas as is", got[:1] == [ha[identity.HEADER]], got)
+    arm("P1 a token _who refused (wrong aud) is never passed", len(got) > 1 and got[1] is None, got)
+    arm("P1 no token, nothing passed; from a non-front peer, nothing passed", got[2:] == [None, None], got)
     cl.__exit__(None, None, None)
 
 
