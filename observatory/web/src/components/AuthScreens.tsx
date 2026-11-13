@@ -130,7 +130,7 @@ export function SignInScreen() {
           )}
 
           {keyDoor ? (
-            <KeyDoor org={rooms ? org : null} onBack={() => { setKeyDoor(false); requestAnimationFrame(() => emailRef.current?.focus()) }} />
+            <KeyDoor org={rooms ? org : null} base={picked?.base ?? null} onBack={() => { setKeyDoor(false); requestAnimationFrame(() => emailRef.current?.focus()) }} />
           ) : (<>
             <form noValidate onSubmit={submit} className="mt-7 space-y-5">
               <Field id="auth-email" label="Email" type="email" auto="username" value={email} inputRef={emailRef}
@@ -277,9 +277,9 @@ export function monogram(name: string): string {
 }
 
 /* THE OWNER'S KEY, the quiet second door: the header key badge's own mechanism (saveObsKey), with the key TRIED against
-   whoami first so a wrong one is a calm line here, never a saved key that silently opens nothing. In a cog the org
-   picked above is chosen first, so whoami asks that org. */
-function KeyDoor({ org, onBack }: { org: string | null; onBack: () => void }) {
+   whoami first so a wrong one is a calm line here, never a saved key that silently opens nothing. In a cog whoami is
+   asked through the picked org's own base, and the org is chosen (its cookie) only once the key has opened it. */
+function KeyDoor({ org, base, onBack }: { org: string | null; base: string | null; onBack: () => void }) {
   const [val, setVal] = useState('')
   const [state, setState] = useState<'idle' | 'trying' | 'wrong' | 'down'>('idle')
   const ref = useRef<HTMLInputElement>(null)
@@ -289,15 +289,16 @@ function KeyDoor({ org, onBack }: { org: string | null; onBack: () => void }) {
     const k = val.trim()
     if (!k || state === 'trying') return
     setState('trying')
-    if (org) setOrg(org)
+    const at = org && base && safeBase(base) ? base : '/'
     let owner = false
     try {
-      const r = await fetch('/api/whoami', { headers: { 'x-obs-key': k }, cache: 'no-store' })
+      const r = await fetch(`${at}api/whoami`, { headers: { 'x-obs-key': k }, cache: 'no-store' })
       if (!r.ok) { setState('down'); return }
       owner = !!(await r.json().catch(() => ({}))).owner
     } catch { setState('down'); return }
     if (!owner) { setState('wrong'); setVal(''); ref.current?.focus(); return }
     saveObsKey(k)
+    if (org) setOrg(org)
     location.hash = nextHash()
     location.reload()
   }
