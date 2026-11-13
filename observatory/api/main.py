@@ -1887,6 +1887,9 @@ class OwnerMsg(BaseModel):
     to: str
     body: str
     thread: str | None = None
+    # the whole recipient list when the human tagged several agents (owner 11-13): each row is stamped with the team,
+    # the FIRST named leads (bridges/common.team_stamp, the one stamp every surface writes)
+    team: list[str] | None = None
 
 
 @app.get("/api/auth/role")
@@ -1918,11 +1921,21 @@ async def owner_send(m: OwnerMsg, request: Request):
     if not m.body.strip() or not m.to.strip():
         return Response(status_code=400)
     meta = asker_meta(request)
+    team = [t.strip().lower() for t in (m.team or []) if t and t.strip()]
+    team = list(dict.fromkeys(team)) if m.to.strip().lower() in team else []
+    stamp = {"team": team, "lead": team[0]} if len(team) > 1 else {}
+    if stamp:
+        meta = {**(meta or {}), **stamp}
     if meta is None:                           # the owner: the very row it always was
         row = await pool.fetchrow(
             "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
             "VALUES ('owner', $1, $2, 'chat', $3) RETURNING *",
             m.to.strip().lower(), m.thread, m.body.strip())
+    elif sender == "owner":                    # the owner tagging a team: his row, plus the stamp
+        row = await pool.fetchrow(
+            "INSERT INTO messages (from_agent, to_agent, thread, intent, body, delivery) "
+            "VALUES ('owner', $1, $2, 'chat', $3, $4::jsonb) RETURNING *",
+            m.to.strip().lower(), m.thread, m.body.strip(), json.dumps(meta))
     else:
         row = await pool.fetchrow(
             "INSERT INTO messages (from_agent, to_agent, thread, intent, body, delivery) "

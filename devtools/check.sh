@@ -1103,6 +1103,7 @@ run "chat: the server half stays owner-only, and the side panel reads nothing ou
 # UNKNOWN); serve_untrusted's own: tests/mutants_serve_untrusted.py.
 run "owner surface: no new writer of the wire, no second server of untrusted bytes, over the derived domain" "$PY" tests/test_owner_surface.py
 run "who asked (cog-who): a member posts as cv-<label>.<uid>, the owner as owner; the reply reaches her thread; the agent sees role" "$PY" tests/test_who_asked.py
+run "fan-out (cog): a message naming several agents reaches each, stamped {team, lead}; the lead replies, helpers work over the wire" "$PY" tests/test_fanout.py
 # devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
 # nothing. Mutants: tests/mutants_sqlsite.py.
 run "sqlsite: one oracle's sqlguard view, and the ledger diff, write nothing" "$PY" tests/test_sqlsite.py

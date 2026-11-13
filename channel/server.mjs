@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs'
 import { homeFile, homePath, dsn } from './home.mjs'
 import { joinState } from './join.mjs'
 import { asker } from './asker.mjs'
+import { team } from './team.mjs'
 
 // mode 'repo' (spawn.sh's residents: ASTRYX_AGENT only) is the behaviour this file always had. The Claude Code
 // plugin sets ASTRYX_JOIN_DIR, and then a project that has not run /astryx:join gets a DORMANT server: no database,
@@ -95,6 +96,10 @@ const mcp = new Server(
       `WHO ASKED: a human's from= is who asked (owner, cv-<name>.<n> a signed-in member with role="member", ` +
       `cv-<name> a canvas guest, wa-<n> a WhatsApp sender); reply to THAT from= on that thread. Owner-only acts ` +
       `(spend, the law, the personal tier, GaussDB approvals, permission verdicts) still need the owner himself. ` +
+      `TEAMS: when a human tags several agents, each gets the message with team= and lead= and a [team: …] line. ` +
+      `The LEAD owns the answer and sends the ONE reply to the human. Helpers work with the lead over the wire on ` +
+      `the same thread: start directly on what is clearly your own domain, or ask the lead first if unsure; never ` +
+      `reply to the human unless the lead asks. ` +
       `To be woken later or when something changes, use the \`trigger\` tool: CronCreate and ScheduleWakeup die with the session.`,
   },
 )
@@ -540,10 +545,12 @@ async function pushMessage(row) {
     }
   }
   const again = Number(row.delivery?.recovered || 0)
+  const crew = team(row, AGENT)                   // a fanned-out message: this member's lead/helper line first
+  const said = crew ? `${crew.line}\n${text}` : text
   const content = again
     ? `[redelivered wake · sent ${new Date(row.ts).toISOString()} · the session it was ` +
-      `first delivered to ended before taking any turn, so nothing read it]\n${text}`
-    : text
+      `first delivered to ended before taking any turn, so nothing read it]\n${said}`
+    : said
   await mcp.notification({
     method: 'notifications/claude/channel',
     params: {
@@ -552,6 +559,7 @@ async function pushMessage(row) {
         from: `${row.from_agent}@${row.from_org}`, thread: row.thread || '',
         intent: row.intent, msg_id: String(row.id),
         ...(asker(row) ? { role: asker(row) } : {}),
+        ...(crew ? { team: crew.members, lead: crew.lead } : {}),
         ...(again ? { redelivered: String(again) } : {}),
       },
     },

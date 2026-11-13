@@ -49,7 +49,7 @@ from astryx.security.serve import serve_untrusted  # noqa: E402   the ONE server
 from astryx.core import canvas as cv
 from astryx.core import presence as pres
 from .canvas_shell import render
-from .common import (ESTATE, MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target,
+from .common import (ESTATE, MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target, team_of, team_stamp,
                      step_line, wire_insert)
 from .transcribe import transcribe
 
@@ -534,16 +534,21 @@ async def _say(v: Viewer, thread: str, default_agent: str, text: str, intent="ch
             agent = default_agent
     meta = {"surface": "canvas", "display_name": v.name, **(meta or {})}
     sender = who or v.wire
-    row = await pool.fetchrow(
-        "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, delivery) "
-        "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *", sender, ORG, agent, thread, intent, text,
-        json.dumps(meta))
+    # a team (two or more @agents this viewer may reach): one row each, stamped, the lead's LAST (common.wire_chat)
+    team = [] if who is not None else [a for a in team_of(text) if v.may_reach(a)]
+    members = team[1:] + team[:1] if len(team) > 1 else [agent]
+    stamp = team_stamp(team)
+    for agent in members:
+        row = await pool.fetchrow(
+            "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, delivery) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *", sender, ORG, agent, thread, intent, text,
+            json.dumps({**meta, **stamp}))
+        waiting.setdefault(agent, {})[thread] = (v.name, time.time())
+        push(v.name, {"type": "progress", "thread": thread, "agent": agent, "line": "◌ waking up"})
     await pool.execute(
         "UPDATE canvas_threads SET updated_at=now(), title=coalesce(title, $2) WHERE thread=$1",
         thread, _title_of(text))
-    waiting.setdefault(agent, {})[thread] = (v.name, time.time())
     push(v.name, {"type": "message", "thread": thread, "message": shape(row)})
-    push(v.name, {"type": "progress", "thread": thread, "agent": agent, "line": "◌ waking up"})
     return row
 
 

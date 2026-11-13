@@ -36,7 +36,7 @@ import httpx
 from fastapi import FastAPI
 
 from .embed_root import Refused, owner_only, read_checked
-from .common import (HERE, Outcome, reacted_message, reaction_signal, route_target, describe_media, env, listen,
+from .common import (HERE, Outcome, reacted_message, reaction_signal, route_target, wire_chat, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
                      step_line, update_poll_votes, vote_body, wire_insert,
@@ -258,10 +258,10 @@ async def on_message(msg: dict):
         meta["reply_to_body"] = ((rep.get("text") or rep.get("caption") or "").strip()
                                  or await resolve_quoted_body(pool, rid))
     said = text
-    agent, text = await route_target(pool, f"tg:{chat}", text, route["agent"])
-    await wire_insert(pool, who, "telegram", agent, f"tg:{chat}", "chat", text, meta, route=route, said=said)
+    agents = await wire_chat(pool, who, "telegram", route["agent"], f"tg:{chat}", text, meta, route=route, said=said)
     if live_steps_ok(route) and trusted:           # S1c: never on a tiered route (its second egress)
-        jobs[agent] = {"chat": chat, "ph_id": None, "sent": ""}
+        for agent in agents:                       # a team: each member's live steps
+            jobs[agent] = {"chat": chat, "ph_id": None, "sent": ""}
         try:
             await tg("sendChatAction", chat_id=int(chat), action="typing")
         except Exception:
