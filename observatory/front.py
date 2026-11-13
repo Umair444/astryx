@@ -17,6 +17,9 @@ ASTRYX_ORG (a federation name, public by nature), and relays bytes.
   GET  /auth/me              {user, orgs: [{org, name, role}]}, each role as its org answers | 401 (plan-11859 U1+U2)
   /auth/admin/*, /auth/link, /auth/accept   the admin panel's account half: users, one-time invite and reset links,
                              sign out everywhere (the block "the admin panel's ACCOUNT half" below)
+  GET  /auth/signup, POST /auth/signup   PUBLIC SIGN-UP (cog-rebuild Phase 3): an account plus a PENDING org request,
+                             never an org. A 404 unless the cog .env's ASTRYX_COG_SIGNUP is on (default off: the GATE)
+  /auth/cog/requests[/<id>/approve|reject]   the cog admin decides those requests (the block "PUBLIC SIGN-UP" below)
   ANY  /api/<path>           the root API, for the org the VIEWER chose: the `x-astryx-org` header, else the
                              `astryx_org` cookie (the app sets it when the owner picks a room; the front never
                              does). None named: the DEFAULT org (cog front parity, owner 11-13): the cog's only org,
@@ -61,7 +64,7 @@ ROOT = Path(__file__).resolve().parent                 # observatory/
 REPO = ROOT.parent
 DIST = ROOT / "web" / "dist"
 sys.path.insert(0, str(REPO / "src"))
-from astryx import cogauth, config, orgs  # noqa: E402
+from astryx import cog_provision, cogauth, config, orgs  # noqa: E402
 from astryx.security import identity, relay  # noqa: E402   the ONE relay header policy (plan-11859 D3)
 
 BACKEND = "astryx-observatory-org"     # the per-org backend's stem (data/org_units.json): its port is the registry's
@@ -129,6 +132,11 @@ class _Auth:
         self.key = identity.load_signer(c["home"])
         # the ORIGINS the cog is signed in on, CONFIGURED (a4 X1): never read from a forwarded header
         self.origins = {o.strip().rstrip("/") for o in env.get("ASTRYX_COG_ORIGINS", "").split(",") if o.strip()}
+        # PUBLIC SIGN-UP (cog-rebuild Phase 3) is OFF unless the cog .env turns it on; read once, so a change is a front
+        # restart (the owner's act). Its caps are the cog's too: sign-ups per client per hour, requests per 24 h.
+        self.signup = env.get("ASTRYX_COG_SIGNUP", "").strip().lower() in ("1", "true", "yes", "on")
+        self.signup_per_client = _count(env.get("ASTRYX_COG_SIGNUP_PER_IP"), SIGNUP_PER_CLIENT)
+        self.signup_daily = _count(env.get("ASTRYX_COG_SIGNUP_DAILY"), SIGNUP_DAILY)
         try:     # the cog store's DSN, through the ONE resolver (file only; it refuses an org's database)
             self.dsn = config.dsn(c["home"] / ".env", env_first=False)
         except (LookupError, config.ForeignDSN) as e:
@@ -153,6 +161,18 @@ class _Auth:
                     self.conn = None
                     if attempt:
                         raise
+
+
+SIGNUP_PER_CLIENT, SIGNUP_DAILY, SIGNUP_WINDOW = 3, 20, 3600.0
+
+
+def _count(v, default: int) -> int:
+    """A cap from the cog .env: a non-negative integer, else the default (a typo never lifts a cap)."""
+    try:
+        n = int(str(v).strip())
+    except (TypeError, ValueError):
+        return default
+    return n if 0 <= n <= 100000 else default
 
 
 _auth_state: list = []
@@ -316,7 +336,15 @@ async def me(request: Request):
         got = await _role_in(a, who, r)
         return {"org": r["org"], "name": r["name"], "role": got} if got else None
     mine = [x for x in await asyncio.gather(*(role(r) for r in rooms())) if x]
-    return JSONResponse({"user": s[1], "orgs": mine}, headers={"cache-control": "no-store"})
+    # the account's own org requests (sign-up: "your org is waiting for approval") and whether it is a cog admin. A
+    # store without Phase 3's tables (cog_schema.sql not re-applied yet) answers none and no: never a 503 for sign-in
+    try:
+        reqs = await a.db(_requests_of, s[0])
+        admin = await a.db(cogauth.is_cog_admin, s[0])
+    except Exception:  # noqa: BLE001
+        reqs, admin = [], False
+    return JSONResponse({"user": s[1], "orgs": mine, "requests": reqs, "cog_admin": admin},
+                        headers={"cache-control": "no-store"})
 
 
 async def _role_in(a: "_Auth", who: str, r: dict) -> str | None:
@@ -706,10 +734,295 @@ async def accept(request: Request):
     return _signed_in(tok, o, json.dumps({"ok": True, "org": org, "kind": kind}).encode())
 
 
+# ---------------------------------------------------------------- PUBLIC SIGN-UP (cog-rebuild Phase 3, owner 11-13)
+# "everyone can sign up to a cog, and sign-up creates that user's OWN org". A sign-up makes an ACCOUNT and a PENDING
+# org request (cog_schema.sql org_requests), never an org: no database, role, HOME, registry entry or agent exists
+# until a COG ADMIN (cog_grants, `cogauth cog-admin EMAIL`) approves it with a token budget, because a self-serve
+# org's agents would otherwise run on the host owner's login and spend his treasury (DESIGN.md Phase 3).
+#
+#   GET  /auth/signup                        {open: true, min_password} | 404 while the flag is off
+#   POST /auth/signup                        {email, password, org_name, org_key} → 200 + the session cookie,
+#                                            {request: {id, key, name, state: pending}} | 400 | 401 | 403 | 404 | 409
+#                                            (the key is taken, or the account already has a request waiting) | 429
+#   GET  /auth/cog/requests?state=           the cog admin's queue: [{id, key, name, state, email, created, budget_tokens,
+#                                            decided_by, decided_at, note, provision, provision_note}]
+#   POST /auth/cog/requests/{id}/approve     {budget_tokens} → approved, then src/astryx/cog_provision.py
+#                                            provision_org(key, owner uid); what became of it is in the row
+#   POST /auth/cog/requests/{id}/reject      {note?} → rejected (the key is free again)
+#
+# THE GATE (DESIGN.md, CORRECTIONS 11-13): public sign-up does not open before the per-org sandbox exists. So the flag
+# is the cog .env's ASTRYX_COG_SIGNUP, default OFF; off, both /auth/signup routes are a 404 and /api/cog says
+# signup false, so the app never shows the path. The cog admin's routes stay up either way: requests already filed are
+# still decided after intake closes. Every sign-up is rate-limited per client (an hour's window) and cog-wide (a
+# day's count, read from the table, so a restart forgets nothing), and an existing account must prove its own password
+# (a sign-up is no way into someone's account; the reply is login's one 401).
+NO_SIGNUP = b'{"error":"this cog does not take sign-ups"}'
+_signups: dict[str, deque] = defaultdict(deque)
+
+
+def _signup_limited(a: _Auth, key: str) -> bool:
+    now = time.monotonic()
+    for k in list(_signups):
+        q = _signups[k]
+        while q and now - q[0] > SIGNUP_WINDOW:
+            q.popleft()
+        if not q:
+            del _signups[k]
+    return len(_signups.get(key, ())) >= a.signup_per_client
+
+
+def _email_ok(email) -> bool:
+    return isinstance(email, str) and 3 <= len(email.strip()) <= 254 and "@" in email and not any(
+        c.isspace() for c in email.strip())
+
+
+def _org_name(v) -> str | None:
+    if not isinstance(v, str):
+        return None
+    v = " ".join(v.split())
+    return v if 1 <= len(v) <= 80 and v.isprintable() else None
+
+
+@app.get("/auth/signup")
+async def signup_info():
+    a = auth()
+    if a is None or not a.signup or not a.dsn:
+        return _nope(404, NO_SIGNUP)
+    return _json({"open": True, "min_password": 12})
+
+
+async def _signups_today(conn) -> int:
+    cur = await conn.execute("SELECT count(*) FROM org_requests WHERE created > now() - interval '1 day'")
+    return (await cur.fetchone())[0]
+
+
+class _Taken(Exception):
+    pass
+
+
+async def _file_request(conn, uid, email: str, phc, key: str, name: str):
+    """The account (when new) and its pending request, in ONE transaction: both land or neither."""
+    async with conn.transaction():
+        if uid is None:
+            cur = await conn.execute("INSERT INTO users (email, pw) VALUES (%s, %s) ON CONFLICT (email) DO NOTHING "
+                                     "RETURNING id", (email, phc))
+            row = await cur.fetchone()
+            if row is None:
+                raise _Taken("email")
+            uid = row[0]
+        cur = await conn.execute("INSERT INTO org_requests (uid, key, name) VALUES (%s, %s, %s) RETURNING id",
+                                 (uid, key, name))
+        return uid, (await cur.fetchone())[0]
+
+
+@app.post("/auth/signup")
+async def signup(request: Request):
+    global _inflight
+    a = auth()
+    if a is None or not a.signup or not a.dsn:
+        return _nope(404, NO_SIGNUP)
+    o = _origin(request, a)
+    if o is None:
+        return _nope(403, b'{"error":"sign up on this cog\'s own page"}')
+    j = await _body(request) or {}
+    email, pw, key, name = j.get("email"), j.get("password"), j.get("org_key"), _org_name(j.get("org_name"))
+    if not _email_ok(email):
+        return _json({"error": "enter your email", "field": "email"}, 400)
+    if not (isinstance(pw, str) and 12 <= len(pw) <= 1024):
+        return _json({"error": "a password has at least 12 characters", "field": "password"}, 400)
+    if name is None:
+        return _json({"error": "name your org (1 to 80 characters)", "field": "org_name"}, 400)
+    if not (isinstance(key, str) and orgs.NAME.fullmatch(key)):
+        return _json({"error": "the org's key is lowercase letters, digits and dashes", "field": "org_key"}, 400)
+    if key in _cog():
+        return _json({"error": "that org key is taken", "field": "org_key"}, 409)
+    email = cogauth.norm_email(email)
+    ck = "c:" + (request.client.host if request.client else "?")
+    if _signup_limited(a, ck) or _limited(ck, "a:" + email):
+        return _nope(429, b'{"error":"too many tries"}')
+    _signups[ck].append(time.monotonic())        # every validated attempt counts, so probing keys is capped too
+    if _inflight >= INFLIGHT:
+        return _nope(503, b'{"error":"sign-up is busy, try again in a moment"}')
+    try:
+        if await a.db(_signups_today) >= a.signup_daily:
+            return _nope(429, b'{"error":"this cog takes no more sign-ups today"}')
+        acct = await a.db(cogauth._account, email)
+    except Exception:  # noqa: BLE001 — no store (or no Phase 3 tables): no sign-up, and no word on the account
+        return _nope(503, b'{"error":"sign-up is unavailable"}')
+    _inflight += 1
+    try:
+        if acct:        # an existing account asks for an org of its own: it proves its own password, as login does
+            if not await _check(cogauth.check_password, pw, acct[1]):
+                now = time.monotonic()
+                _fails[ck].append(now)
+                _fails["a:" + email].append(now)
+                return _nope()
+        phc = None if acct else await _check(cogauth.hash_password, pw)
+    finally:
+        _inflight -= 1
+    import psycopg
+    try:
+        uid, rid = await a.db(_file_request, acct[0] if acct else None, email, phc, key, name)
+    except _Taken:
+        return _nope(409, b'{"error":"that email was just registered: sign in, then try again"}')
+    except psycopg.errors.UniqueViolation as e:
+        if e.diag.constraint_name == "org_requests_one_pending":
+            return _json({"error": "your account already has an org waiting for approval", "field": "email"}, 409)
+        return _json({"error": "that org key is taken", "field": "org_key"}, 409)
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"sign-up is unavailable"}')
+    tok = secrets.token_urlsafe(32)
+    await a.db(cogauth._open_session, uid, cogauth.digest(tok))
+    return _signed_in(tok, o, json.dumps({"ok": True, "request": {"id": rid, "key": key, "name": name,
+                                                                   "state": "pending"}}).encode())
+
+
+async def _requests_of(conn, uid: int) -> list[dict]:
+    cur = await conn.execute("SELECT id, key, name, state, created, decided_at, note FROM org_requests WHERE uid = %s "
+                             "ORDER BY created DESC LIMIT 20", (uid,))
+    return [{"id": r[0], "key": r[1], "name": r[2], "state": r[3], "created": _iso(r[4]), "decided_at": _iso(r[5]),
+             "note": r[6]} for r in await cur.fetchall()]
+
+
+async def _cog_admin(request: Request) -> tuple | Response:
+    """(auth, the caller's uid, its account id), or the refusal: a cog_grants row, never an org role."""
+    a = auth()
+    if a is None:
+        return _nope(404, b'{"error":"this cog has no sign-in"}')
+    who = await viewer(request, a)
+    if who is None:
+        return _nope(401, b'{"error":"signed out"}')
+    n = _account_n(a, who)
+    try:
+        ok = n is not None and await a.db(cogauth.is_cog_admin, n)
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    if not ok:
+        return _nope(403, b'{"error":"cog admins only"}')
+    return a, who, n
+
+
+REQUEST_STATES = ("pending", "approved", "rejected")
+
+
+async def _request_list(conn, state):
+    cur = await conn.execute(
+        "SELECT r.id, r.key, r.name, r.state, u.email, r.created, r.budget_tokens, d.email, r.decided_at, r.note, "
+        "r.provision, r.provision_note FROM org_requests r JOIN users u ON u.id = r.uid "
+        "LEFT JOIN users d ON d.id = r.decided_by WHERE (%s::text IS NULL OR r.state = %s::text) "
+        "ORDER BY (r.state = 'pending') DESC, r.created DESC LIMIT 200", (state, state))
+    return await cur.fetchall()
+
+
+@app.get("/auth/cog/requests")
+async def cog_requests(request: Request, state: str = ""):
+    got = await _cog_admin(request)
+    if isinstance(got, Response):
+        return got
+    a = got[0]
+    if state and state not in REQUEST_STATES:
+        return _nope(400, b'{"error":"state is pending, approved or rejected"}')
+    try:
+        rows = await a.db(_request_list, state or None)
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    keys = ("id", "key", "name", "state", "email", "created", "budget_tokens", "decided_by", "decided_at", "note",
+            "provision", "provision_note")
+    return _json({"signup": a.signup, "requests": [
+        {k: (_iso(v) if k in ("created", "decided_at") else v) for k, v in zip(keys, r)} for r in rows]})
+
+
+async def _decide(conn, rid: int, state: str, by: int, budget, note):
+    """The one conditional UPDATE that decides a pending request: (key, uid), or None when it is not pending."""
+    cur = await conn.execute(
+        "UPDATE org_requests SET state = %s, budget_tokens = %s, note = %s, decided_by = %s, decided_at = now() "
+        "WHERE id = %s AND state = 'pending' RETURNING key, uid", (state, budget, note, by, rid))
+    return await cur.fetchone()
+
+
+async def _request_exists(conn, rid: int) -> bool:
+    cur = await conn.execute("SELECT 1 FROM org_requests WHERE id = %s", (rid,))
+    return await cur.fetchone() is not None
+
+
+async def _provisioned(conn, rid: int, prov: str, note) -> None:
+    await conn.execute("UPDATE org_requests SET provision = %s, provision_note = %s WHERE id = %s", (prov, note, rid))
+
+
+MAX_BUDGET = 10 ** 12
+
+
+@app.post("/auth/cog/requests/{rid}/approve")
+async def cog_approve(rid: int, request: Request):
+    got = await _cog_admin(request)
+    if isinstance(got, Response):
+        return got
+    a, _, by = got
+    j = await _body(request) or {}
+    b = j.get("budget_tokens")
+    if type(b) is not int or not 0 < b <= MAX_BUDGET:
+        return _nope(400, b'{"error":"budget_tokens is a positive whole number of tokens"}')
+    try:
+        row = await a.db(_peek_request, rid)
+        if row is not None and row[0] in _cog():       # an org of that name exists now: approving would collide
+            return _nope(409, b'{"error":"an org with that key already exists in this cog"}')
+        got = await a.db(_decide, rid, "approved", by, b, None)
+        if got is None:
+            return _nope(409 if await a.db(_request_exists, rid) else 404,
+                         b'{"error":"that request is no longer pending"}')
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    key, owner = got[0], cogauth.sub(got[1], a.cog_id)
+    # THE ONE SEAM (src/astryx/cog_provision.py): off the event loop. Its outcome is written to the row, so a deferral
+    # (no provisioner yet: feat/cog-rls2) or a failure is a queue a provisioner works from, never lost
+    call = f"provision_org({key}, {owner})"
+    try:
+        await asyncio.to_thread(cog_provision.provision_org, key, owner)
+        prov, note = "done", call
+    except cog_provision.ProvisionUnavailable as e:
+        prov, note = "deferred", f"{call}: {e}"
+    except Exception as e:  # noqa: BLE001 — named by type only: a provisioner's message may carry a DSN
+        prov, note = "failed", f"{call}: {type(e).__name__}"
+    try:
+        await a.db(_provisioned, rid, prov, note)
+    except Exception:  # noqa: BLE001
+        pass
+    return _json({"ok": True, "id": rid, "key": key, "state": "approved", "budget_tokens": b, "provision": prov,
+                  "provision_note": note})
+
+
+async def _peek_request(conn, rid: int):
+    cur = await conn.execute("SELECT key, state FROM org_requests WHERE id = %s", (rid,))
+    return await cur.fetchone()
+
+
+@app.post("/auth/cog/requests/{rid}/reject")
+async def cog_reject(rid: int, request: Request):
+    got = await _cog_admin(request)
+    if isinstance(got, Response):
+        return got
+    a, _, by = got
+    j = await _body(request) or {}
+    note = j.get("note")
+    if note is not None and not (isinstance(note, str) and len(note) <= 500):
+        return _nope(400, b'{"error":"a note is at most 500 characters"}')
+    try:
+        got = await a.db(_decide, rid, "rejected", by, None, (note or "").strip() or None)
+        if got is None:
+            return _nope(409 if await a.db(_request_exists, rid) else 404,
+                         b'{"error":"that request is no longer pending"}')
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    return _json({"ok": True, "id": rid, "key": got[0], "state": "rejected"})
+
+
+
 @app.get("/api/cog")
 async def cog():
-    # `door`: the org a viewer with no choice lands in (default()), so the app can preselect it (sign-in's dropdown)
-    return {"cog": True, "home": None, "door": default(),
+    # `door`: the org a viewer with no choice lands in (default()), so the app can preselect it (sign-in's dropdown).
+    # `signup`: whether this cog takes public sign-ups (the app shows "Create your org" only then)
+    a = auth()
+    return {"cog": True, "home": None, "door": default(), "signup": bool(a and a.signup and a.dsn),
             "orgs": [{k: r[k] for k in ("org", "name", "base")} for r in rooms()]}
 
 
