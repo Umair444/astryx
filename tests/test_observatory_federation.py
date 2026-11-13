@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Oracle: cog-rebuild Phase 4, the observatory's FEDERATION routes (observatory/api/federation.py).
 In-process: the app's lifespan runs on a throwaway fixture database (fixture_db); the home is a temp dir whose .env holds
-a fresh test key and the fixture DSN; the gateway port is 9 (nothing answers); introduce.py's ONE network call
-(httpx.post) is stubbed, so nothing leaves the host and the live org is never read or written.
+a fresh test key and the fixture DSN; the gateway port is 9 (nothing answers); the peer introduced is a FAKE gateway on
+loopback (a thread in this process), so nothing leaves the host and the live org is never read or written.
   - G  GATE: every (method, path) the module serves is 403 to a visitor (HEAD and OPTIONS too); none is a PUBLIC pair;
        the public GET /api/peers keeps its three columns.
   - ID identity: name, mode 'none' with no ASTRYX_URL/RELAY, the down gateway reported as unreachable, peer counts.
@@ -11,9 +11,12 @@ a fresh test key and the fixture DSN; the gateway port is 9 (nothing answers); i
   - M  a peer's messages: both directions with bodies for the owner; none for a stranger name; a bad name 400.
   - T  trust transitions: trust/untrust/block/unblock each move one row and write one audit row to seed; a repeat is a
        409 that writes nothing; a keyless stranger can't be trusted; an absent peer 404; an unknown action 400.
-  - I  introduce: malformed targets are 400 BEFORE any network call; a good url runs introduce.introduce (the signed
-       reply verified, the row stored as `introduced`, an audit row written); a forged signature is 502 and stores
-       nothing; a relay name with no ASTRYX_RELAY is 502 with introduce.py's own words.
+  - I  introduce: malformed targets are 400 BEFORE any network call; a good url runs introduce.introduce in a CHILD
+       process (introduce_run.py: the signed reply verified, the row stored as `introduced`, an audit row written); a
+       forged signature is 502 and stores nothing; a relay name with no ASTRYX_RELAY is 502 with introduce.py's words.
+  - K  the secret key: federation.py imports nothing that loads it (no introduce module, no load_env, no
+       ASTRYX_SECRET_KEY, no nacl), and after every route ran, astryx.federation.introduce was never imported here.
+  - W  the peers counts cover the last 30 days: an older cross-org message counts for nobody.
   - D  ASTRYX_DEV_NO_WIRE: every POST here is refused (503) and writes nothing."""
 import importlib.util
 import os
@@ -59,6 +62,8 @@ def seed(url: str):
         m("local", "seed", "alpha.example", "seed", status="dead", body="SECRET-OUT-2")
         m("local", "seed", "beta.example", "seed", body="SECRET-OUT-3")
         m("local", "seed", "local", "db", body="local only")                       # never a peer's traffic
+        c.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, intent, body, ts) VALUES "
+                  "('seed', 'alpha.example', 'seed', 'local', 'chat', 'old', now() - interval '40 days')")  # outside 30 d
 
 
 def audits(url: str) -> int:
@@ -74,12 +79,44 @@ def status_of(url: str, org: str):
     return r and r[0]
 
 
-class FakeResp:
-    def __init__(self, code, j):
-        self.status_code, self._j, self.text = code, j, str(j)
+def signed(sk, d: dict) -> dict:
+    """A gateway's signed hello, built here (not by introduce.py, which this process must never import)."""
+    import json
+    body = json.dumps({k: v for k, v in d.items() if k != "sig"}, sort_keys=True, separators=(",", ":")).encode()
+    return {**d, "sig": sk.sign(body).signature.hex()}
 
-    def json(self):
-        return self._j
+
+class FakeGateway:
+    """A peer's /astryx/introduce on loopback: mode 'good' answers a signed hello, 'forged' one altered after signing,
+    'refuse' a 403. Every request is counted."""
+    def __init__(self):
+        import json
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from nacl.encoding import HexEncoder
+        from nacl.signing import SigningKey
+        self.sk, self.mode, self.hits = SigningKey.generate(), "good", []
+        me = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                n = int(self.headers.get("content-length") or 0)
+                me.hits.append((self.path, json.loads(self.rfile.read(n) or b"{}")))
+                if me.mode == "refuse":
+                    self.send_response(403); self.end_headers(); self.wfile.write(b"no"); return
+                d = signed(me.sk, {"astryx": 0, "org": "delta.example", "url": "http://delta.example:8845",
+                                   "pubkey": me.sk.verify_key.encode(HexEncoder).decode(), "ts": time.time(), "reply": True})
+                if me.mode == "forged":
+                    d["org"] = "zeta.example"
+                b = json.dumps(d).encode()
+                self.send_response(200); self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(b))); self.end_headers(); self.wfile.write(b)
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.base = f"http://127.0.0.1:{self.srv.server_address[1]}"
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
 
 
 def main(tmp: Path, url: str):
@@ -103,9 +140,7 @@ def main(tmp: Path, url: str):
     (home / ".env").write_text(f"ASTRYX_ORG={ME}\nASTRYX_SECRET_KEY={key}\nASTRYX_DSN={url}\n")
     envd = {"ASTRYX_GATEWAY_PORT": "9"}                       # never the live home's .env (main._env's fallback)
     fed.bind(lambda: obs.pool, home, owner=lambda r: obs.owner_call(r), env=lambda k: envd.get(k, ""), me=lambda: ME)
-    calls = []
-    real_post = fed._intro.httpx.post
-    fed._intro.httpx.post = lambda *a, **k: (calls.append(a), (_ for _ in ()).throw(AssertionError("unstubbed")))[1]
+    gw = FakeGateway()
 
     cl = TestClient(obs.app, raise_server_exceptions=False)
     cl.__enter__()
@@ -150,6 +185,8 @@ def main(tmp: Path, url: str):
             and r.json()["peers"][-1]["org"] == "gamma.example", [p["org"] for p in r.json()["peers"]])
         arm("P the listing carries NO message body", "SECRET-" not in r.text and "fixture body" not in r.text)
         arm("P the local-only message counts for nobody", sum(p["traffic"]["in"] + p["traffic"]["out"] for p in ps.values()) == 5)
+        arm("W a 40-day-old message from alpha is outside the 30-day counts", a.get("traffic", {}).get("in") == 2
+            and r.json().get("window_days") == 30, a.get("traffic"))
         arm("P anonymous: 403 on the listing", cl.get("/api/federation/peers").status_code == 403)
         pub = cl.get("/api/peers")
         arm("P the PUBLIC /api/peers still shows only org, status, reputation",
@@ -161,7 +198,7 @@ def main(tmp: Path, url: str):
         # ── M a peer's messages ─────────────────────────────────────────────────────────────────────────────────
         r = cl.get("/api/federation/peers/alpha.example/messages", headers=O)
         ms = r.json().get("messages", []) if r.status_code == 200 else []
-        arm("M alpha's traffic both ways, bodies for the owner", len(ms) == 4 and {x["inbound"] for x in ms} == {True, False}
+        arm("M alpha's traffic both ways (the 40-day-old one too: this view is not windowed), bodies for the owner", len(ms) == 5 and {x["inbound"] for x in ms} == {True, False}
             and any(x["body"] == "SECRET-IN-1" for x in ms), ms)
         r = cl.get("/api/federation/peers/nobody.example/messages", headers=O)
         arm("M a name with no traffic answers empty", r.status_code == 200 and r.json().get("messages") == [], r.text[:200])
@@ -203,24 +240,18 @@ def main(tmp: Path, url: str):
         # ── I introduce ─────────────────────────────────────────────────────────────────────────────────────────
         bad = ["", "   ", "ftp://x.example", "http://", "http://u:p@x.example", "http://x.example/?q=1", "http://x.example/#f",
                "javascript:alert(1)", "http://x.example/evil/path", "a b", "../etc", "http://x.example:99999",
-               "http://x\n.example", "local", "x" * 400]
+               "http://x\n.example", "local", "x" * 400, gw.base + "/?q=1", gw.base.replace("//", "//u:p@"),
+               "-h", "--env=/etc/passwd"]
         codes = {b[:30]: cl.post("/api/federation/introduce", headers=O, json={"url": b}).status_code for b in bad}
         arm("I every malformed target is 400", all(c == 400 for c in codes.values()), codes)
-        arm("I ... and none reached the network", not calls, calls)
+        arm("I ... and none reached the network", not gw.hits, gw.hits)
 
-        them = SigningKey.generate()
-        peer_env = {"ASTRYX_ORG": "delta.example", "ASTRYX_SECRET_KEY": them.encode(HexEncoder).decode(),
-                    "ASTRYX_URL": "http://delta.example:8845"}
-        seen = []
-
-        def good_post(u, json=None, timeout=None):
-            seen.append((u, json))
-            return FakeResp(200, fed._intro.hello(peer_env, reply=True))
-        fed._intro.httpx.post = good_post
         n1 = audits(url)
-        r = cl.post("/api/federation/introduce", headers=O, json={"url": "http://delta.example:8845/"})
-        arm("I a good url: introduce.introduce ran (one signed hello to /astryx/introduce)",
-            len(seen) == 1 and seen[0][0] == "http://delta.example:8845/astryx/introduce" and seen[0][1].get("org") == ME
+        r = cl.post("/api/federation/introduce", headers=O, json={"url": gw.base + "/"})
+        seen = gw.hits
+        arm("I a good url: the child ran introduce.introduce (one hello, signed by OUR key, to /astryx/introduce)",
+            len(seen) == 1 and seen[0][0] == "/astryx/introduce" and seen[0][1].get("org") == ME
+            and seen[0][1].get("pubkey") == SigningKey(key.encode(), encoder=HexEncoder).verify_key.encode(HexEncoder).decode()
             and seen[0][1].get("sig"), seen)
         arm("I the outcome names the peer", r.status_code == 200 and r.json().get("org") == "delta.example"
             and r.json().get("via") == "url", r.text[:200])
@@ -228,16 +259,12 @@ def main(tmp: Path, url: str):
         arm("I one audit row", audits(url) == n1 + 1)
         arm("I the hello never echoed our secret key", key not in r.text)
 
-        def forged(u, json=None, timeout=None):
-            d = fed._intro.hello({**peer_env, "ASTRYX_ORG": "epsilon.example"}, reply=True)
-            d["org"] = "zeta.example"                                   # changed after signing
-            return FakeResp(200, d)
-        fed._intro.httpx.post = forged
-        r = cl.post("/api/federation/introduce", headers=O, json={"url": "https://zeta.example"})
+        gw.mode = "forged"                                              # org changed after signing
+        r = cl.post("/api/federation/introduce", headers=O, json={"url": gw.base})
         arm("I a forged reply is 502 and stores nothing", r.status_code == 502 and status_of(url, "zeta.example") is None
             and audits(url) == n1 + 1, r.text[:200])
-        fed._intro.httpx.post = lambda *a, **k: FakeResp(403, {"x": 1})
-        r = cl.post("/api/federation/introduce", headers=O, json={"url": "https://eta.example/o/eta"})
+        gw.mode = "refuse"
+        r = cl.post("/api/federation/introduce", headers=O, json={"url": gw.base + "/o/eta"})
         arm("I a refused introduction is 502 with introduce.py's words", r.status_code == 502
             and "refused" in r.json().get("error", ""), r.text[:200])
         r = cl.post("/api/federation/introduce", headers=O, json={"url": "theta.example"})
@@ -254,8 +281,25 @@ def main(tmp: Path, url: str):
             r1.status_code == 503 and r2.status_code == 503 and status_of(url, "beta.example") == "trusted"
             and audits(url) == n2, (r1.status_code, r2.status_code))
         arm("D GETs still answer", cl.get("/api/federation/peers", headers=O).status_code == 200)
+
+        # ── K the secret key never enters this process ───────────────────────────────────────────────────────────
+        import ast
+        tree = ast.parse(SUBJECT.read_text())
+        imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names} | {
+            f"{n.module}.{a.name}" if n.module else a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) for a in n.names}
+        names = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)} | {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        code_strs = [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                     and not n.value.lstrip().startswith(('"', "astryx observatory"))]
+        arm("K federation.py imports no introduce module and no signing library",
+            not [i for i in imported if "introduce" in i or i.startswith("nacl")], sorted(imported))
+        arm("K federation.py names no secret-key loader (load_env, SigningKey, _key)",
+            not ({"load_env", "SigningKey", "_key", "read_env"} & names), sorted({"load_env", "SigningKey", "_key", "read_env"} & names))
+        arm("K federation.py's code never names ASTRYX_SECRET_KEY",
+            not [x for x in code_strs if "ASTRYX_SECRET_KEY" in x and len(x) < 200])
+        arm("K after every route ran, astryx.federation.introduce was never imported in the observatory's process",
+            "astryx.federation.introduce" not in sys.modules)
     finally:
-        fed._intro.httpx.post = real_post
+        gw.srv.shutdown()
         cl.__exit__(None, None, None)
 
 

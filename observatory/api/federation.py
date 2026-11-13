@@ -9,7 +9,8 @@ met in the org's `peers` table. This module is the observatory's window and the 
                                                in (public url | relay | none: peers can't reach us), and whether the
                                                local gateway answers AS us right now (a fresh probe, 2 s)
     GET  /api/federation/peers                 every peer: url (or "polls us"), status, reputation, last contact, and
-                                               the wire's COUNTS in/out (pending / dead outbound). Counts only.
+                                               the wire's COUNTS in/out over the last 30 days (pending /
+                                               dead outbound). Counts only.
     GET  /api/federation/peers/{org}/messages  ?limit= (≤200): that peer's recent traffic either way, bodies included
     POST /api/federation/introduce             {url}: an http(s) gateway base → introduce.introduce (signed hello, the
                                                signed reply verified, stored as `introduced`); a bare federation name →
@@ -26,15 +27,17 @@ OWNER-ONLY BY OMISSION from main.PUBLIC (the public GET /api/peers stays what it
 checked again in each handler. Under ASTRYX_DEV_NO_WIRE (a worktree's dev server reading a live org) every POST here is
 refused by main.privacy_gate: a click in a screenshot must never widen a live peer.
 
-THE SECRET KEY. main._gateway_identity's stance is that the observatory never loads the org's secret key. introduce
-must sign our hello with it, and the owner asked for introduce IN the observatory, so the POST loads the home's .env
-inside the handler only (never at import, never into a response) and hands it to introduce.py, exactly as the CLI does.
-Every other route reads the public identity from the gateway.
+THE SECRET KEY. The observatory never loads the org's secret key (main._gateway_identity's stance, kept by the owner's
+ruling for this phase). introduce must sign our hello with it, so the POST runs introduce.py's flows in a CHILD process
+(src/astryx/federation/introduce_run.py, the home's .env named, a timeout) and reads back only its one-line outcome and
+exit code: the key lives and dies in that child. This module imports nothing that loads it (the oracle checks).
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import re
+import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -44,9 +47,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from astryx.core.orgname import org_ok
-from astryx.federation import introduce as _intro
 
 router = APIRouter()
+
+REPO = Path(__file__).resolve().parents[2]
+RUNNER = REPO / "src" / "astryx" / "federation" / "introduce_run.py"   # introduce.py's flows, in a child process
+INTRO_TIMEOUT = 45                                 # introduce's own calls time out at 20 s each; the relay path makes two
+WINDOW_DAYS = 30                                   # the peers listing counts the wire over this window
 
 _get_pool = None
 ESTATE: Path | None = None
@@ -134,7 +141,7 @@ PEERS_SQL = """
 WITH t AS (
   SELECT CASE WHEN from_org <> 'local' THEN from_org ELSE to_org END AS org,
          from_org <> 'local' AS inbound, ts, status
-  FROM messages WHERE from_org <> 'local' OR to_org <> 'local')
+  FROM messages WHERE (from_org <> 'local' OR to_org <> 'local') AND ts >= now() - make_interval(days => $1))
 SELECT p.org, p.url, p.status, p.reputation, p.pubkey, p.last_pickup, p.notes,
        count(t.org) FILTER (WHERE t.inbound)                          AS n_in,
        count(t.org) FILTER (WHERE NOT t.inbound)                      AS n_out,
@@ -163,8 +170,8 @@ def peer_row(r) -> dict:
 async def peers(request: Request):
     if (d := _deny(request)):
         return d
-    rows = await _get_pool().fetch(PEERS_SQL)
-    return {"org": _me(), "peers": [peer_row(r) for r in rows]}
+    rows = await _get_pool().fetch(PEERS_SQL, WINDOW_DAYS)
+    return {"org": _me(), "window_days": WINDOW_DAYS, "peers": [peer_row(r) for r in rows]}
 
 
 PEER_MSGS_SQL = (
@@ -220,6 +227,31 @@ async def _audit(conn, body: str) -> None:
                        "VALUES ('owner', 'local', 'seed', 'federation', 'federation', $1)", body)
 
 
+async def run_introduce(target: str) -> tuple[int, dict]:
+    """introduce_run.py as a child (cwd the checkout, the home's .env named): the secret key that signs our hello is
+    loaded THERE and dies with it; this process reads one JSON line of outcome and the exit code, nothing else."""
+    try:
+        p = await asyncio.create_subprocess_exec(
+            sys.executable, str(RUNNER), "--env", str(ESTATE / ".env"), "--", target, cwd=str(REPO),
+            stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    except OSError as e:
+        return -1, {"ok": False, "error": f"could not start the introduction ({type(e).__name__})"}
+    try:
+        out, _ = await asyncio.wait_for(p.communicate(), INTRO_TIMEOUT)
+    except asyncio.TimeoutError:
+        p.kill()
+        await p.wait()
+        return -1, {"ok": False, "error": f"the introduction took longer than {INTRO_TIMEOUT} s: stopped"}
+    lines = out.decode(errors="replace").strip().splitlines()
+    try:
+        j = json.loads(lines[-1]) if lines else {}
+    except ValueError:
+        j = {}
+    if not isinstance(j, dict) or (p.returncode == 0) != bool(j.get("ok")):
+        return p.returncode, {"ok": False, "error": f"introduction failed (rc {p.returncode})"}
+    return p.returncode, j
+
+
 @router.post("/api/federation/introduce")
 async def introduce(m: Introduce, request: Request):
     if (d := _deny(request)):
@@ -229,15 +261,10 @@ async def introduce(m: Introduce, request: Request):
         return JSONResponse({"error": "give a gateway url (http(s)://host[:port][/o/<org>]) or a federation name "
                                       "listed on the relay"}, status_code=400)
     kind, target = t
-    try:
-        env = _intro.load_env(ESTATE / ".env")     # the home's own .env (a cog's org signs as itself); see the docstring
-        if kind == "url":
-            them = await asyncio.to_thread(_intro.introduce, target, env)
-        else:
-            them = await asyncio.to_thread(_intro.introduce_via_relay, target, env)
-    except (RuntimeError, httpx.HTTPError, ValueError, KeyError, FileNotFoundError) as e:
-        msg = str(e) if isinstance(e, RuntimeError) else f"{type(e).__name__}: introduction failed"
-        return JSONResponse({"ok": False, "error": msg[:300]}, status_code=502)
+    rc, them = await run_introduce(target)
+    if not them.get("ok"):
+        return JSONResponse({"ok": False, "error": str(them.get("error") or f"introduction failed (rc {rc})")[:300]},
+                            status_code=502)
     org = them.get("org") or target
     await _audit(
         _get_pool(), f"the owner introduced this org to '{org}' from the observatory "

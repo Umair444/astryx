@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, ScrollArea } from '@mantine/core'
 import AgentFace from './AgentFace'
 import { ApiError, api, apiSend, displayName, fmtAgo } from '../api'
@@ -123,7 +123,30 @@ export default function FederationLayer({ onOpenAgent, focus, compact = false }:
     api<Identity>('/federation/identity').then(setIdent).catch((e) => setErr(String(e.message ?? e)))
     api<{ peers: FedPeer[] }>('/federation/peers').then((j) => setPeers(j.peers)).catch((e) => setErr(String(e.message ?? e)))
   }, [])
-  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t) }, [load])
+  /* the peers read scans the wire's last 30 days, so it refreshes only while the layer is SEEN: on screen (a phone mounts
+     it below the roster, maybe never scrolled to) and the tab not hidden. Back in view, it reads at once. */
+  const root = useRef<HTMLDivElement>(null)
+  const [onScreen, setOnScreen] = useState(false)
+  const [tabShown, setTabShown] = useState(() => document.visibilityState !== 'hidden')
+  useEffect(() => {
+    const el = root.current
+    if (!el || typeof IntersectionObserver === 'undefined') { setOnScreen(true); return }
+    const io = new IntersectionObserver((es) => setOnScreen(es.some((e) => e.isIntersecting)))
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+  useEffect(() => {
+    const v = () => setTabShown(document.visibilityState !== 'hidden')
+    document.addEventListener('visibilitychange', v)
+    return () => document.removeEventListener('visibilitychange', v)
+  }, [])
+  const seen = onScreen && tabShown
+  useEffect(() => {
+    if (!seen) return
+    load()
+    const t = setInterval(load, 30000)
+    return () => clearInterval(t)
+  }, [load, seen])
 
   // a cog's sibling orgs are rooms of THIS fed (the gateway hands them messages in process): they are tree nodes, not peers
   const me = ident?.org ?? overview?.org ?? 'this org'
@@ -160,7 +183,7 @@ export default function FederationLayer({ onOpenAgent, focus, compact = false }:
   }, [ident, me, agents, cog, rooms, onOpenAgent])
 
   return (
-    <div className={compact ? '' : 'grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] items-start'}>
+    <div ref={root} className={compact ? '' : 'grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] items-start'}>
       <div className="flex flex-col gap-4 min-w-0">
         <IdentityCard ident={ident} />
         <Panel className="p-3 sm:p-4">
@@ -256,7 +279,7 @@ function PeerList({ peers, loading, sel, setSel, onChanged }: {
   }
   return (
     <Panel className="p-3 sm:p-4">
-      <SectionHead title="Peers · other feds" count={peers.length} />
+      <SectionHead title="Peers · other feds" count={peers.length} right={<span className="text-[10.5px] text-ink-mute">traffic: last 30 days</span>} />
       {loading && <div className="text-[12.5px] text-ink-mute py-2">reading…</div>}
       {!loading && !peers.length && <div className="text-[12.5px] text-ink-mute py-2">No peers yet. Introduce this org to another fed above.</div>}
       <div className="flex flex-col">
