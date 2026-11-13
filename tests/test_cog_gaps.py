@@ -7,6 +7,11 @@ cog sign-in stood up in a temp HOME (identity.make_keys), each signed identity m
 127.0.0.1. The workspace and chat modules are re-bound to a temp estate, so no projects/meta file of the checkout is
 written. Dummy keys only; nothing leaves the host, no live row is read or written.
 
+  S1 SEARCH follows the view: a member's /api/ws/search finds her own threads only by default, ?scope=everyone every
+     human's; the owner's default search is his own, as before
+  S2 THREAD TITLES name a member's chat by the list's own derivation (her first line), and the owner's alike
+  S3 THE BRIEFING is the viewer's: a member's counts and headlines are what the agents said TO HER; ?scope=everyone
+     counts every human's; the owner's is his, as before; anonymous is 403. /api/ws/agents' last word is the viewer's
   T1 THREAD TOOLS: a member renames/pins/switches a thread she is a party of (200), never another's (403); the owner
      any; dictation's routes pass the member gate
   T2 PROJECTS: a member adds her own (server-stamped `by`, a client's `by` ignored), may not change or drop another's,
@@ -80,6 +85,48 @@ def main(tmp: Path, url: str):
     cl.__enter__()
     A = lambda: as_("7@fxcog", "alice")                         # noqa: E731 — a fresh token each call (60 s TTL)
 
+    # ── S1 search ──────────────────────────────────────────────────────────────────────────────────────────────
+    print("S search follows the view")
+    def threads_of(r):
+        return sorted({h["thread"] for h in r.json().get("results", [])}) if r.status_code == 200 else (r.status_code, r.text[:200])
+    sm = threads_of(cl.get("/api/ws/search", params={"q": "banana"}, headers=A()))
+    se = threads_of(cl.get("/api/ws/search", params={"q": "banana", "scope": "everyone"}, headers=A()))
+    so = threads_of(cl.get("/api/ws/search", params={"q": "banana"}, headers=O))
+    sa = cl.get("/api/ws/search", params={"q": "banana"}).status_code
+    arm("S1 a member's search finds her own thread only", sm == ["chat:20990101-a"], sm)
+    arm("S1 ...?scope=everyone finds every human's", se == ["chat:20990101-a", "chat:20990101-o"], se)
+    arm("S1 the owner's default search is his own (as before)", so == ["chat:20990101-o"], so)
+    arm("S1 anonymous is 403", sa == 403, sa)
+
+    # ── S2 thread titles ───────────────────────────────────────────────────────────────────────────────────────
+    print("S thread titles")
+    tt = cl.get("/api/ws/thread-titles", params={"ids": "chat:20990101-a,chat:20990101-o"}, headers=A()).json().get("titles", {})
+    arm("S2 a member's chat is named by her first line", tt.get("chat:20990101-a", "").lower().startswith("alice banana"), tt)
+    arm("S2 the owner's chat is named by his", tt.get("chat:20990101-o", "").lower().startswith("owner banana"), tt)
+
+    # ── S3 briefing + team cards ───────────────────────────────────────────────────────────────────────────────
+    print("S the briefing is the viewer's")
+    def seed_of(r):
+        if r.status_code != 200:
+            return (r.status_code, r.text[:200])
+        return next((a for a in r.json().get("agents", []) if a["agent"] == "seed"), {})
+    bm = seed_of(cl.get("/api/ws/briefing", headers=A()))
+    be = seed_of(cl.get("/api/ws/briefing", params={"scope": "everyone"}, headers=A()))
+    bo = seed_of(cl.get("/api/ws/briefing", headers=O))
+    ba = cl.get("/api/ws/briefing").status_code
+    said = lambda b: [s["headline"].lower() for s in b.get("said", [])] if isinstance(b, dict) else b   # noqa: E731
+    arm("S3 a member's briefing: what seed said to HER", isinstance(bm, dict) and bm.get("to_owner") == 1
+        and said(bm) and said(bm)[0].startswith("for alice"), bm)
+    arm("S3 ...she is waiting on (its last line to her asks)", isinstance(bm, dict) and bool(bm.get("waiting")), bm)
+    arm("S3 ...?scope=everyone counts every human's", isinstance(be, dict) and be.get("to_owner") == 2, be)
+    arm("S3 the owner's briefing is his (as before)", isinstance(bo, dict) and bo.get("to_owner") == 1
+        and said(bo)[0].startswith("reply to owner"), bo)
+    arm("S3 anonymous is 403", ba == 403, ba)
+    ag = {a["agent"]: a for a in cl.get("/api/ws/agents", headers=A()).json()}
+    ao = {a["agent"]: a for a in cl.get("/api/ws/agents", headers=O).json()}
+    arm("S3 /api/ws/agents: seed's last word is the viewer's", ag.get("seed", {}).get("last_said", "").startswith("for alice")
+        and ao.get("seed", {}).get("last_said", "").startswith("reply to owner"), (ag.get("seed"), ao.get("seed")))
+
     # ── T1 thread tools ────────────────────────────────────────────────────────────────────────────────────────
     print("T a member's own thread tools")
     r1 = cl.put("/api/ws/threads/meta", json={"thread": "chat:20990101-a", "title": "Alice's", "pinned": True}, headers=A())
@@ -92,6 +139,9 @@ def main(tmp: Path, url: str):
     arm("T1 ...never another human's (403, nothing written)", r2.status_code == 403
         and "hijack" not in (W.meta_file().read_text() if W.meta_file().exists() else ""), r2.status_code)
     arm("T1 the owner changes any thread", r4.status_code == 200, r4.status_code)
+    tt = cl.get("/api/ws/thread-titles", params={"ids": "chat:20990101-a"}, headers=O).json().get("titles", {})
+    arm("S2 a member's renamed chat is named by her title (the list's derivation, not a raw label)",
+        tt.get("chat:20990101-a") == "Alice's", tt)
     arm("T1 a viewer is 403", rv.status_code == 403, rv.status_code)
     arm("T1 dictation's routes pass the member gate", obs.member_may("POST", "/api/chat/dictate/session")
         and obs.member_may("POST", "/api/chat/dictate/usage"))

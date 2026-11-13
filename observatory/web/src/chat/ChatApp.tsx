@@ -863,7 +863,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         )}
       </AnimatePresence>
 
-      {palette && <Palette key={paletteQ} initial={paletteQ} threads={listThreads} names={names} status={status} projects={proj.projects} commands={commands} onClose={() => { setPalette(false); setPaletteQ('') }}
+      {palette && <Palette key={paletteQ} initial={paletteQ} scope={scope} threads={listThreads} names={names} status={status} projects={proj.projects} commands={commands} onClose={() => { setPalette(false); setPaletteQ('') }}
         lines={lines} files={files} unread={unread} live={live} onOpenFile={(f) => { setPalette(false); openFile(f) }} onJump={onJump}
         canvases={canvases ?? []} onCanvas={(id) => { setPalette(false); openCanvas(id, true) }}
         go={(t) => { setPalette(false); go(t) }}

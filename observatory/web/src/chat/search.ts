@@ -18,11 +18,12 @@ export interface MessageHit {
 }
 
 export const SEARCH_MIN = 2
-export const searchMessages = (q: string, limit = 20) =>
-  api<{ q: string; results: MessageHit[] }>(`/ws/search?q=${encodeURIComponent(q)}&limit=${limit}`).then((r) => r.results)
+/* scope (cog-gaps): the same VIEW as the list: 'mine' (the server's default) or every human's conversations */
+export const searchMessages = (q: string, limit = 20, scope: 'mine' | 'everyone' = 'mine') =>
+  api<{ q: string; results: MessageHit[] }>(`/ws/search?q=${encodeURIComponent(q)}&limit=${limit}${scope === 'everyone' ? '&scope=everyone' : ''}`).then((r) => r.results)
 
 /* null = not asked (too short) or still asking the first time; [] = asked, nothing */
-export function useMessageSearch(q: string, limit = 20, delay = 180): { hits: MessageHit[] | null; busy: boolean } {
+export function useMessageSearch(q: string, limit = 20, delay = 180, scope: 'mine' | 'everyone' = 'mine'): { hits: MessageHit[] | null; busy: boolean } {
   const [hits, setHits] = useState<MessageHit[] | null>(null)
   const [busy, setBusy] = useState(false)
   const s = q.trim()
@@ -31,13 +32,13 @@ export function useMessageSearch(q: string, limit = 20, delay = 180): { hits: Me
     let live = true
     setBusy(true)
     const t = setTimeout(() => {
-      searchMessages(s, limit)
+      searchMessages(s, limit, scope)
         .then((r) => { if (live) setHits(r) })
         .catch(() => { if (live) setHits([]) })
         .finally(() => { if (live) setBusy(false) })
     }, delay)
     return () => { live = false; clearTimeout(t) }
-  }, [s, limit, delay])
+  }, [s, limit, delay, scope])
   return { hits: s.length < SEARCH_MIN ? null : hits, busy }
 }
 

@@ -45,7 +45,7 @@ export default function ConversationList({ threads, loaded, current, live, proje
   const [editing, setEditing] = useState<string | null>(null)
   const [menu, setMenu] = useState<string | null>(null)
   const search = useRef<HTMLInputElement>(null)
-  const found = useMessageSearch(onJump ? q : '')
+  const found = useMessageSearch(onJump ? q : '', 20, 180, scope ?? 'mine')
 
   const groups = useMemo(() => {
     const s = q.trim().toLowerCase()

@@ -76,16 +76,17 @@ function Marked({ text, hits }: { text: string; hits: number[] }) {
   return <>{out}</>
 }
 
-export function Palette({ threads, names, status, projects, commands, onClose, go, openProject, openAgent, lines = {}, files = [], unread, live = {}, onOpenFile, onJump, canvases = [], onCanvas, initial = '' }: {
+export function Palette({ threads, names, status, projects, commands, onClose, go, openProject, openAgent, lines = {}, files = [], unread, live = {}, onOpenFile, onJump, canvases = [], onCanvas, initial = '', scope = 'mine' }: {
   threads: WsThread[]; names: string[]; status: Record<string, Status>; projects: Project[]; commands: Command[]
   onClose: () => void; go: (t: string) => void; openProject: (id: string) => void; openAgent: (n: string) => void
   lines?: Record<string, string>; files?: MediaItem[]; unread?: Set<string>; live?: Record<string, string>; onOpenFile?: (r: OpenRequest) => void
   onJump?: (h: MessageHit) => void
   canvases?: CanvasRow[]; onCanvas?: (id: number) => void      // iteration 13: the live pages agents paint
   initial?: string                                              // iteration 17: the call's search opens it with words
+  scope?: 'mine' | 'everyone'                                   // cog-gaps: the list's view, searched the same
 }) {
   const [q, setQ] = useState(initial)
-  const found = useMessageSearch(onJump ? q : '', CAP.Messages)
+  const found = useMessageSearch(onJump ? q : '', CAP.Messages, 180, scope)
   const [sel, setSel] = useState(0)
   const list = useRef<HTMLUListElement>(null)
   const items = useMemo(() => {
