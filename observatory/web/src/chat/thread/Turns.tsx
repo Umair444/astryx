@@ -1,7 +1,7 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useReducedMotion } from 'motion/react'
 import { agentColor, displayName, fmtDay, fmtTime } from '../../api'
-import type { Msg, Step } from '../../types'
+import { isHuman, type Msg, type Step } from '../../types'
 import AgentFace from '../../components/AgentFace'
 import Prose from './Prose'
 import { embeds, parts, PROJECT_BLOCK, stripEmbeds, type Turn as WTurn, type Work } from '../model'
@@ -46,7 +46,7 @@ export function rowsOf(rows: Msg[], work: Work | null): Row[] {
   const used = new Set<number>()
   const out: Row[] = []
   for (const m of rows) {
-    const t = m.from === 'owner' ? null : (m.turn_id ? byId.get(m.turn_id) : undefined) ?? byMsg.get(m.id) ?? null
+    const t = isHuman(m.from) ? null : (m.turn_id ? byId.get(m.turn_id) : undefined) ?? byMsg.get(m.id) ?? null
     if (t) used.add(t.id)
     out.push({ msg: m, turn: t, after: m.id })
   }
@@ -102,19 +102,19 @@ export function blocksOf(items: Row[], roster: Set<string>, handoffs: WHandoff[]
     boundary(Date.parse(msg.ts))
     if (out.length > before) prev = null
     said = true
-    const party = msg.from === 'owner' ? msg.to : msg.to === 'owner' ? msg.from : null
+    const party = isHuman(msg.from) ? msg.to : isHuman(msg.to) ? msg.from : null
     if (party && roster.has(party) && !spoke.includes(party)) spoke.push(party)
     const d = new Date(msg.ts).toDateString()
     if (d !== day) { day = d; out.push({ kind: 'day', key: `d${msg.id}`, label: fmtDay(msg.ts) }); prev = null }
     const last = out.at(-1)
-    if (msg.from === 'owner') {
+    if (isHuman(msg.from)) {                       // a human's words: the owner's, or a member's (cog-who)
       const body = stripEmbeds(msg.body)
       if (last?.kind === 'mine' && stripEmbeds(last.msg.body) === body && Date.parse(msg.ts) - Date.parse(last.msg.ts) < 60_000) {
         if (msg.to && !last.to.includes(msg.to)) last.to.push(msg.to)
       } else out.push({ kind: 'mine', key: `m${msg.id}`, msg, to: msg.to ? [msg.to] : [] })
     } else if (!roster.has(msg.from)) {
       out.push({ kind: 'note', key: `m${msg.id}`, msg })
-    } else if (msg.to && msg.to !== 'owner' && roster.has(msg.to)) {
+    } else if (msg.to && !isHuman(msg.to) && roster.has(msg.to)) {
       out.push({ kind: 'handoff', key: `m${msg.id}`, h: { from: msg.from, to: msg.to, ts: msg.ts, body: msg.body, thread: null, intent: msg.intent, id: msg.id } })
     } else {
       const h = turn ? into.get(turn.id) : undefined

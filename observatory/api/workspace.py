@@ -64,11 +64,16 @@ SWITCHES_MAX = 50                                   # a thread keeps its newest 
                                                     # than this read as ordinary history: their agents still answered)
 
 
-def bind(get_pool, estate: Path, roster=None, charter=None, owner=None) -> None:
-    """The host app hands over its pool getter, its estate, its roster, its charter resolver and its owner check
-    (read at call time)."""
-    global _get_pool, ESTATE, _roster, _charter, _owner
+_me = lambda request: "owner"                      # noqa: E731 — main.wire_handle: the viewer's wire handle (cog-who)
+
+
+def bind(get_pool, estate: Path, roster=None, charter=None, owner=None, me=None) -> None:
+    """The host app hands over its pool getter, its estate, its roster, its charter resolver, its owner check and the
+    viewer's wire handle (read at call time)."""
+    global _get_pool, ESTATE, _roster, _charter, _owner, _me
     _get_pool, ESTATE = get_pool, Path(estate)
+    if me is not None:
+        _me = me
     if roster is not None:
         _roster = roster
     if charter is not None:
@@ -192,18 +197,24 @@ def project_of(thread: str, projects: list[dict]) -> str | None:
     return None
 
 
+def human(name: str | None) -> bool:
+    """A human party on the web surfaces: the owner, or a named web human (cv-<x>: a canvas invitee, a member)."""
+    return bool(name) and (name == "owner" or name.startswith("cv-"))
+
+
 def build_rows(aggs: list[dict], meta: dict, projects: list[dict], roster: set[str],
-               canvas: dict[str, dict] | None = None) -> list[dict]:
+               canvas: dict[str, dict] | None = None, me: str = "owner", everyone: bool = False) -> list[dict]:
     """The unified list. `aggs` = one dict per thread (thread, count, last_ts, first_owner, last_body, parties);
-    `meta` = {thread: {title?, pinned?}}; `canvas` = canvas_threads rows by thread. Owner-party threads of a known
-    surface only; an archived canvas chat drops out. Pinned first, then newest."""
+    `meta` = {thread: {title?, pinned?}}; `canvas` = canvas_threads rows by thread. The threads `me` is a party of
+    (cog-who: a VIEW, like a chat app's list, never a wall), or with `everyone` every thread a human is a party of, of a
+    known surface only; an archived canvas chat drops out. Pinned first, then newest."""
     canvas = canvas or {}
     out = []
     for a in aggs:
         t = a.get("thread") or ""
         surface = surface_of(t)
         parties = list(a.get("parties") or [])
-        if surface is None or "owner" not in parties:
+        if surface is None or not (me in parties or (everyone and any(human(x) for x in parties))):
             continue
         cv = canvas.get(t) or {}
         if cv.get("archived"):
@@ -229,6 +240,7 @@ def build_rows(aggs: list[dict], meta: dict, projects: list[dict], roster: set[s
             "pinned": bool(m.get("pinned")),
             "project": project_of(t, projects),
             "switches": sw,
+            "by": a.get("starter"),                 # the human who opened it (cog-who): whose chat, in "everyone"
         })
     out.sort(key=lambda r: (r["last_ts"] or ""), reverse=True)
     out.sort(key=lambda r: not r["pinned"])         # stable: pinned first, each group newest first
@@ -358,31 +370,45 @@ def _pool(request: Request):
 # owner's own words however long the project's instructions run
 _BODY = "CASE WHEN strpos(body, E'\\n[/project]\\n') > 0 AND body LIKE '[project: %' " \
         "THEN substr(body, strpos(body, E'\\n[/project]\\n') + 12) ELSE body END"
+# $1 = the viewer's handle, $2 = everyone: "the human" of a row is the viewer, or (everyone) any web human, so the
+# owner's own list ($1 'owner', $2 false) is exactly the query it always was
+_HUMAN = "({c} = $1 OR ($2 AND ({c} = 'owner' OR {c} LIKE 'cv-%')))"
+_HF, _HT = _HUMAN.format(c="from_agent"), _HUMAN.format(c="to_agent")
 THREADS_SQL = f"""
 SELECT thread, count(*) AS count, max(ts) AS last_ts,
-       (array_agg(left({_BODY}, 400) ORDER BY id) FILTER (WHERE from_agent = 'owner'))[1] AS first_owner,
+       (array_agg(left({_BODY}, 400) ORDER BY id) FILTER (WHERE {_HF}))[1] AS first_owner,
+       (array_agg(from_agent ORDER BY id) FILTER (WHERE {_HF}))[1] AS starter,
        (array_agg(left({_BODY}, 400) ORDER BY id DESC))[1] AS last_body,
        (array_agg(from_agent ORDER BY id DESC))[1] AS last_from,
        array_agg(DISTINCT from_agent) || array_agg(DISTINCT to_agent) AS parties,
-       array_agg(CASE WHEN from_agent = 'owner' THEN to_agent ELSE from_agent END ORDER BY id)
-         FILTER (WHERE from_agent = 'owner' OR to_agent = 'owner') AS partners
+       array_agg(CASE WHEN {_HF} THEN to_agent ELSE from_agent END ORDER BY id)
+         FILTER (WHERE {_HF} OR {_HT}) AS partners
   FROM messages
  WHERE thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%'
  GROUP BY thread ORDER BY max(id) DESC LIMIT 400"""
 
 
+def canvas_user(me: str) -> str:
+    """canvas_threads.user_name for a wire handle: 'owner', or a cv-<x>'s bare <x> (bridges/canvas.py thread_user)."""
+    return me[3:] if me.startswith("cv-") else me
+
+
 @router.get("/api/ws/threads")
-async def ws_threads(request: Request):
+async def ws_threads(request: Request, scope: str = "mine"):
+    """?scope=mine (default): the viewer's own conversations; ?scope=everyone: every human's (a view, not a wall)."""
     pool = _pool(request)
+    me, everyone = _me(request) or "owner", scope == "everyone"
     aggs = [{**dict(r), "last_ts": r["last_ts"].isoformat() if r["last_ts"] else None}
-            for r in await pool.fetch(THREADS_SQL)]
+            for r in await pool.fetch(THREADS_SQL, me, everyone)]
     canvas: dict[str, dict] = {}
     try:                                            # canvas_threads exists where the canvas bridge has run
-        for r in await pool.fetch("SELECT thread, agent, title, archived FROM canvas_threads WHERE user_name = 'owner'"):
+        for r in await pool.fetch("SELECT thread, agent, title, archived FROM canvas_threads "
+                                  "WHERE user_name = $1 OR $2", canvas_user(me), everyone):
             canvas[r["thread"]] = dict(r)
     except Exception:                               # noqa: BLE001 — an estate without canvas lists the rest
         canvas = {}
-    return {"etag": etag(meta_file()), "threads": build_rows(aggs, read_meta(), _projects(), set(_roster()), canvas)}
+    return {"etag": etag(meta_file()), "scope": "everyone" if everyone else "mine",
+            "threads": build_rows(aggs, read_meta(), _projects(), set(_roster()), canvas, me=me, everyone=everyone)}
 
 
 class Meta(BaseModel):

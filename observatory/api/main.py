@@ -253,15 +253,18 @@ async def _who(request: Request) -> tuple[str | None, str | None]:
     (127.0.0.1): every org backend is loopback-bound (the D5 census), and the token is checked whatever the peer."""
     tok = request.headers.get(_identity.HEADER)
     peer = request.client.host if request.client else ""
+    request.state.label = ""                            # the account's own label (cog-who), set only when verified
     if not (_COGAUTH and tok and peer == "127.0.0.1"):
         return None, None
-    uid = _identity.verify(tok, _keys(), _AUD)
-    if uid is None:
+    c = _identity.claims(tok, _keys(), _AUD)
+    if c is None:
         before = _verifiers
         if _keys(kid_missing=True) is not before:       # a rotated key, read once
-            uid = _identity.verify(tok, _verifiers, _AUD)
+            c = _identity.claims(tok, _verifiers, _AUD)
+    uid = c["sub"] if c else None
     if uid is None or pool is None:
         return None, None
+    request.state.label = c["name"]
     try:
         return uid, await pool.fetchval("SELECT role FROM members WHERE uid = $1", uid)
     except (asyncpg.PostgresError, OSError) as e:   # no members table yet (schema.sql not re-applied), a DB blip:
@@ -271,6 +274,55 @@ async def _who(request: Request) -> tuple[str | None, str | None]:
 
 def _signed_owner(request: Request) -> bool:
     return getattr(request.state, "role", None) == "owner"
+
+
+# ---------------------------------------------------------------- who asked (cog-rebuild P2, option (a), owner 11-13)
+# Every message a human writes here says WHICH human, on the wire's existing structure: from_agent is the sender's
+# wire handle, from_org the surface ('local' for the observatory), and the row's delivery jsonb carries
+# {surface, display_name, role} exactly as bridges/canvas.py's _say already stamps it. No new table, no new handle class.
+#   the owner (the key door, or a signed-in account whose members role is owner)  ->  'owner', as ever, so every
+#     agent's send(to='owner') and every owner-only gate (verdicts, polls, approvals) is untouched;
+#   any other signed-in member                                                     ->  'cv-<label>.<n>'
+# where <n> is the account's cog uid (sub = <n>@<cog id>) and <label> its email's local part, slugged to the canvas
+# name alphabet. cv- is the org's existing class for a NAMED HUMAN ON THE WEB (address.py SURFACES admits it, the
+# canvas bridge delivers it); the uid makes it unique in the cog store and stable for the account's life (a label is
+# display only, the uid decides); the '.' is outside canvas invitee names ([a-z][a-z0-9_-]{1,30}), so a member's
+# handle can never be an invitee's. NO PRIVACY WITHIN AN ORG (owner 11-13): a member reads the wire as the owner does;
+# owner-only ACTS (interrupt, goals, federation, the db workbench, people answers) stay on owner_call.
+MEMBER_ROLES = ("member", "admin")                 # who may talk on the wire here ('admin' once members admits it)
+_SLUG = re.compile(r"[^a-z0-9_-]+")
+
+
+def member_handle(sub: str, label: str = "") -> str | None:
+    """The wire handle of a signed-in non-owner account: cv-<slug(label)>.<uid>, or None for a sub with no uid."""
+    n, at, _ = str(sub).partition("@")
+    if not at or not n.isdigit():
+        return None
+    slug = _SLUG.sub("-", (label or "").lower()).strip("-_")[:24].strip("-_") or "u"
+    return f"cv-{slug}.{int(n)}"
+
+
+def insider(request: Request) -> bool:
+    """A human of THIS org: the owner, or a signed-in member. Reads the wire unfiltered and may write to it."""
+    return owner_call(request) or getattr(request.state, "role", None) in MEMBER_ROLES
+
+
+def wire_handle(request: Request) -> str | None:
+    """The from_agent a human's message here is written as: 'owner' for the owner, cv-<label>.<uid> for a member."""
+    if owner_call(request):
+        return "owner"
+    if getattr(request.state, "role", None) in MEMBER_ROLES:
+        return member_handle(getattr(request.state, "uid", "") or "", getattr(request.state, "label", ""))
+    return None
+
+
+def asker_meta(request: Request) -> dict | None:
+    """The delivery stamp a member's row carries (canvas's shape): None for the owner, whose rows stay as they were."""
+    h = wire_handle(request)
+    if h in (None, "owner"):
+        return None
+    return {"surface": "observatory", "display_name": getattr(request.state, "label", "") or h,
+            "role": request.state.role}
 
 
 def owner_call(request: Request) -> bool:
@@ -387,7 +439,8 @@ app.include_router(_chat.router)
 # feat/chat-workspace: the workspace's unified conversation list (chat:, obs:, cv:) and its pins/titles; owner-only by
 # omission from PUBLIC, like /api/chat
 from observatory.api import workspace as _ws  # noqa: E402
-_ws.bind(lambda: pool, ESTATE, roster=lambda: set(agent_meta()), charter=lambda n: _charter_path(n), owner=lambda r: owner_call(r))
+_ws.bind(lambda: pool, ESTATE, roster=lambda: set(agent_meta()), charter=lambda n: _charter_path(n), owner=lambda r: owner_call(r),
+         me=lambda r: wire_handle(r))
 app.include_router(_ws.router)
 
 # feat/chat-workspace: the artifact store (a git repo under data/workspace: versions, restore, annotations) and a
@@ -428,13 +481,35 @@ _DEV_NO_WIRE = bool(os.environ.get("ASTRYX_DEV_NO_WIRE"))
 _WIRE_WRITE = re.compile(r"^/api/(messages|ws/agents/[^/]+/interrupt|federation/.+)$")   # federation/: a peers row + seed's audit row
 
 
+# What a signed-in MEMBER may reach beyond the public face (cog-who): the chat workspace, i.e. talking on the wire and
+# reading it (no privacy within an org, owner 11-13). Owner-only ACTS are not here: interrupt, thread meta writes,
+# projects writes, goals, the db workbench, federation, people, services. (METHOD, path) pairs, or a GET prefix.
+MEMBER = {("POST", "/api/messages"), ("POST", "/api/thread/read"), ("POST", "/api/chat/upload")}
+MEMBER_GET = ("/api/ws/threads", "/api/ws/thread-titles", "/api/ws/search", "/api/ws/handoffs", "/api/ws/agents",
+              "/api/ws/briefing", "/api/ws/media", "/api/ws/artifacts", "/api/chat/", "/api/presence")
+
+
+def member_may(m: str, p: str) -> bool:
+    return (m, p) in MEMBER or (m == "GET" and p.startswith(MEMBER_GET) and p != "/api/chat/file")
+
+
+async def member_file(request: Request) -> bool:
+    """/api/chat/file for a member: only a file some message on the wire ATTACHED ([[file:<path>]]), never any path
+    under the homes (chat.roots() spans whole agent homes; the personal tier binds every user, DESIGN Phase 2)."""
+    path = request.query_params.get("path", "")
+    if not path or pool is None:
+        return False
+    return bool(await pool.fetchval("SELECT 1 FROM messages WHERE strpos(body, $1) > 0 LIMIT 1", f"[[file:{path}]]"))
+
+
 @app.middleware("http")
 async def privacy_gate(request: Request, call_next):
     request.state.uid, request.state.role = await _who(request)
     p = request.url.path
     m = "GET" if request.method == "HEAD" else request.method
     if (p.startswith("/api/") and (m, p) not in PUBLIC and not (m == "GET" and _PUBLIC_AVATAR.match(p))
-            and not is_owner(request)):
+            and not is_owner(request) and not (member_may(m, p) and insider(request))
+            and not (m == "GET" and p == "/api/chat/file" and insider(request) and await member_file(request))):
         return Response(status_code=403)
     if _DEV_NO_WIRE and m != "GET" and _WIRE_WRITE.match(p):
         return JSONResponse({"error": "dev server: wire writes are disabled (ASTRYX_DEV_NO_WIRE)"}, status_code=503)
@@ -619,7 +694,7 @@ async def messages(request: Request, limit: int = 100, before_id: int | None = N
     # forward until it is level. Same filters, same anonymous rule as every other read here.
     limit = min(limit, 500)
     cond, args = [], []
-    if not is_owner(request):
+    if not (is_owner(request) or insider(request)):     # a member reads the wire as the owner does (cog-who)
         # The rule is EMITTED by the authority, not restated here — see
         # anonymous_can_see_sql(). Passing the peer set as a parameter (rather than an
         # IN-subquery) keeps both anonymous paths reading the same python source of truth.
@@ -1825,20 +1900,34 @@ async def auth_role(request: Request):
 
 @app.get("/api/whoami")
 async def whoami(request: Request):
+    """owner (as ever) + who the viewer is on the wire (cog-who): role here (None for the key door or the public face)
+    and handle (the from_agent their messages carry: 'owner', cv-<label>.<uid>, or None)."""
     return {"owner": owner_call(request),
-            "vega": _charter_path("vega") is not None}
+            "vega": _charter_path("vega") is not None,
+            "role": "owner" if owner_call(request) else getattr(request.state, "role", None),
+            "handle": wire_handle(request)}
 
 
 @app.post("/api/messages")
 async def owner_send(m: OwnerMsg, request: Request):
-    if not owner_call(request):
+    """A human's message onto the wire. The owner writes as 'owner' exactly as before; a signed-in member writes as
+    their own handle, with {surface, display_name, role} in delivery (canvas's stamp), so the agent knows who asked."""
+    sender = wire_handle(request)
+    if sender is None:
         return Response(status_code=403)
     if not m.body.strip() or not m.to.strip():
         return Response(status_code=400)
-    row = await pool.fetchrow(
-        "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
-        "VALUES ('owner', $1, $2, 'chat', $3) RETURNING *",
-        m.to.strip().lower(), m.thread, m.body.strip())
+    meta = asker_meta(request)
+    if meta is None:                           # the owner: the very row it always was
+        row = await pool.fetchrow(
+            "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
+            "VALUES ('owner', $1, $2, 'chat', $3) RETURNING *",
+            m.to.strip().lower(), m.thread, m.body.strip())
+    else:
+        row = await pool.fetchrow(
+            "INSERT INTO messages (from_agent, to_agent, thread, intent, body, delivery) "
+            "VALUES ($4, $1, $2, 'chat', $3, $5::jsonb) RETURNING *",
+            m.to.strip().lower(), m.thread, m.body.strip(), sender, json.dumps(meta))
     return msg(row)
 
 
@@ -3304,15 +3393,16 @@ async def thread_read(r: ThreadRead, request: Request):
     (upto), so a reply that lands between render and this call is not marked unseen. NEVER a row a bridge
     delivers (t-, wa:, threadless, tg:, dc:, cv:, tier releases, ear-; bridges/owner_surfaces.py, a4 #57418):
     marking it here would stop the bridge from ever sending it to his phone."""
-    if not owner_call(request):
+    me = wire_handle(request)                  # the owner marks his rows, a member hers (cog-who), never another's
+    if me is None:
         return Response(status_code=403)
     if not r.thread.strip():
         return Response(status_code=400)
     rows = await pool.fetch(
         "UPDATE messages SET status='delivered', delivered_at=now(), "
         "delivery=jsonb_build_object('ok', true, 'handle', 'observatory:thread') "
-        "WHERE thread=$1 AND id <= $2 AND to_agent='owner' AND to_org='local' AND from_agent<>'owner' "
-        f"AND status='pending' AND NOT {OWNER_ROW_BRIDGED_SQL} RETURNING id", r.thread, r.upto)
+        "WHERE thread=$1 AND id <= $2 AND to_agent=$3 AND to_org='local' AND from_agent<>$3 "
+        f"AND status='pending' AND NOT {OWNER_ROW_BRIDGED_SQL} RETURNING id", r.thread, r.upto, me)
     return {"marked": sorted(x["id"] for x in rows)}
 
 
@@ -3548,7 +3638,8 @@ async def events(request: Request):
     # EventSource cannot send headers, so owner mode rides ?key=. Anonymous
     # streams carry ONLY boundary-crossing message events; steps/dags are the
     # agents' insides and stay owner-only.
-    owner = (bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY) or _signed_owner(request)
+    owner = ((bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY) or _signed_owner(request)
+             or insider(request))                       # a member sees the org's stream too (cog-who: no walls inside)
 
     async def visible(data: dict) -> bool:
         if owner:

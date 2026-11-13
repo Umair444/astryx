@@ -8,7 +8,7 @@ import './presence.css'
 import './phone.css'
 import { api, apiPost, displayName } from '../api'
 import { fillsTurn, mergeMsgs, useStore } from '../store'
-import type { Msg, Step } from '../types'
+import { seesEveryone, talks, type Msg, type Step } from '../types'
 import { canvasBase } from '../cog'
 import { nowLine } from '../ui/life'
 import { startDictation } from './dictate'
@@ -17,7 +17,7 @@ import {
   type McpTool, type Project, type Skill, type Uploaded, type Work,
 } from './model'
 import {
-  deskAgent, deskThread, liveAgentOf, loadWsAgents, saveThreadMeta, statusOf, surfaceOf, useNow, useWsThreads,
+  deskAgent, deskThread, liveAgentOf, loadWsAgents, saveThreadMeta, statusOf, surfaceOf, useNow, useWsThreads, type Scope,
   type Status, type Switch, type WsAgent, type WsThread,
 } from './data'
 import AgentRail, { Presence } from './shell/AgentRail'
@@ -109,7 +109,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     return out
   }, [roster, presence, status, now])
 
-  const { threads, loaded, reload, patch } = useWsThreads(messages)
+  const [scope, setScope] = useState<Scope>('mine')        // cog-who: my chats (default) or every human's, a view only
+  const { threads, loaded, reload, patch } = useWsThreads(messages, scope)
   useEffect(() => { if (conn.resync) reload() }, [conn.resync, reload])     // back from a lost stream: the list catches up
   // iteration 9: an agent's reply while the tab is hidden → an OS notification (opt-in; name + title only); the chat
   // is installable (manifest + icons in <head> only while it is on screen)
@@ -614,8 +615,9 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   }, [go])
   useEffect(() => { chatChanged() }, [current, view, palette, rows.length, panel.active, recipients.join(',')])
 
-  // signed out, offline and a rotated key are the gate's (chat/Gate.tsx): this renders only for the owner
-  if (!who.owner) return null
+  // signed out, offline and a rotated key are the gate's (chat/Gate.tsx): this renders only for the owner or a member
+  if (!talks(who)) return null
+  const me = who.handle ?? 'owner'
 
   const roles = Object.fromEntries(team.map((a) => [a.agent, a.role]))
   const title = currentRow?.title ?? (activeProject ? activeProject.name : 'New chat')
@@ -623,7 +625,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     <Composer ref={composer} hero={hero} roster={names} inChat={recipients} skills={cmds.skills} tools={cmds.tools}
       commands={commands} onSend={onSendOrCommand} draftKey={view === 'thread' ? current : thread ?? ''}
       placeholder={placeholder ?? (hero ? 'Ask the team anything. @mention who should take it; seed routes the rest.' : undefined)}
-      lastMine={() => stripEmbeds([...rows].reverse().find((m) => m.from === 'owner')?.body ?? '')} onTalk={openTalk}
+      lastMine={() => stripEmbeds([...rows].reverse().find((m) => m.from === me)?.body ?? '')} onTalk={openTalk}
       onSwitch={(a) => void switchTo(a)} roles={roles} />
   )
   const list = (phone: boolean) => (
@@ -634,6 +636,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       onPin={(t) => setMeta(t, { pinned: !t.pinned })} onRename={(t, title) => setMeta(t, { title })}
       onClose={phone ? () => setDrawer(false) : undefined}
       unread={unread} onJump={onJump}
+      scope={scope} onScope={seesEveryone(who) ? setScope : undefined}
       className={phone ? '!w-[86vw] max-w-[340px]' : `max-md:hidden ${listHidden ? '!hidden' : ''}`} />
   )
   const home = view === 'thread' && !current
