@@ -43,21 +43,25 @@ or private cogs can run as they do now, with full sudo.
   that two orgs must not both hold.
 - The audit tags about 40 tables.
 
-**2. The org is bound to the database role, never to a session setting.** An agent running arbitrary SQL can
+**2. The org is bound to the database role, never to a session setting.** (Helpers live in schema `cog`, not
+`astryx`: the bootstrap superuser is usually named `astryx`, and its default search_path would put a schema of that
+name FIRST, so tables applied as the superuser would land in it.) An agent running arbitrary SQL can
 `SET` any custom setting, so a GUC-based tenant is escapable by one statement.
 
 ```sql
-CREATE TABLE astryx.orgs (key text PRIMARY KEY, parent text, path text, role name UNIQUE);  -- the recursion lives here
-CREATE FUNCTION astryx.tenant() RETURNS text LANGUAGE sql STABLE
-  AS $$ SELECT key FROM astryx.orgs WHERE role = current_user $$;
+CREATE TABLE cog.orgs (key text PRIMARY KEY, parent text, path text, role name UNIQUE, chan text);  -- the recursion lives here
+CREATE FUNCTION cog.tenant() RETURNS text LANGUAGE sql STABLE
+  AS $$ SELECT key FROM cog.orgs WHERE role = current_user $$;
 -- on every tenant table:
 ALTER TABLE t ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant ON t FOR ALL TO astryx_org
-  USING (tenant = (SELECT astryx.tenant())) WITH CHECK (tenant = (SELECT astryx.tenant()));
-ALTER TABLE t ALTER COLUMN tenant SET DEFAULT astryx.tenant();   -- so no INSERT site changes
+  USING (tenant = (SELECT cog.tenant())) WITH CHECK (tenant = (SELECT cog.tenant()));
+ALTER TABLE t ALTER COLUMN tenant SET DEFAULT cog.tenant();   -- so no INSERT site changes
 ```
 
-An unmapped role gets NULL and sees nothing (fail-closed). `SET ROLE` can only move to roles you belong to, and an
+An unmapped role gets NULL and sees nothing (fail-closed). One exception, so fresh installs and test databases keep
+working: a database with **no** org registered yet acts as the default org. Once any org is registered, an
+unmapped role sees nothing. `SET ROLE` can only move to roles you belong to, and an
 org role belongs to nothing but `astryx_org`. `SET ROLE astryx_org` maps to NULL and also sees nothing.
 
 **3. Roles.**
@@ -77,17 +81,19 @@ org role belongs to nothing but `astryx_org`. `SET ROLE astryx_org` maps to NULL
 - Agents create tables (caches, cubes, scratch). These go in **one** shared schema (`store`), named
   `<orgkey>__<name>`. A deeper tree path is allowed (`<orgkey>__<group>__<name>`), and its first segment is always
   the creator's org.
-- An **event trigger** (`ddl_command_end`) enforces this. The provisioner creates it once and `astryx_schema` owns
-  it. It refuses an object whose name lacks the creator's `astryx.tenant()` prefix, then locks the object:
+- An **event trigger** (`ddl_command_end`) enforces this. The provisioner creates it once; Postgres requires an
+  event trigger's owner to be a superuser. Its function runs as the CALLER (SECURITY INVOKER), because it must
+  judge the creating role, and only the object's owner can REVOKE on it. It refuses an object whose name lacks the creator's `cog.tenant()` prefix, then locks the object:
   `REVOKE ALL FROM PUBLIC`, owned by the creating org role, no grants to other orgs.
 - An org role has CREATE on `store` only, and cannot drop or disable the trigger.
-- The rule reads `astryx.orgs`, so it needs no per-org code or schema.
+- The rule reads `cog.orgs`, so it needs no per-org code or schema.
 
 **5. The leaks RLS does not cover, and their fixes.**
 
-- **NOTIFY is database-wide and any role can LISTEN.** Channel names gain the org's short integer id
-  (`ax<n>_msg_<agent>`), and payloads stay ids only. Residual: a hostile org can still LISTEN to guessed channels
-  and learn their cadence. This is acknowledged.
+- **NOTIFY is database-wide and any role can LISTEN** (Postgres has no LISTEN privilege). A counter in the
+  channel name was measured audible across orgs. So each org gets a random 48-bit channel token
+  (`cog.orgs.chan`), and channels are `ax<token>_<suffix>`. An org can read only its own `cog.orgs` row, and
+  payloads stay ids only. Residual: a token that LEAKS (logs, a transcript) is hearable.
 - **Session advisory locks** collide across orgs, so they are keyed by tenant.
 - **Views** get `security_invoker = true`.
 - **Sequences** are shared, which exposes cadence. Accepted.
@@ -122,10 +128,10 @@ Four slices. Each one is deployable on its own and reversible.
    - Anything that silently needed superuser fails loudly here, not as empty results later.
    - Existing agent tables in `store` are renamed to the `<orgkey>__` form.
 3. **RLS on.**
-   - Policies and FORCE on every tenant table; the default becomes `astryx.tenant()`; `security_invoker` on views.
+   - Policies and FORCE on every tenant table; the default becomes `cog.tenant()`; `security_invoker` on views.
    - All NOTIFY channels are renamed at once; locks are keyed by tenant; the event trigger is installed.
 4. **Cross-org.** The gateway's copy path; the registry's `db` field becomes `role`; org provisioning is
-   `INSERT astryx.orgs` plus `CREATE ROLE`.
+   `INSERT cog.orgs` plus `CREATE ROLE`.
 
 **Cutover checks after slices 2 and 3:**
 
