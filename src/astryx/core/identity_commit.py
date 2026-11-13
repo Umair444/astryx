@@ -46,6 +46,18 @@ CORE_HEADINGS = ("## Law", "## Tombstone")
 RESERVED = {".organ.md", "README.md", "CLAUDE.md"}
 
 
+def _tracked(rel: str) -> bool:
+    """Is agents/<rel> in the index of the repo agents/ lives in?"""
+    return subprocess.run(["git", "ls-files", "--error-unmatch", "--", rel], cwd=AGENTS,
+                          capture_output=True).returncode == 0
+
+
+def _shared() -> bool:
+    """agents/ sits inside a larger repo (the shared one) rather than being a repo of its own."""
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=AGENTS, capture_output=True, text=True)
+    return top.returncode == 0 and Path(top.stdout.strip()).resolve() != Path(AGENTS).resolve()
+
+
 def die(msg: str) -> None:
     print(f"REFUSED: {msg}", file=sys.stderr)
     sys.exit(1)
@@ -91,13 +103,14 @@ def main() -> None:
         home = charter.parent / agent
         home.mkdir(exist_ok=True)
         src = str(charter.relative_to(AGENTS))
-        # A gitignored charter is untracked, so `git mv` exits 128 and every flat charter's first self_edit crashed,
-        # leaving the new folder behind (medic 11-12). Same layout test as the commit step below: move it on disk.
-        if subprocess.run(["git", "check-ignore", src], cwd=AGENTS, capture_output=True).returncode == 0:
-            charter.rename(home / charter.name)
-        else:
+        # `git mv` exits 128 on any UNTRACKED charter (gitignored, or simply never added), and every such flat
+        # charter's first self_edit crashed, leaving the new folder behind (medic 11-12). Only a tracked charter is
+        # git-moved; any other is moved on disk.
+        if _tracked(src):
             subprocess.run(["git", "mv", src, str((home / charter.name).relative_to(AGENTS))],
                            cwd=AGENTS, check=True, capture_output=True)
+        else:
+            charter.rename(home / charter.name)
         charter = home / charter.name
     home = charter.parent
 
@@ -144,6 +157,11 @@ def main() -> None:
     if subprocess.run(["git", "check-ignore", rel], cwd=AGENTS,
                       capture_output=True).returncode == 0:
         print(f"committed: {rel} (working-tree-only; agents/ is gitignored, no repo to commit into)")
+        return
+    # In the SHARED repo, a charter nobody has added is not the scribe's to add: staging it would put a private
+    # charter into the pushable tree just because .gitignore didn't name it. Working tree only, like the ignored case.
+    if _shared() and not _tracked(rel):
+        print(f"committed: {rel} (working-tree-only; untracked in the shared repo, never staged by the scribe)")
         return
     author = "owner <owner@astryx.local>" if owner_act else f"{agent} <{agent}@astryx.local>"
     subprocess.run(["git", "add", rel], cwd=AGENTS, check=True, capture_output=True)
