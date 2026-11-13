@@ -545,6 +545,7 @@ run "the Room's SQL on a fixture schema: voiceprints, the router, the ear's spea
 run "channel oracles: none stages server.mjs without its sibling modules (10-11)" "$PY" tests/test_stage_channel_users.py
 run "pushed_tree_check: the committed tree inherits no database or credential env (a4, 10-11)" "$PY" tests/test_pushed_tree_env.py
 run "pushed_tree_check: WHO LAST TOUCHED names each failing gate's script from check.sh's own block (a4, 10-25)" "$PY" tests/test_ptc_who.py
+run "pushed_tree_check: PTC_BASELINE lets an inherited red through, never a new one (medic, 11-13)" "$PY" tests/test_ptc_baseline.py
 run "trigger: the sql watch's memory and wake (new, while, renag, over cap, storm; a4 plan-12214)" "$PY" tests/test_trigger_watch.py
 run "trigger: the expand, normalize, guarded read, one-shots, the tool's naive path (a4 plan-12214)" "$PY" tests/test_trigger_tool.py
 run "send: a malformed [[poll:]]/[[file:]] to a human surface is refused before the INSERT, in parity with the bridge grammar" node tests/test_send_embeds.mjs

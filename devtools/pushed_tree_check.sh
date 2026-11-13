@@ -177,5 +177,28 @@ if [ "$rc" -ne 0 ]; then
 
   echo
   echo "To stand in the failing tree yourself: KEEP_TREE=1 $0 $REF"
+
+  # PTC_BASELINE=<ref> (opt-in, named at push time: `PTC_BASELINE=origin/main git push ...`). A branch cut from a red
+  # base inherits that base's reds, so without this every PR branch is refused for gates it never touched (the
+  # owner's 11-13 public PRs, medic). The same check then runs on the baseline, and only a gate red HERE and green
+  # THERE blocks. Fail-closed: a baseline that can't be checked or read, or any new red, leaves rc as it was.
+  if [ -n "${PTC_BASELINE:-}" ] && [ -n "${fails:-}" ]; then
+    echo
+    echo "PTC_BASELINE=$PTC_BASELINE: checking the baseline the same way, to tell inherited reds from new ones"
+    PTC_BASELINE= bash "${BASH_SOURCE[0]}" "$PTC_BASELINE" >"$TMP/baseline.out" 2>&1; brc=$?
+    base_fails=$(python3 -I "$REPO/devtools/check_verdict.py" --failed "$TMP/baseline.out" 2>/dev/null); vrc=$?
+    if [ "$brc" -eq 77 ] || [ "$vrc" -ne 0 ]; then
+      echo "  baseline VERIFIED NOTHING or its verdict could not be read (rc $brc, parser $vrc): still RED"
+    else
+      new=$(comm -23 <(sort -u <<<"$fails") <(sort -u <<<"$base_fails"))
+      if [ -z "$new" ]; then
+        echo "  every red above is ALREADY red on $PTC_BASELINE ($(git -C "$REPO" rev-parse --short "$PTC_BASELINE")): inherited, none new — allowing"
+        rc=0
+      else
+        echo "  NEW reds, green on $PTC_BASELINE — still RED:"
+        sed 's/^/    ✗ /' <<<"$new"
+      fi
+    fi
+  fi
 fi
 exit "$rc"
