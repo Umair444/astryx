@@ -49,7 +49,7 @@ from astryx.security.serve import serve_untrusted  # noqa: E402   the ONE server
 from astryx.core import canvas as cv
 from astryx.core import presence as pres
 from .canvas_shell import render
-from .common import (ESTATE, MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target,
+from .common import (ESTATE, MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target, team_of, team_stamp,
                      step_line, wire_insert)
 from .transcribe import transcribe
 
@@ -534,16 +534,21 @@ async def _say(v: Viewer, thread: str, default_agent: str, text: str, intent="ch
             agent = default_agent
     meta = {"surface": "canvas", "display_name": v.name, **(meta or {})}
     sender = who or v.wire
-    row = await pool.fetchrow(
-        "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, delivery) "
-        "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *", sender, ORG, agent, thread, intent, text,
-        json.dumps(meta))
+    # a team (two or more @agents this viewer may reach): one row each, stamped, the lead's LAST (common.wire_chat)
+    team = [] if who is not None else [a for a in team_of(text) if v.may_reach(a)]
+    members = team[1:] + team[:1] if len(team) > 1 else [agent]
+    stamp = team_stamp(team)
+    for agent in members:
+        row = await pool.fetchrow(
+            "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, delivery) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *", sender, ORG, agent, thread, intent, text,
+            json.dumps({**meta, **stamp}))
+        waiting.setdefault(agent, {})[thread] = (v.name, time.time())
+        push(v.name, {"type": "progress", "thread": thread, "agent": agent, "line": "◌ waking up"})
     await pool.execute(
         "UPDATE canvas_threads SET updated_at=now(), title=coalesce(title, $2) WHERE thread=$1",
         thread, _title_of(text))
-    waiting.setdefault(agent, {})[thread] = (v.name, time.time())
     push(v.name, {"type": "message", "thread": thread, "message": shape(row)})
-    push(v.name, {"type": "progress", "thread": thread, "agent": agent, "line": "◌ waking up"})
     return row
 
 
@@ -650,9 +655,9 @@ INLINE_TYPES = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".mp4
 TEXT_TYPES = {".txt", ".md", ".csv", ".tsv", ".json", ".log", ".py", ".js", ".ts", ".tsx", ".sql", ".yaml",
               ".yml", ".toml", ".sh", ".ini", ".xml"}
 # Office documents become a PDF (LibreOffice, headless) so they read exactly as authored.
-OFFICE_TYPES = {".docx", ".doc", ".odt", ".rtf", ".pptx", ".ppt", ".odp", ".xlsx", ".xls", ".ods"}
+from astryx.core import office as _office  # noqa: E402
+OFFICE_TYPES = _office.OFFICE_TYPES
 _PREVIEW_DIR = MEDIA_DIR / ".preview"
-_convert_lock = asyncio.Lock()          # one soffice at a time: it is heavy, and shares a profile
 
 
 @app.get("/api/file")
@@ -680,33 +685,10 @@ async def message_file_preview(msg: int, n: int, request: Request):
     path = await _message_file(v, msg, n)
     if not path:
         return deny(404, "file not found")
-    if path.suffix.lower() not in OFFICE_TYPES:
-        return deny(415, "no preview for this type")
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:32]
-    out = _PREVIEW_DIR / f"{digest}.pdf"
-    if not out.is_file():
-        soffice = shutil.which("soffice") or shutil.which("libreoffice")
-        if not soffice:
-            return deny(501, "LibreOffice is not installed on this host")
-        async with _convert_lock:
-            if not out.is_file():
-                _PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-                with tempfile.TemporaryDirectory() as tmp:
-                    src = Path(tmp) / f"doc{path.suffix.lower()}"
-                    shutil.copyfile(path, src)
-                    proc = await asyncio.create_subprocess_exec(
-                        soffice, f"-env:UserInstallation=file://{tmp}/profile", "--headless", "--norestore",
-                        "--convert-to", "pdf", "--outdir", tmp, str(src),
-                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-                    try:
-                        await asyncio.wait_for(proc.wait(), 120)
-                    except asyncio.TimeoutError:
-                        proc.kill()
-                        return deny(504, "the document took too long to render")
-                    made = Path(tmp) / "doc.pdf"
-                    if not made.is_file():
-                        return deny(422, "this document could not be rendered")
-                    shutil.move(str(made), out)
+    try:                                   # the ONE converter, shared with the chat workspace (core/office.py)
+        out = await _office.to_pdf(path, _PREVIEW_DIR)
+    except _office.Unavailable as e:
+        return deny(e.status, e.why)
     return serve_untrusted(out, inline=True, filename=f"{path.stem}.pdf", frame_pdf=True)   # plan-11884 G3 (a2 BC-2 ii)
 
 

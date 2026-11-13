@@ -497,11 +497,15 @@ MEMBER_GET = ("/api/ws/threads", "/api/ws/thread-titles", "/api/ws/search", "/ap
 
 
 def member_may(m: str, p: str) -> bool:
-    return (m, p) in MEMBER or (m == "GET" and p.startswith(MEMBER_GET) and p != "/api/chat/file")
+    return (m, p) in MEMBER or (m == "GET" and p.startswith(MEMBER_GET) and p not in MEMBER_FILE)
+
+
+# the routes that hand out a FILE's bytes (or its rendering): a member reaches them only for an attached file
+MEMBER_FILE = ("/api/chat/file", "/api/chat/preview")
 
 
 async def member_file(request: Request) -> bool:
-    """/api/chat/file for a member: only a file some message on the wire ATTACHED ([[file:<path>]]), never any path
+    """/api/chat/file (and /preview) for a member: only a file some message on the wire ATTACHED ([[file:<path>]]), never any path
     under the homes (chat.roots() spans whole agent homes; the personal tier binds every user, DESIGN Phase 2)."""
     path = request.query_params.get("path", "")
     if not path or pool is None:
@@ -516,7 +520,7 @@ async def privacy_gate(request: Request, call_next):
     m = "GET" if request.method == "HEAD" else request.method
     if (p.startswith("/api/") and (m, p) not in PUBLIC and not (m == "GET" and _PUBLIC_AVATAR.match(p))
             and not is_owner(request) and not (member_may(m, p) and insider(request))
-            and not (m == "GET" and p == "/api/chat/file" and insider(request) and await member_file(request))
+            and not (m == "GET" and p in MEMBER_FILE and insider(request) and await member_file(request))
             and not (request.state.role == "admin" and (m, p) in _admin.ADMIN_ROUTES)):
         return Response(status_code=403)
     if _DEV_NO_WIRE and m != "GET" and _WIRE_WRITE.match(p):
@@ -533,7 +537,20 @@ def msg(r) -> dict:
         "thread": r["thread"], "intent": r["intent"],
         "body": r["body"], "status": r["status"],
         "turn_id": r["turn_id"] if "turn_id" in r.keys() else None,
+        "lead": _lead_of(r),
     }
+
+
+def _lead_of(r) -> str | None:
+    """A fanned-out row's lead (the agent that owns the one reply): the one fact of `delivery` the page may see (the
+    rest can carry a sender's jid). None for every other row."""
+    d = r["delivery"] if "delivery" in r.keys() else None
+    if isinstance(d, str):
+        try:
+            d = json.loads(d)
+        except ValueError:
+            return None
+    return d.get("lead") if isinstance(d, dict) and isinstance(d.get("team"), list) and len(d["team"]) > 1 else None
 
 
 def step(r) -> dict:
@@ -1895,6 +1912,9 @@ class OwnerMsg(BaseModel):
     to: str
     body: str
     thread: str | None = None
+    # the whole recipient list when the human tagged several agents (owner 11-13): each row is stamped with the team,
+    # the FIRST named leads (bridges/common.team_stamp, the one stamp every surface writes)
+    team: list[str] | None = None
 
 
 @app.get("/api/auth/role")
@@ -1926,11 +1946,21 @@ async def owner_send(m: OwnerMsg, request: Request):
     if not m.body.strip() or not m.to.strip():
         return Response(status_code=400)
     meta = asker_meta(request)
+    team = [t.strip().lower() for t in (m.team or []) if t and t.strip()]
+    team = list(dict.fromkeys(team)) if m.to.strip().lower() in team else []
+    stamp = {"team": team, "lead": team[0]} if len(team) > 1 else {}
+    if stamp:
+        meta = {**(meta or {}), **stamp}
     if meta is None:                           # the owner: the very row it always was
         row = await pool.fetchrow(
             "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
             "VALUES ('owner', $1, $2, 'chat', $3) RETURNING *",
             m.to.strip().lower(), m.thread, m.body.strip())
+    elif sender == "owner":                    # the owner tagging a team: his row, plus the stamp
+        row = await pool.fetchrow(
+            "INSERT INTO messages (from_agent, to_agent, thread, intent, body, delivery) "
+            "VALUES ('owner', $1, $2, 'chat', $3, $4::jsonb) RETURNING *",
+            m.to.strip().lower(), m.thread, m.body.strip(), json.dumps(meta))
     else:
         row = await pool.fetchrow(
             "INSERT INTO messages (from_agent, to_agent, thread, intent, body, delivery) "

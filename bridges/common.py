@@ -129,6 +129,49 @@ def address_agent(text: str, default: str) -> tuple[str, str]:
     return default, text
 
 
+def team_of(text: str) -> list[str]:
+    """Every agent @mentioned in `text`, in the order the human named them, each once. Two or more is a TEAM: the
+    message fans out to each, and the first named LEADS (owner 11-13: "@lending, @seed work together"). Names with
+    no charter are skipped, exactly as address_agent skips them."""
+    team: list[str] = []
+    for m in _MENTION.finditer(text or ""):
+        name = m.group(1).lower()
+        if name not in team and agent_exists(name):
+            team.append(name)
+    return team
+
+
+def team_stamp(team: list[str]) -> dict:
+    """The delivery fields a fanned-out row carries ({} for one agent): the members in order and the lead. The
+    channel server turns them into each member's prompt line (channel/team.mjs); nothing new on the wire."""
+    return {"team": list(team), "lead": team[0]} if len(team) > 1 else {}
+
+
+async def wire_chat(pool, who: str, org: str, default: str, thread: str, text: str, meta: dict | None,
+                    route: dict | None = None, said: str | None = None) -> list[str]:
+    """A human's CHAT onto the wire, for every bridge: one agent as before (route_target's precedence), or, when the
+    message names two or more agents, one row per member stamped with the team. The lead's row is written LAST, so
+    route_target's "whoever the human last addressed" carries a bare follow-up to the lead. A tier route has one
+    reader and never fans out (wire_insert sends it to the route's agent). Returns the agents written to."""
+    team = team_of(text)
+    tiered = False
+    if route is not None:
+        from astryx.security import release as R
+        try:
+            tiered = R.route_tier(route) is not None
+        except R.GrantError:
+            tiered = True
+    if len(team) < 2 or tiered:
+        agent, text = await route_target(pool, thread, text, default)
+        await wire_insert(pool, who, org, agent, thread, "chat", text, meta, route=route, said=said)
+        return [agent]
+    stamp = team_stamp(team)
+    for agent in team[1:] + team[:1]:                # helpers first, the lead last (the sticky follow-up)
+        await wire_insert(pool, who, org, agent, thread, "chat", text, {**(meta or {}), **stamp},
+                          route=route, said=said)
+    return team
+
+
 # The human's inbound that ANSWERS an agent: a poll vote, the one structured answer bridges issue
 # ids for (live inbound intents: chat, poll, reaction; there's no inbound 'permission', since an
 # answer to a permission prompt arrives as chat). NAMED POSITIVELY, because the failure directions

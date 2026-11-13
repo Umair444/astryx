@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { download } from '../../model'
 import { extOf, isProse, type Opened } from '../api'
 import { bytes, KindIcon, KIND_WORD } from '../kinds'
@@ -14,6 +14,7 @@ const Code = lazy(() => import('./Code'))
 const PdfView = lazy(() => import('./Pdf'))
 const DocxView = lazy(() => import('./Docx'))
 const SheetView = lazy(() => import('./Sheet'))
+const OfficeView = lazy(() => import('./Office'))
 
 export default function ArtifactView({ art, rev }: { art: Opened; rev?: string }) {
   return (
@@ -33,15 +34,35 @@ function TextKinds({ art, rev }: { art: Opened; rev?: string }) {
   return ext === 'md' || ext === 'markdown' ? <Markdown text={text} /> : isProse(art.name) ? <Plain text={text} /> : <Code text={text} ext={ext} />
 }
 
+/* a docx / xlsx keeps its own reader (text you can diff, sheets as cells), with "As authored" one click away: the
+   same LibreOffice PDF every other Office file reads as (./Office) */
+function Authored({ art, children }: { art: Opened; children: React.ReactNode }) {
+  const [pdf, setPdf] = useState(false)
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex justify-end px-3 py-1.5 shrink-0">
+        <button onClick={() => setPdf((x) => !x)} className="text-[12px] text-ink-mute hover:text-ink rounded-full border border-line px-2.5 py-0.5"
+          title={pdf ? 'Back to the reader' : 'See it exactly as authored (rendered to PDF)'}>{pdf ? 'Reader' : 'As authored'}</button>
+      </div>
+      <div className="flex-1 min-h-0">{pdf ? <OfficeView art={art} /> : children}</div>
+    </div>
+  )
+}
+
 function BlobKinds({ art, rev }: { art: Opened; rev?: string }) {
+  if (art.kind === 'slides' || art.kind === 'office') return <OfficeView art={art} />    // no bytes here: the server renders it
+  return <Blobbed art={art} rev={rev} />
+}
+
+function Blobbed({ art, rev }: { art: Opened; rev?: string }) {
   const { blob, err } = useBlob(art, rev)
   if (err) return <Failed err={err} />
   if (!blob) return <Loading />
   switch (art.kind) {
     case 'image': return <ImageView blob={blob} name={art.name} />
     case 'pdf': return <PdfView blob={blob} />
-    case 'docx': return <DocxView blob={blob} />
-    case 'sheet': return <SheetView blob={blob} name={art.name} memo={art.id} />
+    case 'docx': return <Authored art={art}><DocxView blob={blob} /></Authored>
+    case 'sheet': return <Authored art={art}><SheetView blob={blob} name={art.name} memo={art.id} /></Authored>
     case 'audio': case 'video': return <Player blob={blob} kind={art.kind} name={art.name} />
     default: return <Card art={art} blob={blob} />
   }

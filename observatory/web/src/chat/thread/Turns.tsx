@@ -236,6 +236,7 @@ const CANVAS_CTX = /^\[canvas #(\d+)(?: "([^"\]]*)")?(?: v(\d+))?\]\s*/
 const LONG = 560
 
 function Mine({ m, to, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; onEdit: (m: Msg) => void; onOpenFile: (r: OpenRequest) => void; onOpenAsk?: (a: ParsedAsk) => void }) {
+  const team = m.lead && to.includes(m.lead) ? [m.lead, ...to.filter((a) => a !== m.lead)] : to   // the lead first
   const [more, setMore] = useState(false)
   // a project chat's first message: the project's pinned files ride inside its hidden context block for the agents;
   // the owner didn't attach them, so they are not chips here (the media drawer still lists them) (iteration 11)
@@ -255,9 +256,26 @@ function Mine({ m, to, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; 
   }, [m.body, !!ask, !!ch, !!ctx]) // eslint-disable-line react-hooks/exhaustive-deps
   const long = text.length > LONG || text.split('\n').length > 9
   return (
-    <div className="flex flex-col items-end gap-1 group mt-6 first:mt-0" data-turn>
+    <div className="flex flex-col items-end gap-1 group mt-4 first:mt-0" data-turn>
       {ctx && <span className="text-[11px] text-ink-mute border border-line rounded-full px-2 py-[1px] mb-0.5">on canvas #{ctx[1]}{ctx[2] ? ` · ${ctx[2]}` : ''}{ctx[3] ? ` · v${ctx[3]}` : ''}</span>}
-      <div className="ws-mine max-w-[80%] rounded-[14px] px-4 py-2.5 text-[15px] leading-[1.55] text-ink whitespace-pre-wrap break-words">
+      {/* the meta sits BESIDE the bubble (owner 11-13: expert prompts, dense thread): who it went to, then when; on a
+          phone it drops below */}
+      <div className="flex items-start justify-end gap-3 w-full max-sm:flex-col-reverse max-sm:items-end max-sm:gap-1">
+      <div className="ws-mine-meta flex flex-col items-end gap-1 pt-1.5 text-[11px] text-ink-mute shrink-0 max-w-[30%] max-sm:max-w-none max-sm:flex-row max-sm:items-center max-sm:pt-0">
+        {team.length > 0 && <span className="flex flex-wrap justify-end items-center gap-1" title={team.length > 1 ? `a team: ${team[0]} leads and replies` : undefined}>
+          {team.map((a, i) => <span key={a} className={`inline-flex items-center gap-1 rounded-full border border-line px-1.5 py-[1px] ${i === 0 && team.length > 1 ? 'ws-lead' : ''}`}>
+            <AgentFace name={a} size={13} />{displayName(a)}{i === 0 && team.length > 1 && <span className="text-[10px] opacity-75">leads</span>}
+          </span>)}
+        </span>}
+        <span className="flex items-center gap-2">
+          <span className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 flex items-center gap-2">
+            {!ch && <TurnActions m={m} text={text} inline />}
+            <button onClick={() => onEdit(m)} className="ws-editbtn hover:text-ink" title="Send again, edited (↑ in an empty composer)">Edit</button>
+          </span>
+          <span>{fmtTime(m.ts)}</span>
+        </span>
+      </div>
+      <div className="ws-mine max-w-[80%] max-sm:max-w-[92%] rounded-[14px] px-4 py-2.5 text-[15px] leading-[1.55] text-ink whitespace-pre-wrap break-words">
         {ask && <AskChip ask={ask} onOpen={onOpenAsk} />}
         {ch && <ChangesCard ch={ch} />}
         {!ch && <div className={long && !more ? 'max-h-[11.5em] overflow-hidden [mask-image:linear-gradient(#000_70%,transparent)]' : ''}>
@@ -268,11 +286,6 @@ function Mine({ m, to, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to: string[]; 
         {long && <button onClick={() => setMore((x) => !x)} className="mt-1 text-[12px] text-ink-mute hover:text-ink">{more ? 'Show less' : 'Show all'}</button>}
         {files.length > 0 && <div className={`${text || ch ? 'mt-2' : ''} flex flex-wrap gap-1.5`}>{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} msg={m} onOpen={onOpenFile} />)}</div>}
       </div>
-      <div className="flex items-center gap-2 text-[11px] text-ink-mute pr-1">
-        {!ch && <TurnActions m={m} text={text} inline />}
-        <button onClick={() => onEdit(m)} className="ws-editbtn opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-ink" title="Send again, edited (↑ in an empty composer)">Edit</button>
-        {to.length > 0 && <span>to {to.map(displayName).join(', ')}</span>}
-        <span>{fmtTime(m.ts)}</span>
       </div>
     </div>
   )
@@ -283,7 +296,7 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
   const text = stripEmbeds(m.body)
   const flow = useMemo(() => inlineParts(parts(m.body)), [m.body])      // the text with its files in place
   return (
-    <div className={`ws-turn ${cont ? 'mt-3 is-cont' : 'mt-7 first:mt-0'}`} data-turn>
+    <div className={`ws-turn ${cont ? 'mt-2.5 is-cont' : 'mt-5 first:mt-0'}`} data-turn>
       {cont && <TurnActions m={m} text={text} />}
       {!cont && (
         // the actions live IN the header row (iteration 10): they take their own room at its end, so the role

@@ -12,6 +12,7 @@ export interface Outgoing {
   text: string               // what the owner typed (shown)
   body: (agent: string) => Promise<string>   // the wire body for one recipient
   to: string[]               // still to reach
+  team?: string[]            // the whole recipient list, the first named leading (a retry keeps the team)
   failed: string | null      // the error, once a send failed
   files: Uploaded[]          // its attachments (Edit puts them back)
 }

@@ -46,6 +46,7 @@ export interface Msg {
   body: string
   status: string | null
   turn_id?: number | null // the turn that produced this message (peel-open)
+  lead?: string | null    // a message to a TEAM of agents: the one that leads and replies (the first named)
 }
 
 export interface ThreadInfo {

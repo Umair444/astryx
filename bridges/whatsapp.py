@@ -42,7 +42,7 @@ import asyncpg
 from fastapi import FastAPI, Request, Response
 
 from .embed_root import Refused, owner_only, read_checked
-from .common import (HERE, MEDIA_DIR, Outcome, route_target, describe_media,
+from .common import (HERE, MEDIA_DIR, Outcome, route_target, wire_chat, describe_media,
                      env, listen, load_routes,
                      reacted_message, reaction_signal,
                      record_poll, resolve_quoted_body, split_files, split_polls,
@@ -422,13 +422,13 @@ async def hook(request: Request):
                                  or await resolve_quoted_body(pool, rid))
 
     said = text
-    agent, text = await route_target(pool, f"wa:{chat}", text, route["agent"])
 
-    await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text, meta, route=route, said=said)
+    agents = await wire_chat(pool, sender, "whatsapp", route["agent"], f"wa:{chat}", text, meta, route=route, said=said)
 
     if live_steps_ok(route) and trusted:          # S1c: never on a tiered route (its second egress)
-        jobs[agent] = {"chat": chat, "thread": f"wa:{chat}", "opened": now,
-                       "ph_id": None, "latest": "", "sent": "", "busy": False}
+        for agent in agents:                      # a team: each member's live steps show it working
+            jobs[agent] = {"chat": chat, "thread": f"wa:{chat}", "opened": now,
+                           "ph_id": None, "latest": "", "sent": "", "busy": False}
         asyncio.get_event_loop().create_task(typing(chat))
     return {"ok": True}
 

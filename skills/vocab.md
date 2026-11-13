@@ -18,6 +18,7 @@ Canonical definitions for org-specific terms. Check here before writing about or
 | plan_quorum | Channel-server tool: latest verdict per voter on a plan thread + approval count; call before nudging |
 | Skill | A finished, committed, reusable capability landing in `skills/` via RSI |
 | Trigger | A named cron-style appointment delivered by the pulse; agents act on them |
+| Team | A human message tagging two or more agents ("@lending @seed …"): every one receives it, the FIRST named LEADS. The lead owns the answer and sends the ONE reply; helpers work with the lead over the wire on the same thread (start on what is clearly theirs, or ask the lead first) and never reply to the human unless the lead asks. Stamped `{team, lead}` in delivery by every surface |
 | Night-review | The nightly RSI trigger: agents read their own steps and take one growth action |
 | Local.md | The org's law — Umair's control instrument; agents obey it silently, propose diffs via STEWARD |
 | Observatory | The public dashboard (FastAPI + SSE off postgres); a window, not an organ |

@@ -10,7 +10,7 @@ import { embeds, fetchFile } from '../model'
    DEGRADED MODE: while the store is not there (404/5xx on /api/ws/artifacts/open), an artifact is the plain file read
    through /api/chat/file, with no versions; `store: false` tells the panel to hide what needs history. */
 
-export type Kind = 'text' | 'table' | 'code' | 'image' | 'pdf' | 'docx' | 'sheet' | 'audio' | 'video' | 'binary'
+export type Kind = 'text' | 'table' | 'code' | 'image' | 'pdf' | 'docx' | 'sheet' | 'slides' | 'office' | 'audio' | 'video' | 'binary'
 
 /* source/msg/msg_ts: the version's PROVENANCE (iteration 7), the [[file:]] and the message that carried its bytes (null
    for an owner edit, or a version stored before provenance was recorded) */
@@ -45,6 +45,8 @@ const EXT: Record<string, Kind> = {
   html: 'code', css: 'code', toml: 'code',
   png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image', avif: 'image',
   pdf: 'pdf', docx: 'docx', xlsx: 'sheet',
+  // every other Office file reads as the PDF it is, authored (the server's LibreOffice: core/office.py, /api/chat/preview)
+  pptx: 'slides', ppt: 'slides', odp: 'slides', doc: 'office', odt: 'office', rtf: 'office', xls: 'office', ods: 'office',
   mp3: 'audio', m4a: 'audio', ogg: 'audio', wav: 'audio', flac: 'audio',
   mp4: 'video', webm: 'video', mov: 'video',
 }

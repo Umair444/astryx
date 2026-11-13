@@ -148,13 +148,21 @@ async def upload(request: Request, name: str = "file"):
         return JSONResponse({"error": "the file is empty"}, status_code=400)
     if len(data) > MAX_UPLOAD:
         return JSONResponse({"error": "the file is over 20 MB"}, status_code=413)
+    # EVERY kind is accepted (owner 11-13: "every kind of file should be acceptable from chat"): a sniffed passive type
+    # keeps its type; anything else (docx, xlsx, zip, csv-as-binary…) is stored opaque and serve_untrusted only ever
+    # hands it out as an octet-stream ATTACHMENT under the sandbox CSP, never interpreted on the owner's origin. Its
+    # extension comes from the display name only when it is plain ([a-z0-9]{1,8}), so an agent can see what it is;
+    # the stored name stays server-minted.
     kind = sniff(data[:4096])
-    if not kind:
-        return JSONResponse({"error": "this kind of file isn't accepted here (images, PDF, text, audio and video are)"},
-                            status_code=415)
-    dest = MEDIA / "upload" / f"{uuid.uuid4().hex}{EXT[kind]}"
+    ext = EXT.get(kind) if kind else None
+    if not ext:                                  # unknown bytes never wear an extension that claims a sniffed or
+        m = re.fullmatch(r".*\.([A-Za-z0-9]{1,8})", safe_name(name) or "")     # rendered type (a script "photo.png")
+        ext = "." + m.group(1).lower() if m else ".bin"
+        if ext in set(EXT.values()) | {".svg", ".html", ".htm", ".xhtml", ".xml", ".js", ".mjs"}:
+            ext = ".bin"
+    dest = MEDIA / "upload" / f"{uuid.uuid4().hex}{ext}"
     atomic_write(dest, data, mode=0o640)
-    return {"path": str(dest), "name": safe_name(name), "size": len(data), "type": kind}
+    return {"path": str(dest), "name": safe_name(name), "size": len(data), "type": kind or "application/octet-stream"}
 
 
 @router.get("/api/chat/file")
@@ -167,6 +175,25 @@ async def file(request: Request, path: str = ""):
     if p is None:
         return Response(status_code=404)
     return serve_untrusted(p, inline=True, svg=True)      # an .svg that IS one: image/svg+xml under SVG_CSP
+
+
+@router.get("/api/chat/preview")
+async def preview(request: Request, path: str = ""):
+    """An Office document (pptx, ppt, docx, doc, xlsx, xls, odt, odp, ods, rtf) as the PDF it reads as, authored:
+    converted once by the converter canvas uses (astryx.core.office, LibreOffice headless, cached by content hash),
+    served by serve_untrusted, drawn by the panel's pdf.js. The same gate as /api/chat/file: a ?key= never
+    authenticates it, and a member reaches only a file some message attached (main.member_file)."""
+    if "key" in request.query_params:
+        return Response(status_code=403)
+    p = readable(path)
+    if p is None:
+        return Response(status_code=404)
+    from astryx.core import office
+    try:
+        out = await office.to_pdf(p, MEDIA / ".preview")
+    except office.Unavailable as e:
+        return JSONResponse({"error": e.why}, status_code=e.status)
+    return serve_untrusted(out, inline=True, filename=f"{p.stem}.pdf")
 
 
 # ----------------------------------------------------------------------------------------------------- projects

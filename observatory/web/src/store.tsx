@@ -66,7 +66,7 @@ interface Store {
   who: WhoAmI // owner unlocks the composer, vega gates the concierge
   whoChecked: boolean // false until the first /whoami answer — gates the lock panels
   recheckWho: () => Promise<WhoAmI>
-  send: (to: string, body: string, thread?: string) => Promise<Msg>
+  send: (to: string, body: string, thread?: string, team?: string[]) => Promise<Msg>
   refreshGoals: () => void
 }
 
@@ -102,9 +102,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [recheckWho])
 
   // owner composer — optimistic append; SSE delivers the same row, dedupe by id
-  const send = useCallback(async (to: string, body: string, thread?: string) => {
+  // team: the whole recipient list when several agents are tagged (the first named leads): the server stamps each row
+  const send = useCallback(async (to: string, body: string, thread?: string, team?: string[]) => {
     const t0 = Date.now()
-    const m = await apiPost<Msg>('/messages', { to, body, thread: thread ?? null })
+    const m = await apiPost<Msg>('/messages', { to, body, thread: thread ?? null, ...(team && team.length > 1 ? { team } : {}) })
     noteServerTime(parseTs(m.ts), 0, t0, Date.now())   // the row's stamp: the server's clock to the microsecond (api.ts)
     setMessages((cur) => capped(mergeMsgs(cur, [m])))
     return m

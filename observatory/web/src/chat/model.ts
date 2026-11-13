@@ -41,10 +41,12 @@ export function participants(rows: Msg[], roster: string[]): string[] {
 
 /* the body every recipient gets: alone, the text as typed; with others, a first line naming the team, so each agent
    knows who else hears this thread and can answer them on it */
-export function bodyFor(text: string, to: string[], me: string): string {
-  if (to.length < 2) return text
-  return `[chat with ${to.filter((n) => n !== me).map((n) => '@' + n).join(' ')} — everyone here reads this thread; reply on it]\n${text}`
-}
+/* a message to several agents is a TEAM: the server stamps each row {team, lead} and every agent reads its own lead/
+   helper line (channel/team.mjs), so the body stays the human's words. The old "[chat with …]" prefix is still
+   stripped on display for rows written before (stripEmbeds). */
+export function bodyFor(text: string, _to: string[], _me: string): string { return text }
+/* the order rows are written in: helpers first, the lead (first named) LAST, so a bare follow-up goes to the lead */
+export function teamOrder(to: string[]): string[] { return to.length > 1 ? [...to.slice(1), to[0]] : [...to] }
 
 export const FILE_EMBED = /\[\[file:([^\]\n]+)\]\](?: \(([^)\n]{1,120})\))?/g    // an upload adds its display name
 export interface Embed { path: string; label?: string }

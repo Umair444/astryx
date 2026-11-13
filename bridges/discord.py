@@ -37,7 +37,7 @@ import httpx
 from fastapi import FastAPI
 
 from .embed_root import Refused, owner_only, read_checked
-from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_signal, route_target, describe_media, env, listen,
+from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_signal, route_target, wire_chat, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
                      step_line, update_poll_votes, vote_body, vote_changes, wire_insert,
@@ -295,10 +295,10 @@ async def on_message(msg: discord.Message):
         rbody = resolved.content if isinstance(resolved, discord.Message) else ""
         meta["reply_to_body"] = (rbody or "").strip() or await resolve_quoted_body(pool, ref.message_id)
     said = text
-    agent, text = await route_target(pool, f"dc:{cid}", text, route["agent"])
-    await wire_insert(pool, who, "discord", agent, f"dc:{cid}", "chat", text, meta, route=route, said=said)
+    agents = await wire_chat(pool, who, "discord", route["agent"], f"dc:{cid}", text, meta, route=route, said=said)
     if live_steps_ok(route) and trusted:           # S1c: never on a tiered route (its second egress)
-        jobs[agent] = {"chat": cid, "ph": None, "sent": ""}
+        for agent in agents:                       # a team: each member's live steps
+            jobs[agent] = {"chat": cid, "ph": None, "sent": ""}
         try:
             await msg.channel.typing()
         except Exception:

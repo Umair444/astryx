@@ -6,7 +6,8 @@ no OpenAI key is set, so nothing leaves the host.
     a PUBLIC pair.
   - D1: /api/chat/file is 403 with ONLY ?key= (and with ?key= beside the header): a navigation never authenticates it;
     200 with the header.
-  - D3 UPLOAD: the BYTES decide (a script or an svg is 415 whatever its name); an empty body 400, an oversize one 413;
+  - D3 UPLOAD: every kind is accepted (owner 11-13); the BYTES decide the type, and bytes off the allowlist are stored
+    opaque (.bin unless a plain, non-claiming extension) and served only as an attachment; an empty body 400, an oversize one 413;
     the stored name is server-minted (uuid + the sniffed extension) under media/upload/, the client's name only
     display metadata; two uploads of one name make two files; the answer names nothing else.
   - G3 SERVING: every answer of the file route carries nosniff and the CSP sandbox; an allowlisted type is served as
@@ -26,6 +27,7 @@ no OpenAI key is set, so nothing leaves the host.
 CHAT_SRC names another chat.py, SERVE_SRC another serve.py (devtools/mutation_probe.py: tests/mutants_chat_api.py,
 tests/mutants_serve_untrusted.py)."""
 import importlib.util
+import time
 import os
 import re
 import sys
@@ -141,10 +143,22 @@ def main(tmp: Path, url: str):
     arm("G1 every /api/chat (method, path), HEAD and OPTIONS included, is 403 to a visitor", not leaks, leaks)
 
     # ── D3 upload ────────────────────────────────────────────────────────────────────────────────────────────
+    # every kind is accepted (owner 11-13); bytes off the allowlist are stored OPAQUE: they never wear an extension
+    # that claims a sniffed or rendered type, and serve_untrusted hands them out only as an attachment
     for label, body, name in (("a script named .png", b"#!/bin/sh\x00\x01\x02rm", "photo.png"),
                               ("an svg", b"\x00<svg onload=alert(1)>", "logo.svg")):
         r = cl.post(f"/api/chat/upload?name={name}", content=body, headers=O)
-        arm(f"D3 the bytes decide: {label} is 415", r.status_code == 415, r.status_code)
+        jj = r.json() if r.status_code == 200 else {}
+        arm(f"D3 the bytes decide: {label} is stored opaque (.bin, octet-stream)",
+            r.status_code == 200 and jj.get("path", "").endswith(".bin") and jj.get("type") == "application/octet-stream", (r.status_code, jj))
+        f = cl.get("/api/chat/file", params={"path": jj.get("path", "")}, headers=O)
+        arm(f"D3 {label} is served only as an attachment",
+            f.status_code == 200 and f.headers.get("content-type", "").startswith("application/octet-stream")
+            and "attachment" in f.headers.get("content-disposition", ""), (f.status_code, dict(f.headers)))
+    r = cl.post("/api/chat/upload?name=Q3 report.docx", content=b"PK\x03\x04" + b"\x00" * 64, headers=O)
+    jd = r.json() if r.status_code == 200 else {}
+    arm("D3 any other kind (a .docx) is accepted, keeping its plain extension",
+        r.status_code == 200 and jd.get("path", "").endswith(".docx") and jd.get("type") == "application/octet-stream", (r.status_code, jd))
     arm("D3 an empty body is 400", cl.post("/api/chat/upload?name=a.png", content=b"", headers=O).status_code == 400)
     arm("D3 a body over the cap is 413",
         cl.post("/api/chat/upload?name=a.txt", content=b"x" * (chat.MAX_UPLOAD + 1), headers=O).status_code == 413)
@@ -161,6 +175,38 @@ def main(tmp: Path, url: str):
     tr = cl.post("/api/chat/upload?name=notes.md", content="# a note\nplain".encode(), headers=O)
     t = tr.json() if tr.status_code == 200 else {"status": tr.status_code}
     arm("D3 text is accepted and stored as .txt", t.get("path", "").endswith(".txt") and t.get("type", "").startswith("text/plain"), t)
+
+    # ── P1 Office previews (owner 11-13: every Office file viewable in chat, canvas's standard) ───────────────────
+    import shutil as _sh
+    import subprocess as _sp
+    import tempfile as _tf
+    if _sh.which("soffice") or _sh.which("libreoffice"):
+        with _tf.TemporaryDirectory() as td:
+            src = Path(td) / "deck.txt"
+            src.write_text("Quarterly review\nSlide text\n")
+            made = {}
+            for ext in ("docx", "pptx"):
+                _sp.run([_sh.which("soffice") or _sh.which("libreoffice"), f"-env:UserInstallation=file://{td}/p",
+                         "--headless", "--convert-to", ext if ext == "docx" else "pptx:Impress MS PowerPoint 2007 XML",
+                         "--outdir", td, str(src)], capture_output=True, timeout=180)
+                f = Path(td) / f"deck.{ext}"
+                if f.is_file():
+                    up = cl.post(f"/api/chat/upload?name=Q3 deck.{ext}", content=f.read_bytes(), headers=O)
+                    made[ext] = up.json().get("path", "") if up.status_code == 200 else ""
+            for ext, path in made.items():
+                pv = cl.get("/api/chat/preview", params={"path": path}, headers=O)
+                arm(f"P1 a .{ext} previews as a PDF (as authored)", pv.status_code == 200 and pv.content[:5] == b"%PDF-"
+                    and pv.headers.get("content-type", "").startswith("application/pdf"), (pv.status_code, pv.content[:40]))
+                t0 = time.time()
+                again = cl.get("/api/chat/preview", params={"path": path}, headers=O)
+                arm(f"P1 a .{ext} preview is cached (converted once)", again.status_code == 200 and time.time() - t0 < 3, time.time() - t0)
+            arm("P1 both a docx and a pptx were made to preview", set(made) == {"docx", "pptx"}, made)
+            arm("P1 a ?key= never authenticates the preview",
+                cl.get("/api/chat/preview", params={"path": made.get("docx", ""), "key": O["x-obs-key"]}).status_code == 403)
+        arm("P1 a non-Office file has no preview (415)",
+            cl.get("/api/chat/preview", params={"path": str(p)}, headers=O).status_code == 415)
+    else:
+        print("  SKIP  P1 office previews: LibreOffice isn't installed here")
 
     # ── D1 + G3 the file read ────────────────────────────────────────────────────────────────────────────────
     ok = cl.get("/api/chat/file", params={"path": str(p)}, headers=O)
