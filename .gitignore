@@ -1,5 +1,5 @@
 venv/
-channel/node_modules/
+channel/node_modules
 homes/
 .env
 local.md
@@ -16,9 +16,9 @@ agents/seed/avatar.*
 !agents/*.example/**
 agents/.git/
 /memory/
-observatory/web/node_modules/
+observatory/web/node_modules
 observatory/web/dist/
-canvas/web/node_modules/
+canvas/web/node_modules
 canvas/web/dist/
 
 # geoloc — niche owner-personal location intake (Tasker→endpoint); removed from the
