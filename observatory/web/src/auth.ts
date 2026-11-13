@@ -12,7 +12,9 @@
 export const LOGIN = (import.meta as unknown as { env: Record<string, string | undefined> }).env.VITE_AUTH_UI === '1'
 
 export interface AuthOrg { org: string; name: string; role: string }
-export interface Me { user: string; orgs: AuthOrg[] }
+/* an org this account asked for (public sign-up, cog-rebuild Phase 3): pending until a cog admin decides it */
+export interface OrgRequest { id: number; key: string; name: string; state: 'pending' | 'approved' | 'rejected'; created: string | null; note: string | null }
+export interface Me { user: string; orgs: AuthOrg[]; requests: OrgRequest[]; cogAdmin: boolean }
 
 /* /auth/me: the account, or null when signed out (401). A front without the endpoint (404) or one that doesn't answer
    is `unavailable`: the app then runs exactly as it does without sign-in, never behind a form that can't work. */
@@ -27,7 +29,10 @@ export async function readMe(): Promise<MeState> {
   if (!j || typeof j.user !== 'string') return { state: 'unavailable' }
   const orgs = (Array.isArray(j.orgs) ? j.orgs : []).filter((o: AuthOrg) =>
     o && typeof o.org === 'string' && typeof o.name === 'string' && typeof o.role === 'string')
-  return { state: 'in', me: { user: j.user, orgs } }
+  const requests = (Array.isArray(j.requests) ? j.requests : []).filter((x: OrgRequest) =>
+    x && typeof x.id === 'number' && typeof x.key === 'string' && typeof x.name === 'string' &&
+    ['pending', 'approved', 'rejected'].includes(x.state))
+  return { state: 'in', me: { user: j.user, orgs, requests, cogAdmin: j.cog_admin === true } }
 }
 
 /* F8 and I9 (plan-11859): a failed sign-in must not say WHICH part failed, or the form tells an outsider who is a
@@ -168,3 +173,55 @@ export const ACCEPT_WORDS: Record<Exclude<Accept, 'ok'> | 'empty', string> = {
   unreachable: WORDS.unreachable,
   empty: 'Enter your email and a password.',
 }
+
+/* PUBLIC SIGN-UP (cog-rebuild Phase 3; front.py "PUBLIC SIGN-UP"). Offered only when the cog says so (/api/cog's
+   `signup`, the front's ASTRYX_COG_SIGNUP flag, default off). A sign-up makes an account and a PENDING request for an
+   org of your own: nothing runs until a cog admin approves it. The key is the org's address (/o/<key>), previewed live
+   from the name with the server's own rule (orgs.NAME: lowercase letters, digits and dashes, at most 63). */
+export function orgKey(name: string): string {
+  return name.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+/, '').slice(0, 63).replace(/-+$/, '')
+}
+export const ORG_KEY = /^[a-z0-9][a-z0-9-]{0,62}$/
+
+export type SignUp = 'ok' | 'mismatch' | 'taken' | 'waiting' | 'invalid' | 'slow-down' | 'origin' | 'closed' | 'unreachable'
+export async function signUp(email: string, password: string, orgName: string, key: string): Promise<{ out: SignUp; field?: string }> {
+  let r: Response
+  try {
+    r = await fetch('/auth/signup', {
+      method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password, org_name: orgName, org_key: key }),
+    })
+  } catch { return { out: 'unreachable' } }
+  if (r.ok) return { out: 'ok' }
+  if (r.status === 401) return { out: 'mismatch' }          // an existing account, not its password: the body is never read (F8)
+  const j = r.status === 400 || r.status === 409 ? await r.json().catch(() => ({})) : {}
+  const field = typeof j.field === 'string' ? j.field : undefined
+  if (r.status === 409) return { out: field === 'org_key' ? 'taken' : 'waiting', field }
+  return { out: r.status === 400 ? 'invalid' : r.status === 429 ? 'slow-down' : r.status === 403 ? 'origin'
+    : r.status === 404 ? 'closed' : 'unreachable', field }
+}
+export const SIGNUP_WORDS: Record<Exclude<SignUp, 'ok'> | 'empty' | 'short' | 'key', string> = {
+  mismatch: 'That email already has an account, and that is not its password. Use its password to ask for an org.',
+  taken: 'That org address is taken. Change the name or the address.',
+  waiting: 'This account already has an org waiting for approval.',
+  invalid: 'Check your email, a password of at least 12 characters, and the org name.',
+  'slow-down': 'Too many sign-ups from here. Try again later.',
+  origin: WORDS.origin,
+  closed: "This cog isn't taking new orgs right now.",
+  unreachable: "Sign-up isn't answering. Check your connection, then try again.",
+  empty: 'Enter your email, a password and a name for your org.',
+  short: 'Use at least 12 characters for your password.',
+  key: 'The address is lowercase letters, digits and dashes.',
+}
+
+/* THE COG ADMIN's queue (cog_grants; never an org role): every org request, approve with a token budget, or reject */
+export interface CogRequest {
+  id: number; key: string; name: string; state: 'pending' | 'approved' | 'rejected'; email: string; created: string
+  budget_tokens: number | null; decided_by: string | null; decided_at: string | null; note: string | null
+  provision: 'deferred' | 'done' | 'failed' | null; provision_note: string | null
+}
+export const cogRequests = () => authCall<{ signup: boolean; requests: CogRequest[] }>('/auth/cog/requests')
+export const cogApprove = (id: number, budget: number) =>
+  authCall<{ state: string; provision: string | null }>(`/auth/cog/requests/${id}/approve`, { budget_tokens: budget })
+export const cogReject = (id: number, note: string) => authCall<{ state: string }>(`/auth/cog/requests/${id}/reject`, { note })

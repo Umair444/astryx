@@ -3,9 +3,10 @@ import type { ReactNode } from 'react'
 import { Menu, Modal, Select } from '@mantine/core'
 import { agentColor, fmtAgo } from '../api'
 import {
-  adminCancelInvite, adminInvite, adminReset, adminSignOutEverywhere, adminUsers, adminWords, roleWords, signInHref,
+  adminCancelInvite, adminInvite, adminReset, adminSignOutEverywhere, adminUsers, adminWords, cogApprove, cogReject,
+  cogRequests, roleWords, signInHref,
 } from '../auth'
-import type { AdminInvite, AdminUser, AdminUsers } from '../auth'
+import type { AdminInvite, AdminUser, AdminUsers, CogRequest } from '../auth'
 import { safeBase } from '../cog'
 import { canAdmin, hereOrg, useMe } from '../me'
 import { Action, Empty, Panel, SectionHead, ViewHeader } from '../ui/kit'
@@ -246,6 +247,8 @@ export default function AdminView() {
           {' '}<b className="text-ink-dim">Member</b> {ROLE_WHAT.member.toLowerCase()}. <b className="text-ink-dim">Viewer</b> {ROLE_WHAT.viewer.toLowerCase()}.
           {data?.tree && <> A role on a group or agent applies to everything under it.</>}
         </p>
+
+        {me.cogAdmin && <CogSection />}
       </div>
 
       <InviteModal open={inviting} onClose={() => setInviting(false)} roles={offered} nodes={data?.tree ? nodes : []}
@@ -421,5 +424,98 @@ function LinkModal({ shown, onClose }: { shown: Shown | null; onClose: () => voi
         </div>
       ) : <p className="text-[14px] text-ink-dim">{shown?.note}</p>}
     </Modal>
+  )
+}
+
+/* THE COG (cog-rebuild Phase 3): for a COG ADMIN only (cog_grants, never an org role). Every request for a new org
+   from public sign-up: who asked, the name and address they want, when. Approve sets the org's token budget (no
+   agent of a non-primary org runs without one) and asks the provisioner; reject frees the address, with an optional
+   note the person sees. A request is decided once; the list shows what became of each. */
+const COG_WORDS: Record<number, string> = {
+  400: 'The budget is a whole number of tokens above zero, and a note is at most 500 characters.',
+  401: 'Your session has ended. Sign in again.',
+  403: 'Only a cog admin decides new orgs.',
+  404: 'That request no longer exists.',
+  409: 'That request was already decided, or an org with that address now exists.',
+}
+const PROVISION: Record<string, string> = {
+  deferred: 'approved; setup waits on the org provisioner',
+  done: 'approved and set up',
+  failed: 'approved; setup failed',
+}
+
+function CogSection() {
+  const [rows, setRows] = useState<CogRequest[] | null>(null)
+  const [open, setOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<number | null>(null)
+  const [budget, setBudget] = useState<Record<number, string>>({})
+  const [note, setNote] = useState<Record<number, string>>({})
+  const load = useCallback(async () => {
+    const r = await cogRequests()
+    if (r.ok) { setRows(r.data.requests); setOpen(r.data.signup); setError(null) } else setError(COG_WORDS[r.status] ?? r.why)
+  }, [])
+  useEffect(() => { load() }, [load])
+  const pending = useMemo(() => (rows ?? []).filter((r) => r.state === 'pending'), [rows])
+  const decided = useMemo(() => (rows ?? []).filter((r) => r.state !== 'pending').slice(0, 20), [rows])
+
+  async function decide(r: CogRequest, approve: boolean) {
+    let res
+    if (approve) {
+      const n = Number((budget[r.id] ?? '').replace(/[,_\s]/g, ''))
+      if (!Number.isInteger(n) || n <= 0) { setError(COG_WORDS[400]); return }
+      setBusy(r.id); res = await cogApprove(r.id, n)
+    } else { setBusy(r.id); res = await cogReject(r.id, note[r.id] ?? '') }
+    setBusy(null)
+    if (!res.ok) { setError(COG_WORDS[res.status] ?? res.why); return }
+    await load()
+  }
+
+  return (
+    <section className="mt-10" aria-labelledby="cog-head">
+      <div id="cog-head"><SectionHead title="Cog · new org requests" count={rows ? pending.length : undefined}
+        right={<span className="text-[11.5px] text-ink-mute">{open ? 'Sign-up is open' : 'Sign-up is closed'}</span>} /></div>
+      {error && <p role="alert" className="mb-3 text-[13px] text-bad">{error}</p>}
+      <Panel className="overflow-hidden">
+        {rows === null && !error && <div className="px-4 py-6 text-[13px] text-ink-mute">Reading the requests…</div>}
+        {rows !== null && pending.length === 0 && <div className="px-4 py-6 text-[13px] text-ink-mute">No org is waiting.</div>}
+        <ul>
+          {pending.map((r) => (
+            <li key={r.id} className="px-4 py-3.5 border-b border-line last:border-b-0">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="text-[14px] text-ink">{r.name}</span>
+                <span className="font-mono text-[12px] text-ink-mute">/o/{r.key}</span>
+                <span className="text-[12px] text-ink-mute">by {r.email} · {fmtAgo(r.created)} ago</span>
+              </div>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <label className="sr-only" htmlFor={`cog-budget-${r.id}`}>Token budget for {r.name}</label>
+                <input id={`cog-budget-${r.id}`} inputMode="numeric" placeholder="Token budget, e.g. 2000000"
+                  value={budget[r.id] ?? ''} onChange={(e) => { const v = e.currentTarget.value; setBudget((b) => ({ ...b, [r.id]: v })) }}
+                  className="h-9 w-56 rounded-lg border border-line bg-deck-3/40 px-3 text-[13px] text-ink placeholder:text-ink-mute focus-visible:ring-2 focus-visible:ring-cyan/50" />
+                <Action disabled={busy === r.id} onClick={() => decide(r, true)}>Approve</Action>
+                <label className="sr-only" htmlFor={`cog-note-${r.id}`}>Note if rejected</label>
+                <input id={`cog-note-${r.id}`} placeholder="Note (optional)" maxLength={500}
+                  value={note[r.id] ?? ''} onChange={(e) => { const v = e.currentTarget.value; setNote((b) => ({ ...b, [r.id]: v })) }}
+                  className="h-9 min-w-0 flex-1 rounded-lg border border-line bg-deck-3/40 px-3 text-[13px] text-ink placeholder:text-ink-mute focus-visible:ring-2 focus-visible:ring-cyan/50" />
+                <button className="px-3 py-2 rounded-xl text-[13px] text-ink-mute hover:text-bad" disabled={busy === r.id}
+                  onClick={() => decide(r, false)}>Reject</button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </Panel>
+      {decided.length > 0 && (
+        <ul className="mt-3 space-y-1">
+          {decided.map((r) => (
+            <li key={r.id} className="text-[12.5px] text-ink-mute">
+              <span className="text-ink-dim">{r.name}</span> <span className="font-mono">/o/{r.key}</span> ·{' '}
+              {r.state === 'approved' ? <>{PROVISION[r.provision ?? ''] ?? 'approved'} · budget {r.budget_tokens?.toLocaleString()}</>
+                : <>rejected{r.note ? `: ${r.note}` : ''}</>}
+              {r.decided_by && <> · by {r.decided_by}</>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }

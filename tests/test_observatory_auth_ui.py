@@ -187,7 +187,8 @@ def main():
         M = res["me"]
         check("401 is signed out", M["out"] == {"state": "out"}, M["out"])
         check("200 is signed in, malformed orgs dropped",
-              M["in"] == {"state": "in", "me": {"user": "u@x.test", "orgs": [{"org": "astryx", "name": "umairfiaz.com", "role": "owner"}]}}, M["in"])
+              M["in"] == {"state": "in", "me": {"user": "u@x.test", "orgs": [{"org": "astryx", "name": "umairfiaz.com", "role": "owner"}],
+                                                  "requests": [], "cogAdmin": False}}, M["in"])   # no requests field: none (Phase 3)
         check("404, a network failure and a bodiless 200 are unavailable",
               all(M[k] == {"state": "unavailable"} for k in ("missing", "net", "junk")), M)
 

@@ -3,8 +3,8 @@ import type { FormEvent, ReactNode } from 'react'
 import '@fontsource/instrument-serif/400.css'
 import '@fontsource/instrument-serif/400-italic.css'
 import { Menu } from '@mantine/core'
-import { ACCEPT_WORDS, WORDS, acceptLink, linkToken, nextHash, readLink, readMe, roleWords, signIn, signInHref, signOut } from '../auth'
-import type { Accept, AuthOrg, LinkInfo, Me, MeState } from '../auth'
+import { ACCEPT_WORDS, ORG_KEY, SIGNUP_WORDS, WORDS, acceptLink, linkToken, nextHash, orgKey, readLink, readMe, roleWords, signIn, signInHref, signOut, signUp } from '../auth'
+import type { Accept, AuthOrg, LinkInfo, Me, MeState, OrgRequest } from '../auth'
 import { agentColor, saveObsKey } from '../api'
 import { chooseOrg, chosenOrg, safeBase, setOrg, useCog } from '../cog'
 import type { Cog } from '../cog'
@@ -64,7 +64,9 @@ type Phase = 'idle' | 'pending' | 'done'
                pick; several: a radio group of cards, searchable past six), then email and password, then the button.
    The button names what happens ("Sign in"), says it while it happens ("Signing in…") and once it has ("Signed in").
    A failure keeps what was typed but the password, and puts the cursor where the fix starts. The owner's key stays a
-   quiet second door under the form (the same saveObsKey the header's key badge uses). No sign-up yet (a later phase). */
+   quiet second door under the form (the same saveObsKey the header's key badge uses). PUBLIC SIGN-UP (cog-rebuild
+   Phase 3): "Create your org" appears only when the cog takes sign-ups (/api/cog's `signup`, the front's flag, default
+   off) and swaps the form for CreateOrg in place (#/sign-up opens it directly); off, the screen is exactly as before. */
 export function SignInScreen() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -72,6 +74,7 @@ export function SignInScreen() {
   const [phase, setPhase] = useState<Phase>('idle')
   const [error, setError] = useState<string | null>(null)
   const [keyDoor, setKeyDoor] = useState(false)
+  const [creating, setCreating] = useState(() => /^#\/sign-up\b/.test(location.hash))
   const emailRef = useRef<HTMLInputElement>(null)
   const pwRef = useRef<HTMLInputElement>(null)
   useEffect(() => { emailRef.current?.focus() }, [])
@@ -114,6 +117,15 @@ export function SignInScreen() {
 
   const picked = rooms?.orgs.find((o) => o.org === org) ?? null
   const sky = picked ? pulse[picked.org] : undefined
+  const canSignUp = !!rooms?.signup
+  if (creating && canSignUp) return (
+    <main className="auth-room bg-deck text-ink">
+      <Sky name={null} pulse={undefined} />
+      <section className="auth-door" aria-labelledby="auth-title">
+        <CreateOrg taken={rooms!.orgs.map((o) => o.org)} onBack={() => { setCreating(false); location.hash = '#/sign-in' }} />
+      </section>
+    </main>
+  )
 
   return (
     <main className="auth-room bg-deck text-ink">
@@ -160,11 +172,108 @@ export function SignInScreen() {
           </>)}
 
           <p className="mt-10 pt-5 border-t border-line text-[13px] leading-relaxed text-ink-mute">
+            {canSignUp && <>Want an org of your own?{' '}
+              <button type="button" className="auth-link" onClick={() => { setCreating(true); setError(null) }}>Create your org</button>
+              <br /></>}
             No account yet? Your org's owner adds you.
           </p>
         </div>
       </section>
     </main>
+  )
+}
+
+/* CREATE YOUR ORG: an account and a request for an org of your own, in one form. The address (/o/<key>) is previewed
+   live from the name and can be edited; nothing runs until a cog admin approves it, and the screen says so before you
+   send. An existing account uses its own password (the request joins it). Success signs you in and lands on the
+   pending screen (your orgs: none yet, the request waiting). */
+function CreateOrg({ taken, onBack }: { taken: string[]; onBack: () => void }) {
+  const [name, setName] = useState('')
+  const [key, setKey] = useState('')
+  const [keyEdited, setKeyEdited] = useState(false)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [reveal, setReveal] = useState(false)
+  const [phase, setPhase] = useState<Phase>('idle')
+  const [error, setError] = useState<string | null>(null)
+  const nameRef = useRef<HTMLInputElement>(null)
+  const keyRef = useRef<HTMLInputElement>(null)
+  const emailRef = useRef<HTMLInputElement>(null)
+  const pwRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { nameRef.current?.focus() }, [])
+  const k = keyEdited ? key : orgKey(name)
+  const keyBad = k !== '' && !ORG_KEY.test(k)
+  const keyTaken = taken.includes(k)
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    if (phase !== 'idle') return
+    if (!name.trim() || !k || !email.trim() || !password) {
+      setError(SIGNUP_WORDS.empty)
+      ;(!name.trim() ? nameRef : !k ? keyRef : !email.trim() ? emailRef : pwRef).current?.focus()
+      return
+    }
+    if (keyBad || keyTaken) { setError(keyBad ? SIGNUP_WORDS.key : SIGNUP_WORDS.taken); keyRef.current?.focus(); return }
+    if (password.length < 12) { setError(SIGNUP_WORDS.short); pwRef.current?.focus(); return }
+    setPhase('pending'); setError(null)
+    const { out, field } = await signUp(email.trim(), password, name.trim(), k)
+    if (out !== 'ok') {
+      setPhase('idle'); setPassword(''); setError(SIGNUP_WORDS[out])
+      ;(out === 'taken' || field === 'org_key' ? keyRef : field === 'org_name' ? nameRef
+        : out === 'mismatch' || out === 'waiting' || field === 'email' ? emailRef : pwRef).current?.focus()
+      return
+    }
+    setPhase('done')
+    location.hash = '#/orgs'
+    location.reload()
+  }
+
+  return (
+    <div className="w-full max-w-[25rem]">
+      <h1 id="auth-title" className="auth-display">Create your org</h1>
+      <p className="mt-3 text-[15px] leading-relaxed text-ink-dim">
+        Your own org, with its own agents. A cog admin approves new orgs before anything runs; you'll see it waiting
+        when you sign in.
+      </p>
+      <form noValidate onSubmit={submit} className="mt-7 space-y-5">
+        <Field id="signup-name" label="Org name" type="text" auto="organization" value={name} inputRef={nameRef}
+          onChange={(v) => { setName(v); setError(null) }} invalid={!!error && !name.trim()} />
+        <div>
+          <label htmlFor="signup-key" className="block text-[13px] font-medium text-ink-dim mb-2">Address</label>
+          <div className="auth-well">
+            <input id="signup-key" ref={keyRef} type="text" autoComplete="off" value={k} spellCheck={false}
+              autoCapitalize="none" aria-invalid={keyBad || keyTaken || undefined} aria-describedby="signup-key-hint"
+              onChange={(e) => { setKey(e.currentTarget.value.toLowerCase()); setKeyEdited(true); setError(null) }}
+              className="auth-field auth-field-sm font-mono" />
+          </div>
+          <p id="signup-key-hint" className="mt-2 text-[13px] text-ink-mute" aria-live="polite">
+            {keyTaken ? SIGNUP_WORDS.taken : keyBad ? SIGNUP_WORDS.key
+              : k ? <>Your org will live at <span className="font-mono text-ink">/o/{k}</span></> : 'Lowercase letters, digits and dashes.'}
+          </p>
+        </div>
+        <Field id="signup-email" label="Email" type="email" auto="username" value={email} inputRef={emailRef}
+          onChange={(v) => { setEmail(v); setError(null) }} invalid={!!error && !email.trim()} />
+        <Field id="signup-password" label="Password" type={reveal ? 'text' : 'password'} auto="new-password"
+          value={password} inputRef={pwRef} onChange={(v) => { setPassword(v); setError(null) }} invalid={!!error && !password}
+          trailing={
+            <button type="button" className="auth-reveal" aria-pressed={reveal} aria-controls="signup-password"
+              aria-label={reveal ? 'Hide password' : 'Show password'}
+              onClick={() => { setReveal((r) => !r); pwRef.current?.focus() }}>
+              <EyeIcon open={!reveal} />
+            </button>
+          } />
+        <p className="-mt-2 text-[13px] text-ink-mute">At least 12 characters. Already have an account? Use its password.</p>
+        <p id="auth-error" role="alert" aria-live="assertive" className="auth-error" data-shown={error ? '' : undefined}>
+          {error && <><ErrIcon />{error}</>}
+        </p>
+        <button type="submit" disabled={phase !== 'idle'} className="auth-primary w-full">
+          {phase === 'pending' ? 'Creating…' : phase === 'done' ? 'Sent for approval' : 'Create your org'}
+        </button>
+      </form>
+      <p className="mt-6 text-[13px]">
+        <button type="button" className="auth-link auth-quiet" onClick={onBack}>I already have an org: sign in</button>
+      </p>
+    </div>
   )
 }
 
@@ -360,7 +469,7 @@ async function afterSignIn(next: string) {
 /* The cog's rooms (registry name, federation name) and its default org, or null on one org. Public (the owner ruled the
    names public, plan-11859 I9). */
 interface Room { org: string; name: string; base: string }
-interface Rooms { orgs: Room[]; door: string | null }
+interface Rooms { orgs: Room[]; door: string | null; signup: boolean }
 async function cogRooms(): Promise<Rooms | null> {
   try {
     const r = await fetch('/api/cog', { credentials: 'same-origin' })
@@ -370,7 +479,7 @@ async function cogRooms(): Promise<Rooms | null> {
     const orgs = j.orgs.filter((o: { org: unknown; name: unknown }) => o && typeof o.org === 'string' && o.org &&
       typeof o.name === 'string').map((o: { org: string; name: string; base: unknown }) =>
       ({ org: o.org, name: o.name, base: safeBase(o.base) ? o.base : '' }))
-    return { orgs, door: typeof j.door === 'string' ? j.door : null }
+    return { orgs, door: typeof j.door === 'string' ? j.door : null, signup: j.signup === true }
   } catch { return null }
 }
 
@@ -427,6 +536,7 @@ function OrgList({ me, cog }: { me: Me; cog: Cog }) {
   const orgs = switchable(me.orgs, cog.cog ? cog.orgs.map((o) => o.org ?? '').filter(Boolean) : null)
   const here = cog.cog ? chosenOrg() : orgs[0]?.org ?? null
   const next = nextHash()
+  if (orgs.length === 0 && me.requests.length > 0) return <Pending me={me} req={me.requests[0]} />
   if (orgs.length === 0) return (
     <Stage title="No orgs yet" lede={<>You're signed in as <span className="text-ink">{me.user}</span>, but not a member of any org here. Ask an org's owner to add you.</>}>
       <SignOutButton />
@@ -453,6 +563,25 @@ function OrgList({ me, cog }: { me: Me; cog: Cog }) {
         })}
       </ul>
       <div className="mt-7 flex justify-center"><SignOutButton quiet /></div>
+    </Stage>
+  )
+}
+
+/* YOUR ORG IS WAITING (public sign-up): signed in with a request and no org yet. It says where the request stands, in
+   words: waiting for a cog admin, approved and being set up, or declined (with the admin's note). Nothing to press but
+   sign out; the page reads /auth/me again on the next visit. */
+function Pending({ me, req }: { me: Me; req: OrgRequest }) {
+  const title = req.state === 'pending' ? 'Your org is waiting for approval' : req.state === 'approved' ? 'Your org is approved'
+    : 'Your org was not approved'
+  const lede = req.state === 'pending'
+    ? <>You asked for <span className="text-ink">{req.name}</span> (<span className="font-mono text-[14px]">/o/{req.key}</span>). A cog admin reviews new orgs before any agent runs; come back after they've looked.</>
+    : req.state === 'approved'
+      ? <><span className="text-ink">{req.name}</span> is approved and being set up. It opens here once it's ready.</>
+      : <><span className="text-ink">{req.name}</span> wasn't approved{req.note ? <>: <span className="text-ink">{req.note}</span></> : '.'}</>
+  return (
+    <Stage title={title} lede={lede}>
+      <p className="mb-6 text-center text-[13px] text-ink-mute">Signed in as <span className="text-ink">{me.user}</span></p>
+      <SignOutButton />
     </Stage>
   )
 }

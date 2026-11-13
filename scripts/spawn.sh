@@ -125,6 +125,14 @@ if [ -z "$RENDER" ] && ! tmux has-session -t "=ax-$AGENT" 2>/dev/null; then
     fi
   done
 fi
+# THE BUDGET GATE (cog-rebuild Phase 3): an org that is not the cog's primary spawns no resident without a token budget
+# (its .env's ASTRYX_ORG_BUDGET_TOKENS, or a cog admin's approval) and a login of its own, never the host owner's
+# ambient one. Before every side effect of a real spawn; one org, or the primary, passes as before. Any answer but
+# "yes" refuses: a gate that crashed is no permission (tests/test_signup.py G-arms).
+if [ -z "$RENDER" ]; then
+  GATE=$("$PY" "$ROOT/src/astryx/core/runtime_env.py" --gate "$AGENT") || {
+    echo "spawn: $AGENT not spawned: its org has no budget to run on (runtime_env said why above)" >&2; exit 1; }
+fi
 SESS="ax-$AGENT"
 HOME_D="$ORGH/homes/$AGENT"
 [ -n "$RENDER" ] && HOME_D="$OUT"
@@ -295,7 +303,11 @@ if [ "$RRC" -eq 3 ]; then
   echo "spawn: $AGENT not spawned: its org's CLI has no launcher here (runtime_env said why above)" >&2
   exit 1
 fi
-[ "$RRC" -eq 0 ] || RENV=""
+if [ "$RRC" -ne 0 ]; then
+  # several orgs: a runtime_env that failed must not quietly leave the agent on the host's ambient login (the owner's)
+  if [ -n "$MULTI" ]; then echo "spawn: $AGENT not spawned: runtime_env failed (rc $RRC), so its login is unknown" >&2; exit 1; fi
+  RENV=""
+fi
 
 # plan-9139 S1d (S0 D4, seed #45086): a TIER member's auto-memory goes to its own dir under tier/, never the shared
 # one, set in THIS template because every spawn rewrites settings.json (so --resume reads it too). The label comes from

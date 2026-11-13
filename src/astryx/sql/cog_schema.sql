@@ -3,8 +3,9 @@
 -- org's own `members` table (schema.sql) is the authority for what you may do there (a2 I1). Idempotent.
 
 -- an account. email is the sign-in name, stored lowercased; pw is an argon2id PHC string (src/astryx/cogauth.py),
--- never a password. There is no public sign-up: a row is written by the host CLI (src/astryx/cogauth.py, D7), or by
--- the front when a person opens an org owner's or admin's one-time invite (`links` below)
+-- never a password. A row is written by the host CLI (src/astryx/cogauth.py, D7), by the front when a person opens an
+-- org owner's or admin's one-time invite (`links` below), or by the front's public sign-up, which exists only while
+-- the cog .env's ASTRYX_COG_SIGNUP is on (default off) and makes an account plus a PENDING `org_requests` row
 CREATE TABLE IF NOT EXISTS users (
   id       bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   email    text NOT NULL UNIQUE CHECK (email = lower(email) AND email <> ''),
@@ -45,3 +46,41 @@ CREATE TABLE IF NOT EXISTS links (
                                      OR (kind = 'reset' AND uid IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS links_org_open ON links (org) WHERE used IS NULL;
+
+-- cog-rebuild Phase 3 (public sign-up, owner 11-13): a person may ask for an org of their OWN. The ask is a ROW here,
+-- never an org: no database, role, HOME, registry entry or agent exists until a COG ADMIN approves it with a token
+-- budget (a self-serve org's agents would otherwise run on, and spend, the host owner's login). The front writes a
+-- `pending` row at sign-up (observatory/front.py /auth/signup, only while the cog .env's ASTRYX_COG_SIGNUP is on) and a
+-- cog admin decides it (/auth/cog/requests). `key` is the org's registry name to be (orgs.NAME); one live claim per
+-- key (pending or approved) and one pending ask per account are the DATABASE's rules (the partial unique indexes),
+-- so two racing sign-ups can't both hold a name. `provision` is what became of src/astryx/cog_provision.py's
+-- provision_org at approval: NULL not tried, 'deferred' (the provisioner is not built yet: feat/cog-rls2), 'done',
+-- 'failed'; `provision_note` says why, never a secret.
+CREATE TABLE IF NOT EXISTS org_requests (
+  id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  uid             bigint NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  key             text NOT NULL CHECK (key ~ '^[a-z0-9][a-z0-9-]{0,62}$'),
+  name            text NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
+  state           text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'approved', 'rejected')),
+  budget_tokens   bigint CHECK (budget_tokens IS NULL OR budget_tokens > 0),
+  created         timestamptz NOT NULL DEFAULT now(),
+  decided_by      bigint REFERENCES users (id) ON DELETE SET NULL,
+  decided_at      timestamptz,
+  note            text,
+  provision       text CHECK (provision IN ('deferred', 'done', 'failed')),
+  provision_note  text,
+  CONSTRAINT org_requests_decided CHECK ((state = 'pending') = (decided_at IS NULL)),
+  CONSTRAINT org_requests_budget CHECK (state <> 'approved' OR budget_tokens IS NOT NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS org_requests_key_live ON org_requests (key) WHERE state IN ('pending', 'approved');
+CREATE UNIQUE INDEX IF NOT EXISTS org_requests_one_pending ON org_requests (uid) WHERE state = 'pending';
+CREATE INDEX IF NOT EXISTS org_requests_created ON org_requests (created);
+
+-- the COG's own roles (not an org's: those are each org's `members`). One today: cog_admin, who decides org requests.
+-- Written only by the host CLI (src/astryx/cogauth.py cog-admin EMAIL); the bootstrap is the primary org's owner.
+CREATE TABLE IF NOT EXISTS cog_grants (
+  uid      bigint NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  role     text NOT NULL CHECK (role IN ('cog_admin')),
+  granted  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (uid, role)
+);
