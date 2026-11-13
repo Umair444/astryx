@@ -13,7 +13,7 @@ import { canvasBase } from '../cog'
 import { nowLine } from '../ui/life'
 import { startDictation } from './dictate'
 import {
-  bodyFor, loadCommands, loadWork, newThread, participants, stepsOf, stripEmbeds,
+  bodyFor, teamOrder, loadCommands, loadWork, newThread, participants, stepsOf, stripEmbeds,
   type McpTool, type Project, type Skill, type Uploaded, type Work,
 } from './model'
 import {
@@ -393,7 +393,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     setOutbox((xs) => xs.map((x) => (x.key === o.key ? { ...x, failed: null } : x)))
     const left = [...o.to]
     try {
-      for (const a of o.to) { await send(a, await o.body(a), o.thread); left.shift() }
+      for (const a of teamOrder(o.to)) { await send(a, await o.body(a), o.thread, o.team); left.splice(left.indexOf(a), 1) }
       setOutbox((xs) => xs.filter((x) => x.key !== o.key))
       reload()
     } catch (e) {
@@ -405,7 +405,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       const body = [text, ...files.map((f) => `[[file:${f.path}]] (${f.name})`)].filter(Boolean).join('\n')
       const pj = projectOf(current, proj.projects)
       const ctx = pj && !rows.some((m) => m.from === 'owner') ? projectContext(pj) : Promise.resolve('')
-      const o: Outgoing = { key: `o${Date.now()}${Math.random()}`, thread: current, text, files, to: [...to], failed: null, body: async (a) => (await ctx) + bodyFor(body, to, a) }
+      const o: Outgoing = { key: `o${Date.now()}${Math.random()}`, thread: current, text, files, to: [...to], team: [...to], failed: null, body: async (a) => (await ctx) + bodyFor(body, to, a) }
       setOutbox((xs) => [...xs, o])
       void deliver(o)
       return
@@ -415,7 +415,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     // a project chat's FIRST message carries the project's instructions and files (projects/context.ts)
     const pj = !current && activeProject ? activeProject : projectOf(t, proj.projects)
     const ctx = pj && (!current || !rows.some((m) => m.from === 'owner')) ? await projectContext(pj) : ''
-    for (const a of to) await send(a, ctx + bodyFor(body, to, a), t)        // R4: one row per recipient, one thread
+    for (const a of teamOrder(to)) await send(a, ctx + bodyFor(body, to, a), t, to)   // R4: one row per recipient, one thread; a team stamped
     if (!current && activeProject) await proj.mutate(moveThread(t, activeProject.id))
     if (!current) go(t)
     reload()
@@ -426,7 +426,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     const t = `chat:project-${p.id}`
     const ctx = await projectContext(p)
     const kick = `Project "${p.name}" is running.\nWork it together and autonomously: split it between you, say who takes what on this thread, and post progress and results here as you go. Ask me only what you can't decide.`
-    for (const a of p.agents) await send(a, ctx + bodyFor(kick, p.agents, a), t)
+    for (const a of teamOrder(p.agents)) await send(a, ctx + bodyFor(kick, p.agents, a), t, p.agents)
     if (!p.threads.includes(t)) await proj.mutate(moveThread(t, p.id))
     go(t); setWorkforce(true)
   }

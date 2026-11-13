@@ -148,13 +148,21 @@ async def upload(request: Request, name: str = "file"):
         return JSONResponse({"error": "the file is empty"}, status_code=400)
     if len(data) > MAX_UPLOAD:
         return JSONResponse({"error": "the file is over 20 MB"}, status_code=413)
+    # EVERY kind is accepted (owner 11-13: "every kind of file should be acceptable from chat"): a sniffed passive type
+    # keeps its type; anything else (docx, xlsx, zip, csv-as-binary…) is stored opaque and serve_untrusted only ever
+    # hands it out as an octet-stream ATTACHMENT under the sandbox CSP, never interpreted on the owner's origin. Its
+    # extension comes from the display name only when it is plain ([a-z0-9]{1,8}), so an agent can see what it is;
+    # the stored name stays server-minted.
     kind = sniff(data[:4096])
-    if not kind:
-        return JSONResponse({"error": "this kind of file isn't accepted here (images, PDF, text, audio and video are)"},
-                            status_code=415)
-    dest = MEDIA / "upload" / f"{uuid.uuid4().hex}{EXT[kind]}"
+    ext = EXT.get(kind) if kind else None
+    if not ext:                                  # unknown bytes never wear an extension that claims a sniffed or
+        m = re.fullmatch(r".*\.([A-Za-z0-9]{1,8})", safe_name(name) or "")     # rendered type (a script "photo.png")
+        ext = "." + m.group(1).lower() if m else ".bin"
+        if ext in set(EXT.values()) | {".svg", ".html", ".htm", ".xhtml", ".xml", ".js", ".mjs"}:
+            ext = ".bin"
+    dest = MEDIA / "upload" / f"{uuid.uuid4().hex}{ext}"
     atomic_write(dest, data, mode=0o640)
-    return {"path": str(dest), "name": safe_name(name), "size": len(data), "type": kind}
+    return {"path": str(dest), "name": safe_name(name), "size": len(data), "type": kind or "application/octet-stream"}
 
 
 @router.get("/api/chat/file")

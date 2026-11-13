@@ -525,7 +525,20 @@ def msg(r) -> dict:
         "thread": r["thread"], "intent": r["intent"],
         "body": r["body"], "status": r["status"],
         "turn_id": r["turn_id"] if "turn_id" in r.keys() else None,
+        "lead": _lead_of(r),
     }
+
+
+def _lead_of(r) -> str | None:
+    """A fanned-out row's lead (the agent that owns the one reply): the one fact of `delivery` the page may see (the
+    rest can carry a sender's jid). None for every other row."""
+    d = r["delivery"] if "delivery" in r.keys() else None
+    if isinstance(d, str):
+        try:
+            d = json.loads(d)
+        except ValueError:
+            return None
+    return d.get("lead") if isinstance(d, dict) and isinstance(d.get("team"), list) and len(d["team"]) > 1 else None
 
 
 def step(r) -> dict:

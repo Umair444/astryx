@@ -111,8 +111,14 @@ export default forwardRef<ComposerHandle, {
     if (picker && onSwitch) {           // the roster, the chat's current agent(s) first; picking one switches
       const cur = inChat.filter((n) => roster.includes(n))
       return [...cur, ...roster.filter((n) => !cur.includes(n))].map((n) => ({
-        key: '@' + n, label: displayName(n), hint: cur.includes(n) ? (cur.length === 1 ? 'this chat is with it now' : 'in this chat now') : roles[n] ?? '', kind: 'agent' as const,
-        apply: () => { setPicker(false); if (!(cur.length === 1 && cur[0] === n)) onSwitch([n]); requestAnimationFrame(() => box.current?.focus()) },
+        key: '@' + n, label: displayName(n), hint: cur.includes(n) ? (cur.length === 1 ? '✓ in To (the only one)' : cur[0] === n ? '✓ in To · leads' : '✓ in To · click to remove') : (roles[n] ? `${roles[n]} · click to add` : 'click to add'), kind: 'agent' as const,
+        // a TOGGLE (owner 11-13): picking adds the agent to the "To" chips or takes it out; the first stays the lead.
+        // The last one can't be removed (a message always goes somewhere).
+        apply: () => {
+          const next = cur.includes(n) ? cur.filter((x) => x !== n) : [...cur, n]
+          if (next.length) onSwitch(next)
+          requestAnimationFrame(() => box.current?.focus())
+        },
       }))
     }
     if (slash) {
@@ -241,16 +247,35 @@ export default forwardRef<ComposerHandle, {
             <button className="ws-icon ws-talk-open" onClick={() => onTalk(to[0])} title={`Talk with ${displayName(to[0])}: a voice conversation (⌘⇧.)`} aria-label={`talk with ${displayName(to[0])}`}>{I.wave()}</button>
           )}
           {to.length > 0 && (
-            // the faces ARE the switch (a button when the page can switch): a click opens the roster to hand the chat to
-            <button type="button" disabled={!onSwitch} onMouseDown={(e) => e.preventDefault()} onClick={() => (picker ? setPicker(false) : openPicker())}
-              aria-haspopup="listbox" aria-expanded={picker} aria-label={`To ${to.map(displayName).join(', ')}${onSwitch ? ': switch agent' : ''}`}
-              className="ws-to flex items-center gap-1.5 ml-1.5 min-w-0 text-[12px] text-ink-mute rounded-full pl-1 pr-2 py-0.5 enabled:hover:bg-[color-mix(in_srgb,var(--t-fg)_6%,transparent)] enabled:hover:text-ink-dim disabled:cursor-default"
-              title={`To ${to.map(displayName).join(', ')}${onSwitch ? ' · click to switch this chat to another agent' : ''}`}>
-              <span className="max-sm:hidden">To</span>
-              <span className="flex -space-x-1">{to.slice(0, 5).map((n) => <span key={n} className="rounded-full ring-2 ring-[var(--t-panel)]"><AgentFace name={n} size={18} /></span>)}</span>
-              {to.length === 1 && <span className="truncate text-ink-dim max-sm:hidden">{displayName(to[0])}</span>}
-              {onSwitch && <span className={`text-[10px] transition-transform ${picker ? 'rotate-180' : ''}`} aria-hidden>▾</span>}
-            </button>
+            // the "To" CHIPS (owner 11-13): each agent with its own ×, a hairline between them, and a + that opens the
+            // roster to add or remove; the first named leads a team (its reply is the one the human gets)
+            <div className="ws-to flex items-center min-w-0 ml-1.5 text-[12px] text-ink-mute" role="group" aria-label={`To ${to.map(displayName).join(', ')}`}>
+              <span className="max-sm:hidden mr-1.5">To</span>
+              <span className="flex items-center min-w-0 overflow-x-auto [scrollbar-width:none]">
+                {to.map((n, i) => (
+                  <span key={n} className="flex items-center shrink-0">
+                    {i > 0 && <span className="mx-1 h-3.5 w-px bg-line" aria-hidden />}
+                    <span className={`inline-flex items-center gap-1 rounded-full pl-0.5 pr-1 py-[1px] text-ink-dim ${i === 0 && to.length > 1 ? 'ws-lead' : ''}`}
+                      title={i === 0 && to.length > 1 ? `${displayName(n)} leads: it replies, the others help` : displayName(n)}>
+                      <AgentFace name={n} size={16} />
+                      <span className="max-w-[9rem] truncate">{displayName(n)}</span>
+                      {i === 0 && to.length > 1 && <span className="text-[10px] text-ink-mute">leads</span>}
+                      {onSwitch && !named.length && to.length > 1 && (
+                        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => onSwitch(to.filter((x) => x !== n))}
+                          className="ml-0.5 w-4 h-4 grid place-items-center rounded-full text-ink-mute hover:text-ink hover:bg-[color-mix(in_srgb,var(--t-fg)_8%,transparent)]"
+                          aria-label={`remove ${displayName(n)}`} title={`Remove ${displayName(n)}`}>×</button>
+                      )}
+                    </span>
+                  </span>
+                ))}
+              </span>
+              {onSwitch && !named.length && (
+                <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => (picker ? setPicker(false) : openPicker())}
+                  aria-haspopup="listbox" aria-expanded={picker} aria-label="add or remove agents"
+                  className="ml-1 w-5 h-5 shrink-0 grid place-items-center rounded-full border border-line text-ink-mute hover:text-ink hover:border-[var(--t-accent)]"
+                  title="Add or remove agents (or type @name)">+</button>
+              )}
+            </div>
           )}
           {err && <span className="ml-2 text-[12px] text-bad truncate" role="alert">{err}</span>}
           {dict.phase === 'error' && dict.error && !err && <span className="ml-2 text-[12px] text-bad truncate" role="alert">{dict.error}</span>}

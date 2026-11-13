@@ -372,3 +372,6 @@
 .ws-mate { border: 1px solid transparent; border-radius: 14px; transition: background-color 120ms ease-out, border-color 120ms ease-out; }
 .ws-mate:hover, .ws-mate:focus-visible { background: color-mix(in srgb, var(--t-panel) 70%, transparent); border-color: var(--t-line); }
 .ws-mate:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent); outline-offset: 1px; }
+
+/* the lead of a team (owner 11-13): a quiet accent ring on its chip, in the composer and on the message */
+.ws-lead { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t-accent) 45%, transparent); color: var(--t-fg); }
