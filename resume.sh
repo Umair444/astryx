@@ -64,9 +64,18 @@ from astryx import orgs
 c = orgs.cog()
 o = orgs.here("'"$ROOT"'") if c else None
 print((orgs.load() or {}).get(o, {}).get("ports", {}).get("astryx-observatory-org", "") if o else "")' 2>/dev/null)
+# the front speaks TLS when the cog home holds a certificate (tls/cert.pem + tls/key.pem; owner 11-13: "http is bad")
+OBS_TLS=""
+COG_HOME=$("$ROOT/venv/bin/python" -c 'import sys; sys.path.insert(0, "'"$ROOT"'/src")
+from astryx import orgs
+c = orgs.cog()
+print(c["home"] if c else "")' 2>/dev/null)
+if [ -n "$COG_HOME" ] && [ -f "$COG_HOME/tls/cert.pem" ] && [ -f "$COG_HOME/tls/key.pem" ]; then
+  OBS_TLS="--ssl-certfile $COG_HOME/tls/cert.pem --ssl-keyfile $COG_HOME/tls/key.pem"
+fi
 if [ -n "$OBS_ORG_PORT" ]; then
   start_svc observatory-org "$OBS_ORG_PORT" "$ROOT/observatory/api" "$ROOT/venv/bin/uvicorn main:app --host 127.0.0.1 --port $OBS_ORG_PORT --proxy-headers --forwarded-allow-ips 127.0.0.1"
-  start_svc observatory 8090 "$ROOT/observatory" "$ROOT/venv/bin/uvicorn front:app --host 0.0.0.0 --port 8090 --proxy-headers --forwarded-allow-ips 127.0.0.1"
+  start_svc observatory 8090 "$ROOT/observatory" "$ROOT/venv/bin/uvicorn front:app --host 0.0.0.0 --port 8090 --proxy-headers --forwarded-allow-ips 127.0.0.1 $OBS_TLS"
 else
   start_svc observatory 8090 "$ROOT/observatory/api" "$ROOT/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8090"
 fi
