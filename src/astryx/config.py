@@ -153,7 +153,21 @@ def _check_pair(v: str, src: str, path, environ) -> None:
                          "database, which an empty DSN reaches (correction 1(ii))")
     home = Path(path).parent if path else paths.home()
     mine = orgs.org_of(home, environ)
-    owner = next((o for o, e in reg.items() if e["db"] == db), None)
+    user = info.get("user")
+    # cog-rls slice 2: under row-level security the ROLE is the org's identity. A DSN whose user is another org's role
+    # binds that org's rows wherever the database is; one whose org carries a role must log in AS that role.
+    by_role = next((o for o, e in reg.items() if e.get("role") and e["role"] == user), None)
+    if by_role is not None and by_role != mine:
+        raise ForeignDSN(f"the DSN in {src} logs in as org {by_role}'s role, and this HOME is "
+                         f"{mine or 'no registered org'} (cog-rls)")
+    if mine is not None and reg[mine].get("role"):
+        if user != reg[mine]["role"]:
+            raise ForeignDSN(f"{src} logs in as {user!r}, and the registry binds {mine} to role {reg[mine]['role']!r}")
+        if db != reg[mine]["db"]:
+            raise ForeignDSN(f"{src} names database {db!r}, and the registry gives {mine} {reg[mine]['db']!r}")
+        return
+    owners = [o for o, e in reg.items() if e["db"] == db]
+    owner = owners[0] if len(owners) == 1 else (mine if mine in owners else (owners[0] if owners else None))
     if owner is not None and owner != mine:
         raise ForeignDSN(f"the DSN in {src} binds org {owner}'s database, and this HOME is "
                          f"{mine or 'no registered org'} (correction 2)")

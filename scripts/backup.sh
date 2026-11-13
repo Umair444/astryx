@@ -140,6 +140,16 @@ fi
 
 DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file 2>/dev/null || true)
 [ -n "$DSN" ] || { echo "backup: no ASTRYX_DSN in .env" >&2; exit 1; }   # org-home: a message
+# cog-rls slice 2: a provisioned org's DSN is org_<key>, which can't dump the whole database (row-level security, objects
+# it was never granted) nor read every role. A full dump is the PROVISIONER's: the root-only superuser file, same
+# database. Readable only under sudo/root; otherwise the org DSN is used and pg_dump fails LOUD (never a silent partial).
+SUPER_FILE=${ASTRYX_PG_SUPER_FILE:-/etc/astryx/pg-super.dsn}
+if [ -r "$SUPER_FILE" ]; then
+  # the DSNs ride the environment, never argv (ps shows argv to every user)
+  DSN=$(ORG_DSN="$DSN" SUPER_FILE="$SUPER_FILE" "$ROOT/venv/bin/python" -c 'import os; from psycopg.conninfo import make_conninfo, conninfo_to_dict
+print(make_conninfo(open(os.environ["SUPER_FILE"]).read().strip(), dbname=conninfo_to_dict(os.environ["ORG_DSN"]).get("dbname")))') \
+    || { echo "backup: the provisioner DSN file is unreadable as a DSN" >&2; exit 1; }
+fi
 
 mkdir -p backups   # org-home: relative to $ORGH, the org's HOME (cd above)
 ts=$(date +%Y%m%dT%H%M%S)

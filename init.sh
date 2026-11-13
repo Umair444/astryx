@@ -625,7 +625,9 @@ _act_schema() { say "applying schema (schema.sql differs from what this database
     return 1
   fi
   sha=$(_sha256 "$tmp")
-  psql_q -X -q -v ON_ERROR_STOP=1 < "$tmp" >/dev/null; rc=$?; rm -f "$tmp"; [ "$rc" -eq 0 ] || return 1
+  psql_q -X -q -v ON_ERROR_STOP=1 < "$tmp" >/dev/null; rc=$?; rm -f "$tmp"
+  # cog-rls slice 2: a provisioned org's DSN is org_<key>, which owns no core object. The apply is the provisioner's.
+  [ "$rc" -eq 0 ] || { echo -e "\033[31m[astryx]\033[0m schema apply refused; if this org is provisioned (its DSN is org_<key>), apply as the provisioner: sudo venv/bin/python devtools/org_apply.py --all" >&2; return 1; }
   psql_q -X -q -v ON_ERROR_STOP=1 \
     -c "CREATE TABLE IF NOT EXISTS schema_applied (id int PRIMARY KEY CHECK (id = 1), sha text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())" \
     -c "INSERT INTO schema_applied (id, sha) VALUES (1, '$sha') ON CONFLICT (id) DO UPDATE SET sha = EXCLUDED.sha, applied_at = now()" >/dev/null; }

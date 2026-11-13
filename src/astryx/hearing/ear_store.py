@@ -85,7 +85,10 @@ def maintain(conn, ttl: int | None = None, ahead: int = 2, now: datetime | None 
 
     Erasure first and every statement on its own: one bad partition (a same-day table under another name from a
     restore or a hand fix, a lock) never stops the drops or the other days. A failure is RETURNED in "errors" as
-    (verb, partition, error type), never raised, so the caller still runs the TTL arm and reports both."""
+    (verb, partition, error type), never raised, so the caller still runs the TTL arm and reports both.
+
+    Both verbs go through schema.sql's SECURITY DEFINER helpers cog.ear_day / cog.ear_drop (cog-rls slice 2):
+    the caller is an org role, which does not own utterances and so can't run DDL on it."""
     ttl = ttl or ttl_days()
     now = now or datetime.now(timezone.utc)
     made, dropped, errors = [], [], []
@@ -101,15 +104,13 @@ def maintain(conn, ttl: int | None = None, ahead: int = 2, now: datetime | None 
 
     for name, lo, _ in partitions(conn):
         if lo is None or lo < cutoff:
-            one("drop", name, sql.SQL("DROP TABLE {}").format(sql.Identifier(name)), dropped)
+            one("drop", name, sql.SQL("SELECT cog.ear_drop({})").format(sql.Literal(name)), dropped)
     have = {n for n, _, _ in partitions(conn)}
     for k in range(ahead + 1):
         lo = _day(now) + timedelta(days=k)
         name = f"utterances_p{lo:%Y%m%d}"
         if name not in have:
-            one("create", name, sql.SQL("CREATE TABLE IF NOT EXISTS {} PARTITION OF utterances FOR VALUES FROM ({}) TO ({})")
-                .format(sql.Identifier(name), sql.Literal(lo.isoformat()),
-                        sql.Literal((lo + timedelta(days=1)).isoformat())), made)
+            one("create", name, sql.SQL("SELECT cog.ear_day({})").format(sql.Literal(lo.isoformat())), made)
     return {"created": made, "dropped": dropped, "errors": errors}
 
 
