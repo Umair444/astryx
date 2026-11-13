@@ -58,7 +58,7 @@ export default function Sidebar({ route, onOpenAgent }: { route: Route; onOpenAg
               <span>✎</span><span>Canvas</span><span className="opacity-80">↗</span>
             </a>
             <a href="#/chat" className="ax-action flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-medium no-underline">
-              <span>💬</span><span>Chats</span>
+              <span>❝</span><span>Chats</span>
             </a>
           </div>
           <nav className="flex flex-col gap-0.5">
