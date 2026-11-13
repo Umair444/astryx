@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import '@fontsource/instrument-serif'
+import '@fontsource/instrument-serif/400.css'
+import '@fontsource/instrument-serif/400-italic.css'
 import { Menu } from '@mantine/core'
 import { WORDS, nextHash, readMe, roleWords, signIn, signInHref, signOut } from '../auth'
 import type { AuthOrg, Me, MeState } from '../auth'
-import { chooseOrg, chosenOrg, setOrg, useCog } from '../cog'
+import { agentColor, saveObsKey } from '../api'
+import { chooseOrg, chosenOrg, safeBase, setOrg, useCog } from '../cog'
 import type { Cog } from '../cog'
 
 /* SIGN-IN SCREENS (goal 11859 U3; the bar is seed's msg 61877 and the owner's Room pick, A ORBIT by default). The visual
@@ -34,44 +36,60 @@ function Stage({ children, title, lede }: { children: ReactNode; title: string; 
   )
 }
 
-function Field({ id, label, type, auto, value, onChange, invalid, inputRef }: {
+function Field({ id, label, type, auto, value, onChange, invalid, inputRef, trailing }: {
   id: string; label: string; type: string; auto: string; value: string; onChange: (v: string) => void
-  invalid: boolean; inputRef?: React.Ref<HTMLInputElement>
+  invalid: boolean; inputRef?: React.Ref<HTMLInputElement>; trailing?: ReactNode
 }) {
   return (
     <div>
-      <label htmlFor={id} className="block text-[13px] text-ink-dim mb-1.5">{label}</label>
-      <input id={id} ref={inputRef} type={type} autoComplete={auto} value={value} spellCheck={false}
-        aria-invalid={invalid || undefined} aria-describedby={invalid ? 'auth-error' : undefined}
-        onChange={(e) => onChange(e.currentTarget.value)} className="auth-field" />
+      <label htmlFor={id} className="block text-[13px] font-medium text-ink-dim mb-2">{label}</label>
+      <div className="auth-well">
+        <input id={id} ref={inputRef} type={type} autoComplete={auto} value={value} spellCheck={false}
+          autoCapitalize="none" aria-invalid={invalid || undefined} aria-describedby={invalid ? 'auth-error' : undefined}
+          onChange={(e) => onChange(e.currentTarget.value)} className="auth-field" data-trailing={trailing ? '' : undefined} />
+        {trailing}
+      </div>
     </div>
   )
 }
 
 type Phase = 'idle' | 'pending' | 'done'
 
-/* Sign in. The button names what happens ("Sign in"), says it while it happens ("Signing in…") and once it has
-   ("Signed in"). A failure keeps what was typed but the password, and puts the cursor where the fix starts. */
+/* SIGN IN (owner 11-13: "make the sign in UI better … the dropdown is so lame and it shouldn't be down there … think
+   of astryx"). Two panes on a wide screen, one column on a phone:
+     THE SKY   the org's living side: the orb at the centre of its orbits, one dot on the ring per agent awake (the
+               public overview's count, the same number the floor shows anyone), the wordmark and one line on what
+               this is. Nothing private is ever read here: only /api/cog's names and each org's public overview.
+     THE DOOR  WHERE first, then WHO: the org you're signing in to as an identity card (one org: the card, nothing to
+               pick; several: a radio group of cards, searchable past six), then email and password, then the button.
+   The button names what happens ("Sign in"), says it while it happens ("Signing in…") and once it has ("Signed in").
+   A failure keeps what was typed but the password, and puts the cursor where the fix starts. The owner's key stays a
+   quiet second door under the form (the same saveObsKey the header's key badge uses). No sign-up yet (a later phase). */
 export function SignInScreen() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [reveal, setReveal] = useState(false)
   const [phase, setPhase] = useState<Phase>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [keyDoor, setKeyDoor] = useState(false)
   const emailRef = useRef<HTMLInputElement>(null)
   const pwRef = useRef<HTMLInputElement>(null)
   useEffect(() => { emailRef.current?.focus() }, [])
-  // THE ORG (owner 11-13: "the sign-in screen has a dropdown of the cog's orgs"): the cog's rooms, public by ruling
-  // (plan-11859 I9), preselected to the one you are in, else the front's default (its only org, else the door). One
-  // org (no cog): no dropdown, as before
+  // THE ORG: the cog's rooms, public by ruling (plan-11859 I9), preselected to the one you are in, else the front's
+  // default (its only org, else the door). One org (no cog): no card, as before
   const [rooms, setRooms] = useState<Rooms | null>(null)
   const [org, setOrgPick] = useState('')
+  const [pulse, setPulse] = useState<Record<string, Pulse>>({})
   useEffect(() => {
+    let live = true
     cogRooms().then((r) => {
-      if (!r || r.orgs.length === 0) return
+      if (!live || !r || r.orgs.length === 0) return
       const here = chosenOrg()
       setRooms(r)
       setOrgPick(r.orgs.some((o) => o.org === here) ? here! : r.door ?? r.orgs[0].org)
+      r.orgs.slice(0, 24).forEach((o) => readPulse(o.base).then((p) => { if (live && p) setPulse((m) => ({ ...m, [o.org]: p })) }))
     })
+    return () => { live = false }
   }, [])
 
   async function submit(e: FormEvent) {
@@ -94,30 +112,235 @@ export function SignInScreen() {
     await afterSignIn(nextHash())
   }
 
+  const picked = rooms?.orgs.find((o) => o.org === org) ?? null
+  const sky = picked ? pulse[picked.org] : undefined
+
   return (
-    <Stage title="Sign in" lede="Use the email and password your org's owner gave you. One account opens every org you belong to.">
-      <form noValidate onSubmit={submit} className="space-y-4">
-        <Field id="auth-email" label="Email" type="email" auto="username" value={email} inputRef={emailRef}
-          onChange={(v) => { setEmail(v); setError(null) }} invalid={!!error} />
-        <Field id="auth-password" label="Password" type="password" auto="current-password" value={password} inputRef={pwRef}
-          onChange={(v) => { setPassword(v); setError(null) }} invalid={!!error} />
-        {rooms && (
-          <div>
-            <label htmlFor="auth-org" className="block text-[13px] text-ink-dim mb-1.5">Org</label>
-            <select id="auth-org" value={org} onChange={(e) => setOrgPick(e.currentTarget.value)} className="auth-field">
-              {rooms.orgs.map((o) => <option key={o.org} value={o.org}>{o.name}</option>)}
-            </select>
-          </div>
-        )}
-        <p id="auth-error" role="alert" className="min-h-[2.6em] text-[13px] leading-snug text-bad">{error}</p>
-        <button type="submit" disabled={phase !== 'idle'} className="auth-primary w-full">
-          {phase === 'pending' ? 'Signing in…' : phase === 'done' ? 'Signed in' : 'Sign in'}
-        </button>
-      </form>
-      <p className="mt-6 text-center text-[13px] text-ink-mute">
-        No account yet? Your org's owner adds you. <a href="#/" className="auth-link">Back to the floor</a>
+    <main className="auth-room bg-deck text-ink">
+      <Sky name={picked?.name ?? null} pulse={sky} />
+      <section className="auth-door" aria-labelledby="auth-title">
+        <div className="w-full max-w-[25rem]">
+          <h1 id="auth-title" className="auth-display">Sign in</h1>
+          <p className="mt-3 text-[15px] leading-relaxed text-ink-dim">
+            One account opens every org you belong to.
+          </p>
+
+          {rooms && (
+            <OrgPick rooms={rooms} value={org} onChange={(v) => { setOrgPick(v); setError(null) }} pulse={pulse} />
+          )}
+
+          {keyDoor ? (
+            <KeyDoor org={rooms ? org : null} base={picked?.base ?? null} onBack={() => { setKeyDoor(false); requestAnimationFrame(() => emailRef.current?.focus()) }} />
+          ) : (<>
+            <form noValidate onSubmit={submit} className="mt-7 space-y-5">
+              <Field id="auth-email" label="Email" type="email" auto="username" value={email} inputRef={emailRef}
+                onChange={(v) => { setEmail(v); setError(null) }} invalid={!!error} />
+              <Field id="auth-password" label="Password" type={reveal ? 'text' : 'password'} auto="current-password"
+                value={password} inputRef={pwRef} onChange={(v) => { setPassword(v); setError(null) }} invalid={!!error}
+                trailing={
+                  <button type="button" className="auth-reveal" aria-pressed={reveal} aria-controls="auth-password"
+                    aria-label={reveal ? 'Hide password' : 'Show password'}
+                    onClick={() => { setReveal((r) => !r); pwRef.current?.focus() }}>
+                    <EyeIcon open={!reveal} />
+                  </button>
+                } />
+              <p id="auth-error" role="alert" aria-live="assertive" className="auth-error" data-shown={error ? '' : undefined}>
+                {error && <><ErrIcon />{error}</>}
+              </p>
+              <button type="submit" disabled={phase !== 'idle'} className="auth-primary w-full">
+                {phase === 'pending' ? 'Signing in…' : phase === 'done' ? 'Signed in' : 'Sign in'}
+              </button>
+            </form>
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-[13px]">
+              <button type="button" className="auth-link auth-quiet" onClick={() => setKeyDoor(true)}>
+                Use an access key instead
+              </button>
+              <a href="#/" className="auth-link auth-quiet">Back to the floor</a>
+            </div>
+          </>)}
+
+          <p className="mt-10 pt-5 border-t border-line text-[13px] leading-relaxed text-ink-mute">
+            No account yet? Your org's owner adds you.
+          </p>
+        </div>
+      </section>
+    </main>
+  )
+}
+
+/* THE SKY: the org at work, drawn, never animated beyond the orb's breath (and that stops under reduced motion). One
+   dot on the outer ring per agent awake, at most twelve, so the picture is the number. */
+function Sky({ name, pulse }: { name: string | null; pulse?: Pulse }) {
+  const dots = Math.min(pulse?.live ?? 0, 12)
+  const ring = Array.from({ length: dots }, (_, i) => {
+    const a = (-0.55 + (i / Math.max(dots, 1)) * 2) * Math.PI
+    return { x: Math.cos(a) * 250, y: Math.sin(a) * 74, near: Math.sin(a) > 0 }
+  })
+  return (
+    <aside className="auth-sky" aria-label="astryx">
+      <div className="auth-sky-glow" aria-hidden />
+      <div className="relative flex items-center gap-2.5">
+        <span className="auth-orb auth-orb-mark" aria-hidden />
+        <span className="auth-wordmark">astryx</span>
+      </div>
+      <div className="auth-sky-stage" aria-hidden>
+        <svg viewBox="-300 -110 600 220" className="auth-orbits">
+          <ellipse rx="150" ry="44" fill="none" stroke="var(--t-line2)" strokeWidth="1" strokeDasharray="2 6" />
+          <ellipse rx="250" ry="74" fill="none" stroke="var(--t-line2)" strokeWidth="1" strokeDasharray="2 7" />
+          {ring.filter((d) => !d.near).map((d, i) => <circle key={'f' + i} cx={d.x} cy={d.y} r="3.5" fill="var(--t-accent2)" opacity=".55" />)}
+        </svg>
+        <span className="auth-orb auth-orb-hero" />
+        <svg viewBox="-300 -110 600 220" className="auth-orbits">
+          {ring.filter((d) => d.near).map((d, i) => <circle key={'n' + i} cx={d.x} cy={d.y} r="4.5" fill="var(--t-accent)" />)}
+        </svg>
+      </div>
+      <div className="relative">
+        <p className="auth-hero-line">Your agents are <em className="auth-sig">already at work.</em></p>
+        <p className="mt-4 max-w-[30rem] text-[15px] leading-relaxed text-ink-dim">
+          A self-managed org: agents that plan, build and check each other's work in the open. Sign in to take your seat
+          among them.
+        </p>
+        <p className="auth-live" data-ready={pulse ? '' : undefined}>
+          {pulse && <><span className="auth-live-dot" aria-hidden />
+            {pulse.live} of {pulse.agents} agents awake{name ? <> in <span className="text-ink">{name}</span></> : null}</>}
+        </p>
+      </div>
+    </aside>
+  )
+}
+
+/* THE ORG, chosen first. One org: an identity card, not a control (nothing to pick). Several: a radio group of the same
+   cards (arrow keys move, the native radio carries the state to a screen reader), with a search past six. */
+function OrgPick({ rooms, value, onChange, pulse }: {
+  rooms: Rooms; value: string; onChange: (v: string) => void; pulse: Record<string, Pulse>
+}) {
+  const [q, setQ] = useState('')
+  if (rooms.orgs.length === 1) {
+    const o = rooms.orgs[0]
+    return (
+      <div className="mt-8">
+        <p className="text-[13px] font-medium text-ink-dim mb-2">Signing in to</p>
+        <div className="auth-card" data-one="">
+          <OrgCardBody o={o} p={pulse[o.org]} />
+        </div>
+      </div>
+    )
+  }
+  const needle = q.trim().toLowerCase()
+  const shown = needle ? rooms.orgs.filter((o) => (o.name + ' ' + o.org).toLowerCase().includes(needle)) : rooms.orgs
+  return (
+    <fieldset className="mt-8">
+      <legend className="text-[13px] font-medium text-ink-dim mb-2">Choose your org</legend>
+      {rooms.orgs.length > 6 && (
+        <div className="auth-well mb-2">
+          <label htmlFor="auth-org-q" className="sr-only">Find an org</label>
+          <input id="auth-org-q" type="search" value={q} placeholder="Find an org" spellCheck={false} autoComplete="off"
+            onChange={(e) => setQ(e.currentTarget.value)} className="auth-field auth-field-sm" />
+        </div>
+      )}
+      <div className="auth-cards" data-many={rooms.orgs.length > 6 ? '' : undefined}>
+        {shown.map((o) => (
+          <label key={o.org} className="auth-card" data-checked={o.org === value ? '' : undefined}>
+            <input type="radio" name="auth-org" value={o.org} checked={o.org === value} className="sr-only"
+              onChange={() => onChange(o.org)} />
+            <OrgCardBody o={o} p={pulse[o.org]} />
+            <span className="auth-tick" aria-hidden />
+          </label>
+        ))}
+        {shown.length === 0 && <p className="px-1 py-3 text-[13px] text-ink-mute">No org matches “{q}”.</p>}
+      </div>
+    </fieldset>
+  )
+}
+
+function OrgCardBody({ o, p }: { o: Room; p?: Pulse }) {
+  return (<>
+    <span className="auth-orb auth-monogram" style={{ ['--orb' as string]: agentColor(o.org) }} aria-hidden>
+      <span>{monogram(o.name)}</span>
+    </span>
+    <span className="min-w-0 flex-1">
+      <span className="block truncate text-[15px] font-medium text-ink">{o.name}</span>
+      <span className="block truncate text-[13px] text-ink-mute">
+        <span className="font-mono text-[12px]">{o.org}</span>
+        {p ? <> · {p.agents} {p.agents === 1 ? 'agent' : 'agents'}</> : null}
+      </span>
+    </span>
+  </>)
+}
+
+/* the mark on the org's own orb: the first letter of its name, past a domain's tail and the generic words an org name
+   carries ("astryx-org" → "A", "umairfiaz.com" → "U", "north lab" → "NL") */
+const GENERIC = new Set(['org', 'inc', 'co', 'ltd', 'llc', 'the', 'hq'])
+export function monogram(name: string): string {
+  const w = name.replace(/\.[a-z]{2,}$/i, '').split(/[\s._-]+/).filter((x) => x && !GENERIC.has(x.toLowerCase()))
+  return ((w[0]?.[0] ?? name[0] ?? '?') + (w.length > 1 ? w[1][0] : '')).toUpperCase()
+}
+
+/* THE OWNER'S KEY, the quiet second door: the header key badge's own mechanism (saveObsKey), with the key TRIED against
+   whoami first so a wrong one is a calm line here, never a saved key that silently opens nothing. In a cog whoami is
+   asked through the picked org's own base, and the org is chosen (its cookie) only once the key has opened it. */
+function KeyDoor({ org, base, onBack }: { org: string | null; base: string | null; onBack: () => void }) {
+  const [val, setVal] = useState('')
+  const [state, setState] = useState<'idle' | 'trying' | 'wrong' | 'down'>('idle')
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => { ref.current?.focus() }, [])
+  async function go(e: FormEvent) {
+    e.preventDefault()
+    const k = val.trim()
+    if (!k || state === 'trying') return
+    setState('trying')
+    const at = org && base && safeBase(base) ? base : '/'
+    let owner = false
+    try {
+      const r = await fetch(`${at}api/whoami`, { headers: { 'x-obs-key': k }, cache: 'no-store' })
+      if (!r.ok) { setState('down'); return }
+      owner = !!(await r.json().catch(() => ({}))).owner
+    } catch { setState('down'); return }
+    if (!owner) { setState('wrong'); setVal(''); ref.current?.focus(); return }
+    saveObsKey(k)
+    if (org) setOrg(org)
+    location.hash = nextHash()
+    location.reload()
+  }
+  const msg = state === 'wrong' ? "That key didn't open this org." : state === 'down' ? "The org isn't answering. Try again in a moment." : null
+  return (
+    <form noValidate onSubmit={go} className="mt-7 space-y-5">
+      <div>
+        <label htmlFor="auth-key" className="block text-[13px] font-medium text-ink-dim mb-2">Access key</label>
+        <div className="auth-well">
+          <input id="auth-key" ref={ref} type="password" autoComplete="off" value={val} spellCheck={false}
+            aria-invalid={!!msg || undefined} aria-describedby={msg ? 'auth-key-error' : undefined}
+            onChange={(e) => { setVal(e.currentTarget.value); setState('idle') }} className="auth-field" />
+        </div>
+      </div>
+      <p id="auth-key-error" role="alert" aria-live="assertive" className="auth-error" data-shown={msg ? '' : undefined}>
+        {msg && <><ErrIcon />{msg}</>}
       </p>
-    </Stage>
+      <button type="submit" disabled={state === 'trying'} className="auth-primary w-full">
+        {state === 'trying' ? 'Opening…' : 'Open with key'}
+      </button>
+      <div className="text-[13px]">
+        <button type="button" className="auth-link auth-quiet" onClick={onBack}>Use email and password</button>
+      </div>
+    </form>
+  )
+}
+
+function EyeIcon({ open }: { open: boolean }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" />
+      <circle cx="12" cy="12" r="3" />
+      {!open && <path d="M4 4l16 16" />}
+    </svg>
+  )
+}
+
+function ErrIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden className="shrink-0 mt-[2px]">
+      <circle cx="12" cy="12" r="9" /><path d="M12 7.5v5.5" /><path d="M12 16.5h.01" />
+    </svg>
   )
 }
 
@@ -136,7 +359,8 @@ async function afterSignIn(next: string) {
 
 /* The cog's rooms (registry name, federation name) and its default org, or null on one org. Public (the owner ruled the
    names public, plan-11859 I9). */
-interface Rooms { orgs: { org: string; name: string }[]; door: string | null }
+interface Room { org: string; name: string; base: string }
+interface Rooms { orgs: Room[]; door: string | null }
 async function cogRooms(): Promise<Rooms | null> {
   try {
     const r = await fetch('/api/cog', { credentials: 'same-origin' })
@@ -144,8 +368,22 @@ async function cogRooms(): Promise<Rooms | null> {
     const j = await r.json()
     if (!j || j.cog !== true || !Array.isArray(j.orgs)) return null
     const orgs = j.orgs.filter((o: { org: unknown; name: unknown }) => o && typeof o.org === 'string' && o.org &&
-      typeof o.name === 'string').map((o: { org: string; name: string }) => ({ org: o.org, name: o.name }))
+      typeof o.name === 'string').map((o: { org: string; name: string; base: unknown }) =>
+      ({ org: o.org, name: o.name, base: safeBase(o.base) ? o.base : '' }))
     return { orgs, door: typeof j.door === 'string' ? j.door : null }
+  } catch { return null }
+}
+
+/* an org's pulse for the sign-in: agents awake of agents, from its PUBLIC overview (the count the floor shows anyone),
+   read through its own base; anything else is no pulse, and the screen simply doesn't mention it */
+interface Pulse { live: number; agents: number }
+async function readPulse(base: string): Promise<Pulse | null> {
+  if (!base || !safeBase(base)) return null
+  try {
+    const r = await fetch(`${base}api/overview`, { credentials: 'same-origin' })
+    if (!r.ok) return null
+    const j = await r.json()
+    return Number.isFinite(j?.live) && Number.isFinite(j?.agents) && j.agents > 0 ? { live: j.live, agents: j.agents } : null
   } catch { return null }
 }
 

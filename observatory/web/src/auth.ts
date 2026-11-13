@@ -32,8 +32,9 @@ export async function readMe(): Promise<MeState> {
 
 /* F8 and I9 (plan-11859): a failed sign-in must not say WHICH part failed, or the form tells an outsider who is a
    member. So the outcome is the status ALONE: the 401's body is never read, and every 401 shows the same words whatever
-   the server put in it. A rate-limit refusal names itself (it reveals nothing about the account). */
-export type SignIn = 'ok' | 'mismatch' | 'slow-down' | 'unreachable'
+   the server put in it. A rate-limit refusal names itself (it reveals nothing about the account), and so does the
+   front's 403 for a page served from an address that isn't the cog's own (front.py: a foreign Origin). */
+export type SignIn = 'ok' | 'mismatch' | 'slow-down' | 'origin' | 'unreachable'
 
 export async function signIn(email: string, password: string): Promise<SignIn> {
   let r: Response
@@ -44,7 +45,8 @@ export async function signIn(email: string, password: string): Promise<SignIn> {
       body: JSON.stringify({ email, password }),
     })
   } catch { return 'unreachable' }
-  return r.ok ? 'ok' : r.status === 401 ? 'mismatch' : r.status === 429 ? 'slow-down' : 'unreachable'
+  return r.ok ? 'ok' : r.status === 401 ? 'mismatch' : r.status === 429 ? 'slow-down'
+    : r.status === 403 ? 'origin' : 'unreachable'
 }
 
 export async function signOut(): Promise<boolean> {
@@ -53,8 +55,9 @@ export async function signOut(): Promise<boolean> {
 
 /* The words, one place. Each failure says what to do next, in the interface's voice. */
 export const WORDS: Record<Exclude<SignIn, 'ok'> | 'empty' | 'signout-failed', string> = {
-  mismatch: "Email or password didn't match. Check both, or ask your org's owner to reset your password.",
-  'slow-down': 'Too many tries. Wait a minute, then try again.',
+  mismatch: "That email and password don't match. Check both, or ask your org's owner to reset your password.",
+  'slow-down': 'Too many attempts. Wait a few minutes, then try again.',
+  origin: "Sign-in only works from this org's official address. Open it there and sign in again.",
   unreachable: "Sign-in isn't answering. Check your connection, then try again.",
   empty: 'Enter your email and password.',
   'signout-failed': "Couldn't sign you out. Try again.",
