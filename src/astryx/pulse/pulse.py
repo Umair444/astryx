@@ -195,7 +195,7 @@ def reconcile(conn) -> bool:
             conn.execute(
                 """INSERT INTO triggers (agent, name, schedule, kind, check_src, note, next_fire)
                    VALUES (%(a)s, %(n)s, %(s)s, 'python', %(src)s, %(note)s, now())
-                   ON CONFLICT (agent, name) DO UPDATE
+                   ON CONFLICT (tenant, agent, name) DO UPDATE
                      SET schedule = %(s)s, check_src = %(src)s, note = %(note)s,
                          off_reason = {_ON}, enabled = ({_ON}) IS NULL""".format(_ON=_PY_REASON),
                 {"a": agent, "n": t["name"], "s": t["schedule"],

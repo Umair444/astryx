@@ -272,7 +272,7 @@ def _set(conn, agent: str, a: dict) -> str:
         """INSERT INTO triggers (agent, name, schedule, kind, check_src, note, next_fire, state, off_reason, enabled,
                                  watch, renag, after_for, once)
            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-           ON CONFLICT (agent, name) DO UPDATE
+           ON CONFLICT (tenant, agent, name) DO UPDATE
              SET schedule=EXCLUDED.schedule, check_src=EXCLUDED.check_src, note=EXCLUDED.note,
                  next_fire=EXCLUDED.next_fire, state=EXCLUDED.state, off_reason=EXCLUDED.off_reason, enabled=EXCLUDED.enabled,
                  off_why=CASE WHEN EXCLUDED.off_reason IS NULL THEN NULL ELSE triggers.off_why END,

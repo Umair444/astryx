@@ -18,7 +18,7 @@ MUTANTS = {
     "B2 any role is the owner (a member of B opens B's owner routes)":
         ('    return getattr(request.state, "role", None) == "owner"', '    return getattr(request.state, "role", None) is not None'),
     "B3 the role is not read from this org's members (every verified identity is an owner)":
-        ('    return uid, await pool.fetchval("SELECT role FROM members WHERE uid = $1", uid)', '    return uid, "owner"'),
+        ('        return uid, await pool.fetchval("SELECT org_role($1)", uid)', '        return uid, "owner"'),
     "B4 the gate judges before it reads the identity":
         ("    request.state.uid, request.state.role = await _who(request)", "    request.state.uid, request.state.role = None, None"),
     "B5 the event stream ignores the signed-in owner (an EventSource can only send the cookie)":

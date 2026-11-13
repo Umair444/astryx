@@ -8,6 +8,42 @@ DO $$ BEGIN CREATE EXTENSION IF NOT EXISTS age;     EXCEPTION WHEN OTHERS THEN R
 
 -- db: astryx (in genesis-pg). Apply: psql "$ASTRYX_DSN" -f schema.sql
 
+-- TENANT (cog-rls slice 1, homes/seed/cog-rebuild/RLS.md): every org-, agent- and per-human-level table carries
+-- `tenant`, the registry key of the org that owns the row. It is declared ONLY by an `ALTER TABLE … ADD COLUMN IF NOT
+-- EXISTS tenant` after each table (a constant default: no rewrite), never inside a CREATE TABLE, so a fresh apply and
+-- a re-apply on an older database take the same path to the same catalog. Every key a row is upserted on leads with
+-- tenant (pg_temp.widen_key below), so each `ON CONFLICT (tenant, …)` target names a real unique index. RLS is OFF in
+-- this slice and nothing reads tenant yet; slice 3 swaps the default for astryx.tenant() and adds the policies.
+-- Cog-level tables carry no tenant: leases (a host device), relay_*, usage_polls (one subscription).
+-- widen_key: make table t's key `cname` exactly (cols…), idempotently. It is judged against the catalog by COLUMNS: a
+-- key already on cols is left alone (a re-apply is a no-op); otherwise the PRIMARY KEY (kind p), or the UNIQUE (kind u)
+-- named cname or on cols without its leading tenant, is dropped and the widened key added under cname. A session-temp
+-- procedure: the whole file is applied in one session, and it leaves no object behind in the database.
+CREATE OR REPLACE PROCEDURE pg_temp.widen_key(t regclass, cname name, kind "char", cols name[])
+LANGUAGE plpgsql AS $$
+DECLARE
+  old name;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint c
+              WHERE c.conrelid = t AND c.contype = kind AND c.conname = cname
+                AND ARRAY(SELECT a.attname FROM unnest(c.conkey) WITH ORDINALITY k(n, o)
+                            JOIN pg_attribute a ON a.attrelid = t AND a.attnum = k.n ORDER BY k.o) = cols) THEN
+    RETURN;
+  END IF;
+  SELECT c.conname INTO old FROM pg_constraint c
+   WHERE c.conrelid = t AND c.contype = kind
+     AND (kind = 'p' OR c.conname = cname
+          OR ARRAY(SELECT a.attname FROM unnest(c.conkey) WITH ORDINALITY k(n, o)
+                     JOIN pg_attribute a ON a.attrelid = t AND a.attnum = k.n ORDER BY k.o) = cols[2:])
+   LIMIT 1;
+  IF old IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', t, old);
+  END IF;
+  EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I %s (%s)', t, cname,
+                 CASE kind WHEN 'p' THEN 'PRIMARY KEY' ELSE 'UNIQUE' END,
+                 (SELECT string_agg(quote_ident(x), ', ') FROM unnest(cols) AS x));
+END $$;
+
 CREATE TABLE IF NOT EXISTS steps (
   id          bigserial PRIMARY KEY,
   ts          timestamptz NOT NULL DEFAULT now(),
@@ -21,7 +57,9 @@ CREATE TABLE IF NOT EXISTS steps (
   meta        jsonb
 );
 ALTER TABLE steps ADD COLUMN IF NOT EXISTS turn_id bigint;   -- migration for pre-turns installs
-CREATE INDEX IF NOT EXISTS steps_agent_ts ON steps (agent, ts DESC);
+ALTER TABLE steps ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CREATE INDEX IF NOT EXISTS steps_tenant_agent_ts ON steps (tenant, agent, ts DESC);   -- was steps_agent_ts (agent, ts)
+DROP INDEX IF EXISTS steps_agent_ts;
 CREATE INDEX IF NOT EXISTS steps_goal     ON steps (goal_id) WHERE goal_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS steps_turn     ON steps (turn_id) WHERE turn_id IS NOT NULL;
 
@@ -70,8 +108,10 @@ CREATE TABLE IF NOT EXISTS turns (
   -- edge — verified goal budgets propagate back over exactly these rows.
   goal_id       bigint
 );
+ALTER TABLE turns ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';   -- before turns_v, which snapshots t.*
 CREATE INDEX IF NOT EXISTS turns_goal ON turns (goal_id) WHERE goal_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS turns_agent_time ON turns (agent, ended_at DESC);
+CREATE INDEX IF NOT EXISTS turns_tenant_agent_time ON turns (tenant, agent, ended_at DESC);   -- was turns_agent_time
+DROP INDEX IF EXISTS turns_agent_time;
 CREATE INDEX IF NOT EXISTS turns_msg        ON turns (input_msg_id) WHERE input_msg_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS turns_raw_gin    ON turns USING gin (raw_payload);
 
@@ -190,7 +230,9 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS turn_id bigint;   -- migration for pre-turns installs
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivery jsonb;   -- migration: awaitable send reads the deliverer's result here
-CREATE INDEX IF NOT EXISTS messages_inbox ON messages (to_agent, status, id);
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CREATE INDEX IF NOT EXISTS messages_tenant_inbox ON messages (tenant, to_agent, status, id);   -- was messages_inbox
+DROP INDEX IF EXISTS messages_inbox;
 CREATE INDEX IF NOT EXISTS messages_turn  ON messages (turn_id) WHERE turn_id IS NOT NULL;
 DO $$ BEGIN
   ALTER TABLE messages ADD CONSTRAINT messages_turn_fk
@@ -208,6 +250,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   active   boolean NOT NULL DEFAULT true,
   UNIQUE (watcher, target)
 );
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('subscriptions', 'subscriptions_watcher_target_key', 'u', '{tenant,watcher,target}');
 
 CREATE TABLE IF NOT EXISTS goals (
   id            bigserial PRIMARY KEY,
@@ -237,6 +281,7 @@ CREATE TABLE IF NOT EXISTS goals (
 -- honestly unknown); NULL above it = a new goal not yet attributed; '(unfunded)' = shipped
 -- with no funder (named at W-birth by the trigger); '<agent>' = an attributed funder.
 ALTER TABLE goals ADD COLUMN IF NOT EXISTS funded_by text;
+ALTER TABLE goals ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 -- the legacy watermark: the highest goal id that existed when funded_by was introduced.
 -- Captured ONCE (the WHERE-NOT-EXISTS guard) so re-running schema.sql never moves it; on a
 -- fresh clone (empty goals) it is 0 and nothing is legacy.
@@ -247,9 +292,11 @@ CREATE TABLE IF NOT EXISTS funded_by_watermark (
   singleton     boolean PRIMARY KEY DEFAULT true CHECK (singleton),
   legacy_max_id bigint NOT NULL
 );
+ALTER TABLE funded_by_watermark ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('funded_by_watermark', 'funded_by_watermark_pkey', 'p', '{tenant,singleton}');
 INSERT INTO funded_by_watermark (legacy_max_id)
   SELECT COALESCE(max(id), 0) FROM goals
-  ON CONFLICT (singleton) DO NOTHING;
+  ON CONFLICT (tenant, singleton) DO NOTHING;
 CREATE OR REPLACE FUNCTION goals_done_stamp() RETURNS trigger AS $$
 BEGIN
   IF NEW.state IN ('shipped','done') AND (OLD.state IS DISTINCT FROM NEW.state) THEN
@@ -311,6 +358,8 @@ CREATE TABLE IF NOT EXISTS econ (
   computed_at timestamptz NOT NULL DEFAULT now(),
   metrics     jsonb NOT NULL
 );
+ALTER TABLE econ ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('econ', 'econ_pkey', 'p', '{tenant,day}');
 
 CREATE TABLE IF NOT EXISTS peers (
   org        text PRIMARY KEY,               -- org name (domain when it has one)
@@ -323,6 +372,8 @@ CREATE TABLE IF NOT EXISTS peers (
   caps_received jsonb NOT NULL DEFAULT '[]',
   notes      text
 );
+ALTER TABLE peers ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';   -- `org` is the PEER; tenant is the org that knows it
+CALL pg_temp.widen_key('peers', 'peers_pkey', 'p', '{tenant,org}');
 
 -- The relay (bridges/relay.py), used only when this gateway hosts one (ASTRYX_RELAY_HOST=1).
 -- A separate surface from peers/messages: orgs registered here are NOT peers of this org.
@@ -357,6 +408,7 @@ CREATE TABLE IF NOT EXISTS receipts (
   sig_a      text,
   sig_b      text
 );
+ALTER TABLE receipts ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 
 -- Doorbells. Payloads are tiny (ids); the table is the truth, consumers fetch + drain.
 CREATE OR REPLACE FUNCTION notify_message() RETURNS trigger AS $$
@@ -393,6 +445,7 @@ CREATE TABLE IF NOT EXISTS dag_runs (
   finished timestamptz,
   result   jsonb
 );
+ALTER TABLE dag_runs ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';   -- run_id stays the key: a global serial, and dag_steps.run_id references it
 CREATE TABLE IF NOT EXISTS dag_steps (
   id       bigserial PRIMARY KEY,
   run_id   bigint REFERENCES dag_runs(run_id),
@@ -405,6 +458,7 @@ CREATE TABLE IF NOT EXISTS dag_steps (
   error    text
 );
 CREATE INDEX IF NOT EXISTS dag_steps_run ON dag_steps (run_id);
+ALTER TABLE dag_steps ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 
 -- Triggers: agents author their own wake-ups. The pulse daemon evaluates each
 -- schedule and, when a check fires, INSERTs an ordinary wire message to the
@@ -446,6 +500,8 @@ ALTER TABLE triggers ADD COLUMN IF NOT EXISTS watch text NOT NULL DEFAULT 'new'
 ALTER TABLE triggers ADD COLUMN IF NOT EXISTS renag interval;
 ALTER TABLE triggers ADD COLUMN IF NOT EXISTS after_for interval;
 ALTER TABLE triggers ADD COLUMN IF NOT EXISTS once boolean NOT NULL DEFAULT false;
+ALTER TABLE triggers ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('triggers', 'triggers_agent_name_key', 'u', '{tenant,agent,name}');
 CREATE INDEX IF NOT EXISTS triggers_due ON triggers (next_fire) WHERE enabled;
 
 -- plan-12214 part 2: every job an agent can't do from a tool's schema alone, one row per problem. The unit is the JOB,
@@ -464,6 +520,8 @@ CREATE TABLE IF NOT EXISTS capability_census (
   created    timestamptz NOT NULL DEFAULT now(),
   updated    timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE capability_census ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('capability_census', 'capability_census_job_key', 'u', '{tenant,job}');
 INSERT INTO capability_census (job, surface, stage, had_to_read, first_call_failure, fix, state, source) VALUES
  ('wake me later or when something changes', 'tool', 'contract', 'cog_backup.py, pulse_run.py, astryx/__init__.py, pulse.py',
   'the old set amended destructively; kind typos, bad cron and sql re-onset failed silently', 'the trigger tool, plan-12214 slice 1', 'fixed', 'reported'),
@@ -480,7 +538,7 @@ INSERT INTO capability_census (job, surface, stage, had_to_read, first_call_fail
  ('know whether a trigger is on, from one column', 'table', 'contract', 'pulse.normalize(), trigger_tool._seen()',
   'until the contract land, enabled and off_reason are two writers: an unrespawned resident''s old tools write enabled alone, and the reason lags a tick',
   'goal 12238: enabled generated from off_reason, the kind CHECK, normalize() and the slice-1 shims deleted', 'open', 'derived')
-ON CONFLICT (job) DO NOTHING;
+ON CONFLICT (tenant, job) DO NOTHING;
 
 -- polls: every WhatsApp poll seen on a routed surface — agent-embedded
 -- ([[poll: q | a | b | multi=N]] in any outbound body), CLI-sent, or
@@ -497,6 +555,7 @@ CREATE TABLE IF NOT EXISTS polls (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE polls ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';   -- msg_id stays the key: a WhatsApp message id is global
 
 -- signals: the TIER-CROSSING DOORBELL (plan-16 / goal 16). An OPAQUE HANDLE
 -- REGISTRY, never a queue. A private-tier event (e.g. canopus's recruiter mail,
@@ -533,6 +592,7 @@ CREATE TABLE IF NOT EXISTS signals (
 );
 -- the wake query: unhandled rows for an agent at a given urgency
 CREATE INDEX IF NOT EXISTS signals_wake ON signals (agent, priority, handled_at);
+ALTER TABLE signals ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 
 -- ── the social graph (owner ruling 2026-08-14: "postgres for everything") ──────────
 -- The network's people, FB-shaped: we record THAT two people are related, never what
@@ -559,6 +619,8 @@ CREATE TABLE IF NOT EXISTS social_person (
   seen_at    timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (org, id)
 );
+ALTER TABLE social_person ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';   -- `org` is provenance (who observed); tenant is the org that holds the row
+CALL pg_temp.widen_key('social_person', 'social_person_pkey', 'p', '{tenant,org,id}');
 -- Edges: "related at all" — co-membership or a direct thread. Weight = evidence
 -- count (shared groups), so a rendering can threshold without the storage lying.
 CREATE TABLE IF NOT EXISTS social_edge (
@@ -593,6 +655,8 @@ ALTER TABLE social_relation
   ADD COLUMN IF NOT EXISTS essence   text,          -- ≤60 words: who this person is to the owner
   ADD COLUMN IF NOT EXISTS now_state text,          -- ≤30 words: the latest state + open loops, with direction
   ADD COLUMN IF NOT EXISTS through   timestamptz;   -- the last WhatsApp message folded in (the delta watermark)
+ALTER TABLE social_relation ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('social_relation', 'social_relation_pkey', 'p', '{tenant,org,pid}');
 
 -- CLASSIFICATIONS (goal 4227, S4): one LABEL per prompt from the pluggable classifier, which
 -- the nudge hook (hooks/nudge.py) reads for RECURRENCE of a task family. It holds labels ONLY.
@@ -613,6 +677,7 @@ CREATE TABLE IF NOT EXISTS classifications (
   nudged      boolean NOT NULL DEFAULT false   -- this label produced a nudge (the cooldown's record)
 );
 ALTER TABLE classifications ADD COLUMN IF NOT EXISTS nudged boolean NOT NULL DEFAULT false;
+ALTER TABLE classifications ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 CREATE INDEX IF NOT EXISTS classifications_recur ON classifications (agent, family, ts DESC);
 
 -- SQLGUARD STATE (goal 4243): what the meta-guard has to remember ACROSS runs, as a row (org law), not a file.
@@ -627,6 +692,8 @@ CREATE TABLE IF NOT EXISTS sqlguard_seen (
   runs        int NOT NULL DEFAULT 1,
   PRIMARY KEY (kind, key)
 );
+ALTER TABLE sqlguard_seen ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('sqlguard_seen', 'sqlguard_seen_pkey', 'p', '{tenant,kind,key}');
 
 -- held_wakes (goal 4227 S1c): wakes a trigger raised while the 5h quota was >=85% and the trigger
 -- carries no survival flag (premium=0). The pulse is the ONLY writer of trigger wakes: checks call
@@ -656,6 +723,7 @@ CREATE TABLE IF NOT EXISTS held_wakes (
 );
 CREATE INDEX IF NOT EXISTS held_wakes_key
   ON held_wakes (agent, trigger, to_agent, coalesce(thread, ''));
+ALTER TABLE held_wakes ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 
 -- wire_emitted (goal 4227 S1c, C1.5): "has this been EMITTED?" — messages plus held wakes, elided
 -- rows included (they were emitted and are retrievable). A check asking whether it or anyone already
@@ -683,12 +751,15 @@ CREATE TABLE IF NOT EXISTS canvas_users (
   last_seen   timestamptz,
   revoked     boolean NOT NULL DEFAULT false
 );
+ALTER TABLE canvas_users ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('canvas_users', 'canvas_users_pkey', 'p', '{tenant,name}');   -- token_hash stays global
 CREATE TABLE IF NOT EXISTS canvas_sessions (
   token_hash  text PRIMARY KEY,                 -- sha256 of the HttpOnly cookie value
   user_name   text NOT NULL,                    -- 'owner' or a canvas_users.name
   created_at  timestamptz NOT NULL DEFAULT now(),
   expires_at  timestamptz NOT NULL DEFAULT now() + interval '30 days'
 );
+ALTER TABLE canvas_sessions ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';   -- token_hash stays the key: a hash of a random cookie is global
 CREATE TABLE IF NOT EXISTS canvas_threads (
   thread      text PRIMARY KEY,                 -- 'cv:<id>' (or a foreign thread an agent opened to a canvas user)
   user_name   text NOT NULL,
@@ -699,6 +770,8 @@ CREATE TABLE IF NOT EXISTS canvas_threads (
   updated_at  timestamptz NOT NULL DEFAULT now(),
   archived    boolean NOT NULL DEFAULT false
 );
+ALTER TABLE canvas_threads ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('canvas_threads', 'canvas_threads_pkey', 'p', '{tenant,thread}');
 CREATE INDEX IF NOT EXISTS canvas_threads_user ON canvas_threads (user_name, updated_at DESC);
 CREATE TABLE IF NOT EXISTS canvases (
   id          bigserial PRIMARY KEY,
@@ -722,6 +795,7 @@ CREATE TABLE IF NOT EXISTS canvas_versions (     -- immutable; publish = a new r
   ts          timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (canvas_id, version)
 );
+ALTER TABLE canvas_versions ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';   -- canvas_id is a global serial: the keys of the canvas tables stay as they are
 CREATE TABLE IF NOT EXISTS canvas_data (         -- live documents a canvas renders from
   canvas_id   bigint NOT NULL REFERENCES canvases(id),
   key         text NOT NULL,
@@ -730,6 +804,7 @@ CREATE TABLE IF NOT EXISTS canvas_data (         -- live documents a canvas rend
   updated_at  timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (canvas_id, key)
 );
+ALTER TABLE canvas_data ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 -- Doorbell: ids only (NOTIFY caps at 8000 bytes); consumers fetch the row. Namespaced channel.
 CREATE OR REPLACE FUNCTION notify_canvas() RETURNS trigger AS $$
 BEGIN
@@ -761,6 +836,7 @@ CREATE TABLE IF NOT EXISTS canvas_voice_usage (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS canvas_voice_usage_day ON canvas_voice_usage (minted_at);
+ALTER TABLE canvas_voice_usage ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 
 -- ── PRESENCE (2026-10-09): where each agent's attention IS, right now. One row per agent, so it is
 -- a state, not a log (steps is the log). General on purpose: `surface` names any place the org can
@@ -777,6 +853,9 @@ CREATE TABLE IF NOT EXISTS presence (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE canvases ADD COLUMN IF NOT EXISTS crew text[] NOT NULL DEFAULT '{}';  -- agents summoned to work on it
+ALTER TABLE canvases ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+ALTER TABLE presence ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('presence', 'presence_pkey', 'p', '{tenant,agent}');
 CREATE OR REPLACE FUNCTION notify_presence() RETURNS trigger AS $$
 BEGIN
   PERFORM pg_notify('astryx_presence', json_build_object('agent', NEW.agent)::text);
@@ -795,6 +874,8 @@ ALTER TABLE social_edge ADD COLUMN IF NOT EXISTS first_ts   timestamptz;
 ALTER TABLE social_edge ADD COLUMN IF NOT EXISTS last_ts    timestamptz;
 ALTER TABLE social_edge ADD COLUMN IF NOT EXISTS mine       int;
 ALTER TABLE social_edge ADD COLUMN IF NOT EXISTS scanned_at timestamptz;
+ALTER TABLE social_edge ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('social_edge', 'social_edge_pkey', 'p', '{tenant,org,src,dst,rel}');
 
 -- HANDS LEASES (plan-7862 S1). One row per browser lease; src/astryx/hands/hands.py is the ONLY writer.
 -- The per-lease proxy's allow-list is GENERATED from `allow`, so the row is the authority on
@@ -813,6 +894,7 @@ CREATE TABLE IF NOT EXISTS hands_leases (
   ended_at    timestamptz,
   end_reason  text CHECK (end_reason IS NULL OR end_reason IN ('killed','step_cap','wall_cap','error'))
 );
+ALTER TABLE hands_leases ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 
 -- LEASES (plan-8674 D4, hearing S1): ONE small lease seam. One row per RESOURCE ('ear:<room>' = one ear per
 -- room); src/astryx/hearing/ear_lease.py is the ONLY writer. Claim is an atomic UPDATE … WHERE state='free' RETURNING; the
@@ -860,6 +942,7 @@ CREATE TABLE IF NOT EXISTS utterances (
   backend text,                                        -- which STT backend heard it (cpu/cuda faster-whisper, ...)
   PRIMARY KEY (ts, id)
 ) PARTITION BY RANGE (ts);
+ALTER TABLE utterances ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';   -- on the parent: every day partition inherits it
 
 -- VOICES (the Room, owner brief 2026-10-11): who is speaking in the room. Every utterance's audio is matched against
 -- these prints (src/astryx/hearing/voiceprint.py, CAM++ speaker embeddings on CPU); a voice the ear has never heard becomes a new
@@ -878,6 +961,8 @@ CREATE TABLE IF NOT EXISTS voices (
   first_heard timestamptz NOT NULL DEFAULT now(),
   last_heard  timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE voices ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('voices', 'voices_label_key', 'u', '{tenant,label}');
 
 -- HEARINGS (plan-8674 S2, a4 #42048 D5): an agent's hear() caught its name in an utterance. This row is the POINTER
 -- the agent is woken with, and it carries NO TEXT by design (no text column exists): the words stay in `utterances`,
@@ -901,6 +986,7 @@ CREATE TABLE IF NOT EXISTS hearings (
   fetched_at       timestamptz                          -- the last ear_fetch.py read (door 2 is counted, never silent)
 );
 CREATE INDEX IF NOT EXISTS hearings_agent_ts ON hearings (agent, ts DESC);
+ALTER TABLE hearings ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 
 -- LIBRARY PASSAGES (plan-8018 S3; memory #49623, a3 #49626, seed #49625): the retrieval copy of graph `memory`.
 -- One passage per ADMITTED Concept (a page, or one of its heading-grain sections). Outside the graph's namespace
@@ -920,6 +1006,8 @@ CREATE TABLE IF NOT EXISTS library.passage (
   root_digest text NOT NULL
 );
 CREATE INDEX IF NOT EXISTS passage_tsv ON library.passage USING gin (tsv);
+ALTER TABLE library.passage ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';   -- the library is an org-level derived copy
+CALL pg_temp.widen_key('library.passage', 'passage_pkey', 'p', '{tenant,node_id}');
 -- BM25's corpus statistics, refilled by the same writer from ts_stat over the same snapshot (declared with the
 -- passage copy: same writer, same digest).
 CREATE TABLE IF NOT EXISTS library.lexeme_df (
@@ -927,12 +1015,16 @@ CREATE TABLE IF NOT EXISTS library.lexeme_df (
   ndoc        int NOT NULL CHECK (ndoc > 0),
   root_digest text NOT NULL
 );
+ALTER TABLE library.lexeme_df ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('library.lexeme_df', 'lexeme_df_pkey', 'p', '{tenant,word}');
 CREATE TABLE IF NOT EXISTS library.stats (
   one         boolean PRIMARY KEY DEFAULT true CHECK (one),   -- a single row
   n           int NOT NULL CHECK (n >= 0),
   avgdl       float8 NOT NULL CHECK (avgdl >= 0),
   root_digest text NOT NULL
 );
+ALTER TABLE library.stats ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('library.stats', 'stats_pkey', 'p', '{tenant,one}');
 
 -- THE READER: Okapi BM25 (k1 = 1.2, b = 0.75, idf = ln(1 + (N - df + 0.5) / (df + 0.5))), any-term match.
 -- q is normalised by the 'english' config, the same one that built tsv, so both sides are the same lexemes.
@@ -986,6 +1078,7 @@ CREATE TABLE IF NOT EXISTS influence_edge (
   computed_at timestamptz NOT NULL,
   CHECK (src <> dst)
 );
+ALTER TABLE influence_edge ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 CREATE INDEX IF NOT EXISTS influence_edge_scope ON influence_edge (scope, kind, ts);
 CREATE TABLE IF NOT EXISTS influence_value (
   scope       text NOT NULL DEFAULT 'local',
@@ -996,6 +1089,8 @@ CREATE TABLE IF NOT EXISTS influence_value (
   computed_at timestamptz NOT NULL,
   PRIMARY KEY (scope, view, agent, computed_at)
 );
+ALTER TABLE influence_value ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('influence_value', 'influence_value_pkey', 'p', '{tenant,scope,view,agent,computed_at}');
 CREATE TABLE IF NOT EXISTS influence_query (
   id        bigserial PRIMARY KEY,
   ts        timestamptz NOT NULL DEFAULT now(),
@@ -1005,6 +1100,7 @@ CREATE TABLE IF NOT EXISTS influence_query (
   liveness  text NOT NULL                     -- which filter ran, as the reply printed it
 );
 CREATE INDEX IF NOT EXISTS influence_query_ts ON influence_query (ts);
+ALTER TABLE influence_query ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 
 -- plan-11324 S4 · WORKFLOWS: a goal's planned coordination (a DAG of tasks converging on one agent), append-only
 -- revisions. The body's rules live in src/astryx/workflow.py (validate); actuals are MEASURED from origin/main there,
@@ -1017,6 +1113,7 @@ CREATE TABLE IF NOT EXISTS goal_workflow (
   ts       timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (goal_id, rev)
 );
+ALTER TABLE goal_workflow ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';   -- goal_id is a global serial: the key stays
 
 -- THE STORE (owner 10-21): every agent's own durable data, by DOMAIN, in one schema and one directory with one name.
 -- A domain's tables are `store.<domain>_<noun>` (finance_payslip, finance_txn, finance_account …): the prefix IS the
@@ -1028,10 +1125,76 @@ CREATE SCHEMA IF NOT EXISTS store;
 -- plan-11859 U1U2 (D2, D8; a2 I1, I8): who may do what IN THIS ORG. uid is the cog front's signed identity
 -- (src/astryx/security/identity.py: "<user id>@<cog id>"); role is decided HERE, never carried in the token. An empty
 -- table opens this org to nobody (only the owner key, OBS_KEY, until U7 retires it). ONE writer of a row:
--- astryx.cogauth.grant (the host CLI, and devtools/cog_add_org.py --owner when it makes an org). Today only `owner`
--- opens the observatory's owner gate; member and viewer are recorded and shown, and unlock nothing more yet.
+-- astryx.cogauth.grant (the host CLI, and devtools/cog_add_org.py --owner when it makes an org).
+-- Tree-scoped (salvaged from cog P2 S1, 3f8d5d1, without its principals): a role sits on a NODE of the agents/ tree,
+-- never on a fixed level. `node` is a path in agents/ ('' = the whole org, 'lending' a group, 'lending/scout' an agent)
+-- and a role on a node is inherited by its whole subtree: the effective role at a node is the row with the LONGEST
+-- matching prefix (member_role below). The role names are kept in step in three places: this CHECK,
+-- astryx.cogauth.ROLES and the front's `in cogauth.ROLES` filter (tests/test_tenant_slice1.py).
 CREATE TABLE IF NOT EXISTS members (
-  uid    text PRIMARY KEY CHECK (uid LIKE '%@%'),
-  role   text NOT NULL CHECK (role IN ('owner', 'member', 'viewer')),
-  added  timestamptz NOT NULL DEFAULT now()
+  uid    text NOT NULL CHECK (uid LIKE '%@%'),
+  node   text NOT NULL DEFAULT '',
+  role   text NOT NULL,
+  added  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT members_pkey PRIMARY KEY (uid, node),
+  CONSTRAINT members_role_check CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
+  CONSTRAINT members_node_check CHECK (node = '' OR node ~ '^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*)*$')
 );
+-- the migration of a database made by the first shape (uid PRIMARY KEY, role in owner/member/viewer): every step is
+-- judged against the catalog first, so a re-apply on either shape changes nothing it doesn't have to. Its rows keep
+-- their uid and role and gain node '' (the whole org: exactly the scope they had) and tenant.
+ALTER TABLE members ADD COLUMN IF NOT EXISTS node text NOT NULL DEFAULT '';
+ALTER TABLE members ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+CALL pg_temp.widen_key('members', 'members_pkey', 'p', '{tenant,uid,node}');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'members'::regclass AND conname = 'members_role_check'
+                   AND pg_get_constraintdef(oid) LIKE '%admin%') THEN
+    ALTER TABLE members DROP CONSTRAINT IF EXISTS members_role_check;
+    ALTER TABLE members ADD CONSTRAINT members_role_check CHECK (role IN ('owner', 'admin', 'member', 'viewer'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'members'::regclass AND conname = 'members_node_check') THEN
+    ALTER TABLE members ADD CONSTRAINT members_node_check
+      CHECK (node = '' OR node ~ '^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*)*$');
+  END IF;
+END $$;
+
+-- The effective role of uid at a node: the row on the longest node that is the node itself or one of its ancestors
+-- ('' is every node's ancestor). NULL = no role there. The ONE definition of inheritance; every reader calls it.
+CREATE OR REPLACE FUNCTION member_role(p_uid text, p_node text DEFAULT '') RETURNS text
+LANGUAGE sql STABLE AS $$
+  SELECT role FROM members
+   WHERE uid = p_uid
+     AND (node = '' OR node = p_node OR left(p_node, length(node) + 1) = node || '/')
+   ORDER BY length(node) DESC
+   LIMIT 1
+$$;
+-- The role a uid holds in the org AS A WHOLE (the observatory's gate): its role at the root, else, when it holds roles
+-- only on subtrees, a participant's: 'member' (a subtree owner or admin is not an org-wide one), or 'viewer' when every
+-- one of its rows is a viewer's. NULL = not a member of this org at all.
+CREATE OR REPLACE FUNCTION org_role(p_uid text) RETURNS text
+LANGUAGE sql STABLE AS $$
+  SELECT coalesce(member_role(p_uid, ''),
+                  (SELECT CASE WHEN bool_or(role <> 'viewer') THEN 'member' WHEN count(*) > 0 THEN 'viewer' END
+                     FROM members WHERE uid = p_uid))
+$$;
+-- THE LAST-OWNER GUARD, in the table so every writer meets it: while the org has any other member, its last
+-- whole-org owner can be neither removed nor demoted (nor moved off the root). Removing the LAST membership of all is
+-- allowed: an empty table is the designed bootstrap state (fails closed: only the owner key opens the org). Judged
+-- within the row's own tenant.
+CREATE OR REPLACE FUNCTION members_last_owner() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.role = 'owner' AND OLD.node = ''
+     AND (TG_OP = 'DELETE' OR NEW.role <> 'owner' OR NEW.node <> '' OR NEW.uid <> OLD.uid OR NEW.tenant <> OLD.tenant)
+     AND NOT EXISTS (SELECT 1 FROM members
+                      WHERE tenant = OLD.tenant AND role = 'owner' AND node = '' AND uid <> OLD.uid)
+     AND EXISTS (SELECT 1 FROM members WHERE tenant = OLD.tenant AND uid <> OLD.uid) THEN
+    RAISE EXCEPTION 'the last owner of this org can not be removed or demoted while it has other members'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END $$;
+DROP TRIGGER IF EXISTS members_last_owner ON members;
+CREATE TRIGGER members_last_owner BEFORE DELETE OR UPDATE ON members
+  FOR EACH ROW EXECUTE FUNCTION members_last_owner();

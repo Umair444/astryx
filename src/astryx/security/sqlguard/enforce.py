@@ -106,7 +106,7 @@ def _clock(conn, kind, keys, write=False):
             (kind, list(keys))).fetchall()}, now
     out = {}
     for k in keys:
-        r = conn.execute("INSERT INTO sqlguard_seen (kind, key) VALUES (%s,%s) ON CONFLICT (kind, key) DO UPDATE "
+        r = conn.execute("INSERT INTO sqlguard_seen (kind, key) VALUES (%s,%s) ON CONFLICT (tenant, kind, key) DO UPDATE "
                          "SET last_seen=now(), runs=sqlguard_seen.runs+1 RETURNING first_seen, runs",
                          (kind, k)).fetchone()
         out[k] = r

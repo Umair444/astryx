@@ -122,7 +122,7 @@ def create(conn, title: str, agent: str = "painter", user: str = "owner", brief:
         "RETURNING id", (title.strip()[:200], agent, user, tier, brief)).fetchone()[0]
     conn.execute(
         "INSERT INTO canvas_threads (thread, user_name, agent, title, canvas_id) "
-        "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (thread) DO NOTHING",
+        "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (tenant, thread) DO NOTHING",
         (f"cv:canvas-{cid}", user, agent, title.strip()[:200], cid))
     return cid
 

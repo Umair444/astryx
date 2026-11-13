@@ -8,8 +8,8 @@ org's own `members` table, and the host CLI that is the only writer of either.
     venv/bin/python src/astryx/cogauth.py user add EMAIL                the password is read from stdin (a pipe) or
     venv/bin/python src/astryx/cogauth.py user reset EMAIL              the terminal, NEVER argv; reset revokes every
                                                                         session of that account
-    venv/bin/python src/astryx/cogauth.py grant ORG EMAIL owner|member|viewer
-    venv/bin/python src/astryx/cogauth.py revoke ORG EMAIL
+    venv/bin/python src/astryx/cogauth.py grant ORG EMAIL owner|admin|member|viewer [--node PATH]
+    venv/bin/python src/astryx/cogauth.py revoke ORG EMAIL [--node PATH]     no --node: every row of the account
     venv/bin/python src/astryx/cogauth.py backup DIR                    the cog store: pg_dump -Fc → DIR/cog-<ts>.dump
     venv/bin/python src/astryx/cogauth.py restore-verify DIR            the newest dump restores into a scratch
                                                                         database (<db>_restorecheck), its users count
@@ -54,7 +54,8 @@ from pathlib import Path
 
 from astryx import config, orgs
 
-ROLES = ("owner", "member", "viewer")
+# in step with schema.sql's members_role_check and the front's `in cogauth.ROLES` filter (tests/test_tenant_slice1.py)
+ROLES = ("owner", "admin", "member", "viewer")
 SESSION_DAYS = 14
 SCHEMA = Path(__file__).resolve().parent / "sql" / "cog_schema.sql"
 # argon2id above OWASP's floor for interactive sign-in (m 19 MiB, t 2): m 64 MiB, t 3; libsodium fixes p at 1
@@ -162,16 +163,21 @@ def sub(uid: int, cog_id: str) -> str:
     return f"{uid}@{cog_id}"
 
 
-def grant(org_conn, who: str, role: str) -> None:
-    """THE one writer of a membership row (D8)."""
+def grant(org_conn, who: str, role: str, node: str = "") -> None:
+    """THE one writer of a membership row (D8). `node` is a path in the agents/ tree ('' = the whole org); a role on a
+    node is inherited by its subtree (schema.sql member_role). A role change that would leave the org's members with
+    no whole-org owner is refused by the table itself (members_last_owner)."""
     if role not in ROLES:
         raise ValueError(f"role must be one of {', '.join(ROLES)}")
-    org_conn.execute("INSERT INTO members (uid, role) VALUES (%s, %s) ON CONFLICT (uid) DO UPDATE SET role = "
-                     "EXCLUDED.role", (who, role))
+    org_conn.execute("INSERT INTO members (uid, node, role) VALUES (%s, %s, %s) ON CONFLICT (tenant, uid, node) DO "
+                     "UPDATE SET role = EXCLUDED.role", (who, node, role))
 
 
-def revoke(org_conn, who: str) -> bool:
-    return org_conn.execute("DELETE FROM members WHERE uid = %s", (who,)).rowcount > 0
+def revoke(org_conn, who: str, node: str | None = None) -> bool:
+    """Every membership row of `who` (node None), or its row on one node."""
+    if node is None:
+        return org_conn.execute("DELETE FROM members WHERE uid = %s", (who,)).rowcount > 0
+    return org_conn.execute("DELETE FROM members WHERE uid = %s AND node = %s", (who, node)).rowcount > 0
 
 
 # ------------------------------------------------------------------ the CLI
@@ -255,13 +261,19 @@ def cmd_grant(a, role: str | None) -> int:
         uid = uid_of(conn, a.email)
     if uid is None:
         raise SystemExit("cogauth: no such account")
+    node = getattr(a, "node", None)
+    where = f"{a.org}" + (f" at {node}" if node else "")
     with psycopg.connect(_org_dsn(a.org), autocommit=True) as oc:
-        if role:
-            grant(oc, sub(uid, c["id"]), role)
-            print(f"cogauth: {sub(uid, c['id'])} is {role} of {a.org}")
-        else:
-            print(f"cogauth: {sub(uid, c['id'])} " + ("removed from " if revoke(oc, sub(uid, c["id"])) else
-                                                      "was not a member of ") + a.org)
+        try:
+            if role:
+                grant(oc, sub(uid, c["id"]), role, node or "")
+                print(f"cogauth: {sub(uid, c['id'])} is {role} of {where}")
+            else:
+                print(f"cogauth: {sub(uid, c['id'])} " + ("removed from " if revoke(oc, sub(uid, c["id"]), node) else
+                                                          "was not a member of ") + where)
+        except psycopg.errors.CheckViolation:
+            raise SystemExit("cogauth: refused: that would leave this org's members with no whole-org owner, or the "
+                             "node is not a path in the agents/ tree") from None
     return 0
 
 
@@ -337,6 +349,7 @@ def main(argv=None) -> int:
         g.add_argument("email")
         if name == "grant":
             g.add_argument("role", choices=ROLES)
+        g.add_argument("--node", help="a path in the agents/ tree (default: the whole org)")
     for name in ("backup", "restore-verify"):
         s.add_parser(name).add_argument("dir")
     a = ap.parse_args(argv)

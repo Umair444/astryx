@@ -56,7 +56,7 @@ def focus(conn, agent: str, surface: str | None, target: str | None = None,
         raise ValueError(f"state must be one of {STATES}")
     conn.execute(
         "INSERT INTO presence (agent, surface, target, say, state, updated_at) VALUES (%s,%s,%s,%s,%s,now()) "
-        "ON CONFLICT (agent) DO UPDATE SET surface=EXCLUDED.surface, target=EXCLUDED.target, "
+        "ON CONFLICT (tenant, agent) DO UPDATE SET surface=EXCLUDED.surface, target=EXCLUDED.target, "
         "say=EXCLUDED.say, state=EXCLUDED.state, updated_at=now()",
         (agent, surface, (target or None) and target[:500], (say or None) and say[:SAY_MAX], state))
 
@@ -64,7 +64,7 @@ def focus(conn, agent: str, surface: str | None, target: str | None = None,
 def done(conn, agent: str, say: str | None = None) -> None:
     """Finished: keep the surface and target (the viewer sees WHERE), flip the state."""
     conn.execute(
-        "INSERT INTO presence (agent, state, say) VALUES (%s,'done',%s) ON CONFLICT (agent) DO UPDATE "
+        "INSERT INTO presence (agent, state, say) VALUES (%s,'done',%s) ON CONFLICT (tenant, agent) DO UPDATE "
         "SET state='done', say=coalesce(EXCLUDED.say, presence.say), updated_at=now()",
         (agent, (say or None) and say[:SAY_MAX]))
 

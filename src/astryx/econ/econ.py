@@ -645,7 +645,7 @@ def rollup(conn, day: str | None = None) -> dict:
     metrics["built_from"] = built_from()
     from psycopg.types.json import Jsonb
     conn.execute("INSERT INTO econ (day, metrics) VALUES (%s, %s) "
-                 "ON CONFLICT (day) DO UPDATE SET metrics=EXCLUDED.metrics, "
+                 "ON CONFLICT (tenant, day) DO UPDATE SET metrics=EXCLUDED.metrics, "
                  "computed_at=now()", (day, Jsonb(metrics)))
     conn.commit()
     return metrics

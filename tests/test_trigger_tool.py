@@ -120,7 +120,7 @@ def migration(fx):
             except psycopg.Error as e:
                 check(f"X5 an old body's {label} still works in the window", False, e)
         c.execute("INSERT INTO triggers (agent,name,schedule,kind) VALUES ('a','spawned','0 9 * * *','heartbeat') "
-                  "ON CONFLICT (agent,name) DO NOTHING")
+                  "ON CONFLICT (tenant,agent,name) DO NOTHING")
         check("X6 spawn.sh's insert still works", c.execute("SELECT enabled FROM triggers WHERE name='spawned'").fetchone()[0] is True)
         # normalize (B5): the backfill's classes, from `enabled` alone; it never turns a row on
         pulse.normalize(c)

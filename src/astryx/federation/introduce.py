@@ -69,7 +69,7 @@ def store_peer(env, org, url, pubkey, notes):
         conn.execute(
             """INSERT INTO peers (org, url, pubkey, status, notes)
                VALUES (%s, %s, %s, 'introduced', %s)
-               ON CONFLICT (org) DO UPDATE SET url=EXCLUDED.url, pubkey=EXCLUDED.pubkey""",
+               ON CONFLICT (tenant, org) DO UPDATE SET url=EXCLUDED.url, pubkey=EXCLUDED.pubkey""",
             (org, url, pubkey, notes))
 
 

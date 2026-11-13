@@ -190,7 +190,7 @@ async def thread_user(conn, row) -> str | None:
     if user and thread:
         await conn.execute(
             "INSERT INTO canvas_threads (thread, user_name, agent, title) VALUES ($1,$2,$3,$4) "
-            "ON CONFLICT (thread) DO NOTHING", thread, user, row["from_agent"],
+            "ON CONFLICT (tenant, thread) DO NOTHING", thread, user, row["from_agent"],
             re.sub(r"\s+", " ", row["body"])[:60])
         push(user, {"type": "thread", "thread": thread})
     return user
@@ -1068,7 +1068,7 @@ async def invite(body: NewUser, request: Request):
     tok = secrets.token_urlsafe(24)
     await pool.execute(
         "INSERT INTO canvas_users (name, token_hash, agents) VALUES ($1,$2,$3) "
-        "ON CONFLICT (name) DO UPDATE SET token_hash=EXCLUDED.token_hash, agents=EXCLUDED.agents, revoked=false",
+        "ON CONFLICT (tenant, name) DO UPDATE SET token_hash=EXCLUDED.token_hash, agents=EXCLUDED.agents, revoked=false",
         name, _h(tok), body.agents)
     return {"name": name, "token": tok, "link": f"{public_base(request)}/#invite={tok}"}
 

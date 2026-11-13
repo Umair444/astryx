@@ -162,7 +162,7 @@ def run(limit: int = DEFAULT_LIMIT, budget_s: float = 600) -> dict:
                 continue
             with conn.cursor() as cur:
                 cur.execute("INSERT INTO social_relation (org,pid,kind,context,confidence) "
-                            "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (org,pid) DO UPDATE SET "
+                            "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (tenant,org,pid) DO UPDATE SET "
                             "kind=EXCLUDED.kind, context=EXCLUDED.context, "
                             "confidence=EXCLUDED.confidence, updated_at=now()",
                             (org, pid, lab["relation"], lab.get("who"), lab.get("confidence")))
