@@ -1130,6 +1130,7 @@ run "world layer / PII never crosses" "$PY" tests/test_world.py
 # display name), and the salt must actually reach the digest or pseudonymity is
 # nominal. All three are asserted here.
 run "people graph / no jid escapes"  "$PY" tests/test_people.py
+run "people re-key: old-salt ids move to the fixed salt in one transaction, counts only, refuse on a mismatch, idempotent" "$PY" tests/test_people_rekey.py
 # Personas read the owner's private conversations. The lead assertion is that NO
 # message text survives into the output — fixtures carry sentinel strings and the
 # whole result is searched for them, so a future "topic" field turns this red.
