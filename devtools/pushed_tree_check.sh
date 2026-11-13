@@ -182,8 +182,15 @@ if [ "$rc" -ne 0 ]; then
   # base inherits that base's reds, so without this every PR branch is refused for gates it never touched (the
   # owner's 11-13 public PRs, medic). The same check then runs on the baseline, and only a gate red HERE and green
   # THERE blocks. Fail-closed: a baseline that can't be checked or read, or any new red, leaves rc as it was.
+  # The baseline must be a STRICT ancestor of the pushed ref (seed #11604): the ref itself, or any unrelated red ref,
+  # would call every red "inherited" — --no-verify under another name. The comparison is by gate NAME, so a new
+  # break inside a gate already red on the baseline is NOT caught: name those gates as not re-verified.
   if [ -n "${PTC_BASELINE:-}" ] && [ -n "${fails:-}" ]; then
     echo
+    bsha=$(git -C "$REPO" rev-parse --verify -q "$PTC_BASELINE^{commit}"); rsha=$(git -C "$REPO" rev-parse "$REF^{commit}")
+    if [ -z "$bsha" ] || [ "$bsha" = "$rsha" ] || ! git -C "$REPO" merge-base --is-ancestor "$bsha" "$rsha"; then
+      echo "PTC_BASELINE=$PTC_BASELINE is not a strict ancestor of $REF: no baseline comparison — still RED"
+    else
     echo "PTC_BASELINE=$PTC_BASELINE: checking the baseline the same way, to tell inherited reds from new ones"
     PTC_BASELINE= bash "${BASH_SOURCE[0]}" "$PTC_BASELINE" >"$TMP/baseline.out" 2>&1; brc=$?
     base_fails=$(python3 -I "$REPO/devtools/check_verdict.py" --failed "$TMP/baseline.out" 2>/dev/null); vrc=$?
@@ -192,12 +199,15 @@ if [ "$rc" -ne 0 ]; then
     else
       new=$(comm -23 <(sort -u <<<"$fails") <(sort -u <<<"$base_fails"))
       if [ -z "$new" ]; then
-        echo "  every red above is ALREADY red on $PTC_BASELINE ($(git -C "$REPO" rev-parse --short "$PTC_BASELINE")): inherited, none new — allowing"
+        echo "  every red above is ALREADY red on $PTC_BASELINE (${bsha:0:7}): inherited, none new — allowing"
+        echo "  NOT re-verified (red on both, compared by name only):"
+        sed 's/^/    ○ /' <<<"$fails"
         rc=0
       else
         echo "  NEW reds, green on $PTC_BASELINE — still RED:"
         sed 's/^/    ✗ /' <<<"$new"
       fi
+    fi
     fi
   fi
 fi

@@ -9,6 +9,8 @@ is a stub printing check.sh's FAILED shapes, failing one gate per RED_<gate> fil
   B3  no PTC_BASELINE → unchanged: the inherited red still blocks (the mode is opt-in)
   B4  a baseline that can't be checked (no such ref → 77) → still RED (fail-closed)
   B5  a baseline whose verdict can't be parsed → still RED (fail-closed)
+  B6  the baseline is the pushed ref itself → still RED (seed #11604: else every red reads "inherited")
+  B7  the baseline is a red ref that is NOT an ancestor of the pushed one → still RED
   C1  control: a green ref never runs the baseline
 Run: venv/bin/python tests/test_ptc_baseline.py   (also wired into devtools/check.sh)
 """
@@ -85,6 +87,15 @@ def main():
         rc, out = ptc("inherits", "base")
         check("B5 a baseline verdict that can't be parsed: still RED", rc == 1 and "inherited, none new" not in out, out)
         (r / "devtools" / "check_verdict.py").write_text(good)
+        rc, out = ptc("breaks", "breaks")
+        check("B6 the baseline is the pushed ref itself: still RED", rc == 1 and "not a strict ancestor" in out, out)
+        git("checkout", "-q", "-b", "side", "base"); (r / "RED_beta").write_text(""); (r / "RED_gamma").write_text("")
+        git("add", "."); git("commit", "-qm", "an unrelated ref, red on more")
+        rc, out = ptc("breaks", "side")
+        check("B7 a red ref that is not an ancestor: still RED", rc == 1 and "not a strict ancestor" in out, out)
+        rc, out = ptc("inherits", "base")
+        check("B1' an allowed push names the gates it did NOT re-verify",
+              rc == 0 and "NOT re-verified" in out and "alpha: a gate" in out.split("NOT re-verified", 1)[1], out)
         git("checkout", "-q", "base"); git("rm", "-q", "RED_alpha"); git("commit", "-qm", "green")
         rc, out = ptc("HEAD", "base")
         check("C1 control: a green ref never runs the baseline", rc == 0 and "checking the baseline" not in out, out)
