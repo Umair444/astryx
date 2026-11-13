@@ -150,6 +150,10 @@ SITE = re.compile(r"INSERT\s+INTO\s+([A-Za-z_][\w.]*)(?:(?!INSERT\s+INTO).){0,25
                   re.I | re.S)
 
 
+# tables of the cog STORE (src/astryx/sql/cog_schema.sql: accounts, sessions, one-time links), not an org's schema
+COG_STORE = {"users", "sessions", "links"}
+
+
 def sites() -> list:
     """Every `INSERT INTO t … ON CONFLICT (cols)` in the tracked tree (tests/ excluded: their fixtures model OLD
     bodies on purpose), plus the gitignored triggers/ and nucleus/ when this host has them."""
@@ -169,6 +173,8 @@ def sites() -> list:
         for m in SITE.finditer(text):
             line = text.count("\n", 0, m.start(2)) + 1
             cols = [x.strip().strip('"') for x in m.group(2).split(",") if x.strip()]
+            if m.group(1).lower() in COG_STORE:
+                continue          # the cog store's own tables (cog_schema.sql, another database): no tenant there
             out.append((f"{f.relative_to(REPO) if f.is_relative_to(REPO) else f}:{line}", m.group(1).lower(), cols))
     return out
 
@@ -184,10 +190,11 @@ def unique_indexes(c, table: str) -> list:
 
 # ------------------------------------------------------------------ T2: the old shape
 def main_schema() -> str:
-    r = subprocess.run(["git", "-C", str(REPO), "show", "main:src/astryx/sql/schema.sql"], capture_output=True, text=True)
+    # the shape BEFORE this slice: pinned to the tag cut just before it merged (main now carries the slice itself)
+    old = "pre-cog-window:src/astryx/sql/schema.sql"
+    r = subprocess.run(["git", "-C", str(REPO), "show", old], capture_output=True, text=True)
     if r.returncode != 0:
-        r = subprocess.run(["git", "-C", "/opt/astryx", "show", "main:src/astryx/sql/schema.sql"],
-                           capture_output=True, text=True, check=True)
+        r = subprocess.run(["git", "-C", "/opt/astryx", "show", old], capture_output=True, text=True, check=True)
     return r.stdout
 
 

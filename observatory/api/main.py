@@ -234,6 +234,7 @@ def anonymous_can_see(from_org, to_org, peers: frozenset) -> bool:
 # valid token for THIS org means the public face, whatever path the request took (D2). Today `member` and `viewer`
 # open nothing beyond the public face (recorded, shown by /auth/me; a later slice gives them a meaning).
 from astryx.security import identity as _identity  # noqa: E402
+from observatory.api import members as _members  # noqa: E402 — the members table's ONE reader/writer (its shape moves)
 _COGAUTH = orgs.cog() if _SEAT else None         # the cog's sign-in: {id, home}, or None (no `cog` block, or no front)
 _AUD = _SEAT if _COGAUTH else None               # this org's registry name: the only aud this backend accepts
 _verifiers: dict = {}
@@ -266,7 +267,7 @@ async def _who(request: Request) -> tuple[str | None, str | None]:
         return None, None
     request.state.label = c["name"]
     try:
-        return uid, await pool.fetchval("SELECT org_role($1)", uid)   # schema.sql: the root row's, else a subtree's
+        return uid, await _members.role_of(pool, uid)   # observatory/api/members.py: the ONE reader of the table
     except (asyncpg.PostgresError, OSError) as e:   # no members table yet (schema.sql not re-applied), a DB blip:
         print(f"observatory: a signed-in viewer reads as public: {type(e).__name__}", file=sys.stderr)
         return uid, None                              # the public face (D2), never a 500 on it
@@ -461,6 +462,12 @@ from observatory.api import federation as _fed  # noqa: E402
 _fed.bind(lambda: pool, ESTATE, owner=lambda r: owner_call(r), env=_env, me=lambda: _env("ASTRYX_ORG") or ORG)
 app.include_router(_fed.router)
 
+# cog-rebuild: the org's ADMIN API (its members: list, grant, revoke; the agents/ tree as nodes; activity counts). The
+# owner reaches it as everything; a signed-in ADMIN reaches exactly _admin.ADMIN_ROUTES past privacy_gate
+from observatory.api import admin as _admin  # noqa: E402
+_admin.bind(lambda: pool, DSN, ESTATE, _COGAUTH["id"] if _COGAUTH else None, owner=lambda r: is_owner(r))
+app.include_router(_admin.router)
+
 # the Room's speaker: agents answer the room with send(to='room'); spoken in their voice, or run on the screen
 from observatory.api import room as _room  # noqa: E402
 
@@ -509,7 +516,8 @@ async def privacy_gate(request: Request, call_next):
     m = "GET" if request.method == "HEAD" else request.method
     if (p.startswith("/api/") and (m, p) not in PUBLIC and not (m == "GET" and _PUBLIC_AVATAR.match(p))
             and not is_owner(request) and not (member_may(m, p) and insider(request))
-            and not (m == "GET" and p == "/api/chat/file" and insider(request) and await member_file(request))):
+            and not (m == "GET" and p == "/api/chat/file" and insider(request) and await member_file(request))
+            and not (request.state.role == "admin" and (m, p) in _admin.ADMIN_ROUTES)):
         return Response(status_code=403)
     if _DEV_NO_WIRE and m != "GET" and _WIRE_WRITE.match(p):
         return JSONResponse({"error": "dev server: wire writes are disabled (ASTRYX_DEV_NO_WIRE)"}, status_code=503)

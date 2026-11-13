@@ -3,8 +3,8 @@ import type { FormEvent, ReactNode } from 'react'
 import '@fontsource/instrument-serif/400.css'
 import '@fontsource/instrument-serif/400-italic.css'
 import { Menu } from '@mantine/core'
-import { WORDS, nextHash, readMe, roleWords, signIn, signInHref, signOut } from '../auth'
-import type { AuthOrg, Me, MeState } from '../auth'
+import { ACCEPT_WORDS, WORDS, acceptLink, linkToken, nextHash, readLink, readMe, roleWords, signIn, signInHref, signOut } from '../auth'
+import type { Accept, AuthOrg, LinkInfo, Me, MeState } from '../auth'
 import { agentColor, saveObsKey } from '../api'
 import { chooseOrg, chosenOrg, safeBase, setOrg, useCog } from '../cog'
 import type { Cog } from '../cog'
@@ -513,3 +513,91 @@ export function AccountMenu() {
     </Menu>
   )
 }
+
+/* A ONE-TIME LINK (#/accept?t=…, the admin panel's invite or reset; front.py /auth/accept). The sign-in's own stage and
+   fields: it says what the link opens (the org by name, the role, and where in the tree it applies), asks for what it
+   needs (an invite: your email and a password, an existing account proves its own; a reset: a new password for the
+   account it names) and, once used, signs you in and walks into the org. A spent or expired link says so, once. */
+export function AcceptScreen() {
+  const [token] = useState(linkToken)
+  const [info, setInfo] = useState<LinkInfo | 'gone' | 'unavailable' | null>(null)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [reveal, setReveal] = useState(false)
+  const [phase, setPhase] = useState<Phase>('idle')
+  const [error, setError] = useState<string | null>(null)
+  const emailRef = useRef<HTMLInputElement>(null)
+  const pwRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { readLink(token).then(setInfo) }, [token])
+  useEffect(() => { if (info && typeof info === 'object') (info.kind === 'reset' ? pwRef : emailRef).current?.focus() }, [info])
+
+  if (info === null) return <main className="min-h-dvh bg-deck" aria-busy="true" />
+  if (info === 'gone' || info === 'unavailable') return (
+    <Stage title={info === 'gone' ? 'Link expired' : 'Not answering'}
+      lede={info === 'gone' ? ACCEPT_WORDS.gone : WORDS.unreachable}>
+      <a href="#/sign-in" className="auth-primary w-full">Go to sign in</a>
+      <p className="mt-6 text-center text-[13px]"><a href="#/" className="auth-link">Back to the floor</a></p>
+    </Stage>
+  )
+  const link = info
+  const reset = link.kind === 'reset'
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    if (phase !== 'idle') return
+    if ((!reset && !email.trim()) || !password) {
+      setError(ACCEPT_WORDS.empty)
+      ;(!reset && !email.trim() ? emailRef : pwRef).current?.focus()
+      return
+    }
+    setPhase('pending'); setError(null)
+    const { out, org } = await acceptLink(token, reset ? '' : email.trim(), password)
+    if (out !== 'ok') {
+      setPhase('idle'); setPassword(''); setError(ACCEPT_WORDS[out as Exclude<Accept, 'ok'>])
+      ;(out === 'mismatch' && !reset ? emailRef : pwRef).current?.focus()
+      return
+    }
+    setPhase('done')
+    setOrg(org ?? link.org)                      // into the org the link opened, after the reload
+    location.hash = '#/'
+    location.reload()
+  }
+
+  const where = link.node ? <> on <span className="font-mono text-[14px] text-ink">{link.node}</span></> : null
+  return (
+    <Stage title={reset ? 'New password' : "You're invited"}
+      lede={reset
+        ? <>Choose a new password for <span className="text-ink">{link.email}</span>. Every device signed in to it is signed out.</>
+        : <>Join <span className="text-ink">{link.name}</span> as {article(roleWords(link.role ?? ''))} <span className="text-ink">{roleWords(link.role ?? '')}</span>{where}.</>}>
+      <form noValidate onSubmit={submit} className="space-y-5">
+        {!reset && (
+          <Field id="accept-email" label="Email" type="email" auto="username" value={email} inputRef={emailRef}
+            onChange={(v) => { setEmail(v); setError(null) }} invalid={!!error} />
+        )}
+        <Field id="accept-password" label={reset ? 'New password' : 'Password'} type={reveal ? 'text' : 'password'}
+          auto="new-password" value={password} inputRef={pwRef}
+          onChange={(v) => { setPassword(v); setError(null) }} invalid={!!error}
+          trailing={
+            <button type="button" className="auth-reveal" aria-pressed={reveal} aria-controls="accept-password"
+              aria-label={reveal ? 'Hide password' : 'Show password'}
+              onClick={() => { setReveal((r) => !r); pwRef.current?.focus() }}>
+              <EyeIcon open={!reveal} />
+            </button>
+          } />
+        <p className="-mt-2 text-[13px] text-ink-mute">
+          {reset ? 'At least 12 characters.' : 'New here? Pick a password of at least 12 characters. Already have an account? Use its password.'}
+        </p>
+        <p id="auth-error" role="alert" aria-live="assertive" className="auth-error" data-shown={error ? '' : undefined}>
+          {error && <><ErrIcon />{error}</>}
+        </p>
+        <button type="submit" disabled={phase !== 'idle'} className="auth-primary w-full">
+          {phase === 'pending' ? (reset ? 'Saving…' : 'Joining…') : phase === 'done' ? (reset ? 'Saved' : 'Joined')
+            : reset ? 'Save and sign in' : `Join ${link.name}`}
+        </button>
+      </form>
+      <p className="mt-6 text-center text-[13px]"><a href="#/sign-in" className="auth-link auth-quiet">I'll sign in instead</a></p>
+    </Stage>
+  )
+}
+
+const article = (w: string) => (/^[aeiou]/i.test(w) ? 'an' : 'a')

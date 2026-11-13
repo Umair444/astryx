@@ -164,7 +164,7 @@ def main(tmp: Path, url: str):
     arm("R1 ...and leaves the agent->owner reply on a chat: thread alone (owner unchanged)",
         to_owner not in claimed and st.get(to_owner) == "pending", (claimed, st))
     # canvas.py's claim() then runs thread_user's INSERT for that row: canvas_threads takes a member's bare name
-    ins = re.search(r'"(INSERT INTO canvas_threads \(thread, user_name, agent, title\) VALUES \(\$1,\$2,\$3,\$4\) )"\s*"(ON CONFLICT \(thread\) DO NOTHING)"',
+    ins = re.search(r'"(INSERT INTO canvas_threads \(thread, user_name, agent, title\) VALUES \(\$1,\$2,\$3,\$4\) )"\s*"(ON CONFLICT \(tenant, thread\) DO NOTHING)"',
                     (REPO / "bridges" / "canvas.py").read_text())
     arm("R1 thread_user's canvas_threads INSERT is the one this oracle runs", bool(ins))
     if ins:

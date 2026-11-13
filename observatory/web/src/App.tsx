@@ -3,7 +3,7 @@ import { AppShell, Burger, Group, Popover, Text, TextInput, Tooltip } from '@man
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { saveObsKey } from './api'
 import { LOGIN, signInHref } from './auth'
-import { useMe, whoLabel } from './me'
+import { canAdmin, useMe, whoLabel } from './me'
 import { StoreProvider, useStore } from './store'
 import { talks } from './types'
 import { CogProvider, useCog } from './cog'
@@ -39,6 +39,7 @@ const TheatreView = lazy(() => import('./components/TheatreView'))
 const MemoryView = lazy(() => import('./components/MemoryView'))
 const GrowbotView = lazy(() => import('./components/GrowbotView'))
 const FaceView = lazy(() => import('./components/FaceView'))
+const AdminView = lazy(() => import('./components/AdminView'))
 
 /* SIGN-IN (goal 11859 U3), behind the LOGIN build flag until forge's U1U2 lands: off, none of it is in the build (the
    imports below are never made, so no /auth request exists), and the key door below is the only way in, as before. */
@@ -48,13 +49,15 @@ const Auth = LOGIN ? {
   Orgs: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.OrgListScreen }))),
   Account: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.AccountMenu }))),
   Chooser: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.AuthChooser }))),
+  Accept: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.AcceptScreen }))),
 } : null
 
 /* the sign-in pages are whole screens, outside the shell (as the face is) */
 function authPage() {
   if (!Auth) return null
   const p = location.hash.replace(/^#\/?/, '').split(/[/?]/)[0]
-  const Page = p === 'sign-in' ? Auth.SignIn : p === 'signed-out' ? Auth.SignedOut : p === 'orgs' ? Auth.Orgs : null
+  const Page = p === 'sign-in' ? Auth.SignIn : p === 'signed-out' ? Auth.SignedOut : p === 'orgs' ? Auth.Orgs
+    : p === 'accept' ? Auth.Accept : null
   return Page ? <Suspense fallback={<div className="min-h-dvh bg-deck" />}><Page /></Suspense> : null
 }
 
@@ -72,6 +75,7 @@ export type Route =
   | { tab: 'face' }
   | { tab: 'floor' }
   | { tab: 'chat'; thread?: string }
+  | { tab: 'admin' }
 
 function parseHash(): Route {
   const h = location.hash.replace(/^#\/?/, '')
@@ -88,6 +92,7 @@ function parseHash(): Route {
   if (tab === 'face') return { tab: 'face' }
   if (tab === 'network') return { tab: 'network' }
   if (tab === 'chat') return { tab: 'chat', thread: a || undefined }
+  if (tab === 'admin') return { tab: 'admin' }
   return { tab: 'floor' }          // the Floor is home: the org as a place
 }
 
@@ -111,6 +116,7 @@ const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'memory', label: 'Memory', icon: '⬢' },
   { key: 'growbot', label: 'GrowBot', icon: '🤖' },
   { key: 'monitor', label: 'System', icon: '❐' },
+  { key: 'admin', label: 'Admin', icon: '⚙' },
 ]
 
 /* The read-only badge doubles as the discreet door: clicking it lets the
@@ -262,9 +268,12 @@ function Shell() {
   const me = useMe()             // signed in: your name and the org's in place of 'local' (owner 11-13)
   const cog = useCog()
   // the Floor and the Network are the org's public faces; everything else is the owner's
-  // cog-who: a signed-in member also has the chat workspace (the route itself is ChatGate's, which admits them)
-  const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network' || t.key === 'floor' || (t.key === 'chat' && talks(who)))
-  const locked = !who.owner && route.tab !== 'network' && route.tab !== 'floor'
+  // cog-who: a signed-in member also has the chat workspace (the route itself is ChatGate's, which admits them);
+  // the Admin pane: an account panel, so it opens to a SIGNED-IN owner or admin of this org (never the key alone)
+  const admin = canAdmin(me)
+  const tabs = (who.owner ? TABS : TABS.filter((t) => t.key === 'network' || t.key === 'floor' || t.key === 'admin' || (t.key === 'chat' && talks(who))))
+    .filter((t) => t.key !== 'admin' || admin)
+  const locked = !who.owner && route.tab !== 'network' && route.tab !== 'floor' && !(route.tab === 'admin' && admin)
   const openAgent = (n: string) => (who.owner ? setTalking(n) : setAgentOpen(n))
 
   useEffect(() => {
@@ -355,6 +364,7 @@ function Shell() {
               {route.tab === 'theatre' && <TheatreView />}
               {route.tab === 'memory' && <MemoryView />}
               {route.tab === 'growbot' && <GrowbotView />}
+              {route.tab === 'admin' && <AdminView />}
             </Suspense>
           )}
         </div>
@@ -406,7 +416,9 @@ function Shell() {
 export default function App() {
   return (
     <CogProvider chooser={(cog) => Auth
-      ? <Suspense fallback={null}><Auth.Chooser cog={cog} fallback={<CogChooser cog={cog} />} /></Suspense>
+      // a one-time link (#/accept) is opened before any org is chosen: it names its own org, and walks into it after
+      ? <Suspense fallback={null}>{/^#\/accept\b/.test(location.hash) ? <Auth.Accept />
+        : <Auth.Chooser cog={cog} fallback={<CogChooser cog={cog} />} />}</Suspense>
       : <CogChooser cog={cog} />}>
       <StoreProvider>
         <Shell />

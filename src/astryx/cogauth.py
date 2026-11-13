@@ -16,8 +16,9 @@ org's own `members` table, and the host CLI that is the only writer of either.
                                                                         matches the live store's, and it is dropped
 
 THE RULES IT HOLDS:
-- There is no public sign-up (D7): an account exists because the host CLI wrote it. Recovery is `user reset` (no
-  email: an externally authored identity, a1 F6).
+- There is no public sign-up (D7): an account exists because the host CLI wrote it, or because a person opened a
+  one-time invite an org's owner or admin made (observatory/front.py, the admin panel). Recovery is `user reset`, or
+  a one-time reset link from that panel (no email: an externally authored identity, a1 F6).
 - A password is stored as an argon2id PHC string (OWASP's first choice), by libsodium through PyNaCl, already a core
   dependency. libsodium releases the GIL, so the front checks it in a thread and its event loop keeps relaying
   (measured: `cryptography`'s argon2id held the GIL, 2 loop ticks in 1.65 s; PyNaCl's left 61 of ~93). A sign-in for
