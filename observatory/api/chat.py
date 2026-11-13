@@ -51,14 +51,18 @@ ESTATE: Path | None = None
 MEDIA: Path | None = None
 REPO: Path | None = None
 _roster = lambda: set()                            # noqa: E731 — the live agent names (main.agent_meta)
+_me = lambda request: "owner"                      # noqa: E731 — main.wire_handle: the viewer's wire handle (cog-who)
 
 
-def bind(get_pool, estate: Path, media: Path, repo: Path, roster=None) -> None:
-    """The host app hands over its pool getter, its estate and its roster (read at call time)."""
-    global _get_pool, ESTATE, MEDIA, REPO, _roster
+def bind(get_pool, estate: Path, media: Path, repo: Path, roster=None, me=None) -> None:
+    """The host app hands over its pool getter, its estate, its roster and the viewer's wire handle (read at call
+    time)."""
+    global _get_pool, ESTATE, MEDIA, REPO, _roster, _me
     _get_pool, ESTATE, MEDIA, REPO = get_pool, Path(estate), Path(media), Path(repo)
     if roster is not None:
         _roster = roster
+    if me is not None:
+        _me = me
 
 
 SCRATCH_BASE = Path(f"/tmp/claude-{os.getuid()}")   # Claude Code's per-uid temp root (bridges/embed_root.py's)
@@ -218,6 +222,7 @@ class Project(BaseModel):
     emoji: str | None = None
     created: str | None = None       # read-side: the server stamps both, a client's value is ignored
     updated: str | None = None
+    by: str | None = None            # read-side: the wire handle that made it (cog-gaps), server-stamped; none = owner
     missing: list[str] = []          # D6': read-side only; never stored
 
 
@@ -255,7 +260,33 @@ def upgrade(p: dict) -> dict:
     out = {"id": p.get("id"), "name": p.get("name"), "instructions": p.get("instructions") or p.get("brief") or "",
            "agents": list(p.get("agents") or []), "threads": list(p.get("threads") or []), "files": list(p.get("files") or []),
            "color": p.get("color"), "emoji": p.get("emoji"), "created": p.get("created"), "updated": p.get("updated")}
+    if p.get("by"):                  # a member's project names her (cog-gaps); the owner's carry no key, as before
+        out["by"] = p["by"]
     return out
+
+
+# the fields a member must leave as they are on a project that is not hers (cog-gaps: her projects are hers to edit;
+# the rest of the org's are shown, never changed by her)
+PROJECT_FIELDS = ("name", "instructions", "agents", "threads", "files", "color", "emoji")
+
+
+def project_owner(p: dict) -> str:
+    return p.get("by") or "owner"
+
+
+def foreign_edit(new: list[dict], old: list[dict], me: str) -> str:
+    """A member's PUT may add, change and drop only projects that are HERS: '' when it does, else the reason. Every
+    stored project of another human must come back unchanged in PROJECT_FIELDS."""
+    got = {p["id"]: p for p in new}
+    for p in old:
+        if project_owner(p) == me:
+            continue
+        q = got.get(p["id"])
+        if q is None:
+            return f"the project {p.get('name')!r} is not yours to remove"
+        if any(q.get(k) != p.get(k) for k in PROJECT_FIELDS):
+            return f"the project {p.get('name')!r} is not yours to change"
+    return ""
 
 
 def stamp(new: list[dict], old: list[dict], now: str) -> list[dict]:
@@ -296,13 +327,31 @@ async def projects_put(body: list[Project], request: Request):
     why = _valid(body)
     if why:
         return JSONResponse({"error": why}, status_code=400)
+    me = _me(request) or "owner"
+    old = _read_projects()
+    was = {p["id"]: p for p in old}
     keep = []
     for p in body:
-        d = p.model_dump(exclude={"missing", "brief", "created", "updated"})
+        d = p.model_dump(exclude={"missing", "brief", "created", "updated", "by"})
         d["instructions"] = p.instructions or p.brief
         d["name"] = p.name.strip()
+        maker = was[p.id].get("by") if p.id in was else (None if me == "owner" else me)
+        if maker:                                    # server-stamped: a client's `by` is never read
+            d["by"] = maker
         keep.append(d)
-    keep = stamp(keep, _read_projects(), time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    if me != "owner":                                # a member: her own projects only (cog-gaps)
+        why = foreign_edit(keep, old, me)
+        if not why:                                  # ...and a conversation she files must be one of hers
+            pool = _pool(request)
+            from observatory.api.workspace import party
+            prior = {t for p in old if project_owner(p) == me for t in p["threads"]}
+            for t in {t for p in keep if project_owner(p) == me for t in p["threads"]} - prior:
+                if not await party(pool, t, me):
+                    why = "a project of yours holds only your own conversations"
+                    break
+        if why:
+            return JSONResponse({"error": why}, status_code=403)
+    keep = stamp(keep, old, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     text = json.dumps({"projects": keep}, indent=2, ensure_ascii=False) + "\n"
     try:
         new = atomic_write(projects_file(), text, if_match=tag)

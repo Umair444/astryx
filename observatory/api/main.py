@@ -442,7 +442,8 @@ app.include_router(_pilot_voice.router)
 
 # plan-11884: /chat's server half (uploads, the side panel's file read, projects, dictation); owner-only by omission
 from observatory.api import chat as _chat  # noqa: E402
-_chat.bind(lambda: pool, ESTATE, ESTATE / "media", REPO, roster=lambda: set(agent_meta()))   # media/: every channel's inbound files
+_chat.bind(lambda: pool, ESTATE, ESTATE / "media", REPO, roster=lambda: set(agent_meta()),
+           me=lambda r: wire_handle(r))   # media/: every channel's inbound files
 app.include_router(_chat.router)
 
 # feat/chat-workspace: the workspace's unified conversation list (chat:, obs:, cv:) and its pins/titles; owner-only by
@@ -497,9 +498,13 @@ _WIRE_WRITE = re.compile(r"^/api/(messages|ws/agents/[^/]+/interrupt|federation/
 
 
 # What a signed-in MEMBER may reach beyond the public face (cog-who): the chat workspace, i.e. talking on the wire and
-# reading it (no privacy within an org, owner 11-13). Owner-only ACTS are not here: interrupt, thread meta writes,
-# projects writes, goals, the db workbench, federation, people, services. (METHOD, path) pairs, or a GET prefix.
-MEMBER = {("POST", "/api/messages"), ("POST", "/api/thread/read"), ("POST", "/api/chat/upload")}
+# reading it (no privacy within an org, owner 11-13), and the tools of HER OWN chats (cog-gaps): rename/pin/switch a
+# thread she is a party of (workspace.ws_meta checks the party), her projects (chat.projects_put: another's project
+# is read-only to her) and dictation. Owner-only ACTS are not here: interrupt, goals, the db workbench, federation,
+# people, services, admin. (METHOD, path) pairs, or a GET prefix.
+MEMBER = {("POST", "/api/messages"), ("POST", "/api/thread/read"), ("POST", "/api/chat/upload"),
+          ("PUT", "/api/ws/threads/meta"), ("PUT", "/api/chat/projects"),
+          ("POST", "/api/chat/dictate/session"), ("POST", "/api/chat/dictate/usage")}
 MEMBER_GET = ("/api/ws/threads", "/api/ws/thread-titles", "/api/ws/search", "/api/ws/handoffs", "/api/ws/agents",
               "/api/ws/briefing", "/api/ws/media", "/api/ws/artifacts", "/api/chat/", "/api/presence")
 

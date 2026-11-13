@@ -419,10 +419,29 @@ class Meta(BaseModel):
     switch_to: list[str] | None = None               # SWITCH the chat to these agents (appended, never replacing)
 
 
+# A thread is a viewer's OWN when she wrote on it or was written to on it, or (canvas) it is registered under her
+PARTY_SQL = ("SELECT EXISTS (SELECT 1 FROM messages WHERE thread = $1 AND (from_agent = $2 OR to_agent = $2)) "
+             "OR EXISTS (SELECT 1 FROM canvas_threads WHERE thread = $1 AND user_name = $3)")
+PARTY_MSG_SQL = "SELECT EXISTS (SELECT 1 FROM messages WHERE thread = $1 AND (from_agent = $2 OR to_agent = $2))"
+
+
+async def party(pool, thread: str, me: str) -> bool:
+    """`me` (a wire handle) is a party of `thread`: the rule "her own chats" means for a member's thread tools."""
+    try:
+        return bool(await pool.fetchval(PARTY_SQL, thread, me, canvas_user(me)))
+    except Exception:                               # noqa: BLE001 — an estate without canvas_threads: messages decide
+        return bool(await pool.fetchval(PARTY_MSG_SQL, thread, me))
+
+
 @router.put("/api/ws/threads/meta")
-async def ws_meta(body: Meta):
+async def ws_meta(body: Meta, request: Request):
     if not valid_thread(body.thread):
         return JSONResponse({"error": "not a conversation thread"}, status_code=400)
+    me = _me(request) or ""
+    # the owner renames/pins any conversation (as ever); a member only her own (cog-gaps: the default view, no wall —
+    # she reads every thread, but another human's chat's name and pin are theirs)
+    if not _owner(request) and not (me and await party(_pool(request), body.thread, me)):
+        return JSONResponse({"error": "only a conversation you are part of"}, status_code=403)
     patch = body.model_dump(exclude_unset=True)
     if "title" not in patch and "pinned" not in patch and "switch_to" not in patch:
         return JSONResponse({"error": "nothing to change"}, status_code=400)
