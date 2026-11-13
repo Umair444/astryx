@@ -14,7 +14,7 @@ from T/.env, a1 #62369 A1), and HOME=T/home (no reader reaches a file under the 
   E5 pulse/shipped_triggers/org_backup.py   _org(estate)
   E8 core/upstream_pr.py          setting("ASTRYX_UPSTREAM")        E9 hearing/ear_store.py        _env("EAR_TTL_DAYS")
   E10 hearing/voice_mint.py       cap_minutes(), env("OPENAI_API_KEY"), its estate T (every key it reads is planted)
-  E11 people/people.py            _salt() (whichever of PEOPLE_SALT / ASTRYX_ORG the file names first), _org()
+  E11 people/people.py            _salt() (PEOPLE_SALT wherever it sits; ASTRYX_ORG only without it), _org()
   E12 security/release.py         mac_key()                         E13 security/dsn_census.py     _node(), dsns()
   E14 federation/introduce.py     load_env(): the pairs, and an absent .env still raises
      each: the asked key reads past a non-UTF-8 line, and the skip is said on stderr without the value
@@ -131,7 +131,7 @@ SITES = [
      "print(m.cap_minutes(), m.env('OPENAI_API_KEY') == 'fx-PLANTED-not-a-key',"
      " paths.estate(m.__file__) == pathlib.Path.cwd())", "12.5 True True"),
     ("E11", "people/people.py", NO_PG + "import astryx.people.people as m; print(m._salt(), m._org())",
-     "envread.fixture.test envread.fixture.test"),          # ASTRYX_ORG is named before PEOPLE_SALT: _salt takes it
+     "fx-PLANTED-salt envread.fixture.test"),               # ASTRYX_ORG is named first, yet PEOPLE_SALT wins: line order must not pick the salt
     ("E12", "security/release.py", "import astryx.security.release as m; print(m.mac_key().decode())",
      "fx-PLANTED-release-key-0123456789abcdef"),
     ("E13", "security/dsn_census.py",
