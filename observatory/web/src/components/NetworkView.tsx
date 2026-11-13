@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import PeopleGraph from './PeopleGraph'
+import FederationLayer from './FederationLayer'
 import AgentFace from './AgentFace'
 import { ScrollArea } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
@@ -170,7 +171,10 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
   /* Two layers of one network: AGENTS (orgs and residents) and PEOPLE — the social
    * graph the network has observed, the FB shape. Owner-only for now: it carries real
    * names; the anonymized public form is a separate ruling. */
-  const [layer, setLayer] = useState<'agents' | 'people'>('agents')
+  /* FEDERATION is the third layer (cog-rebuild P4, owner 11-13): the map one level up (fed ⊃ cog ⊃ org ⊃ group ⊃
+     agent) with the other feds as peers, introduce, and trust/untrust/block. A peer's orb on the map opens it there. */
+  const [layer, setLayer] = useState<'agents' | 'people' | 'federation'>('agents')
+  const [focusPeer, setFocusPeer] = useState<string | null>(null)
   const isMobile = useMediaQuery('(max-width: 48em)')
   const [flashEdges, setFlashEdges] = useState<Edge[]>([])
 
@@ -548,7 +552,9 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
         position: { x: r2 * Math.cos(ang) - PEER_W / 2, y: r2 * Math.sin(ang) - PEER_H / 2 },
         data: {
           label: (
-            <div className="w-full h-full flex flex-col items-center gap-2 pt-1">
+            <button type="button" disabled={!who.owner} title={who.owner ? `${p.org}: open in Federation` : undefined}
+              onClick={() => { setFocusPeer(p.org); setLayer('federation') }}
+              className={`w-full h-full flex flex-col items-center gap-2 pt-1 ${who.owner ? 'cursor-pointer' : 'cursor-default'}`}>
               <span className={p.status === 'active' || p.status === 'trusted' ? '' : 'opacity-60 saturate-50'}>
                 <Orb size={64} tone="accent2" />
               </span>
@@ -558,7 +564,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
                   {p.status} · rep {p.reputation}
                 </div>
               </div>
-            </div>
+            </button>
           ),
         },
         style: bare(PEER_W, PEER_H),
@@ -590,7 +596,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
   )
   const layerTabs = who.owner ? (
     <Tabs id="net-layer" value={layer} onChange={setLayer}
-      items={[{ id: 'agents', label: 'Agents' }, { id: 'people', label: 'People' }] as const} />
+      items={[{ id: 'agents', label: 'Agents' }, { id: 'people', label: 'People' }, { id: 'federation', label: 'Federation' }] as const} />
   ) : null
 
   if (isMobile) {
@@ -695,7 +701,13 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
               })}
             </div>
           )}
-          {fedPeers.length > 0 && (
+          {who.owner && (
+            <div className="mt-6">
+              <div className="text-[11px] uppercase tracking-[0.14em] text-ink-dim mb-2">Federation</div>
+              <FederationLayer onOpenAgent={onOpenAgent} focus={focusPeer} compact />
+            </div>
+          )}
+          {!who.owner && fedPeers.length > 0 && (
             <div className="mt-6">
               <div className="text-[11px] uppercase tracking-[0.14em] text-ink-dim mb-2">Federation peers</div>
               {fedPeers.map((p) => (
@@ -727,6 +739,10 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
       </div>
       {who.owner && layer === 'people' ? (
         <div className="absolute inset-0 pt-[118px]"><PeopleGraph /></div>
+      ) : who.owner && layer === 'federation' ? (
+        <ScrollArea className="absolute inset-0" type="scroll">
+          <div className="px-4 pt-[132px] pb-8 max-w-[1400px] mx-auto"><FederationLayer onOpenAgent={onOpenAgent} focus={focusPeer} /></div>
+        </ScrollArea>
       ) : (
       <div className="absolute inset-0">
         <ReactFlow
