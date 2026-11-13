@@ -70,8 +70,16 @@ CREATE TABLE IF NOT EXISTS cog.orgs (
 ALTER TABLE cog.orgs ADD COLUMN IF NOT EXISTS chan text NOT NULL DEFAULT substr(replace(gen_random_uuid()::text, '-', ''), 1, 12);
 CREATE UNIQUE INDEX IF NOT EXISTS orgs_n ON cog.orgs (n);
 CREATE UNIQUE INDEX IF NOT EXISTS orgs_role ON cog.orgs (role);
+-- An UNPROVISIONED database (cog.orgs empty: a fresh init, a test's own database) is the one-org install it was
+-- before the cog: every session acts for 'astryx', exactly slice 1's constant default. Once ANY org is registered the
+-- binding is strict: an unmapped role is NULL. Whether the registry is empty must be judged past cog.orgs' own RLS
+-- (an unmapped role sees no row and would read "empty"), so cog.provisioned() is SECURITY DEFINER, owned by the
+-- schema owner (cog.orgs is ENABLEd, not FORCEd: its owner reads every row), search_path pinned.
+CREATE OR REPLACE FUNCTION cog.provisioned() RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ SELECT EXISTS (SELECT 1 FROM cog.orgs) $$;
 CREATE OR REPLACE FUNCTION cog.tenant() RETURNS text
-LANGUAGE sql STABLE PARALLEL SAFE AS $$ SELECT key FROM cog.orgs WHERE role = current_user $$;
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+  SELECT CASE WHEN cog.provisioned() THEN (SELECT key FROM cog.orgs WHERE role = current_user) ELSE 'astryx' END $$;
 -- the NOTIFY channel `ax<chan>_<suffix>` of the session's org: listeners ask for their names with this, so SQL, Python
 -- and node can't drift. cog.chan_of is the senders' form, for a row's tenant. An org cog.orgs doesn't know (or an
 -- unmapped session) is `ax0_<suffix>`: a doorbell never fails an insert, and ax0 is no registered org's.
@@ -1475,4 +1483,8 @@ BEGIN
   END IF;
 END $$;
 CALL cog.adopt();
-DO $$ DECLARE k text; BEGIN FOR k IN SELECT key FROM cog.orgs LOOP CALL cog.seed(k); END LOOP; END $$;
+DO $$ DECLARE k text; BEGIN
+  FOR k IN SELECT key FROM cog.orgs UNION ALL SELECT 'astryx' WHERE NOT EXISTS (SELECT 1 FROM cog.orgs) LOOP
+    CALL cog.seed(k);                    -- an unprovisioned database is org 'astryx' (cog.tenant above)
+  END LOOP;
+END $$;

@@ -175,7 +175,8 @@ def node_arms(db, home: Path, dsn: str) -> None:
 
         print("C2 cancelled during the receipt wait")
         listen = psycopg.connect(dsn, autocommit=True)
-        listen.execute("LISTEN astryx_wire")
+        # cog-rls slice 3: the org's wire channel is ax<chan>_wire, named by the database (cog.chan)
+        listen.execute('LISTEN "' + listen.execute("SELECT cog.chan('wire')").fetchone()[0] + '"')
         rid = b.call({"to": "owner", "thread": "obs:sender", "body": "CANCEL-C2"})
         wait_for(lambda: row("CANCEL-C2") is not None, 30)
         r = row("CANCEL-C2")
@@ -256,11 +257,11 @@ def observatory_arms(db, url: str) -> None:
 
         print("O1 the live feed")
         # the tap's LISTEN is up when a ring reaches it: ring the kept row until it arrives (measured, bounded)
-        ok = wait_for(lambda: db.execute("SELECT pg_notify('astryx_wire', %s)", (str(keep),)) and False
+        ok = wait_for(lambda: db.execute("SELECT pg_notify(cog.chan('wire'), %s)", (str(keep),)) and False
                       or any(e.get("type") == "message" and e.get("id") == keep for e in got), 20, tick=0.3)
         arm("O1 the tap is listening (a pending row's ring arrives as 'message')", ok, got[-3:])
-        db.execute("SELECT pg_notify('astryx_wire', 'not-an-id')")
-        db.execute("SELECT pg_notify('astryx_wire', %s)", (str(gone),))
+        db.execute("SELECT pg_notify(cog.chan('wire'), 'not-an-id')")
+        db.execute("SELECT pg_notify(cog.chan('wire'), %s)", (str(gone),))
         ok = wait_for(lambda: {"type": "message_retracted", "id": gone} in got, 10)
         arm("O1 a retracted row's ring arrives as message_retracted (after a malformed one)", ok, got[-3:])
         arm("O1 the retracted row is never pushed as a 'message'",

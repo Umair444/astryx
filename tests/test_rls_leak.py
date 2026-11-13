@@ -22,6 +22,7 @@ text a row carries says `leak_<org>`, so a leak of a's data into anything b can 
   L6 lock       the one-body advisory lock (channel/server.mjs) keyed by tenant: a and b both hold `seed`
   L7 databases  harden_cluster (on a scratch database standing in for postgres/template1): PUBLIC loses CONNECT, the
                 test and monitor roles keep it, org_b can't connect
+  L8 legacy      an UNPROVISIONED database (cog.orgs empty) acts as org 'astryx', as before the cog (fresh init)
 Exit 0 · 1 · 77 (no database, or a provisioner that can't make roles / the store guard).
 """
 import json
@@ -46,7 +47,7 @@ from devtools import cog_roles as cr  # noqa: E402
 from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db, live_dsn  # noqa: E402
 
 fails, unverified = [], []
-DEFINER_OK = {"cog.ear_day(timestamp with time zone)", "cog.ear_drop(text)"}
+DEFINER_OK = {"cog.ear_day(timestamp with time zone)", "cog.ear_drop(text)", "cog.provisioned()"}
 
 
 def check(name, ok, detail=""):
@@ -305,6 +306,17 @@ def l5_notify(c, orgs):
               "of a's", not got_b, str(got_b))
 
 
+def l8_unprovisioned():
+    """A database with NO org registered (a fresh init, a test's own) is the one-org install of before: every session
+    acts for 'astryx' and the seed rows exist. One registered org flips it to strict (L3: an unmapped role sees nothing)."""
+    with fixture_db() as fx, psycopg.connect(fx["dsn"], autocommit=True) as c:
+        t = c.execute("SELECT cog.tenant(), cog.provisioned()").fetchone()
+        r = c.execute("INSERT INTO steps (agent, kind, content) VALUES ('l8', 'milestone', 'x') RETURNING tenant").fetchone()[0]
+        w = c.execute("SELECT count(*) FROM funded_by_watermark WHERE tenant = 'astryx'").fetchone()[0]
+        check("L8 unprovisioned: cog.tenant() is 'astryx', an insert lands as astryx, the watermark is seeded",
+              t == ("astryx", False) and r == "astryx" and w == 1, f"{t} {r} {w}")
+
+
 def l6_lock(orgs):
     q = "SELECT pg_try_advisory_lock(hashtext('astryx-body:' || coalesce(cog.tenant(), '')), hashtext('seed'))"
     src = (REPO / "channel" / "server.mjs").read_text()
@@ -358,6 +370,7 @@ def main() -> int:
             l5_notify(c, orgs)
             l6_lock(orgs)
             l7_databases(names, orgs, sup)
+        l8_unprovisioned()
     except FixtureUnavailable as e:
         print(f"NOT SEARCHED: {e}")
         return 77

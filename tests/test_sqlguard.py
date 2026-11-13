@@ -397,12 +397,12 @@ def main():
     # zero NOTIFY in live (a1: the LISTEN connection is opened BEFORE the fixture DB exists)
     lis = psycopg.connect(live_dsn(), autocommit=True)
     probe = f"sqlguard_probe_{os.getpid()}"
-    for ch in ("astryx_steps", "astryx_wire", probe):
+    for ch in ("astryx_steps", "astryx_wire", "ax0_steps", "ax0_wire", probe):   # pre- and post-cog-rls names
         lis.execute(f"LISTEN {ch}")
     with fixture_db() as fx:
         c = psycopg.connect(fx["dsn"], autocommit=True)
         inner = psycopg.connect(fx["dsn"], autocommit=True)
-        inner.execute("LISTEN astryx_steps")
+        inner.execute('LISTEN "' + inner.execute("SELECT cog.chan('steps')").fetchone()[0] + '"')   # cog-rls slice 3
         c.execute("INSERT INTO steps (agent, kind, content) VALUES (%s, 'milestone', 'fx')", (TAG,))
         mid = c.execute("INSERT INTO messages (from_agent, to_agent, body) VALUES (%s, %s, 'fx') RETURNING id",
                         (TAG, TAG)).fetchone()[0]
@@ -412,8 +412,8 @@ def main():
     live.execute(f"NOTIFY {probe}, 'control'")
     got = list(lis.notifies(timeout=2))
     OUT["notify"] = {
-        "leaked": [n.payload for n in got if (n.channel == "astryx_steps" and TAG in n.payload)
-                   or (n.channel == "astryx_wire" and n.payload == str(mid))],
+        "leaked": [n.payload for n in got if (n.channel in ("astryx_steps", "ax0_steps") and TAG in n.payload)
+                   or (n.channel in ("astryx_wire", "ax0_wire") and n.payload == str(mid))],
         "probe": sum(1 for n in got if n.channel == probe), "fixture_inner": inner_got}
     lis.close()
 

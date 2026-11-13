@@ -449,13 +449,6 @@ def fixture_db(extra: tuple = (), lifetime: str = "immediate", batch: Batch | No
         sha = file_sha()
         with psycopg.connect(dsn, autocommit=True) as c:
             c.execute(SCHEMA.read_text())          # the WHOLE file, the same bytes init.sh applies
-            # cog-rls slice 3: tenant's default is cog.tenant(), the org of the LOGIN role. The fixture's own connections
-            # act for org 'astryx' (the key every row carried before the cog), so this admin role is registered as it
-            # in THIS database only, and the per-org seed rows are made for it. An oracle that needs other orgs
-            # provisions them itself (tests/_rls_fixture.py).
-            c.execute("INSERT INTO cog.orgs (key, path, role) VALUES ('astryx', 'astryx', current_user) "
-                      "ON CONFLICT (key) DO NOTHING")
-            c.execute("CALL cog.seed('astryx')")
             for ddl in extra:
                 c.execute(ddl)
             # An extra that left search_path at ag_catalog once stamped every AGE label table `graphid` against a
