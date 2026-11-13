@@ -228,12 +228,22 @@ def harden_cluster(admin, names: Names, dbs=("postgres", "template1")) -> None:
 
 # ── the DSN side ─────────────────────────────────────────────────────────────────────────────────────────────────────
 def role_dsn(base_dsn: str, role: str, pw: str, dbname: str | None = None) -> str:
-    """base_dsn's server, `role` and `pw`, and its database unless one is named."""
-    from psycopg.conninfo import make_conninfo
+    """base_dsn's server, `role` and `pw`, and its database unless one is named. Keeps the base's FORM: a URL stays a
+    URL (asyncpg — the observatory's pool — accepts only postgresql:// URLs; make_conninfo always returns key=value,
+    which a live rehearsal caught starting the observatory, 11-13); key=value stays key=value."""
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
     kw = {"user": role, "password": pw}
     if dbname:
         kw["dbname"] = dbname
-    return make_conninfo(base_dsn, **kw)
+    if "://" not in base_dsn:
+        return make_conninfo(base_dsn, **kw)
+    from urllib.parse import quote, urlencode
+    d = {**conninfo_to_dict(base_dsn), **kw}
+    host, port, db = d.pop("host", ""), d.pop("port", ""), d.pop("dbname", "")
+    user, pw_ = d.pop("user", ""), d.pop("password", "")
+    auth = quote(user, safe="") + (":" + quote(pw_, safe="") if pw_ else "") + "@" if user else ""
+    netloc = auth + ("[" + host + "]" if ":" in host else host) + (":" + str(port) if port else "")
+    return f"postgresql://{netloc}/{quote(db, safe='')}" + ("?" + urlencode(d) if d else "")
 
 
 def write_env(env: Path, key: str, value: str) -> None:
