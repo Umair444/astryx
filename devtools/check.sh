@@ -832,6 +832,10 @@ run "cog sign-in: the owner signs in and reaches his rooms with no key, the key 
 # one-org-cog control that must pass where they must not).
 run "cog one-org parity: one org behind the front loses nothing; no cog block is today (cog-rebuild P1)" "$PY" tests/test_cog_one_org_parity.py
 run "cog CLI: the one writer of accounts and memberships; the cog store's backup restores (U1+U2 D7 D8 D9)" "$PY" tests/test_cogauth_cli.py
+# cog-rls slice 1 (homes/seed/cog-rebuild/RLS.md): the tenant column on every org/agent/per-human table, keys widened to lead
+# with it, every ON CONFLICT target a real unique index, tree-scoped members; main's shape migrates in place, a re-apply
+# is a no-op. RLS stays off.
+run "cog-rls slice 1: tenant column, widened keys, ON CONFLICT targets, tree-scoped members; re-apply idempotent" "$PY" tests/test_tenant_slice1.py
 # plan-11859 U4: the owner sets this org's agent login from the observatory (a subscription token, a metered key only with
 # the billing confirmed, or neither), through the one .env writer, never a value back. Mutants: tests/mutants_org_login.py,
 # tests/mutants_config_unset.py.
