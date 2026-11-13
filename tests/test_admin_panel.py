@@ -408,6 +408,16 @@ def run(t, da, dbb, procs):
                       headers={"origin": ORIGIN})
     check("an EXISTING email with the wrong password: 401, and the link stays open",
           st_w == 401 and call(F, f"/auth/link?t={tok_e}")[0] == 200 and rows_a(U["mem"]) == [("", "member")], f"{st_w}")
+    # login's per-account limit holds through a link: the guard is checked before the password, so a 5th wrong try
+    # (4 more here, 1 above) makes the next one 429 even with the right password. Uses `cross` to keep mem usable.
+    st, _, inv = call(F, "/auth/admin/invite", "POST", {"org": oa, "role": "viewer", "node": "solo"}, headers=as_("owner"))
+    tok_rl = inv.get("link", "").partition("#/accept?t=")[2]
+    rl = [call(F, "/auth/accept", "POST", {"token": tok_rl, "email": users["cross"], "password": "fx-dummy-wrong-0009"},
+               headers={"origin": ORIGIN, "x-forwarded-for": f"198.51.101.{i}"})[0] for i in range(5)]
+    rl6 = call(F, "/auth/accept", "POST", {"token": tok_rl, "email": users["cross"], "password": PW["cross"]},
+               headers={"origin": ORIGIN, "x-forwarded-for": "198.51.101.9"})[0]
+    check("5 wrong passwords for one existing account through a link: the 6th is 429 even with the right one",
+          rl == [401] * 5 and rl6 == 429, f"{rl} {rl6}")
     st_r, hs, _ = call(F, "/auth/accept", "POST", {"token": tok_e, "email": users["mem"], "password": PW["mem"]},
                        headers={"origin": ORIGIN})
     check("...with its own password: 200, a second row on solo, and its old session still live",
@@ -420,7 +430,7 @@ def run(t, da, dbb, procs):
     stc, _, cj = call(F, "/auth/admin/invite/cancel", "POST", {"org": oa, "id": open_ids[-1] if open_ids else -1},
                       headers=as_("owner"))
     check("the users list shows the open invite; cancel closes it (its link 410)",
-          len(open_ids) == 1 and stc == 200 and cj.get("ok") and call(F, f"/auth/link?t={tok_c}")[0] == 410,
+          len(open_ids) == 2 and stc == 200 and cj.get("ok") and call(F, f"/auth/link?t={tok_c}")[0] == 410,
           f"{open_ids} {stc} {cj}")
 
     print("\nM5 THE LAST OWNER")

@@ -655,6 +655,8 @@ async def accept(request: Request):
                                                                                                  email.strip())):
             return _nope(400, b'{"error":"enter your email"}')
         email = cogauth.norm_email(email)
+        if _limited(ck, "a:" + email):     # login's per-account limit holds here too: a link is no side door
+            return _nope(429, b'{"error":"too many tries"}')
         acct = await a.db(cogauth._account, email)
     _inflight += 1
     try:
