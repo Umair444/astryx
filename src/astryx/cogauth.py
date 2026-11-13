@@ -8,7 +8,7 @@ org's own `members` table, and the host CLI that is the only writer of either.
     venv/bin/python src/astryx/cogauth.py user add EMAIL                the password is read from stdin (a pipe) or
     venv/bin/python src/astryx/cogauth.py user reset EMAIL              the terminal, NEVER argv; reset revokes every
                                                                         session of that account
-    venv/bin/python src/astryx/cogauth.py grant ORG EMAIL owner|member|viewer
+    venv/bin/python src/astryx/cogauth.py grant ORG EMAIL owner|admin|member|viewer
     venv/bin/python src/astryx/cogauth.py revoke ORG EMAIL
     venv/bin/python src/astryx/cogauth.py backup DIR                    the cog store: pg_dump -Fc → DIR/cog-<ts>.dump
     venv/bin/python src/astryx/cogauth.py restore-verify DIR            the newest dump restores into a scratch
@@ -16,8 +16,9 @@ org's own `members` table, and the host CLI that is the only writer of either.
                                                                         matches the live store's, and it is dropped
 
 THE RULES IT HOLDS:
-- There is no public sign-up (D7): an account exists because the host CLI wrote it. Recovery is `user reset` (no
-  email: an externally authored identity, a1 F6).
+- There is no public sign-up (D7): an account exists because the host CLI wrote it, or because a person opened a
+  one-time invite an org's owner or admin made (observatory/front.py, the admin panel). Recovery is `user reset`, or
+  a one-time reset link from that panel (no email: an externally authored identity, a1 F6).
 - A password is stored as an argon2id PHC string (OWASP's first choice), by libsodium through PyNaCl, already a core
   dependency. libsodium releases the GIL, so the front checks it in a thread and its event loop keeps relaying
   (measured: `cryptography`'s argon2id held the GIL, 2 loop ticks in 1.65 s; PyNaCl's left 61 of ~93). A sign-in for
@@ -54,7 +55,9 @@ from pathlib import Path
 
 from astryx import config, orgs
 
-ROLES = ("owner", "member", "viewer")
+# in step with schema.sql's members_role_check and the front's `in cogauth.ROLES` filter. `admin` is stored once
+# the members table carries the tree-scoped shape (feat/cog-rls); on the first shape its CHECK refuses it
+ROLES = ("owner", "admin", "member", "viewer")
 SESSION_DAYS = 14
 SCHEMA = Path(__file__).resolve().parent / "sql" / "cog_schema.sql"
 # argon2id above OWASP's floor for interactive sign-in (m 19 MiB, t 2): m 64 MiB, t 3; libsodium fixes p at 1
@@ -162,16 +165,36 @@ def sub(uid: int, cog_id: str) -> str:
     return f"{uid}@{cog_id}"
 
 
-def grant(org_conn, who: str, role: str) -> None:
-    """THE one writer of a membership row (D8)."""
+def _tree_shaped(org_conn) -> bool:
+    """Whether this org's members table carries `node` (the tree-scoped shape, feat/cog-rls), judged by the catalog."""
+    return org_conn.execute("SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('members') "
+                            "AND attname = 'node' AND NOT attisdropped)").fetchone()[0]
+
+
+def grant(org_conn, who: str, role: str, node: str = "") -> None:
+    """THE one writer of a membership row (D8). `node` is a path in the agents/ tree ('' = the whole org); a role on a
+    node is inherited by its subtree (schema.sql member_role). A role change that would leave the org's members with
+    no whole-org owner is refused by the table itself (members_last_owner). On a members table of the first shape
+    (uid alone) only the whole org exists. The upsert names the key by its constraint, so it holds on every shape."""
     if role not in ROLES:
         raise ValueError(f"role must be one of {', '.join(ROLES)}")
-    org_conn.execute("INSERT INTO members (uid, role) VALUES (%s, %s) ON CONFLICT (uid) DO UPDATE SET role = "
-                     "EXCLUDED.role", (who, role))
+    if not _tree_shaped(org_conn):
+        if node:
+            raise ValueError("this org's members table has no tree scope yet: grant on the whole org")
+        org_conn.execute("INSERT INTO members (uid, role) VALUES (%s, %s) ON CONFLICT (uid) DO UPDATE SET role = "
+                         "EXCLUDED.role", (who, role))
+        return
+    org_conn.execute("INSERT INTO members (uid, node, role) VALUES (%s, %s, %s) ON CONFLICT ON CONSTRAINT members_pkey "
+                     "DO UPDATE SET role = EXCLUDED.role", (who, node, role))
 
 
-def revoke(org_conn, who: str) -> bool:
-    return org_conn.execute("DELETE FROM members WHERE uid = %s", (who,)).rowcount > 0
+def revoke(org_conn, who: str, node: str | None = None) -> bool:
+    """Every membership row of `who` (node None), or its row on one node."""
+    if node is None:
+        return org_conn.execute("DELETE FROM members WHERE uid = %s", (who,)).rowcount > 0
+    if not _tree_shaped(org_conn):
+        return node == "" and org_conn.execute("DELETE FROM members WHERE uid = %s", (who,)).rowcount > 0
+    return org_conn.execute("DELETE FROM members WHERE uid = %s AND node = %s", (who, node)).rowcount > 0
 
 
 # ------------------------------------------------------------------ the CLI

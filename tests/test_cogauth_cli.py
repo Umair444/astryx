@@ -171,7 +171,7 @@ def main():
                   rc == 0 and rc2 == 0 and rows == [(f"{u1}@{cid}", "owner")], f"{rc} {rc2} {rows}")
             rcx = [cog("grant", "fxnoorg", "one@fx-cogcli.invalid", "owner")[0],
                    cog("grant", org, "nobody@fx-cogcli.invalid", "owner")[0],
-                   cog("grant", org, "one@fx-cogcli.invalid", "admin")[0]]
+                   cog("grant", org, "one@fx-cogcli.invalid", "superuser")[0]]
             check("refused: an unknown org (1), an unknown email (1), a bad role (usage, 2)", rcx == [1, 1, 2], str(rcx))
             rc, out = cog("revoke", org, "one@fx-cogcli.invalid")
             outs.append(out)

@@ -15,6 +15,8 @@ ASTRYX_ORG (a federation name, public by nature), and relays bytes.
   POST /auth/login           {email, password} → 200 + the session cookie | 401 (one body) | 429 | 403 foreign Origin
   POST /auth/logout          the session revoked (a server row), the cookie cleared
   GET  /auth/me              {user, orgs: [{org, name, role}]}, each role as its org answers | 401 (plan-11859 U1+U2)
+  /auth/admin/*, /auth/link, /auth/accept   the admin panel's account half: users, one-time invite and reset links,
+                             sign out everywhere (the block "the admin panel's ACCOUNT half" below)
   ANY  /api/<path>           the root API, for the org the VIEWER chose: the `x-astryx-org` header, else the
                              `astryx_org` cookie (the app sets it when the owner picks a room; the front never
                              does). None named: the DEFAULT org (cog front parity, owner 11-13): the cog's only org,
@@ -42,6 +44,8 @@ import asyncio
 import concurrent.futures
 import http.cookiejar
 import json
+import re
+import secrets
 import sys
 import time
 from collections import defaultdict, deque
@@ -250,9 +254,14 @@ async def login(request: Request):
             _fails[k].remove(now)
         except (KeyError, ValueError):
             pass
-    r = Response(b'{"ok":true}', media_type="application/json", headers={"cache-control": "no-store"})
-    r.set_cookie(SESSION, got[1], max_age=cogauth.SESSION_DAYS * 86400, path="/", httponly=True,
-                 samesite="strict", secure=o.startswith("https://"))
+    return _signed_in(got[1], o)
+
+
+def _signed_in(token: str, origin: str, body: bytes = b'{"ok":true}') -> Response:
+    """The reply that carries a new session: its one cookie (httpOnly, SameSite=Strict, Secure on an https origin)."""
+    r = Response(body, media_type="application/json", headers={"cache-control": "no-store"})
+    r.set_cookie(SESSION, token, max_age=cogauth.SESSION_DAYS * 86400, path="/", httponly=True,
+                 samesite="strict", secure=origin.startswith("https://"))
     return r
 
 
@@ -291,17 +300,395 @@ async def me(request: Request):
     who = cogauth.sub(s[0], a.cog_id)
 
     async def role(r: dict):
-        if r["port"] is None:
-            return None
-        try:
-            resp = await client().get(f"http://127.0.0.1:{r['port']}/api/auth/role", timeout=3,
-                                      headers={identity.HEADER: identity.mint(a.key, who, r["org"])})
-            got = resp.json().get("role") if resp.status_code == 200 else None
-        except (httpx.HTTPError, ValueError, AttributeError):
-            return None
-        return {"org": r["org"], "name": r["name"], "role": got} if got in cogauth.ROLES else None
+        got = await _role_in(a, who, r)
+        return {"org": r["org"], "name": r["name"], "role": got} if got else None
     mine = [x for x in await asyncio.gather(*(role(r) for r in rooms())) if x]
     return JSONResponse({"user": s[1], "orgs": mine}, headers={"cache-control": "no-store"})
+
+
+async def _role_in(a: "_Auth", who: str, r: dict) -> str | None:
+    """The role `who` holds in org r, as THAT org's backend answers (its members table, asked with a token for it)."""
+    if r["port"] is None:
+        return None
+    try:
+        resp = await client().get(f"http://127.0.0.1:{r['port']}/api/auth/role", timeout=3,
+                                  headers={identity.HEADER: identity.mint(a.key, who, r["org"])})
+        got = resp.json().get("role") if resp.status_code == 200 else None
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+    return got if got in cogauth.ROLES else None
+
+
+
+# ---------------------------------------------------------------- the admin panel's ACCOUNT half (cog-rebuild, owner 11-13)
+# "an option to create new user … whoever is the owner of org can decide the roles of other users … managed by an
+# admin". Accounts are the cog's (this store); roles are each org's (its backend, observatory/api/admin.py). There is
+# no mail on this host, so a new user and a forgotten password are both a ONE-TIME LINK the owner or an admin copies
+# to the person: a random token, only its sha256 stored (cog_schema.sql `links`), one use, an expiry.
+#
+#   GET  /auth/admin/users?org=          the accounts with a role in org: uid, email, created, last sign-in, live
+#                                        sessions, their rows [{node, role}]; and the org's open invites
+#   POST /auth/admin/invite              {org, role, node?} → {link, expires}: shown once
+#   POST /auth/admin/invite/cancel       {org, id}
+#   POST /auth/admin/reset               {org, uid} → {link, expires}: a reset LINK, never a password
+#   POST /auth/admin/revoke-sessions     {org, uid} → {revoked}: sign out everywhere
+#   GET  /auth/link?t=                   what a link is (kind, org, role, node; a reset's email) | 410
+#   POST /auth/accept                    {token, email?, password}: an invite creates the account when the email is
+#                                        new (an existing one proves its password), then the role is granted; a reset
+#                                        sets the password and revokes every session. Either way, signed in after
+#
+# WHO MAY: the owner or an admin OF THAT ORG, as its backend answers (/api/auth/role, as /auth/me asks), through a
+# session viewer() accepts (this origin; a state change from a configured Origin). An admin never makes an owner.
+# THE GRANT AT ACCEPT is made AS THE INVITER: the front mints the inviter's identity for that org and PUTs the row to
+# the org's /api/admin/members, so the backend judges it with the guards it applies to everyone, and an inviter who
+# has since lost the role can no longer bring anyone in. Sessions are cog-wide, so a reset or a sign-out-everywhere
+# is refused unless the caller manages EVERY org where the target holds a role (an owner target: owners only).
+INVITE_HOURS, RESET_HOURS = 72, 24
+_NODE = re.compile(r"^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*)*$")   # schema.sql members_node_check
+MANAGERS = ("owner", "admin")
+GONE = b'{"error":"this link is no longer valid"}'
+
+
+def _json(obj, status: int = 200) -> JSONResponse:
+    return JSONResponse(obj, status_code=status, headers={"cache-control": "no-store"})
+
+
+def _account_n(a: _Auth, who) -> int | None:
+    """The account id in a uid of THIS cog (<n>@<cog id>), else None."""
+    if not isinstance(who, str):
+        return None
+    n, _, cid = who.partition("@")
+    return int(n) if n.isdigit() and len(n) <= 18 and cid == a.cog_id else None
+
+
+async def _manager(request: Request, org) -> tuple | Response:
+    """(auth, the caller's uid, its role in org, org's room), or the refusal."""
+    a = auth()
+    if a is None:
+        return _nope(404, b'{"error":"this cog has no sign-in"}')
+    r = _cog().get(org) if isinstance(org, str) else None
+    if r is None:
+        return _nope(404, b'{"error":"no such org in this cog"}')
+    who = await viewer(request, a)
+    if who is None:
+        return _nope(401, b'{"error":"signed out"}')
+    role = await _role_in(a, who, r)
+    if role not in MANAGERS:
+        return _nope(403, b'{"error":"owners and admins only"}')
+    return a, who, role, r
+
+
+async def _backend(a: _Auth, who: str, r: dict, method: str, path: str, body=None) -> tuple[int, dict]:
+    """A call to org r's backend AS `who` (a token minted for that org): (status, its JSON or {})."""
+    if r["port"] is None:
+        return 502, {}
+    try:
+        resp = await client().request(method, f"http://127.0.0.1:{r['port']}{path}", json=body, timeout=10,
+                                      headers={identity.HEADER: identity.mint(a.key, who, r["org"])})
+    except httpx.HTTPError:
+        return 502, {}
+    try:
+        j = resp.json()
+    except ValueError:
+        j = {}
+    return resp.status_code, j if isinstance(j, dict) else {}
+
+
+async def _body(request: Request) -> dict | None:
+    try:
+        j = await request.json()
+    except Exception:  # noqa: BLE001 — any malformed body is the same refusal
+        return None
+    return j if isinstance(j, dict) else None
+
+
+async def _accounts(conn, ids: list[int]):
+    cur = await conn.execute(
+        "SELECT u.id, u.email, u.created, max(s.created), "
+        "count(s.digest) FILTER (WHERE s.revoked IS NULL AND s.expires > now()) "
+        "FROM users u LEFT JOIN sessions s ON s.uid = u.id WHERE u.id = ANY(%s) GROUP BY u.id", (ids,))
+    return await cur.fetchall()
+
+
+async def _open_invites(conn, org: str):
+    cur = await conn.execute(
+        "SELECT l.id, l.role, l.node, l.created, l.expires, u.email FROM links l LEFT JOIN users u ON u.id = l.by_uid "
+        "WHERE l.kind = 'invite' AND l.org = %s AND l.used IS NULL AND l.expires > now() ORDER BY l.created", (org,))
+    return await cur.fetchall()
+
+
+def _iso(t):
+    return t.isoformat() if t else None
+
+
+@app.get("/auth/admin/users")
+async def admin_users(request: Request, org: str = ""):
+    got = await _manager(request, org)
+    if isinstance(got, Response):
+        return got
+    a, who, you, r = got
+    st, j = await _backend(a, who, r, "GET", "/api/admin/members")
+    if st != 200 or not isinstance(j.get("members"), list):
+        return _nope(502, b'{"error":"the org could not list its members"}')
+    rows: dict[str, list] = {}
+    for m in j["members"]:
+        rows.setdefault(m.get("uid"), []).append({"node": m.get("node") or "", "role": m.get("role")})
+    ids = [n for n in (_account_n(a, u) for u in rows) if n is not None]
+    try:
+        acc = {x[0]: x for x in await a.db(_accounts, ids)}
+        inv = await a.db(_open_invites, r["org"])
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    users = []
+    for uid, held in rows.items():
+        x = acc.get(_account_n(a, uid))
+        root = next((h["role"] for h in held if h["node"] == ""), None)
+        users.append({"uid": uid, "email": x[1] if x else None, "created": _iso(x[2]) if x else None,
+                      "last_session": _iso(x[3]) if x else None, "live_sessions": x[4] if x else 0,
+                      "role": root, "roles": sorted(held, key=lambda h: h["node"]), "you": uid == who})
+    users.sort(key=lambda u: (-{"owner": 3, "admin": 2, "member": 1, "viewer": 0}.get(u["role"] or "", -1),
+                              u["email"] or "~"))
+    return _json({"org": r["org"], "name": r["name"], "you": you, "uid": who, "roles": j.get("roles") or [],
+                  "tree": bool(j.get("tree")), "users": users,
+                  "invites": [{"id": i[0], "role": i[1], "node": i[2], "created": _iso(i[3]), "expires": _iso(i[4]),
+                               "by": i[5]} for i in inv]})
+
+
+async def _new_link(conn, dig: bytes, kind: str, org: str, role, node: str, uid, by: int, hours: int):
+    cur = await conn.execute(
+        "INSERT INTO links (digest, kind, org, role, node, uid, by_uid, expires) VALUES (%s, %s, %s, %s, %s, %s, %s, "
+        "now() + make_interval(hours => %s)) RETURNING expires", (dig, kind, org, role, node, uid, by, hours))
+    return (await cur.fetchone())[0]
+
+
+def _link_url(request: Request, a: _Auth, token: str) -> str:
+    return f"{_origin(request, a)}/#/accept?t={token}"     # a POST here passed viewer(): its Origin is configured
+
+
+@app.post("/auth/admin/invite")
+async def admin_invite(request: Request):
+    j = await _body(request) or {}
+    got = await _manager(request, j.get("org"))
+    if isinstance(got, Response):
+        return got
+    a, who, you, r = got
+    role, node = j.get("role"), j.get("node") or ""
+    st, mj = await _backend(a, who, r, "GET", "/api/admin/members")
+    if st != 200:
+        return _nope(502, b'{"error":"the org could not be asked"}')
+    if role not in (mj.get("roles") or []):
+        return _json({"error": f"role is one of {', '.join(mj.get('roles') or [])}"}, 400)
+    if you != "owner" and role == "owner":
+        return _nope(403, b'{"error":"only an owner can invite an owner"}')
+    if not isinstance(node, str) or (node and not (mj.get("tree") and _NODE.fullmatch(node))):
+        return _nope(400, b'{"error":"node is a path in the agents/ tree"}')
+    token = secrets.token_urlsafe(32)
+    try:
+        exp = await a.db(_new_link, cogauth.digest(token), "invite", r["org"], role, node, None, _account_n(a, who),
+                         INVITE_HOURS)
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    return _json({"link": _link_url(request, a, token), "expires": _iso(exp), "role": role, "node": node})
+
+
+async def _cancel_invite(conn, org: str, iid: int, owner_too: bool) -> int:
+    cur = await conn.execute("UPDATE links SET used = now() WHERE id = %s AND org = %s AND kind = 'invite' AND "
+                             "used IS NULL AND (%s OR role <> 'owner')", (iid, org, owner_too))
+    return cur.rowcount
+
+
+@app.post("/auth/admin/invite/cancel")
+async def admin_invite_cancel(request: Request):
+    j = await _body(request) or {}
+    got = await _manager(request, j.get("org"))
+    if isinstance(got, Response):
+        return got
+    a, _, you, r = got
+    if not isinstance(j.get("id"), int):
+        return _nope(400, b'{"error":"send {org, id}"}')
+    n = await a.db(_cancel_invite, r["org"], j["id"], you == "owner")
+    return _json({"ok": n > 0})
+
+
+async def _may_manage(a: _Auth, who: str, you: str, r: dict, target: str) -> Response | None:
+    """None when the caller may act on the target's ACCOUNT (cog-wide), else the refusal."""
+    if _account_n(a, target) is None:
+        return _nope(400, b'{"error":"uid is an account of this cog"}')
+    every = rooms()
+    theirs = await asyncio.gather(*(_role_in(a, target, x) for x in every))
+    if theirs[[x["org"] for x in every].index(r["org"])] is None:
+        return _nope(404, b'{"error":"no such member of this org"}')
+    if target == who:
+        return None
+    mine = await asyncio.gather(*(_role_in(a, who, x) if x["org"] != r["org"] else _same(you) for x in every))
+    for t, m in zip(theirs, mine):
+        if t is None:
+            continue
+        if m not in MANAGERS:
+            return _nope(403, b'{"error":"that account is also in an org you do not manage"}')
+        if t == "owner" and m != "owner":
+            return _nope(403, b'{"error":"only an owner can do that to an owner"}')
+    return None
+
+
+async def _same(v):
+    return v
+
+
+@app.post("/auth/admin/reset")
+async def admin_reset(request: Request):
+    j = await _body(request) or {}
+    got = await _manager(request, j.get("org"))
+    if isinstance(got, Response):
+        return got
+    a, who, you, r = got
+    bad = await _may_manage(a, who, you, r, j.get("uid"))
+    if bad:
+        return bad
+    token = secrets.token_urlsafe(32)
+    try:
+        exp = await a.db(_new_link, cogauth.digest(token), "reset", r["org"], None, "", _account_n(a, j["uid"]),
+                         _account_n(a, who), RESET_HOURS)
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    return _json({"link": _link_url(request, a, token), "expires": _iso(exp)})
+
+
+async def _revoke_all(conn, uid: int) -> int:
+    cur = await conn.execute("UPDATE sessions SET revoked = now() WHERE uid = %s AND revoked IS NULL", (uid,))
+    return cur.rowcount
+
+
+@app.post("/auth/admin/revoke-sessions")
+async def admin_revoke_sessions(request: Request):
+    j = await _body(request) or {}
+    got = await _manager(request, j.get("org"))
+    if isinstance(got, Response):
+        return got
+    a, who, you, r = got
+    bad = await _may_manage(a, who, you, r, j.get("uid"))
+    if bad:
+        return bad
+    n = await a.db(_revoke_all, _account_n(a, j["uid"]))
+    return _json({"revoked": n})
+
+
+async def _peek(conn, dig: bytes):
+    cur = await conn.execute(
+        "SELECT l.kind, l.org, l.role, l.node, l.uid, l.by_uid, l.expires, u.email FROM links l "
+        "LEFT JOIN users u ON u.id = l.uid WHERE l.digest = %s AND l.used IS NULL AND l.expires > now()", (dig,))
+    return await cur.fetchone()
+
+
+async def _claim(conn, dig: bytes) -> bool:
+    cur = await conn.execute("UPDATE links SET used = now() WHERE digest = %s AND used IS NULL AND expires > now()",
+                             (dig,))
+    return cur.rowcount == 1
+
+
+async def _unclaim(conn, dig: bytes) -> None:
+    await conn.execute("UPDATE links SET used = NULL WHERE digest = %s", (dig,))
+
+
+async def _create(conn, email: str, phc: str) -> int | None:
+    cur = await conn.execute("INSERT INTO users (email, pw) VALUES (%s, %s) ON CONFLICT (email) DO NOTHING RETURNING id",
+                             (email, phc))
+    row = await cur.fetchone()
+    return row[0] if row else None
+
+
+async def _drop_account(conn, uid: int) -> None:
+    await conn.execute("DELETE FROM users WHERE id = %s", (uid,))
+
+
+async def _set_password(conn, uid: int, phc: str) -> None:
+    await conn.execute("UPDATE users SET pw = %s WHERE id = %s", (phc, uid))
+    await conn.execute("UPDATE sessions SET revoked = now() WHERE uid = %s AND revoked IS NULL", (uid,))
+
+
+@app.get("/auth/link")
+async def link_info(t: str = ""):
+    a = auth()
+    if a is None:
+        return _nope(404, b'{"error":"this cog has no sign-in"}')
+    try:
+        row = await a.db(_peek, cogauth.digest(t)) if t else None
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    r = _cog().get(row[1]) if row else None
+    if row is None or r is None:
+        return _nope(410, GONE)
+    return _json({"kind": row[0], "org": row[1], "name": r["name"], "role": row[2], "node": row[3],
+                  "expires": _iso(row[6]), "email": row[7] if row[0] == "reset" else None})
+
+
+@app.post("/auth/accept")
+async def accept(request: Request):
+    global _inflight
+    a = auth()
+    if a is None:
+        return _nope(404, b'{"error":"this cog has no sign-in"}')
+    o = _origin(request, a)
+    if o is None:
+        return _nope(403, b'{"error":"open the link on this cog\'s own page"}')
+    j = await _body(request) or {}
+    token, pw, email = j.get("token"), j.get("password"), j.get("email")
+    if not (isinstance(token, str) and token and isinstance(pw, str)):
+        return _nope(400, b'{"error":"send {token, password}"}')
+    ck = "c:" + (request.client.host if request.client else "?")
+    if _limited(ck, "l:" + cogauth.digest(token).hex()):
+        return _nope(429, b'{"error":"too many tries"}')
+    dig = cogauth.digest(token)
+    link = await a.db(_peek, dig)
+    room = _cog().get(link[1]) if link else None
+    if link is None or room is None:
+        _fails[ck].append(time.monotonic())
+        return _nope(410, GONE)
+    kind, org, role, node, target, by = link[:6]
+    if len(pw) < 12:
+        return _nope(400, b'{"error":"a password has at least 12 characters"}')
+    if _inflight >= INFLIGHT:
+        return _nope(503, b'{"error":"sign-in is busy, try again in a moment"}')
+    acct = None
+    if kind == "invite":
+        if not (isinstance(email, str) and 3 <= len(email) <= 254 and "@" in email and not any(c.isspace() for c in
+                                                                                                 email.strip())):
+            return _nope(400, b'{"error":"enter your email"}')
+        email = cogauth.norm_email(email)
+        acct = await a.db(cogauth._account, email)
+    _inflight += 1
+    try:
+        if acct:      # an existing account joins: it proves its own password (a link is no way into someone's account)
+            ok = await _check(cogauth.check_password, pw, acct[1])
+            if not ok:
+                now = time.monotonic()
+                _fails[ck].append(now)
+                _fails["a:" + email].append(now)
+                return _nope()
+        phc = None if acct else await _check(cogauth.hash_password, pw)
+    finally:
+        _inflight -= 1
+    if not await a.db(_claim, dig):         # one use: the claim is the conditional UPDATE, whoever raced us
+        return _nope(410, GONE)
+    if kind == "reset":
+        await a.db(_set_password, target, phc)
+        uid = target
+    else:
+        uid = acct[0] if acct else await a.db(_create, email, phc)
+        if uid is None:                      # the email was taken between the read and the write
+            await a.db(_unclaim, dig)
+            return _nope(409, b'{"error":"that email was just registered: open the link again"}')
+        st, bj = await _backend(a, cogauth.sub(by, a.cog_id), room, "PUT", "/api/admin/members",
+                                {"uid": cogauth.sub(uid, a.cog_id), "role": role, "node": node})
+        if st != 200:                        # the inviter may no longer grant this: nothing is left half-made
+            await a.db(_unclaim, dig)
+            if not acct:
+                await a.db(_drop_account, uid)
+            return _json({"error": "the invite could not be honoured: " + str(bj.get("error") or f"status {st}")},
+                         409 if st in (401, 403, 409) else 502)     # 409: the link's promise no longer holds
+    tok = secrets.token_urlsafe(32)
+    await a.db(cogauth._open_session, uid, cogauth.digest(tok))
+    return _signed_in(tok, o, json.dumps({"ok": True, "org": org, "kind": kind}).encode())
 
 
 @app.get("/api/cog")

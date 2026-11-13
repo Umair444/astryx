@@ -14,7 +14,7 @@ MUTANTS = {
     "K1 a reset leaves the account's sessions live":
         ('        conn.execute("UPDATE sessions SET revoked = now() WHERE uid = %s AND revoked IS NULL", (row[0],))\n', ""),
     "K2 a second grant keeps the first role (no upsert)":
-        ('ON CONFLICT (uid) DO UPDATE SET role = "\n                     "EXCLUDED.role"', 'ON CONFLICT (uid) DO NOTHING"'),
+        ('ON CONFLICT (uid) DO UPDATE SET role = "\n                         "EXCLUDED.role"', 'ON CONFLICT (uid) DO NOTHING"'),
     "K3 a short password is accepted":
         ("    if len(pw) < 12:", "    if len(pw) < 1:"),
     "K4 restore-verify trusts any dump that restores (the count never compared)":
@@ -27,8 +27,8 @@ MUTANTS = {
         ('        finally:\n            live.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(scratch)))\n',
          "        finally:\n            pass\n"),
     "K8 revoke deletes nothing":
-        ('    return org_conn.execute("DELETE FROM members WHERE uid = %s", (who,)).rowcount > 0',
-         '    return org_conn.execute("SELECT 1 FROM members WHERE uid = %s", (who,)).rowcount > 0'),
+        ('        return org_conn.execute("DELETE FROM members WHERE uid = %s", (who,)).rowcount > 0',
+         '        return org_conn.execute("SELECT 1 FROM members WHERE uid = %s", (who,)).rowcount > 0'),
     "K10 a store database named like its role passes the plain check (the sign-ins read 503 later, as at turn-on)":
         ("    except config.DefaultDB:           # the turn-on trap", "    except ZeroDivisionError:           # the turn-on trap"),
     "K9 a cog without a block is managed anyway (no registry block, no refusal)":
