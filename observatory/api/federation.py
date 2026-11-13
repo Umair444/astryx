@@ -150,7 +150,7 @@ SELECT p.org, p.url, p.status, p.reputation, p.pubkey, p.last_pickup, p.notes,
        max(t.ts) FILTER (WHERE t.inbound)                             AS last_in,
        max(t.ts) FILTER (WHERE NOT t.inbound)                         AS last_out
 FROM peers p LEFT JOIN t ON t.org = p.org
-GROUP BY p.org ORDER BY (p.status = 'revoked'), max(t.ts) DESC NULLS LAST, p.org"""
+GROUP BY p.tenant, p.org ORDER BY (p.status = 'revoked'), max(t.ts) DESC NULLS LAST, p.org"""
 
 
 def _iso(v):
