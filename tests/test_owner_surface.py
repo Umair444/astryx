@@ -13,7 +13,7 @@ to none is a FAILURE, never a silent drop. The unit maps to its module through i
      repo-wide (every tracked non-test .py: the functions whose own body holds an INSERT INTO messages string, closed
      ONE level over the functions calling them). The domain's SITES are its own SQL plus every LOAD (a call, a
      rebinding like `_W = wire_insert`, a functools.partial: a1 #62309) that resolves
-     (`from M import f [as a]`, `import M [as R]` -> R.f) to a writer in another module: EXACTLY the expected 13
+     (`from M import f [as a]`, `import M [as R]` -> R.f) to a writer in another module: EXACTLY the expected 14
      (unique (file, function); main.py's growbot_event holds two inserts and is one site), including canvas_error ->
      common.wire_insert and ear.route_room -> hearing.room.route. The domain is ONE IMPORT LEVEL; a dynamic getattr
      is outside it. A domain call through a repo-internal import that doesn't resolve is UNKNOWN, never a pass.
@@ -313,6 +313,7 @@ EXPECTED_SITES = sorted([
     ("observatory/api/main.py", "cog_new_org"), ("observatory/api/main.py", "memory_propose"),
     ("observatory/api/room.py", "ask"), ("bridges/canvas.py", "_say"), ("bridges/ear.py", "record"),
     ("bridges/canvas.py", "canvas_error"), ("bridges/ear.py", "route_room"),     # calls: common.wire_insert, room.route
+    ("observatory/api/federation.py", "_audit"),     # cog-rebuild P4: the owner's introduce/trust act, told to seed
 ])
 
 # ── G3 ───────────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -402,6 +402,12 @@ from observatory.api import ws_canvas as _wscv  # noqa: E402
 _wscv.bind(lambda: pool)
 app.include_router(_wscv.router)
 
+# cog-rebuild Phase 4: FEDERATION (this org's identity, its peers and their traffic, introduce, trust/untrust/block);
+# owner-only by omission from PUBLIC (the public GET /api/peers is unchanged) and checked in every handler
+from observatory.api import federation as _fed  # noqa: E402
+_fed.bind(lambda: pool, ESTATE, owner=lambda r: owner_call(r), env=_env, me=lambda: _env("ASTRYX_ORG") or ORG)
+app.include_router(_fed.router)
+
 # the Room's speaker: agents answer the room with send(to='room'); spoken in their voice, or run on the screen
 from observatory.api import room as _room  # noqa: E402
 
@@ -419,7 +425,7 @@ app.include_router(_room.router)
 # ASTRYX_DEV_NO_WIRE set, every write that reaches agents (a wire message, an interrupt) is refused at the server, so
 # a test script can't wake an agent in the owner's name however it is written (a held, not blocked, POST did: 10774).
 _DEV_NO_WIRE = bool(os.environ.get("ASTRYX_DEV_NO_WIRE"))
-_WIRE_WRITE = re.compile(r"^/api/(messages|ws/agents/[^/]+/interrupt)$")
+_WIRE_WRITE = re.compile(r"^/api/(messages|ws/agents/[^/]+/interrupt|federation/.+)$")   # federation/: a peers row + seed's audit row
 
 
 @app.middleware("http")
