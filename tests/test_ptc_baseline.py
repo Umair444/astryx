@@ -11,6 +11,8 @@ is a stub printing check.sh's FAILED shapes, failing one gate per RED_<gate> fil
   B5  a baseline whose verdict can't be parsed → still RED (fail-closed)
   B6  the baseline is the pushed ref itself → still RED (seed #11604: else every red reads "inherited")
   B7  the baseline is a red ref that is NOT an ancestor of the pushed one → still RED
+  B8  a remote-tracking baseline name (origin/main) is checked as THIS repo resolves it, not as the clone does
+      (inside the clone `origin/main` is this repo's main: a red main there made a new red read "inherited")
   C1  control: a green ref never runs the baseline
 Run: venv/bin/python tests/test_ptc_baseline.py   (also wired into devtools/check.sh)
 """
@@ -93,6 +95,11 @@ def main():
         git("add", "."); git("commit", "-qm", "an unrelated ref, red on more")
         rc, out = ptc("breaks", "side")
         check("B7 a red ref that is not an ancestor: still RED", rc == 1 and "not a strict ancestor" in out, out)
+        git("update-ref", "refs/remotes/origin/main", git("rev-parse", "base"))   # origin/main = base HERE
+        git("branch", "-f", "main", "side")                                    # …while this repo's main is red on more
+        rc, out = ptc("breaks", "origin/main")
+        check("B8 origin/main is the baseline THIS repo means (base), not the clone's (its main): a new red stays RED",
+              rc == 1 and "NEW reds" in out and "beta: a gate" in out.split("NEW reds", 1)[1], out)
         rc, out = ptc("inherits", "base")
         check("B1' an allowed push names the gates it did NOT re-verify",
               rc == 0 and "NOT re-verified" in out and "alpha: a gate" in out.split("NOT re-verified", 1)[1], out)

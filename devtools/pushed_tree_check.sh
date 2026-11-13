@@ -76,7 +76,11 @@ fi
 # gitignored) AND a working .git, which the absence-classifiers need. This is what a
 # fresh clone or a CI checkout receives.
 TREE="$TMP/tree"
-if ! git clone -q "$REPO" "$TREE" 2>/dev/null || ! git -C "$TREE" checkout -q "$REF" 2>/dev/null; then
+# The ref is resolved HERE, to a sha, before the clone: inside the clone a remote-tracking name means something else
+# (`origin/main` there is THIS repo's main, not its origin's). That once made PTC_BASELINE=origin/main check the org's
+# own main as the "baseline" (medic, 11-13).
+SHA=$(git -C "$REPO" rev-parse --verify -q "$REF^{commit}") || SHA=""
+if [ -z "$SHA" ] || ! git clone -q "$REPO" "$TREE" 2>/dev/null || ! git -C "$TREE" checkout -q "$SHA" 2>/dev/null; then
   echo "pushed-tree check: could not clone/checkout $REF — VERIFIED NOTHING"; exit 77
 fi
 [ -f "$TREE/devtools/check.sh" ] || {
@@ -192,7 +196,7 @@ if [ "$rc" -ne 0 ]; then
       echo "PTC_BASELINE=$PTC_BASELINE is not a strict ancestor of $REF: no baseline comparison — still RED"
     else
     echo "PTC_BASELINE=$PTC_BASELINE: checking the baseline the same way, to tell inherited reds from new ones"
-    PTC_BASELINE= bash "${BASH_SOURCE[0]}" "$PTC_BASELINE" >"$TMP/baseline.out" 2>&1; brc=$?
+    PTC_BASELINE= bash "${BASH_SOURCE[0]}" "$bsha" >"$TMP/baseline.out" 2>&1; brc=$?
     base_fails=$(python3 -I "$REPO/devtools/check_verdict.py" --failed "$TMP/baseline.out" 2>/dev/null); vrc=$?
     if [ "$brc" -eq 77 ] || [ "$vrc" -ne 0 ]; then
       echo "  baseline VERIFIED NOTHING or its verdict could not be read (rc $brc, parser $vrc): still RED"
