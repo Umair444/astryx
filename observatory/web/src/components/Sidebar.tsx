@@ -11,6 +11,7 @@ import { LiveDot, Orb, useNow } from '../ui/kit'
 import { moodOf, nowLine } from '../ui/life'
 import { HandBadge } from '../ui/hands'
 import { canvasBase } from '../cog'
+import { useMe, whoLabel } from '../me'
 
 export const LINKS: { tab: Route['tab']; label: string; icon: string; hint: string }[] = [
   { tab: 'floor', label: 'Floor', icon: '◉', hint: 'the org as a room' },
@@ -28,6 +29,7 @@ export const LINKS: { tab: Route['tab']; label: string; icon: string; hint: stri
 
 export default function Sidebar({ route, onOpenAgent }: { route: Route; onOpenAgent: (n: string) => void }) {
   const { overview, agents, presence, who } = useStore()
+  const me = useMe()             // signed in: your name and the org's in place of 'local' (owner 11-13)
   const now = useNow(5000)
   const links = who.owner ? LINKS : LINKS.filter((l) => l.tab === 'network' || l.tab === 'floor')
 
@@ -46,7 +48,7 @@ export default function Sidebar({ route, onOpenAgent }: { route: Route; onOpenAg
         <Orb size={30} />
         <div className="min-w-0">
           <div className="text-[16px] font-semibold tracking-[0.02em] text-ink leading-tight">astryx</div>
-          <div className="text-[11px] text-ink-mute truncate">{overview?.org ?? 'observatory'}</div>
+          <div className="text-[11px] text-ink-mute truncate">{whoLabel(me, overview?.org ?? 'observatory')}</div>
         </div>
       </a>
       <ScrollArea className="flex-1" type="scroll">
