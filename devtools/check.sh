@@ -826,6 +826,11 @@ run "canvas cog: each org's canvas session at its own path under its own name; o
 # mutants_cog_signin.py, mutants_backend_identity.py, mutants_cogauth_session.py, mutants_cogauth_cli.py.
 run "cog identity: the signed token verified against its spec, the response-cookie rule, ONE owner predicate (U1+U2)" "$PY" tests/test_cog_identity.py
 run "cog sign-in: the owner signs in and reaches his rooms with no key, the key still works, each org decides (U1+U2)" "$PY" tests/test_cog_signin.py
+# cog-rebuild Phase 1 (owner 11-13, "the front IS the design"): a cog of ONE org behind the front loses nothing the bare
+# :8090 served: default-org routing (the only org, else the door), bare /canvas /ear /brain, canvas's cookie through
+# both relays, sign-in, the key door, websockets; no registry and no cog block stay today's. Red control: 18 FAILs with
+# the old multi() gate plus no default (seed's build log).
+run "cog one-org parity: one org behind the front loses nothing; no cog block is today (cog-rebuild P1)" "$PY" tests/test_cog_one_org_parity.py
 run "cog CLI: the one writer of accounts and memberships; the cog store's backup restores (U1+U2 D7 D8 D9)" "$PY" tests/test_cogauth_cli.py
 # plan-11859 U4: the owner sets this org's agent login from the observatory (a subscription token, a metered key only with
 # the billing confirmed, or neither), through the one .env writer, never a value back. Mutants: tests/mutants_org_login.py,

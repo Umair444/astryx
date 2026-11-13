@@ -94,16 +94,18 @@ with TestClient(b.root, base_url="http://testserver") as cl:
 msrc = Path(os.environ.get("CANVAS_MAIN_SRC") or REPO / "observatory" / "api" / "main.py").read_text()
 keep = []
 for n in ast.parse(msrc).body:
-    if isinstance(n, ast.Assign) and any(getattr(t, "id", "") in ("CANVAS_UP", "CANVAS_PRE") for t in n.targets):
+    # _SEAT/_COG: "behind the cog's front" (orgs.here, cog front parity 11-13), read from the source, never re-derived
+    if isinstance(n, ast.Assign) and any(getattr(t, "id", "") in ("CANVAS_UP", "CANVAS_PRE", "_SEAT", "_COG")
+                                         for t in n.targets):
         keep.append(n)
     elif isinstance(n, ast.FunctionDef) and n.name == "_upstream":     # CANVAS_UP's one source (9b4c37c)
         keep.append(n)
     elif isinstance(n, ast.AsyncFunctionDef) and n.name == "canvas_root":
         n.decorator_list = []
         keep.append(n)
-from astryx import orgs
+from astryx import orgs, paths
 from starlette.responses import Response
-g = {"orgs": orgs, "_COG": orgs.multi(), "Response": Response}
+g = {"orgs": orgs, "Response": Response, "ESTATE": paths.estate(REPO / "observatory" / "api" / "main.py")}
 exec(compile(ast.Module(body=keep, type_ignores=[]), "main.py", "exec"), g)
 out["main_up"] = g.get("CANVAS_UP")
 out["main_bounce"] = asyncio.run(g["canvas_root"]()).headers.get("location") if "canvas_root" in g else None

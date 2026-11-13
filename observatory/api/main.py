@@ -48,6 +48,13 @@ from astryx import config, orgs, paths  # noqa: E402 — the ONE resolver (plan-
 # The org's estate (.env, agents/, triggers/, units/, …): this checkout on one org, the HOME on several. The observatory
 # is in the declared cog-scoped set (#58435 S3c); until S3c it serves ONE org, the HOME it was started for.
 ESTATE = paths.estate(__file__)
+# THIS org's registry name as the cog's FRONT addresses it (/o/<org>, a token's aud, canvas's cookie), or None when no
+# front stands before it (cog front parity, owner 11-13): several orgs, OR one org under a registry `cog` block. The
+# old gate was multi(), so a ONE-org cog behind the front lost its sign-in, its canvas cookie and its forwarded view.
+# Resolved once, as ESTATE is; every "am I behind a front" below reads THIS, never multi() (orgs.here).
+_SEAT = orgs.here(ESTATE)
+if _SEAT is None and orgs.cog() is not None:      # a cog block but this estate is no registered org: no front speaks
+    print(f"observatory: {ESTATE} is no org of this cog's registry: no sign-in, no /o/ prefix", file=sys.stderr)
 
 def _dsn() -> str:
     try:
@@ -227,8 +234,8 @@ def anonymous_can_see(from_org, to_org, peers: frozenset) -> bool:
 # valid token for THIS org means the public face, whatever path the request took (D2). Today `member` and `viewer`
 # open nothing beyond the public face (recorded, shown by /auth/me; a later slice gives them a meaning).
 from astryx.security import identity as _identity  # noqa: E402
-_COGAUTH = orgs.cog() if orgs.multi() else None    # the cog's sign-in: {id, home}, or None (one org; no `cog` block)
-_AUD = orgs.name() if _COGAUTH else None           # this org's registry name: the only aud this backend accepts
+_COGAUTH = orgs.cog() if _SEAT else None         # the cog's sign-in: {id, home}, or None (no `cog` block, or no front)
+_AUD = _SEAT if _COGAUTH else None               # this org's registry name: the only aud this backend accepts
 _verifiers: dict = {}
 _verifiers_at = 0.0
 
@@ -1847,13 +1854,14 @@ class VegaMsg(BaseModel):
     history: list[dict] = []       # [{role: 'visitor'|'vega', text}], client-kept
 
 vega_hits: dict[str, list[float]] = {}
-_COG = orgs.multi()          # resolved once at start, as ESTATE is
+_COG = _SEAT is not None     # behind the cog's front (one org under a cog block too, orgs.here), resolved once
 
 
 def _client(request: Request) -> str:
     """The visitor a per-visitor cap counts. One org: the peer address, exactly as before. In a cog this observatory
     sits behind the cog's front (observatory/front.py), so its peer is always 127.0.0.1: the front's own
-    x-astryx-front-client (the address IT saw; it overwrites any a caller sends) is read, and only from 127.0.0.1."""
+    x-astryx-front-client (the address IT saw; it overwrites any a caller sends) is read, and only from 127.0.0.1.
+    A cog of ONE org sits behind the front as well (_SEAT), so its visitors are counted apart too."""
     peer = request.client.host if request.client else "?"
     if _COG and peer == "127.0.0.1":
         return request.headers.get("x-astryx-front-client") or peer
@@ -3599,7 +3607,7 @@ def _upstream(stem: str, fixed: int) -> str | None:
 CANVAS_UP = _upstream("astryx-canvas", 8091)   # this org's canvas (its registry port in a cog)
 # In a cog the viewer reaches this observatory under the front's /o/<org>/ (S3c canvas): the prefix is THIS org's
 # registry name, computed, never read from a request (nothing a caller sends can move a redirect). One org: "".
-CANVAS_PRE = f"/o/{orgs.name()}" if _COG else ""
+CANVAS_PRE = f"/o/{_SEAT}" if _COG else ""
 _wscv.CANVAS_PRE = CANVAS_PRE                  # the workspace serves canvas pages with this kit prefix
 _canvas_http: httpx.AsyncClient | None = None
 
@@ -3651,7 +3659,7 @@ async def _pipe(url: str, request: Request, owner_key: bool, down: str):
     host = (request.headers.get("x-forwarded-host") if front else None) or request.headers.get("host", "")
     headers = [(k, v) for k, v in _relay.headers(
         request.headers.items(), host=host, proto=request.url.scheme,
-        cookies=() if owner_key else {_relay.canvas_cookie(orgs.name())})
+        cookies=() if owner_key else {_relay.canvas_cookie(_SEAT)})
         if owner_key or k.lower() != "x-obs-key"]
     upstream = _canvas_http.build_request(
         request.method, url, params=request.query_params,
@@ -3663,7 +3671,7 @@ async def _pipe(url: str, request: Request, owner_key: bool, down: str):
     done = BackgroundTasks()
     done.add_task(r.aclose)
     resp = StreamingResponse(r.aiter_raw(), status_code=r.status_code, background=done)
-    resp.raw_headers = _relay.response_headers(r.headers.raw, orgs.name())   # its own canvas cookie only (N1)
+    resp.raw_headers = _relay.response_headers(r.headers.raw, _SEAT)   # its own canvas cookie only (N1)
     return resp
 
 

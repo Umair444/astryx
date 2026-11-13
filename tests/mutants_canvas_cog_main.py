@@ -16,7 +16,7 @@ MUTANTS = {
     "W1 the observatory proxies the fixed :8091 in a cog (every org's observatory reaches ONE canvas)":
         ('CANVAS_UP = _upstream("astryx-canvas", 8091)', 'CANVAS_UP = "http://127.0.0.1:8091"'),
     "W2 the bare /canvas bounces to the root in a cog (the viewer leaves its org)":
-        ('CANVAS_PRE = f"/o/{orgs.name()}" if _COG else ""\n', 'CANVAS_PRE = ""\n'),
+        ('CANVAS_PRE = f"/o/{_SEAT}" if _COG else ""\n', 'CANVAS_PRE = ""\n'),
     "W3 one org bounces under /o/None (a one-org viewer lands nowhere)":
-        ('CANVAS_PRE = f"/o/{orgs.name()}" if _COG else ""\n', 'CANVAS_PRE = f"/o/{orgs.name()}"\n'),
+        ('CANVAS_PRE = f"/o/{_SEAT}" if _COG else ""\n', 'CANVAS_PRE = f"/o/{_SEAT}"\n'),
 }

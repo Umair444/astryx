@@ -180,6 +180,22 @@ def multi(env=None) -> bool:
     return reg is not None and len(reg) > 1
 
 
+def here(home, env=None, cwd=None) -> str | None:
+    """THIS process's registry name AS THE COG'S FRONT ADDRESSES IT (/o/<org>, a token's aud, canvas's cookie), or
+    None when no front stands before it. Not multi() (cog front parity, owner 11-13: "a cog with one org loses
+    nothing"): the front serves a cog of ONE org too, so "behind a front" is "several orgs" OR "a registry with a
+    `cog` block". Several orgs: name(), exactly as before. One registered org under a cog block: the entry whose
+    HOME is `home` (the caller's paths.estate, resolved once; a one-org host's resolver never reads ASTRYX_HOME,
+    so the estate, not name(), is what places it). No registry, or a registry without a cog block: None, today's
+    names byte for byte. tmux sockets, unit names, ports and the DSN pair stay on multi(): those are "several
+    orgs share this host", which one org under a front is not."""
+    if multi(env):
+        return name(env, cwd)
+    if cog(env) is None:
+        return None
+    return org_of(home, env)
+
+
 def org_of(home, env=None) -> str | None:
     """The registered org whose HOME is `home`, or None."""
     h = Path(home).resolve()

@@ -64,8 +64,10 @@ PREFIX = "/canvas"                                 # served at <host>/canvas/ (o
 # it under the cog front's /o/<org>/: its cookie lives at THAT path, under a name of its own, so one browser holds each
 # org's session apart (a cookie name on one host is host-wide, like a tmux socket) and never sends one org's session
 # to another's canvas. The org is THIS process's registry name, computed, never read from a request. One org: the
-# public path is PREFIX and the cookie `cv_session`, exactly as before.
-_ORG = orgs.name()
+# public path is PREFIX and the cookie `cv_session`, exactly as before. "In a cog" is "behind the cog's front": one org
+# under a registry `cog` block is reached at /o/<org>/ too, so its name and path follow the registry entry, never
+# multi() (orgs.here; cog front parity 11-13: the front relays cv_session-<org>, and a plain cv_session never passed).
+_ORG = orgs.here(ESTATE)
 PUBLIC = f"/o/{_ORG}{PREFIX}" if _ORG else PREFIX
 COOKIE = relay.canvas_cookie(_ORG)                 # ONE name, read by both relays too (src/astryx/security/relay.py)
 
