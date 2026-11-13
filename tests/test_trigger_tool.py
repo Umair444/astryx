@@ -61,8 +61,11 @@ CREATE TABLE triggers (
 CREATE INDEX triggers_due ON triggers (next_fire) WHERE enabled;
 """
 OLD_RM = "UPDATE triggers SET enabled=false WHERE agent='a' AND name='h45'"         # an on row
+# The plan-12214 window: a pre-off_reason body (no off_reason/watch/… columns) still writes the expanded table. Its
+# conflict target is the tenant-leading key since cog-rls slice 1: a body still saying ON CONFLICT (agent, name) fails
+# against the widened key ("no unique constraint matching"), so every running trigger tool is restarted with that apply.
 OLD_SET = ("INSERT INTO triggers (agent, name, schedule, kind, check_src, note, next_fire) "
-           "VALUES ('a','brand_new','* * * * *','heartbeat',null,null, now()) ON CONFLICT (agent, name) DO UPDATE "
+           "VALUES ('a','brand_new','* * * * *','heartbeat',null,null, now()) ON CONFLICT (tenant, agent, name) DO UPDATE "
            "SET schedule='* * * * *', enabled=true, next_fire=now()")
 OLD_REENABLE = "UPDATE triggers SET enabled=true WHERE agent='a' AND name='h1'"     # an old trigger_set on a retired row
 
