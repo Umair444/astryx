@@ -1,7 +1,7 @@
 # Cog tenancy: many orgs, one Postgres, row-level security
 
-*Design doc, for review before any code PR. Status: proposed. The tenant column (slice 1 below) runs on one
-production cog; slices 2–4 are built and tested on fixtures only.*
+*Design doc, for review before any code PR. Status: proposed. Slices 1–3 below run on one production cog (one
+org; cutover 2026-11-13 with the checks in "Migration"); slice 4 and per-tenant export are not built yet.*
 
 ## Why
 
@@ -99,6 +99,45 @@ org role belongs to nothing but `astryx_org`. `SET ROLE astryx_org` maps to NULL
 - **Sequences** are shared, which exposes cadence. Accepted.
 - **Other databases:** `REVOKE CONNECT ON DATABASE postgres, template1 FROM PUBLIC`.
 
+## Who bypasses RLS, and how a mistake is caught
+
+Exactly one role bypasses RLS: the **bootstrap superuser**. It is the provisioner. It runs the schema apply
+(migrations), creates orgs and roles, and takes full backups. Its credential lives in a root-only file
+(`/etc/astryx/pg-super.dsn`), so it runs only through sudo. No runtime process holds it.
+
+- `astryx_schema` owns the tables, but `FORCE ROW LEVEL SECURITY` binds owners too, and it is `NOBYPASSRLS` and
+  `NOLOGIN`.
+- Org roles, `astryx_cog`, `astryx_test` and `astryx_monitor` are all `NOBYPASSRLS`. The test role can't CONNECT to a cog
+  database, and the monitor role reads `pg_stat_activity` only.
+
+A mistake is caught four ways:
+
+1. **Fails closed at the first write.** The tenant default is `cog.tenant()`, which is NULL for any role not in
+   `cog.orgs`, the superuser included. A runtime process left on the superuser fails its first INSERT with NOT
+   NULL; it does not quietly write untagged or cross-org rows. (Seen live at cutover: the one process not yet
+   restarted failed exactly this way.)
+2. **Census.** No env file or connect site resolves to the superuser. Every table with a `tenant` column has
+   ENABLE + FORCE, the one policy, and the `cog.tenant()` default. Every view is `security_invoker`. No `SECURITY
+   DEFINER` function exists outside an allowlist. This runs after every apply.
+3. **Counts.** For every tenant table, the org role's row count equals the provisioner's count of that org's rows.
+4. **The leak test.** A two-org fixture (below) runs in CI with a superuser provisioner. On a deployed cog, its test
+   role runs every arm except the two that need a superuser, which are reported as unverified, not passed.
+
+## Backup and restore, per cog and per tenant
+
+- **Whole cog (the normal path).** The provisioner runs `pg_dump -Fc` of the cog database, plus `pg_dumpall
+  --roles-only`. Restore is `pg_restore` as the provisioner; every org comes back with its roles and its
+  `cog.orgs` rows.
+- **One tenant (proposed, slice 4; not yet built or tested).**
+  - *Export:* as `org_<key>`, `pg_dump --data-only --enable-row-security` over the tenant tables plus
+    `store.<key>__*`. RLS limits the dump to that org's rows.
+  - *Import:* the provisioner creates the org (one `cog.orgs` row + one role), then the rows load **as that org's
+    role**, so WITH CHECK refuses any row tagged for another org.
+  - *Open:* ids come from shared sequences, so importing into a *different* cog can collide on `id`. Either
+    remap ids on import, or key those tables `(tenant, id)`. We'd like the abstractors' view on this.
+  - *Removing an org:* the provisioner runs `DELETE … WHERE tenant = '<key>'` per table, drops the org's `store`
+    tables, then the role.
+
 ## Cross-org messages: a copy, never shared visibility
 
 When org A's agent sends to `x@b`:
@@ -140,21 +179,44 @@ Four slices. Each one is deployable on its own and reversible.
 - a known trigger still fires;
 - a channel bridge (e.g. WhatsApp) still receives its notifications.
 
-**Rollback:**
+**Rollback, per slice.** Each slice is tagged before it lands, and the provisioner takes a full dump first, inside
+the database container so pg_dump matches the server version.
 
-- Point the DSN back at the old role (bypasses RLS) and restart.
-- Full revert: `DISABLE ROW LEVEL SECURITY` per table.
-- The added columns are harmless.
-- Last resort: a dump taken inside the database container, so the pg_dump version matches the server.
+| Slice | Rollback | Note |
+|---|---|---|
+| 1. tenant column | Leave the column: its default is a constant, and nothing reads it while RLS is off. Rolling back the code means applying the tagged schema, which restores the old PK/UNIQUE keys, then restarting every process. | Processes still holding the new `ON CONFLICT` text fail until restarted. |
+| 2. roles | Put the superuser DSN back in each org's env file and restart. RLS is still off and the tenant default is still the constant, so that is enough. | Ownership can stay with `astryx_schema`; the superuser bypasses it. |
+| 3. RLS on | (1) DSN back to the superuser. (2) `DELETE FROM cog.orgs`: the default is now `cog.tenant()`, which is NULL for the superuser while any org is registered, so its inserts would fail NOT NULL. With no org registered, it falls back to the default org. (3) Apply the tagged pre-slice-3 schema as the superuser. (4) Restart every process, so listeners return to the old channel names. | Proven on a fixture. A DSN-only rollback is NOT enough, for the NOT NULL reason. |
+| 4. cross-org | Turn off the gateway's copy path. Rows already copied stay as each org's own. | No shared rows exist to unwind, by design. |
+
+Last resort for any slice: `pg_restore` of the pre-slice dump.
 
 ## Effect on a default (one-org) install
 
-- One extra column per table and the `astryx` schema with one `orgs` row.
-- The org's connection runs as `org_<key>` instead of the superuser.
-- One event trigger.
-- No behaviour change for the org: RLS filters on the only tenant there is.
-- Index order changes (tenant leads); query plans should stay index scans. A p95 check on the inbox and steps
-  queries is part of the cutover.
+Tenancy is not a mode: a one-org install runs the same code path, with one `cog.orgs` row. What it pays:
+
+- One `tenant` column per org-scoped table, and indexes widened to lead with it.
+- Schema `cog`, the roles above, and one event trigger.
+- The org connects as `org_<key>` instead of the superuser. Anything that silently needed superuser fails loudly
+  at slice 2.
+- Per query, one `(SELECT cog.tenant())` InitPlan: a primary-key lookup in a one-row table, evaluated once per
+  query, not per row.
+- **Statistics, the one real trap.** The column arrives with a constant default (no table rewrite), so it has no
+  statistics until each table is analyzed. Until then, the planner guesses `tenant = (SELECT cog.tenant())`
+  matches 0.5% of rows. For "an agent's latest N" it then sorts every row the tenant owns instead of walking an
+  index: the cost grows with the table, not with N. The provisioner's apply now runs `ANALYZE` on every tenant table.
+
+Measured on one production org after slice 3 (100k steps, 12k messages; server execution time, p50 of 40):
+
+| Query | Superuser (no RLS) | Org role, before ANALYZE | Org role, after |
+|---|---|---|---|
+| an agent's inbox (pending, by id) | 0.34 ms | 0.05 ms | 0.05 ms |
+| an agent's latest 50 messages (from or to) | 0.07 ms | 2.6 ms | 0.14 ms |
+| an agent's latest 50 steps | 1.0 ms | 4.1 ms | 0.07 ms* |
+| an agent's latest 20 turns | 0.03 ms | 0.57 ms | 0.10 ms |
+
+\* with a new `(tenant, agent, id DESC)` index; the old `(tenant, agent, ts)` index didn't match the `ORDER BY id`.
+Without it, the plan is the superuser's (2.6 ms cold).
 
 ## Tests (to accompany the code PRs)
 
