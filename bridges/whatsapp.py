@@ -59,6 +59,7 @@ WA_CLI = shlex.split(env("WA_CLI", "docker exec wacli-sync wacli"))
 DATA_HOST = env("WA_DATA_HOST")       # wacli store dir on the host (media on/off switch)
 DATA_CTR = env("WA_DATA_CTR", "/data")    # same dir as the wacli process sees it
 WA_DOCKER = WA_CLI[2] if WA_CLI[:2] == ["docker", "exec"] else ""
+from .common import signed as _signed  # noqa: E402  the sender label, one rule for every shared-identity channel
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 ROUTES_FILE = ESTATE / "bridges" / "routes-whatsapp.json"
 
@@ -495,11 +496,7 @@ def signed(agent: str, text: str, chat) -> str:
     """WhatsApp shows one number for every agent, so the text names its sender: a bold
     label line, then the body. Idempotent (an edited bubble is never signed twice). A route
     with `"signed": false` stays unlabelled: an agent speaking there in the owner's voice."""
-    route = routes().chat(chat)
-    if route is not None and route.get("signed") is False:
-        return text
-    label = f"▸ *{agent}*\n"
-    return text if not text or text.startswith(label) else label + text
+    return _signed(agent, text, routes().chat(chat), "*")     # bridges/common.signed, WhatsApp's bold
 
 
 _skipped_threads: set = set()
