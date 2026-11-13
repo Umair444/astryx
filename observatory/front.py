@@ -747,7 +747,8 @@ async def accept(request: Request):
 #   GET  /auth/cog/requests?state=           the cog admin's queue: [{id, key, name, state, email, created, budget_tokens,
 #                                            decided_by, decided_at, note, provision, provision_note}]
 #   POST /auth/cog/requests/{id}/approve     {budget_tokens} → approved, then src/astryx/cog_provision.py
-#                                            provision_org(key, owner uid); what became of it is in the row
+#                                            provision_org(key, owner uid, budget): an orgs row + one
+#                                            login role + its .env; what became of it is in the row
 #   POST /auth/cog/requests/{id}/reject      {note?} → rejected (the key is free again)
 #
 # THE GATE (DESIGN.md, CORRECTIONS 11-13): public sign-up does not open before the per-org sandbox exists. So the flag
@@ -975,9 +976,9 @@ async def cog_approve(rid: int, request: Request):
     key, owner = got[0], cogauth.sub(got[1], a.cog_id)
     # THE ONE SEAM (src/astryx/cog_provision.py): off the event loop. Its outcome is written to the row, so a deferral
     # (no provisioner yet: feat/cog-rls2) or a failure is a queue a provisioner works from, never lost
-    call = f"provision_org({key}, {owner})"
+    call = f"provision_org({key}, {owner}, {b})"
     try:
-        await asyncio.to_thread(cog_provision.provision_org, key, owner)
+        await asyncio.to_thread(cog_provision.provision_org, key, owner, b)
         prov, note = "done", call
     except cog_provision.ProvisionUnavailable as e:
         prov, note = "deferred", f"{call}: {e}"
