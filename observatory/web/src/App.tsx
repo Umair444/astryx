@@ -3,6 +3,7 @@ import { AppShell, Burger, Group, Popover, Text, TextInput, Tooltip } from '@man
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { saveObsKey } from './api'
 import { LOGIN, signInHref } from './auth'
+import { useMe, whoLabel } from './me'
 import { StoreProvider, useStore } from './store'
 import { CogProvider, useCog } from './cog'
 import { CogChooser, CogSwitcher } from './components/CogBuilding'
@@ -257,6 +258,7 @@ function Shell() {
     })
   const isDesktop = useMediaQuery('(min-width: 48em)', true)
   const { overview, who, whoChecked } = useStore()
+  const me = useMe()             // signed in: your name and the org's in place of 'local' (owner 11-13)
   const cog = useCog()
   // the Floor and the Network are the org's public faces; everything else is the owner's
   const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network' || t.key === 'floor')
@@ -312,7 +314,7 @@ function Shell() {
                 name and live count, as always */}
             {cog.cog ? <CogSwitcher /> : overview && (
               <>
-                <span className="hidden sm:inline font-mono text-ink-dim">{overview.org}</span>
+                <span className="hidden sm:inline font-mono text-ink-dim">{whoLabel(me, overview.org)}</span>
                 <span className="flex items-center gap-1">
                   <span className={`w-2 h-2 rounded-full ${overview.live > 0 ? 'bg-good animate-pulse' : 'bg-ink-mute/40'}`} />
                   {overview.live} live

@@ -4,7 +4,7 @@ import '@fontsource/instrument-serif'
 import { Menu } from '@mantine/core'
 import { WORDS, nextHash, readMe, roleWords, signIn, signInHref, signOut } from '../auth'
 import type { AuthOrg, Me, MeState } from '../auth'
-import { chooseOrg, chosenOrg, useCog } from '../cog'
+import { chooseOrg, chosenOrg, setOrg, useCog } from '../cog'
 import type { Cog } from '../cog'
 
 /* SIGN-IN SCREENS (goal 11859 U3; the bar is seed's msg 61877 and the owner's Room pick, A ORBIT by default). The visual
@@ -60,6 +60,19 @@ export function SignInScreen() {
   const emailRef = useRef<HTMLInputElement>(null)
   const pwRef = useRef<HTMLInputElement>(null)
   useEffect(() => { emailRef.current?.focus() }, [])
+  // THE ORG (owner 11-13: "the sign-in screen has a dropdown of the cog's orgs"): the cog's rooms, public by ruling
+  // (plan-11859 I9), preselected to the one you are in, else the front's default (its only org, else the door). One
+  // org (no cog): no dropdown, as before
+  const [rooms, setRooms] = useState<Rooms | null>(null)
+  const [org, setOrgPick] = useState('')
+  useEffect(() => {
+    cogRooms().then((r) => {
+      if (!r || r.orgs.length === 0) return
+      const here = chosenOrg()
+      setRooms(r)
+      setOrgPick(r.orgs.some((o) => o.org === here) ? here! : r.door ?? r.orgs[0].org)
+    })
+  }, [])
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -77,6 +90,7 @@ export function SignInScreen() {
       return
     }
     setPhase('done')
+    if (rooms && org) setOrg(org)                 // into the org picked here: its observatory home after the reload
     await afterSignIn(nextHash())
   }
 
@@ -87,6 +101,14 @@ export function SignInScreen() {
           onChange={(v) => { setEmail(v); setError(null) }} invalid={!!error} />
         <Field id="auth-password" label="Password" type="password" auto="current-password" value={password} inputRef={pwRef}
           onChange={(v) => { setPassword(v); setError(null) }} invalid={!!error} />
+        {rooms && (
+          <div>
+            <label htmlFor="auth-org" className="block text-[13px] text-ink-dim mb-1.5">Org</label>
+            <select id="auth-org" value={org} onChange={(e) => setOrgPick(e.currentTarget.value)} className="auth-field">
+              {rooms.orgs.map((o) => <option key={o.org} value={o.org}>{o.name}</option>)}
+            </select>
+          </div>
+        )}
         <p id="auth-error" role="alert" className="min-h-[2.6em] text-[13px] leading-snug text-bad">{error}</p>
         <button type="submit" disabled={phase !== 'idle'} className="auth-primary w-full">
           {phase === 'pending' ? 'Signing in…' : phase === 'done' ? 'Signed in' : 'Sign in'}
@@ -112,14 +134,24 @@ async function afterSignIn(next: string) {
   location.reload()
 }
 
-/* The cog's rooms by registry name, or null on one org. Public (the owner ruled the names public, plan-11859 I9). */
-async function cogOrgNames(): Promise<string[] | null> {
+/* The cog's rooms (registry name, federation name) and its default org, or null on one org. Public (the owner ruled the
+   names public, plan-11859 I9). */
+interface Rooms { orgs: { org: string; name: string }[]; door: string | null }
+async function cogRooms(): Promise<Rooms | null> {
   try {
     const r = await fetch('/api/cog', { credentials: 'same-origin' })
     if (!r.ok) return null
     const j = await r.json()
-    return j && j.cog === true && Array.isArray(j.orgs) ? j.orgs.map((o: { org: string }) => o.org).filter(Boolean) : null
+    if (!j || j.cog !== true || !Array.isArray(j.orgs)) return null
+    const orgs = j.orgs.filter((o: { org: unknown; name: unknown }) => o && typeof o.org === 'string' && o.org &&
+      typeof o.name === 'string').map((o: { org: string; name: string }) => ({ org: o.org, name: o.name }))
+    return { orgs, door: typeof j.door === 'string' ? j.door : null }
   } catch { return null }
+}
+
+async function cogOrgNames(): Promise<string[] | null> {
+  const r = await cogRooms()
+  return r ? r.orgs.map((o) => o.org) : null
 }
 
 /* The orgs you can switch to here: your membership (never the cog's room list, which is everyone's), and in a cog only

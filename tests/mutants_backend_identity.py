@@ -27,7 +27,7 @@ MUTANTS = {
     "B6 the verifier accepts any org's token (aud = None checks nothing: the token's own aud is taken)":
         ("    uid = _identity.verify(tok, _keys(), _AUD)\n", "    uid = _identity.verify(tok, _keys(), _identity.json.loads(_identity._unb64(tok.split('.')[0])).get('aud'))\n"),
     "B7 the backend's Set-Cookie pipe passes every cookie (its own relay to canvas)":
-        ("    resp.raw_headers = _relay.response_headers(r.headers.raw, orgs.name())", "    resp.raw_headers = list(r.headers.raw)"),
+        ("    resp.raw_headers = _relay.response_headers(r.headers.raw, _SEAT)", "    resp.raw_headers = list(r.headers.raw)"),
     "B8 a members lookup that fails is a 500 (an org whose schema.sql isn't re-applied breaks its public face)":
         ("    except (asyncpg.PostgresError, OSError) as e:   # no members table yet", "    except ZeroDivisionError as e:   # no members table yet"),
 }

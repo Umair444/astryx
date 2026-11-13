@@ -17,8 +17,14 @@ ASTRYX_ORG (a federation name, public by nature), and relays bytes.
   GET  /auth/me              {user, orgs: [{org, name, role}]}, each role as its org answers | 401 (plan-11859 U1+U2)
   ANY  /api/<path>           the root API, for the org the VIEWER chose: the `x-astryx-org` header, else the
                              `astryx_org` cookie (the app sets it when the owner picks a room; the front never
-                             does). None named, or one not in this cog: 409, pointing at /api/cog. There is no
-                             default org: a cog has no primary (ruling 3(b))
+                             does). None named: the DEFAULT org (cog front parity, owner 11-13): the cog's only org,
+                             else the registry's `door`; with neither, 409 pointing at /api/cog (ruling 3(b): a
+                             cog of several has no primary unless its registry names a door). One named that is not
+                             in this cog: 409
+  ANY  /canvas[/<path>]      308 to /o/<default>/canvas/<path>: canvas's session lives at that path (its cookie's
+                             Path), so a bare-path relay would set a cookie the browser never sends back
+  ANY  /ear/<path>, /brain/<path>   relayed to the default org, as every root path today's one-org :8090 served
+  WS   /o/<org>/<path>, /api/<path>  a websocket pipe to that org's backend (hands' noVNC), the same default rule
   /                          the web app (observatory/web/dist), as the one-org observatory serves it
 
 The front adds ONE fact: who the viewer is (plan-11859 U1+U2). It is the authority for that, so it signs it, per
@@ -27,7 +33,7 @@ Its one cookie is the session's (httpOnly, SameSite=Strict, Secure on an https o
 read it (relay.py, both directions). It has no PUBLIC_PATHS of its own to widen (every /o/ request is judged by the
 backend's).
 
-STATED LIMITS: websockets (hands' noVNC) are not piped through the front yet; reach a backend directly for those.
+STATED LIMITS: a websocket carries no signed identity (the backend's VNC gate is the owner key in its query, as before).
 Run: uvicorn front:app --host 0.0.0.0 --port 8090   (from observatory/), registry: ASTRYX_COG_REGISTRY or the default.
 """
 from __future__ import annotations
@@ -300,8 +306,29 @@ async def me(request: Request):
 
 @app.get("/api/cog")
 async def cog():
-    return {"cog": True, "home": None,
+    # `door`: the org a viewer with no choice lands in (default()), so the app can preselect it (sign-in's dropdown)
+    return {"cog": True, "home": None, "door": default(),
             "orgs": [{k: r[k] for k in ("org", "name", "base")} for r in rooms()]}
+
+
+def default() -> str | None:
+    """The org a request that names none goes to (cog front parity, owner 11-13): the cog's ONLY org, else the
+    registry's `door` (the primary's: the bare root was its own before the cog, orgs.load), else None (409). A
+    property of the registry, never of the request: nothing a caller sends picks it."""
+    c = _cog()
+    if len(c) == 1:
+        return next(iter(c))
+    d = orgs.door()
+    return d if d in c else None
+
+
+def _pick(request) -> tuple[str | None, bool]:
+    """(the org this root request is for, whether the viewer named it): the header, else the cookie, else default()."""
+    named = request.headers.get("x-astryx-org") or request.cookies.get("astryx_org") or ""
+    return (named, True) if named else (default(), False)
+
+
+NO_ORG = {"error": "this cog runs several orgs: choose one", "cog": "/api/cog"}
 
 
 @app.get("/api/cog/stream")
@@ -372,10 +399,114 @@ async def pipe(org: str, path: str, request: Request):
 
 @app.api_route("/api/{path:path}", methods=METHODS)
 async def chosen(path: str, request: Request):
-    org = request.headers.get("x-astryx-org") or request.cookies.get("astryx_org") or ""
+    org, _ = _pick(request)
     if org not in _cog():
-        return JSONResponse({"error": "this cog runs several orgs: choose one", "cog": "/api/cog"}, status_code=409)
+        return JSONResponse(NO_ORG, status_code=409)
     return await _relay(org, f"api/{path}", request)
+
+
+# THE BARE ROOT PATHS today's one-org :8090 serves beside /api (main.py's /canvas, /ear, /brain; the SPA is ours), for
+# the default org (cog front parity, owner 11-13: links, bookmarks, the growbot's brain URL keep working). Canvas is a
+# redirect, not a relay: its session cookie is Path=/o/<org>/canvas (canvas.py PUBLIC), so a page served at /canvas/
+# would set a cookie its own next request never carries (a login loop). The location is computed from the registry
+# and the request's own path, never from a header.
+@app.api_route("/canvas", methods=METHODS)
+@app.api_route("/canvas/{path:path}", methods=METHODS)
+async def bare_canvas(request: Request, path: str = ""):
+    org = default()
+    if org is None:
+        return JSONResponse(NO_ORG, status_code=409)
+    q = request.url.query
+    return Response(status_code=308, headers={"location": f"/o/{org}/canvas/{path}" + (f"?{q}" if q else "")})
+
+
+@app.api_route("/ear/{path:path}", methods=METHODS)
+@app.api_route("/brain/{path:path}", methods=METHODS)
+async def bare(path: str, request: Request):
+    org = default()
+    if org is None:
+        return JSONResponse(NO_ORG, status_code=409)
+    return await _relay(org, request.url.path.lstrip("/"), request)
+
+
+# WEBSOCKETS (hands' noVNC, ui/hands.tsx dials the ROOT /api/hands/<agent>/vnc): a byte pipe to the org's backend,
+# with the same routing as HTTP (/o/<org>/…, or the root's choice/default). Upstream is dialled FIRST, so the viewer
+# is accepted only with the subprotocol the backend chose, and a backend's refusal (its key check) is a refusal here.
+# The connect carries only the relay allowlist's headers (src/astryx/security/relay.py) and the query (the key rides
+# there: a browser websocket can't send headers); no identity is minted (STATED LIMITS).
+from fastapi import WebSocket  # noqa: E402
+
+
+@app.websocket("/o/{org}/{path:path}")
+async def pipe_ws(ws: WebSocket, org: str, path: str):
+    await _relay_ws(org, path, ws)
+
+
+@app.websocket("/api/{path:path}")
+async def chosen_ws(ws: WebSocket, path: str):
+    org, _ = _pick(ws)
+    await _relay_ws(org or "", f"api/{path}", ws)
+
+
+async def _relay_ws(org: str, path: str, ws: WebSocket):
+    import websockets
+    r = _cog().get(org)
+    if r is None or r["port"] is None:
+        await ws.close(code=4404)
+        return
+    q = ws.url.query
+    headers = [(k, v) for k, v in relay.headers(
+        ws.headers.items(), host=ws.headers.get("host", ""), proto="https" if ws.url.scheme == "wss" else "http",
+        cookies={relay.canvas_cookie(org)},
+        extra=[(CLIENT, ws.client.host if ws.client else ""), ("x-forwarded-prefix", f"/o/{org}")])
+        if k.lower() not in ("origin", "content-length")]     # websockets sends its own Origin-less handshake
+    protos = [p.strip() for p in ws.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
+    try:
+        up = await websockets.connect(f"ws://127.0.0.1:{r['port']}/{path}" + (f"?{q}" if q else ""),
+                                      additional_headers=headers, subprotocols=protos or None,
+                                      max_size=None, open_timeout=10)
+    except websockets.InvalidStatus as e:          # the backend refused the handshake (a 403 is its key check)
+        await ws.close(code=4403 if e.response.status_code == 403 else 4502)
+        return
+    except (OSError, websockets.WebSocketException, asyncio.TimeoutError):
+        await ws.close(code=4502)
+        return
+    await ws.accept(subprotocol=up.subprotocol)
+
+    async def to_up():
+        try:
+            while True:
+                m = await ws.receive()
+                if m["type"] == "websocket.disconnect":
+                    return
+                if m.get("bytes") is not None:
+                    await up.send(m["bytes"])
+                elif m.get("text") is not None:
+                    await up.send(m["text"])
+        except (websockets.ConnectionClosed, RuntimeError):
+            return
+
+    async def to_viewer():
+        try:
+            async for m in up:
+                if isinstance(m, bytes):
+                    await ws.send_bytes(m)
+                else:
+                    await ws.send_text(m)
+        except (websockets.ConnectionClosed, RuntimeError):
+            return
+
+    tasks = [asyncio.create_task(to_up()), asyncio.create_task(to_viewer())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for t in tasks:
+            t.cancel()
+        await up.close()
+        try:
+            await ws.close()
+        except RuntimeError:
+            pass
 
 
 async def _relay(org: str, path: str, request: Request):

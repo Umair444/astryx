@@ -167,7 +167,11 @@ def main():
     fn = re.search(r"export function chooseOrg\(org: string\) \{(.*?)\n\}", cg, re.S)
     body = fn.group(1) if fn else ""
     check("a focus switch sets the cookie BEFORE the reload, keeps the URL (the open tab), and never prompts for a key",
-          bool(fn) and 0 <= body.find("document.cookie =") < body.find("location.reload()")
+          # the cookie's one writer is setOrg (cog front parity: the sign-in's org pick and a one-org cog's auto pick
+          # write it too), called here before the reload
+          bool(fn) and 0 <= body.find("setOrg(org)") < body.find("location.reload()")
+          and "document.cookie = `${COOKIE}=" in (re.search(r"export function setOrg\(org: string\) \{(.*?)\n\}", cg, re.S)
+                                                  or re.match("()", "")).group(1)
           and "location.href" not in body and "location.hash" not in body and "obs_key" not in body, body[:300])
     check("a room is locked only when it REFUSED the key (401/403), never when it is down or slow",
           "[401, 403].includes(" in cg and "locked: agents.status === 'rejected'" not in cg)

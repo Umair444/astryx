@@ -190,8 +190,9 @@ def main():
         st, _, body = call(pf, "/api/cog")
         d = json.loads(body) if st == 200 else {}
         want = [{"org": oa, "name": na, "base": f"/o/{oa}/"}, {"org": ob, "name": nb, "base": f"/o/{ob}/"}]
-        check("both orgs, sorted, federation names from each HOME's .env, /o/<org>/ bases, home null, no port",
-              d == {"cog": True, "home": None, "orgs": want}, body[:300])
+        check("both orgs, sorted, federation names from each HOME's .env, /o/<org>/ bases, home null, no port; no "
+              "door in a registry that names none (cog front parity: the default org, else null)",
+              d == {"cog": True, "home": None, "door": None, "orgs": want}, body[:300])
         check("the front's own: no backend saw /api/cog", not lines(logs[oa]) and not lines(logs[ob]))
 
         print("\nO2 /o/<a>/ IS A'S BACKEND, AND ONLY A'S")

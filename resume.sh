@@ -56,7 +56,29 @@ start_svc() {  # name  port  workdir  cmd...
   fi
 }
 start_svc bridge      8477 "$ROOT"                 "$ROOT/venv/bin/uvicorn bridges.whatsapp:app --host 0.0.0.0 --port 8477"
-start_svc observatory 8090 "$ROOT/observatory/api" "$ROOT/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8090"
+# The observatory: in a cog (a registry with a `cog` block, /etc/astryx/cog.json or ASTRYX_COG_REGISTRY) the org's
+# backend is main:app on 127.0.0.1 at its registry port and the cog's FRONT owns :8090 (sign-in, relay); without one,
+# main:app on :8090 as before. Relaunching the old layout under a cog would silently drop sign-in (cog-rebuild P1).
+OBS_ORG_PORT=$("$ROOT/venv/bin/python" -c 'import sys; sys.path.insert(0, "'"$ROOT"'/src")
+from astryx import orgs
+c = orgs.cog()
+o = orgs.here("'"$ROOT"'") if c else None
+print((orgs.load() or {}).get(o, {}).get("ports", {}).get("astryx-observatory-org", "") if o else "")' 2>/dev/null)
+# the front speaks TLS when the cog home holds a certificate (tls/cert.pem + tls/key.pem; owner 11-13: "http is bad")
+OBS_TLS=""
+COG_HOME=$("$ROOT/venv/bin/python" -c 'import sys; sys.path.insert(0, "'"$ROOT"'/src")
+from astryx import orgs
+c = orgs.cog()
+print(c["home"] if c else "")' 2>/dev/null)
+if [ -n "$COG_HOME" ] && [ -f "$COG_HOME/tls/cert.pem" ] && [ -f "$COG_HOME/tls/key.pem" ]; then
+  OBS_TLS="--ssl-certfile $COG_HOME/tls/cert.pem --ssl-keyfile $COG_HOME/tls/key.pem"
+fi
+if [ -n "$OBS_ORG_PORT" ]; then
+  start_svc observatory-org "$OBS_ORG_PORT" "$ROOT/observatory/api" "$ROOT/venv/bin/uvicorn main:app --host 127.0.0.1 --port $OBS_ORG_PORT --proxy-headers --forwarded-allow-ips 127.0.0.1"
+  start_svc observatory 8090 "$ROOT/observatory" "$ROOT/venv/bin/uvicorn front:app --host 0.0.0.0 --port 8090 --proxy-headers --forwarded-allow-ips 127.0.0.1 $OBS_TLS"
+else
+  start_svc observatory 8090 "$ROOT/observatory/api" "$ROOT/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8090"
+fi
 start_svc gateway     8845 "$ROOT/bridges"         "$ROOT/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845"
 start_svc frontends   8998 "$ROOT"                 "$ROOT/venv/bin/uvicorn bridges.frontends:app --host 0.0.0.0 --port 8998"
 start_svc canvas      8091 "$ROOT"                 "$ROOT/venv/bin/uvicorn bridges.canvas:root --host 127.0.0.1 --port 8091"
@@ -83,7 +105,7 @@ echo "resume: spawning residents..."
 sleep 3
 echo
 echo "=== resume: verify ==="
-for p in 8477 8090 8845 8998; do port_up "$p" && echo "  :$p up" || echo "  :$p DOWN"; done
+for p in 8477 8090 ${OBS_ORG_PORT} 8845 8998; do port_up "$p" && echo "  :$p up" || echo "  :$p DOWN"; done
 echo "  tmux sessions: $(tmux ls 2>/dev/null | wc -l)"
 echo "  pulse loops:   $(pulse_loops)  (must be 1)"
 echo "  last_eval age: $(psql "$DSN" -qtAc "SELECT now()-max(last_eval) FROM triggers WHERE enabled" 2>/dev/null)"
