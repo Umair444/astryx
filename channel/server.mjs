@@ -240,8 +240,34 @@ const TOOLS = [
 const TRIGGER_TOOL = homePath('src/astryx/pulse/trigger_tool.py')
 const PULSE_PY = homePath('venv/bin/python')
 
-async function handleTool(name, a) {
+// A send's row is retracted when its tool call is cancelled before the message left (the owner interrupts the
+// call; 2026-11-13, msg 11813: the call read "rejected" while the row, already committed, was delivered anyway).
+// 'pending' only, in one statement: a row a bridge or a pane already took is out, and stays as it is.
+const RETRACT_SQL = `UPDATE messages SET status='retracted',
+       delivery=coalesce(delivery,'{}'::jsonb)||'{"retracted":true,"why":"the sender''s tool call was cancelled"}'::jsonb
+     WHERE id=$1 AND status='pending' RETURNING id`
+async function retractSend(id) {
+  try {
+    const r = await pool.query(RETRACT_SQL, [id])
+    if (!r.rows.length) {
+      console.error(`astryx send: call cancelled, but msg ${id} was already out (not pending); left as it is`)
+      return false
+    }
+    // the observatory's doorbell: the same channel as a new row, the same payload shape (the id); the screen reads
+    // the row's status and drops it. Bridges only re-select status='pending' on this ring, so it delivers nothing.
+    await pool.query(`SELECT pg_notify('astryx_wire', $1)`, [String(id)])
+    console.error(`astryx send: call cancelled, msg ${id} retracted before delivery`)
+    return true
+  } catch (e) {
+    console.error(`astryx send: call cancelled, retract of msg ${id} failed: ${e.message}`)
+    return false
+  }
+}
+
+async function handleTool(name, a, signal) {
   if (name === 'send' && a.background) {
+    if (signal?.aborted) return 'send cancelled, nothing sent'
+    // detached from the request by design: the call has already answered 'queued', so nothing can cancel it
     handleTool('send', { ...a, background: false }).catch(() => {})
     return 'queued'
   }
@@ -279,6 +305,11 @@ async function handleTool(name, a) {
       }
     }
     const thread = a.thread || `t-${Date.now().toString(36)}`
+    // cancelled while the checks above ran: nothing was written, nothing goes out
+    if (signal?.aborted) {
+      console.error(`astryx send: call cancelled before the row was written; nothing sent (to ${a.to})`)
+      return 'send cancelled, nothing sent'
+    }
     const ins = await pool.query(
       `INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body)
        VALUES ($1,'local',$2,$3,$4,$5,$6) RETURNING id`,
@@ -288,9 +319,19 @@ async function handleTool(name, a) {
     // walking away after the insert — the feedback loop. Internal agent-to-agent messages
     // have no such receipt and return immediately.
     if (!channelBound) return `sent to ${a.to} (thread ${thread}, msg ${id})${note}`
+    // The wait is cancellable: an interrupt during it retracts the row if no bridge or pane has taken it yet.
+    const cancelled = async () => (await retractSend(id))
+      ? `send cancelled · msg ${id} retracted before delivery`
+      : `send cancelled too late · msg ${id} was already out`
+    if (signal?.aborted) return await cancelled()
     const deadline = Date.now() + 20_000
     while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 300))
+      await new Promise(r => {
+        const t = setTimeout(done, 300)
+        function done() { clearTimeout(t); signal?.removeEventListener('abort', done); r() }
+        signal?.addEventListener('abort', done, { once: true })
+      })
+      if (signal?.aborted) return await cancelled()
       const r = await pool.query(`SELECT status, delivery FROM messages WHERE id=$1`, [id])
       const row = r.rows[0]
       if (!row || row.status === 'pending') continue
@@ -400,9 +441,10 @@ async function handleTool(name, a) {
 }
 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
-mcp.setRequestHandler(CallToolRequestSchema, async req => {
+mcp.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
   try {
-    const text = await handleTool(req.params.name, req.params.arguments ?? {})
+    // extra.signal: aborted when the client cancels this call (notifications/cancelled), e.g. the owner interrupts it
+    const text = await handleTool(req.params.name, req.params.arguments ?? {}, extra?.signal)
     return { content: [{ type: 'text', text }] }
   } catch (e) {
     return { content: [{ type: 'text', text: `astryx error: ${e.message}` }], isError: true }

@@ -384,7 +384,8 @@ SELECT thread, count(*) AS count, max(ts) AS last_ts,
        array_agg(CASE WHEN {_HF} THEN to_agent ELSE from_agent END ORDER BY id)
          FILTER (WHERE {_HF} OR {_HT}) AS partners
   FROM messages
- WHERE thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%'
+ WHERE (thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%')
+   AND status IS DISTINCT FROM 'retracted'
  GROUP BY thread ORDER BY max(id) DESC LIMIT 400"""
 
 
@@ -449,7 +450,8 @@ async def ws_agents(request: Request):
     names = sorted(_roster())
     last = {r["from_agent"]: r for r in await _pool(request).fetch(
         "SELECT DISTINCT ON (from_agent) from_agent, ts, thread, left(body, 400) AS body FROM messages "
-        "WHERE to_agent = 'owner' AND ts > now() - interval '30 days' ORDER BY from_agent, id DESC")}
+        "WHERE to_agent = 'owner' AND ts > now() - interval '30 days' AND status IS DISTINCT FROM 'retracted' "
+        "ORDER BY from_agent, id DESC")}
     out = []
     for n in names:
         role = ""
@@ -581,7 +583,7 @@ WITH owned AS MATERIALIZED (
   SELECT m.id, m.ts, m.thread, m.from_agent, m.to_agent, m.body
     FROM messages m
    WHERE (m.thread LIKE 'chat:%' OR m.thread LIKE 'obs:%' OR m.thread LIKE 'cv:%')
-     AND m.thread IN (SELECT thread FROM owned)
+     AND m.thread IN (SELECT thread FROM owned) AND m.status IS DISTINCT FROM 'retracted'
 )
 SELECT id, ts, thread, from_agent, to_agent, left(body, 8000) AS body
   FROM cand
@@ -765,9 +767,10 @@ SELECT thread, count(*) AS count, max(ts) AS last_ts,
        array_agg(DISTINCT from_agent) || array_agg(DISTINCT to_agent) AS parties
   FROM messages
  WHERE thread = ANY($1::text[]) AND (thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%')
+   AND status IS DISTINCT FROM 'retracted'
  GROUP BY thread"""
 FIRST_SQL = ("SELECT DISTINCT ON (thread) thread, left(body, 2000) AS body FROM messages "
-             "WHERE thread = ANY($1::text[]) ORDER BY thread, id")
+             "WHERE thread = ANY($1::text[]) AND status IS DISTINCT FROM 'retracted' ORDER BY thread, id")
 
 
 def title_ids(raw: str) -> list[str]:
