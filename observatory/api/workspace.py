@@ -440,7 +440,8 @@ async def ws_meta(body: Meta, request: Request):
     me = _me(request) or ""
     # the owner renames/pins any conversation (as ever); a member only her own (cog-gaps: the default view, no wall —
     # she reads every thread, but another human's chat's name and pin are theirs)
-    if not _owner(request) and not (me and await party(_pool(request), body.thread, me)):
+    # ('owner' is wire_handle's name for the owner alone; a module bound without a handle reads as the owner, as ever)
+    if not (_owner(request) or me == "owner") and not (me and await party(_pool(request), body.thread, me)):
         return JSONResponse({"error": "only a conversation you are part of"}, status_code=403)
     patch = body.model_dump(exclude_unset=True)
     if "title" not in patch and "pinned" not in patch and "switch_to" not in patch:
