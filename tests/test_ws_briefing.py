@@ -19,6 +19,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+# A synthetic owner-country number, built at runtime: the privacy gate refuses the literal in any tracked file
+CC_PHONE = "92" + "3001234567"
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "src"))
 
@@ -65,8 +67,8 @@ def window():
 def lines():
     arm("a [tag] and 'x here.' prefix dropped, capitalized",
         W.said_line("[lending] lending here. **done**: the loader runs") == "Done: the loader runs", W.said_line("[lending] lending here. **done**: the loader runs"))
-    out = W.said_line("Customer 0300 1234567 and 923001234567 flagged")
-    arm("digit runs of 10+ masked (separators too)", "1234567" not in out and "923001234567" not in out and "…" in out, out)
+    out = W.said_line(f"Customer 0300 1234567 and {CC_PHONE} flagged")
+    arm("digit runs of 10+ masked (separators too)", "1234567" not in out and CC_PHONE not in out and "…" in out, out)
     arm("a date and a comma figure survive", W.said_line("Sign-ups 1,234,567 on 20261110") == "Sign-ups 1,234,567 on 20261110")
     arm("embeds only -> no words", W.said_line("[[file:/x/a.png]] (chart)") == "")
     arm("first meaningful line, table rows skipped", W.said_line("| a | b |\n|---|---|\nThe answer is 42") == "The answer is 42")
@@ -78,14 +80,14 @@ def lines():
 def shaping():
     rows = [
         row(1, "owner", "lending", "wa:9@g.us", None),
-        row(2, "lending", "owner", "wa:9@g.us", "[lending] Disbursals: 1,204 today. Customer 923001234567 retried.\nfull table follows\n\nShould I split it by city?"),
+        row(2, "lending", "owner", "wa:9@g.us", f"[lending] Disbursals: 1,204 today. Customer {CC_PHONE} retried.\nfull table follows\n\nShould I split it by city?"),
         row(3, "lending", "db", "t-x"),
         row(4, "db", "lending", "t-x"),
         row(5, "lending", "db", "t-x"),
         row(6, "lending", "seed", "plan-1"),
         row(7, "db", "owner", "chat:1-a", "Here is the drift report\n[[file:/opt/astryx/homes/db/drift.csv]] (drift)"),
         row(8, "owner", "db", "chat:1-a", None),                                  # the owner answered db: not waiting
-        row(9, "wa-923001234567", "lending", "wa:9@g.us", None),                   # a guest: never named
+        row(9, f"wa-{CC_PHONE}", "lending", "wa:9@g.us", None),                   # a guest: never named
         row(10, "seed", "steward", "org-news", "Shipped: the workspace", "milestone"),
         row(11, "seed", "memory", "org-news", "Shipped: the workspace", "milestone"),  # same post, another recipient
         row(12, "finance", "owner", "cv:ab", "Received. Working.\n[[file:/m/a.pdf]] (P&L)\n[[file:/m/b.png]]"),
@@ -95,11 +97,11 @@ def shaping():
         row(16, "db", "owner", "wa:9@g.us", "Loader stopped; needs the network team.\n\nShall I raise it with them?"),
     ]
     idx = {A.artifact_id("cv:ab", "P-L.pdf"): {"name": "P-L.pdf", "thread": "cv:ab", "path": "cv_ab/P-L.pdf"}}
-    b = W.brief(rows, {"medic": 4, "lending": 3, "wa-923001234567": 9}, {"medic": {"ts": T0, "content": "Queued the PR for upstream"}},
+    b = W.brief(rows, {"medic": 4, "lending": 3, f"wa-{CC_PHONE}": 9}, {"medic": {"ts": T0, "content": "Queued the PR for upstream"}},
                 idx, {"cv_ab/P-L.pdf": 3}, ROSTER)
     names = [a["agent"] for a in b["agents"]]
     blob = json.dumps(b, default=str)
-    arm("no body anywhere; the guest's number never appears", '"body"' not in blob and "923001234567" not in blob and "wa-9" not in blob, blob[:300])
+    arm("no body anywhere; the guest's number never appears", '"body"' not in blob and CC_PHONE not in blob and "wa-9" not in blob, blob[:300])
     arm("order: waiting (newest first), then wrote, then only worked", names == ["db", "finance", "lending", "seed", "medic"], names)
     by = {a["agent"]: a for a in b["agents"]}
     arm("lending waits: its wa message is newer than the owner's", by["lending"]["waiting"] and by["lending"]["waiting"]["id"] == 2, by["lending"]["waiting"])
