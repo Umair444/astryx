@@ -287,7 +287,12 @@ def l5_notify(c, orgs):
         al.execute(sql.SQL("LISTEN {}").format(sql.Identifier(mine[1])))     # a's backend's last query names the token
         ctl = c.execute("SELECT count(*) FROM pg_stat_activity WHERE query LIKE %s", (f"%{token}%",)).fetchone()[0]
         probe = bc.execute("SELECT count(*) FROM pg_stat_activity WHERE query LIKE %s", (f"%{token}%",)).fetchone()[0]
-        check("L5 control: the provisioner DOES see a's LISTEN (with its token) in pg_stat_activity", ctl >= 1, str(ctl))
+        # the control needs a provisioner that reads other roles' query text: a superuser or pg_read_all_stats. A
+        # deployed cog's test role is neither (11-13: it would read every org's SQL), so there the control is unverified.
+        if c.execute("SELECT pg_has_role('pg_read_all_stats', 'MEMBER')").fetchone()[0]:
+            check("L5 control: the provisioner DOES see a's LISTEN (with its token) in pg_stat_activity", ctl >= 1, str(ctl))
+        else:
+            unverified.append("L5 control (the provisioner can't read other roles' query text)")
         check("L5 org_b can't learn a's token: cog.orgs shows b only its own row, cog.chan_of('a') is not a's, "
               "pg_stat_activity hides a's LISTEN", seen == (1, 0) and via != mine[1] and probe == 0, f"{seen} {via} {probe}")
         guess = list(own_b) + [f"ax{n}_{x}" for n in range(0, 6) for x in ("msg_seed", "wire", "steps", "outbound")] + \

@@ -369,6 +369,16 @@ def cmd_apply(a) -> int:
                     continue
                 role = ensure_org(c, names, key)
                 print(f"org {key}: role {role}")
+        # tenant arrived with a constant default (no rewrite), so it has no statistics until autovacuum happens to
+        # analyze each table. Without them the planner guesses `tenant = (SELECT cog.tenant())` at 0.5% and, for "an
+        # agent's latest N", sorts every row the tenant owns instead of walking an index (11-13 live: 4.7 ms -> 0.14).
+        tabs = [r[0] for r in c.execute(
+            "SELECT DISTINCT a.attrelid::regclass::text FROM pg_attribute a JOIN pg_class k ON k.oid = a.attrelid "
+            "WHERE a.attname = 'tenant' AND NOT a.attisdropped AND k.relkind IN ('r', 'p') "
+            "AND k.relnamespace = 'public'::regnamespace")]
+        for t in tabs:
+            c.execute(f"ANALYZE {t}")
+        print(f"analyzed {len(tabs)} tenant table(s)")
     if a.cogstore:
         with psycopg.connect(_with_db(sdsn, a.cogstore), autocommit=True) as cs:
             print(f"cog store {a.cogstore}: {provision_cogstore(cs, names)} relation(s) given to {names.cog}")

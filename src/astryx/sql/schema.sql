@@ -106,6 +106,7 @@ ALTER TABLE steps ADD COLUMN IF NOT EXISTS turn_id bigint;   -- migration for pr
 ALTER TABLE steps ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 CREATE INDEX IF NOT EXISTS steps_tenant_agent_ts ON steps (tenant, agent, ts DESC);   -- was steps_agent_ts (agent, ts)
 DROP INDEX IF EXISTS steps_agent_ts;
+CREATE INDEX IF NOT EXISTS steps_tenant_agent_id ON steps (tenant, agent, id DESC);   -- "an agent's latest N" (ORDER BY id DESC LIMIT): under RLS the tenant is an InitPlan, so the planner can't walk steps_pkey backwards and sorts every row of the agent instead
 CREATE INDEX IF NOT EXISTS steps_goal     ON steps (goal_id) WHERE goal_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS steps_turn     ON steps (turn_id) WHERE turn_id IS NOT NULL;
 
