@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix="fxu-") as td:
     if os.environ.get("ESTATE_SRC"):                            # a mutant estate.py (tests/mutants_fixture_unavailable.py)
         shutil.copy2(os.environ["ESTATE_SRC"], tree / "src/astryx/security/sqlguard/estate.py")
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("ASTRYX_DSN", "ASTRYX_SQLGUARD", "ASTRYX_FIXTURE_ADMIN_DSN", "GIT_")) and k != "ESTATE_SRC"}
+           if not k.startswith(("ASTRYX_DSN", "ASTRYX_SQLGUARD", "ASTRYX_FIXTURE_ADMIN_DSN", "ASTRYX_TEST_DSN", "GIT_")) and k != "ESTATE_SRC"}
 
     def run(gate, extra=None):
         r = subprocess.run([sys.executable, str(tree / gate)], cwd=tree, env={**env, **(extra or {})},

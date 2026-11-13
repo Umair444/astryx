@@ -4,7 +4,7 @@ to lead with it, every ON CONFLICT target matching a real unique index, and the 
 3f8d5d1. RLS stays OFF; nothing here reads tenant.
 
   T1 fresh: schema.sql (THIS tree's bytes) applied whole: every listed table carries tenant text NOT NULL DEFAULT
-     'astryx', no cog-level table does; every widened key leads with tenant; the hot indexes lead with tenant and the
+     cog.tenant() (slice 3; slice 1 shipped the constant 'astryx'), no cog-level table does; every widened key leads with tenant; the hot indexes lead with tenant and the
      old ones are gone; the session-temp widen_key procedure leaves nothing behind
   T2 old shape: a database made by main's schema.sql, seeded with rows, then this schema.sql: every row kept, tagged
      'astryx'; the members owner row migrated in place (node '', still the owner); the catalog equals a fresh apply's
@@ -258,9 +258,11 @@ def main():
         check("T0 the fixture applied THIS tree's schema.sql", fx["file_sha"] == want_sha, fx["file_sha"][:12])
         with psycopg.connect(fx["dsn"], autocommit=True) as c:
             missing = [f"{ns}.{t}:{tenant_col(c, ns, t)}" for ns, ts in TENANT_TABLES.items() for t in ts
-                       if tenant_col(c, ns, t) != ("text", True, "'astryx'::text")]
+                       if tenant_col(c, ns, t) != ("text", True, "cog.tenant()")]
+            # slice 3 swapped slice 1's constant 'astryx' for cog.tenant() (the login role's org; 'astryx' itself on an
+            # unprovisioned database, tests/test_rls_leak.py L8): the column, its NOT NULL and a default stay pinned
             check(f"T1a all {sum(map(len, TENANT_TABLES.values()))} listed tables carry tenant text NOT NULL DEFAULT "
-                  "'astryx'", not missing, missing)
+                  "cog.tenant() (slice 3)", not missing, missing)
             have = [t for t in COG_TABLES if tenant_col(c, "public", t)]
             check("T1b no cog-level table carries tenant (leases, relay_*, usage_polls)", not have, have)
             every = {(r[0], r[1]) for r in c.execute(

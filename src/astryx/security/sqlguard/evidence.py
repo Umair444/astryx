@@ -41,7 +41,7 @@ from pathlib import Path
 PKG = Path(__file__).resolve().parent
 SEALED = ("trace-*.jsonl", "gates.tsv")
 
-STAMP_ENV = ("ASTRYX_COG_REGISTRY", "ASTRYX_FIXTURE_ADMIN_DSN", "ASTRYX_FIXTURE_TEMPLATE", "ASTRYX_HOME",
+STAMP_ENV = ("ASTRYX_COG_REGISTRY", "ASTRYX_FIXTURE_ADMIN_DSN", "ASTRYX_TEST_DSN", "ASTRYX_FIXTURE_TEMPLATE", "ASTRYX_HOME",
              "ASTRYX_REPO_COMMON", "ASTRYX_SQLGUARD_DIR", "ASTRYX_SQLGUARD_ESTATE_SRC", "ASTRYX_SQLGUARD_GATE",
              "ASTRYX_SQLGUARD_ROOT", "ASTRYX_SQLGUARD_RUN", "ASTRYX_SQLGUARD_WRITE_SEEN", "PGOPTIONS")
 # Stamped, never compared: per-process identity. ASTRYX_HOME and ASTRYX_COG_REGISTRY select the HOME (a resident's
@@ -189,7 +189,7 @@ def witness_traces(d):
 
 def env_stamp(environ=None) -> dict:
     environ = os.environ if environ is None else environ
-    return {n: (_sha(environ[n].encode())[:16] if n in environ else None) for n in STAMP_ENV}
+    return {n: (_sha(environ[n].encode())[:16] if n in environ else None) for n in STAMP_ENV}   # org-home: stamped as a hash only, never used as a value
 
 
 def covering_sha(covering) -> str | None:

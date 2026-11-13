@@ -319,8 +319,10 @@ async def wire_loop():
         try:
             conn = await asyncpg.connect(DSN)
             q: asyncio.Queue = asyncio.Queue()
-            for ch in ("astryx_wire", "astryx_steps", "astryx_canvas", "astryx_presence"):
-                await conn.add_listener(ch, lambda c, p, chan, payload: q.put_nowait((chan, payload)))
+            # cog-rls slice 3: this org's channels (ax<n>_…), dispatched below by their logical names
+            from astryx.pg import channels
+            await channels.listen(conn, ("wire", "steps", "canvas", "presence"),
+                                  lambda chan, payload: q.put_nowait((chan, payload)))
             conn.add_termination_listener(lambda c: q.put_nowait(("__dead__", "")))
             await claim(conn)
             present.clear()

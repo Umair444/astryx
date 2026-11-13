@@ -5,7 +5,7 @@ Owner ruling, 2026-10-21. Every agent that needs durable data, whether files or 
 | | Path / name | Example |
 |---|---|---|
 | Files | `<org HOME>/store/<domain>/…` | `store/finance/payslips/2026-09.pdf` |
-| Tables | `store.<domain>_<noun>` (Postgres schema `store`) | `store.finance_payslip` |
+| Tables | `store.<orgkey>__<domain>_<noun>` (Postgres schema `store`, shared by the cog's orgs) | `store.astryx__finance_payslip` |
 
 - **Domain, not agent.** The prefix names the subject (`finance`, `career`, `family` …), so a successor agent inherits
   the domain without a rename. One domain has one writing agent at a time, which its charter names.
@@ -19,5 +19,11 @@ Owner ruling, 2026-10-21. Every agent that needs durable data, whether files or 
   read another org's store, both the DB and the files, so a cog holding a store is single-owner until plan-11859 U6
   isolates orgs. This is convention only: no boundary and no detector, until plan-11859 U6.
 - `store/` is gitignored and captured by `scripts/backup.sh` with the org state; the schema is in the nightly dump.
-- A domain creates its own tables with `CREATE TABLE IF NOT EXISTS store.<domain>_…`. `src/astryx/sql/schema.sql`
-  declares only the `store` namespace.
+- A domain creates its own tables with `CREATE TABLE IF NOT EXISTS store.<orgkey>__<domain>_…`.
+  `src/astryx/sql/schema.sql` declares the `store` namespace and its guard.
+- **The creating org's key comes first, enforced** (owner ruling 11-13, cog-rls slice 2). The store is ONE schema for
+  every org of the cog. An event trigger (`astryx_store_guard`, function `cog.store_guard`) refuses any CREATE or ALTER
+  in `store` by an org role unless the object's name starts with `<that org's key>__` (deeper tree paths allowed:
+  `astryx__lending__ledger`); indexes, sequences, views and functions included. What an org creates is OWNED by its
+  role and PUBLIC is revoked at birth, so no other org can read, write, alter or drop it. Org roles may create in
+  `store` and nowhere else.

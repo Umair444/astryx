@@ -30,6 +30,9 @@ door, if named, is the primary's: the bare root was the primary's before the cog
 `db` is the org's main database by name, so a process can tell "another org's database" WITHOUT reading another
 org's .env (no cross-org read outside the declared cog-scoped set, a2 E). Its own .env must name the same database:
 config.dsn checks that pair for its own org only.
+`role` (optional; cog-rls slice 2) is the org's LOGIN role in the shared database (org_<key>, devtools/cog_roles.py).
+Under row-level security the ROLE is the org's identity, not the database: orgs that each carry a role may share one
+database, and config.dsn then checks that the DSN's user IS this org's role. Without a role, the db rules stand.
 
 A registry that is present but malformed RAISES (RegistryError): an unreadable registry fails closed, never as absent.
 """
@@ -43,6 +46,7 @@ from pathlib import Path
 DEFAULT_PATH = Path("/etc/astryx/cog.json")
 ENV = "ASTRYX_COG_REGISTRY"
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
+ROLE = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 # libpq's last-resort databases (correction 1(ii)): with no dbname anywhere it binds the USER's name, and `postgres`
 # is every cluster's maintenance database. An org there could be reached by an empty DSN plus two PG* names.
 NEVER_ORG_DB = ("postgres",)
@@ -81,7 +85,7 @@ def load(env=None) -> dict | None:
         assert isinstance(raw, dict) and raw
     except (ValueError, KeyError, TypeError, AssertionError):
         raise RegistryError(f"org registry {p}: expected {{\"orgs\": {{name: {{home, db}}}}}}") from None
-    out, homes, dbs, ports = {}, {}, {}, {}
+    out, homes, dbs, ports, roles = {}, {}, {}, {}, {}
     units = _units()
     cog_ports = {u["port"] for u in units.values() if u["scope"] == "cog" and "port" in u}
     org_stems = {k for k, u in units.items() if u["scope"] == "org" and ("port" in u or u.get("registry_port"))}
@@ -97,7 +101,13 @@ def load(env=None) -> dict | None:
         if db.endswith(SCRATCH_SUFFIX):            # a2 #61527 R-1: every org's weekly restore-verify DROPs <its db>_restorecheck
             raise RegistryError(f"org registry {p}: {org}'s database {db!r} ends in {SCRATCH_SUFFIX}, the scratch "
                                 "scripts/restore_verify.sh DROPs (another org's verify would drop it)")
-        if h in homes or db in dbs:
+        role = e.get("role")
+        if role is not None and (not isinstance(role, str) or not ROLE.fullmatch(role)):
+            raise RegistryError(f"org registry {p}: {org}'s role must be a role name ({ROLE.pattern})")
+        if role is not None and role in roles:
+            raise RegistryError(f"org registry {p}: {org} shares role {role} with {roles[role]}")
+        # one database per org, unless BOTH orgs are bound by role (row-level security keeps them apart)
+        if h in homes or (db in dbs and not (role and out[dbs[db]]["role"])):
             raise RegistryError(f"org registry {p}: {org} shares a home or database with {homes.get(h) or dbs[db]}")
         pe = e.get("ports", {})
         if not isinstance(pe, dict):
@@ -122,8 +132,11 @@ def load(env=None) -> dict | None:
         if door and not primary:                        # the bare root was the primary's before the cog (seed #60780)
             raise RegistryError(f"org registry {p}: {org} claims the door but is not the primary; the door is the "
                                 "primary's")
-        homes[h], dbs[db] = org, org
-        out[org] = {"home": h, "db": db, "ports": dict(pe), "door": door, "primary": primary}
+        homes[h] = org
+        dbs.setdefault(db, org)
+        if role:
+            roles[role] = org
+        out[org] = {"home": h, "db": db, "ports": dict(pe), "door": door, "primary": primary, "role": role}
     # ONE primary (it alone keeps the default socket and plain unit names); a door is the primary's, so there is at
     # most one door too (S3e, seed #60376), by construction
     prims = [o for o, e in out.items() if e["primary"]]
