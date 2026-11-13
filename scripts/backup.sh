@@ -146,8 +146,13 @@ DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file 2>/dev/nul
 SUPER_FILE=${ASTRYX_PG_SUPER_FILE:-/etc/astryx/pg-super.dsn}
 if [ -r "$SUPER_FILE" ]; then
   # the DSNs ride the environment, never argv (ps shows argv to every user)
-  DSN=$(ORG_DSN="$DSN" SUPER_FILE="$SUPER_FILE" "$ROOT/venv/bin/python" -c 'import os; from psycopg.conninfo import make_conninfo, conninfo_to_dict
-print(make_conninfo(open(os.environ["SUPER_FILE"]).read().strip(), dbname=conninfo_to_dict(os.environ["ORG_DSN"]).get("dbname")))') \
+  # a URL stays a URL: pg_dsn_user/pg_dsn_db (the docker path) parse URLs only, and make_conninfo writes key=value
+  DSN=$(ORG_DSN="$DSN" SUPER_FILE="$SUPER_FILE" "$ROOT/venv/bin/python" -c 'import os; from urllib.parse import quote, urlsplit
+from psycopg.conninfo import make_conninfo, conninfo_to_dict
+s = open(os.environ["SUPER_FILE"]).read().strip(); db = conninfo_to_dict(os.environ["ORG_DSN"]).get("dbname")
+if db and "://" in s: s = urlsplit(s)._replace(path="/" + quote(db, safe="")).geturl()
+elif db: s = make_conninfo(s, dbname=db)
+print(s)') \
     || { echo "backup: the provisioner DSN file is unreadable as a DSN" >&2; exit 1; }
 fi
 
