@@ -1111,6 +1111,9 @@ run "chat: the server half stays owner-only, and the side panel reads nothing ou
 # UNKNOWN); serve_untrusted's own: tests/mutants_serve_untrusted.py.
 run "owner surface: no new writer of the wire, no second server of untrusted bytes, over the derived domain" "$PY" tests/test_owner_surface.py
 run "who asked (cog-who): a member posts as cv-<label>.<uid>, the owner as owner; the reply reaches her thread; the agent sees role" "$PY" tests/test_who_asked.py
+run "cog gaps: a member's search, titles, briefing follow her view; her own thread tools + projects; owner-only stays" "$PY" tests/test_cog_gaps.py
+run "cog gaps: canvas knows the cog's sign-in (owner as owner, a member as cv-<label>.<uid>; else anonymous)" "$PY" tests/test_canvas_signin.py
+run "cog gaps: the viewer's own words sit right, every other human's left under their name" "$PY" tests/test_chat_sides.py
 run "fan-out (cog): a message naming several agents reaches each, stamped {team, lead}; the lead replies, helpers work over the wire" "$PY" tests/test_fanout.py
 # devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
 # nothing. Mutants: tests/mutants_sqlsite.py.

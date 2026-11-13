@@ -64,8 +64,10 @@ SENT = "S1C-SENTINEL-private-body-7a31"
 
 
 def said(ch, frm, text):
-    """What the human sees: WhatsApp shows one number for every agent, so its bridge signs the text."""
-    return f"\u25b8 *{frm}*\n{text}" if ch == "whatsapp" else text
+    """What the human sees: one identity speaks for every agent (WhatsApp's number, Telegram's bot, a Discord bot with
+    no webhook: DC_ORG has none), so the bridge signs the text in the channel's own markup (bridges/common.signed)."""
+    mark = {"whatsapp": "*", "telegram": "", "discord": "**"}[ch]
+    return f"\u25b8 {mark}{frm}{mark}\n{text}"
 KEY = "d" * 40
 
 
@@ -108,6 +110,12 @@ check("whatsapp: an unrouted chat is labelled (the default)", _wa.signed("seed",
 check("whatsapp: signing twice labels once (an edited bubble)",
       _wa.signed("seed", _wa.signed("seed", "hi", WA_ORG["chat"]), WA_ORG["chat"]) == said("whatsapp", "seed", "hi"))
 check("whatsapp: an empty text stays empty (a poll-only row)", _wa.signed("seed", "", WA_ORG["chat"]) == "")
+from bridges.common import signed as _signed  # noqa: E402 — the one label rule (cog-gaps: Telegram + Discord too)
+check("telegram/discord: the label in the channel's markup (plain / **bold**), idempotent",
+      _signed("seed", "hi", TG_ORG) == said("telegram", "seed", "hi") == _signed("seed", said("telegram", "seed", "hi"), TG_ORG)
+      and _signed("seed", "hi", DC_ORG, "**") == said("discord", "seed", "hi"))
+check("telegram/discord: a route with signed:false stays unlabelled, as WhatsApp's",
+      _signed("seed", "hi", {**TG_ORG, "signed": False}) == "hi" and _signed("seed", "hi", {**DC_ORG, "signed": False}, "**") == "hi")
 _wa.routes = _routes
 
 
@@ -310,6 +318,30 @@ async def bridge_arms():
             check(f"an unthreaded owner row from {frm!r} (thread {th!r}) lands on a DECLARED route and is marked",
                   got["status"] == "delivered" and got["delivery"].get("door") == "org-unstamped"
                   and (chat, said("whatsapp", frm, "org text")) in w.sends, repr((got, w.sends)))
+    print("the sender label on telegram + discord (cog-gaps, WhatsApp's signed()):")
+    ROUTES["telegram"].append({"chat": "41414", "agent": "twin", "enabled": True, "signed": False})
+    r = plain_row("tg:41414", frm="twin")
+    w = World("telegram", [r])
+    got = await w.deliver(r)
+    check("telegram: a signed:false route delivers the agent's words unlabelled (the owner's voice)",
+          got["status"] == "delivered" and w.sends == [("41414", "org text")], repr((got, w.sends)))
+    ROUTES["telegram"].pop()
+    ROUTES["discord"].append({"chat": "61616", "agent": "seed", "enabled": True, "webhook": "http://127.0.0.1:1/hook"})
+    r = plain_row("dc:61616")
+    w = World("discord", [r])
+    hooked = []
+
+    async def hook_send(hook, agent, text):
+        hooked.append((agent, text))
+        return "h-1"
+    BR["discord"].hook_send, real = hook_send, BR["discord"].hook_send
+    try:
+        got = await w.deliver(r)
+    finally:
+        BR["discord"].hook_send = real
+        ROUTES["discord"].pop()
+    check("discord: a WEBHOOK route names the agent itself (its username), so the text stays unlabelled",
+          got["status"] == "delivered" and hooked == [("seed", "org text")] and not w.sends, repr((got, hooked, w.sends)))
     # discord routes are channels (groups with no live membership read): no audience releases to one
     s = stamped_row("whatsapp", WA_TIER)
     rel = json.loads(s["delivery"])["release"]

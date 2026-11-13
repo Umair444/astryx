@@ -490,6 +490,20 @@ async def door_org_ok(pool, row, channel: str, routes, chat) -> bool:
         return False
 
 
+# The sender's label on a channel where every agent shares ONE identity (one WhatsApp number, one Telegram bot, a
+# Discord bot without a webhook): "▸ <agent>" on its own line, then the body. `bold` is the channel's own markup
+# (WhatsApp *x*, Discord **x**, Telegram plain text: none). A route with `"signed": false` stays unlabelled: an agent
+# speaking there in the owner's voice. Idempotent (an edited bubble is never signed twice).
+SIGN = "\u25b8 "
+
+
+def signed(agent: str, text: str, route: dict | None, bold: str = "") -> str:
+    if route is not None and route.get("signed") is False:
+        return text
+    label = f"{SIGN}{bold}{agent}{bold}\n"
+    return text if not text or text.startswith(label) else label + text
+
+
 def live_steps_ok(route) -> bool:
     return _release().live_steps_ok(route)
 

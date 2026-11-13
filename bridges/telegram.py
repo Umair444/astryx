@@ -51,6 +51,7 @@ API_BASE = env("TG_API_BASE", "https://api.telegram.org")
 PROXY = env("TG_PROXY") or None
 API = f"{API_BASE}/bot{TOKEN}"
 FILE_API = f"{API_BASE}/file/bot{TOKEN}"
+from .common import signed  # noqa: E402  the sender label (one bot speaks for every agent), as WhatsApp's
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 ROUTES_FILE = ESTATE / "bridges" / "routes-telegram.json"
 
@@ -92,6 +93,7 @@ async def deliver(row):
     agent = row["from_agent"]
     text, files = split_files(stamped[1] if stamped else row["body"])
     text, polls = split_polls(text, max_options=10)
+    text = signed(agent, text, routes().chat(chat))   # one bot for every agent: name the sender (plain text, no bold)
     out = Outcome()
     try:
         job = jobs.pop(agent, None)
@@ -183,6 +185,7 @@ async def on_step(ev: dict):
     if not line or line == job.get("sent"):
         return
     job["sent"] = line
+    line = signed(agent, line, routes().chat(job["chat"]))
     try:
         if job["ph_id"] is None:
             msg = await tg("sendMessage", chat_id=int(job["chat"]), text=line)

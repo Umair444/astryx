@@ -290,17 +290,10 @@ def _signed_owner(request: Request) -> bool:
 # display only, the uid decides); the '.' is outside canvas invitee names ([a-z][a-z0-9_-]{1,30}), so a member's
 # handle can never be an invitee's. NO PRIVACY WITHIN AN ORG (owner 11-13): a member reads the wire as the owner does;
 # owner-only ACTS (interrupt, goals, federation, the db workbench, people answers) stay on owner_call.
-MEMBER_ROLES = ("member", "admin")                 # who may talk on the wire here ('admin' once members admits it)
-_SLUG = re.compile(r"[^a-z0-9_-]+")
-
-
-def member_handle(sub: str, label: str = "") -> str | None:
-    """The wire handle of a signed-in non-owner account: cv-<slug(label)>.<uid>, or None for a sub with no uid."""
-    n, at, _ = str(sub).partition("@")
-    if not at or not n.isdigit():
-        return None
-    slug = _SLUG.sub("-", (label or "").lower()).strip("-_")[:24].strip("-_") or "u"
-    return f"cv-{slug}.{int(n)}"
+# The rule itself lives in observatory/api/members.py (cog-gaps): canvas maps the front's signed identity to the SAME
+# handle, so one definition serves both surfaces.
+MEMBER_ROLES = _members.MEMBER_ROLES               # who may talk on the wire here ('admin' once members admits it)
+member_handle = _members.member_handle
 
 
 def insider(request: Request) -> bool:
@@ -442,7 +435,8 @@ app.include_router(_pilot_voice.router)
 
 # plan-11884: /chat's server half (uploads, the side panel's file read, projects, dictation); owner-only by omission
 from observatory.api import chat as _chat  # noqa: E402
-_chat.bind(lambda: pool, ESTATE, ESTATE / "media", REPO, roster=lambda: set(agent_meta()))   # media/: every channel's inbound files
+_chat.bind(lambda: pool, ESTATE, ESTATE / "media", REPO, roster=lambda: set(agent_meta()),
+           me=lambda r: wire_handle(r))   # media/: every channel's inbound files
 app.include_router(_chat.router)
 
 # feat/chat-workspace: the workspace's unified conversation list (chat:, obs:, cv:) and its pins/titles; owner-only by
@@ -497,9 +491,13 @@ _WIRE_WRITE = re.compile(r"^/api/(messages|ws/agents/[^/]+/interrupt|federation/
 
 
 # What a signed-in MEMBER may reach beyond the public face (cog-who): the chat workspace, i.e. talking on the wire and
-# reading it (no privacy within an org, owner 11-13). Owner-only ACTS are not here: interrupt, thread meta writes,
-# projects writes, goals, the db workbench, federation, people, services. (METHOD, path) pairs, or a GET prefix.
-MEMBER = {("POST", "/api/messages"), ("POST", "/api/thread/read"), ("POST", "/api/chat/upload")}
+# reading it (no privacy within an org, owner 11-13), and the tools of HER OWN chats (cog-gaps): rename/pin/switch a
+# thread she is a party of (workspace.ws_meta checks the party), her projects (chat.projects_put: another's project
+# is read-only to her) and dictation. Owner-only ACTS are not here: interrupt, goals, the db workbench, federation,
+# people, services, admin. (METHOD, path) pairs, or a GET prefix.
+MEMBER = {("POST", "/api/messages"), ("POST", "/api/thread/read"), ("POST", "/api/chat/upload"),
+          ("PUT", "/api/ws/threads/meta"), ("PUT", "/api/chat/projects"),
+          ("POST", "/api/chat/dictate/session"), ("POST", "/api/chat/dictate/usage")}
 MEMBER_GET = ("/api/ws/threads", "/api/ws/thread-titles", "/api/ws/search", "/api/ws/handoffs", "/api/ws/agents",
               "/api/ws/briefing", "/api/ws/media", "/api/ws/artifacts", "/api/chat/", "/api/presence")
 
@@ -3806,9 +3804,14 @@ async def _pipe(url: str, request: Request, owner_key: bool, down: str):
     # cookie, never the observatory's owner key (it has its own session); the ear gets the key and no cookie.
     front = _COG and (request.client.host if request.client else "") == "127.0.0.1"
     host = (request.headers.get("x-forwarded-host") if front else None) or request.headers.get("host", "")
+    # cog-gaps: canvas recognizes the front's sign-in. The front's signed identity is NOT on the allowlist (D3); it is
+    # passed to canvas alone, explicitly, and only when it came from the front itself and _who VERIFIED it for this
+    # org (request.state.uid). Canvas verifies it again with the cog's public keys (bridges/canvas.py signed_viewer).
+    vouched = request.headers.get(_identity.HEADER) if (front and not owner_key and getattr(request.state, "uid", None)) else None
     headers = [(k, v) for k, v in _relay.headers(
         request.headers.items(), host=host, proto=request.url.scheme,
-        cookies=() if owner_key else {_relay.canvas_cookie(_SEAT)})
+        cookies=() if owner_key else {_relay.canvas_cookie(_SEAT)},
+        extra=[(_identity.HEADER, vouched)] if vouched else ())
         if owner_key or k.lower() != "x-obs-key"]
     upstream = _canvas_http.build_request(
         request.method, url, params=request.query_params,

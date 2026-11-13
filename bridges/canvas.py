@@ -45,6 +45,8 @@ from pydantic import BaseModel
 
 from astryx import orgs  # the org's tmux server (plan-11324 S3b)
 from astryx.security import relay  # noqa: E402   canvas_cookie(): the session cookie's one name (plan-11859 D3)
+from astryx.security import identity  # noqa: E402   the cog front's signed identity (cog-gaps: canvas knows who signed in)
+from observatory.api import members  # noqa: E402   THIS org's membership: the ONE role reader and the who-asked handle
 from astryx.security.serve import serve_untrusted  # noqa: E402   the ONE server of untrusted bytes (plan-11884 G3)
 from astryx.core import canvas as cv
 from astryx.core import presence as pres
@@ -84,14 +86,18 @@ OWNER_WIRE = "owner"   # the owner's wire handle on this surface; an invitee is 
 
 
 class Viewer:
-    def __init__(self, name: str, agents: list[str] | None = None):
-        self.name = name                           # 'owner' or an invitee name
+    def __init__(self, name: str, agents: list[str] | None = None, role: str | None = None, label: str = ""):
+        self.name = name                           # 'owner', an invitee name, or a cog member's <label>.<uid>
         self.owner = name == "owner"
         self.wire = OWNER_WIRE if self.owner else f"cv-{name}"
         self.agents = agents or []
+        self.role = role                           # a signed-in cog member's role here ('member'/'admin'), else None
+        self.member = role in members.MEMBER_ROLES and not self.owner
+        self.label = label or name                 # the human's own label (display_name on the wire)
 
     def may_reach(self, agent: str) -> bool:
-        return self.owner or agent in self.agents
+        # a cog member is an insider of the org (NO privacy within an org, owner 11-13): every agent, as on /chat
+        return self.owner or self.member or agent in self.agents
 
 
 def _h(s: str) -> str:
@@ -99,20 +105,61 @@ def _h(s: str) -> str:
 
 
 async def viewer(request: Request) -> Viewer | None:
+    """The canvas's own session (its cookie: the owner's key login, an invitee's link) first; else the cog front's
+    signed identity (signed_viewer)."""
     tok = request.cookies.get(COOKIE)
-    if not tok:
-        return None
     row = await pool.fetchrow(
         "SELECT s.user_name, u.agents, u.revoked FROM canvas_sessions s "
         "LEFT JOIN canvas_users u ON u.name = s.user_name "
-        "WHERE s.token_hash=$1 AND s.expires_at > now()", _h(tok))
+        "WHERE s.token_hash=$1 AND s.expires_at > now()", _h(tok)) if tok else None
+    if row and row["user_name"] != "owner" and (row["revoked"] or row["revoked"] is None):
+        row = None
     if not row:
-        return None
+        return await signed_viewer(request)
     if row["user_name"] != "owner":
-        if row["revoked"] or row["revoked"] is None:
-            return None
         await pool.execute("UPDATE canvas_users SET last_seen=now() WHERE name=$1", row["user_name"])
     return Viewer(row["user_name"], list(row["agents"] or []))
+
+
+# cog-gaps: a member signed in at the cog's front is HERE too, as main.py's _who reads her. The front mints a 60 s
+# Ed25519 token per request (src/astryx/security/identity.py); the observatory passes it on to canvas only when it
+# verified it itself (main._pipe), and canvas verifies it again: the cog's public keys, aud = THIS org's registry name,
+# from loopback only. The token says WHO; the role is this org's own fact (members.role_of). The owner is 'owner' (as
+# his key login is); a member or admin is cv-<label>.<uid> (members.member_handle, the who-asked rule), so her canvas
+# chats are the SAME threads and handle her /chat sees; a viewer, an unknown account or any doubt: no viewer (401).
+_COGAUTH = orgs.cog() if _ORG else None
+_verifiers: dict = {}
+_verifiers_at = 0.0
+
+
+def _keys(kid_missing: bool = False) -> dict:
+    """The cog's public keys, re-read at most once a minute when a token names an unknown kid (main.py's rule)."""
+    global _verifiers, _verifiers_at
+    if _COGAUTH and (not _verifiers_at or (kid_missing and time.monotonic() - _verifiers_at > 60)):
+        _verifiers, _verifiers_at = identity.load_verifiers(_COGAUTH["home"]), time.monotonic()
+    return _verifiers
+
+
+async def signed_viewer(request: Request) -> Viewer | None:
+    tok = request.headers.get(identity.HEADER)
+    peer = request.client.host if request.client else ""
+    if not (_COGAUTH and _ORG and tok and peer == "127.0.0.1"):
+        return None
+    c = identity.claims(tok, _keys(), _ORG)
+    if c is None:
+        before = _verifiers
+        if _keys(kid_missing=True) is not before:       # a rotated key, read once
+            c = identity.claims(tok, _verifiers, _ORG)
+    if c is None:
+        return None
+    try:
+        role = await members.role_of(pool, c["sub"])
+    except (asyncpg.PostgresError, OSError):            # no members table, a DB blip: anonymous, never a 500
+        return None
+    if role == "owner":
+        return Viewer("owner")
+    h = members.member_handle(c["sub"], c["name"]) if role in members.MEMBER_ROLES else None
+    return Viewer(h[3:], role=role, label=c["name"] or h[3:]) if h else None
 
 
 def limited(key: str, n: int, window: float) -> bool:
@@ -417,7 +464,7 @@ def _alive() -> set[str]:
 async def me(request: Request):
     v = V(request)
     return {"name": v.name, "wire": v.wire, "owner": v.owner, "home": HOME_AGENT,
-            "painter": PAINTER, "agents": _roster() if v.owner else v.agents}
+            "painter": PAINTER, "agents": _roster() if v.owner or v.member else v.agents}
 
 
 @app.get("/api/agents")
@@ -486,7 +533,7 @@ class NewThread(BaseModel):
 @app.post("/api/threads")
 async def new_thread(body: NewThread, request: Request):
     v = V(request)
-    agent = (body.agent or (HOME_AGENT if v.owner else (v.agents[0] if v.agents else ""))).strip().lower()
+    agent = (body.agent or (HOME_AGENT if v.owner or v.member else (v.agents[0] if v.agents else ""))).strip().lower()
     if not agent or not agent_exists(agent):
         return deny(400, "no such agent" if agent else "you have no agents yet — ask the owner for access")
     if not v.may_reach(agent):
@@ -532,7 +579,8 @@ async def _say(v: Viewer, thread: str, default_agent: str, text: str, intent="ch
         agent, text = await route_target(pool, thread, text, default_agent)
         if not v.may_reach(agent):                 # an @mention can't reach past a grant
             agent = default_agent
-    meta = {"surface": "canvas", "display_name": v.name, **(meta or {})}
+    # who asked (cog-who's stamp): a signed-in member's row carries her label and role, as /chat's does
+    meta = {"surface": "canvas", "display_name": v.label, **({"role": v.role} if v.member else {}), **(meta or {})}
     sender = who or v.wire
     # a team (two or more @agents this viewer may reach): one row each, stamped, the lead's LAST (common.wire_chat)
     team = [] if who is not None else [a for a in team_of(text) if v.may_reach(a)]

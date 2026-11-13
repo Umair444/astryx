@@ -60,6 +60,8 @@
 /* turns: owner = a tinted block on the right; agents = prose on the page */
 .ws-mine { background: color-mix(in srgb, var(--t-accent) 7%, var(--t-panel)); border: 1px solid color-mix(in srgb, var(--t-accent) 14%, var(--t-line)); }
 :root[data-theme="dark"] .ws-mine { background: color-mix(in srgb, var(--t-accent) 11%, var(--t-panel)); }
+/* cog-gaps: another human's words (the owner's in a member's view, a member's in the owner's): left, neutral */
+.ws-other { background: var(--t-panel); border: 1px solid var(--t-line); }
 .ws-prose { font-family: "Inter Variable", Inter, system-ui, sans-serif; font-size: 16px; line-height: 1.6; color: var(--t-fg); overflow-wrap: anywhere; font-feature-settings: "cv11", "ss01"; }
 .ws-prose code { font-family: var(--font-mono); font-size: .8em; background: var(--t-panel2); border: 1px solid var(--t-line); border-radius: 5px; padding: .06em .32em; }
 .ws-prose pre { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 12px; padding: .9em 1.1em; overflow-x: auto; }

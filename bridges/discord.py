@@ -45,6 +45,7 @@ from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_sign
 
 DSN = env("ASTRYX_DSN")
 TOKEN = env("DISCORD_BOT_TOKEN")
+from .common import signed  # noqa: E402  the sender label when the BOT speaks (a webhook names the agent itself)
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 ROUTES_FILE = ESTATE / "bridges" / "routes-discord.json"
 
@@ -130,14 +131,16 @@ async def deliver(row):
         ch = client.get_channel(int(cid)) or await client.fetch_channel(int(cid))
         route = routes().chat(cid)
         hook = route.get("webhook") if route else None
+        if not hook:                               # the bot speaks for every agent: name the sender, as WhatsApp does
+            text = signed(agent, text, route, "**")
         job = jobs.pop(agent, None)
         sent = False
         if text and job and job["chat"] == cid and job.get("ph"):
             try:                                   # replace the progress bubble
                 if hook and isinstance(job["ph"], str):
                     sent = await hook_edit(hook, job["ph"], text)
-                elif not isinstance(job["ph"], str):
-                    await job["ph"].edit(content=text[:2000])
+                elif not isinstance(job["ph"], str):   # a bot placeholder (no webhook, or its fallback): named
+                    await job["ph"].edit(content=(signed(agent, text, route, "**") if hook else text)[:2000])
                     sent = True
             except Exception:
                 pass
@@ -145,8 +148,8 @@ async def deliver(row):
             for i in range(0, len(text), 2000):    # discord hard message cap
                 chunk = text[i:i + 2000]
                 mid = await hook_send(hook, agent, chunk) if hook else None
-                if not mid:                        # no webhook (or it failed): bot sends
-                    m = await ch.send(chunk)
+                if not mid:                        # no webhook (or it failed): bot sends, the sender named
+                    m = await ch.send(signed(agent, chunk, route, "**")[:2000] if hook else chunk)
                     mid = str(getattr(m, "id", "") or "")
                 if not mid:                        # neither path produced an id
                     out.failed("text", "no message id returned by webhook or bot send")
@@ -237,11 +240,11 @@ async def on_step(ev: dict):
             # webhook placeholder carries the agent's own name; job["ph"] is a
             # str (webhook message id) or a discord.Message (bot fallback)
             job["ph"] = (await hook_send(hook, agent, line)) if hook \
-                else await ch.send(line)
+                else await ch.send(signed(agent, line, route, "**"))
         elif isinstance(job["ph"], str):
             await hook_edit(hook, job["ph"], line)
         else:
-            await job["ph"].edit(content=line)
+            await job["ph"].edit(content=signed(agent, line, route, "**"))
         await ch.typing()
     except Exception:
         pass

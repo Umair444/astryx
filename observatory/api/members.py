@@ -28,6 +28,18 @@ import re
 import time
 
 NODE = re.compile(r"^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*)*$")   # schema's members_node_check, '' aside
+MEMBER_ROLES = ("member", "admin")                 # the roles that talk on the wire (cog-who); 'viewer' only reads
+_SLUG = re.compile(r"[^a-z0-9_-]+")
+
+
+def member_handle(sub: str, label: str = "") -> str | None:
+    """The wire handle of a signed-in non-owner account (cog-who): cv-<slug(label)>.<uid>, or None for a sub with no
+    uid. ONE rule for every surface that names a member (main.py's who-asked, bridges/canvas.py's signed viewer)."""
+    n, at, _ = str(sub).partition("@")
+    if not at or not n.isdigit():
+        return None
+    slug = _SLUG.sub("-", (label or "").lower()).strip("-_")[:24].strip("-_") or "u"
+    return f"cv-{slug}.{int(n)}"
 RANK = {"viewer": 0, "member": 1, "admin": 2, "owner": 3}
 SHAPE_TTL = 30.0
 

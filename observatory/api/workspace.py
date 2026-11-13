@@ -419,10 +419,30 @@ class Meta(BaseModel):
     switch_to: list[str] | None = None               # SWITCH the chat to these agents (appended, never replacing)
 
 
+# A thread is a viewer's OWN when she wrote on it or was written to on it, or (canvas) it is registered under her
+PARTY_SQL = ("SELECT EXISTS (SELECT 1 FROM messages WHERE thread = $1 AND (from_agent = $2 OR to_agent = $2)) "
+             "OR EXISTS (SELECT 1 FROM canvas_threads WHERE thread = $1 AND user_name = $3)")
+PARTY_MSG_SQL = "SELECT EXISTS (SELECT 1 FROM messages WHERE thread = $1 AND (from_agent = $2 OR to_agent = $2))"
+
+
+async def party(pool, thread: str, me: str) -> bool:
+    """`me` (a wire handle) is a party of `thread`: the rule "her own chats" means for a member's thread tools."""
+    try:
+        return bool(await pool.fetchval(PARTY_SQL, thread, me, canvas_user(me)))
+    except Exception:                               # noqa: BLE001 — an estate without canvas_threads: messages decide
+        return bool(await pool.fetchval(PARTY_MSG_SQL, thread, me))
+
+
 @router.put("/api/ws/threads/meta")
-async def ws_meta(body: Meta):
+async def ws_meta(body: Meta, request: Request):
     if not valid_thread(body.thread):
         return JSONResponse({"error": "not a conversation thread"}, status_code=400)
+    me = _me(request) or ""
+    # the owner renames/pins any conversation (as ever); a member only her own (cog-gaps: the default view, no wall —
+    # she reads every thread, but another human's chat's name and pin are theirs)
+    # ('owner' is wire_handle's name for the owner alone; a module bound without a handle reads as the owner, as ever)
+    if not (_owner(request) or me == "owner") and not (me and await party(_pool(request), body.thread, me)):
+        return JSONResponse({"error": "only a conversation you are part of"}, status_code=403)
     patch = body.model_dump(exclude_unset=True)
     if "title" not in patch and "pinned" not in patch and "switch_to" not in patch:
         return JSONResponse({"error": "nothing to change"}, status_code=400)
@@ -448,10 +468,10 @@ async def ws_meta(body: Meta):
 async def ws_agents(request: Request):
     """The empty state's team cards: role from the charter, and each agent's newest message to the owner (30 days)."""
     names = sorted(_roster())
-    last = {r["from_agent"]: r for r in await _pool(request).fetch(
+    last = {r["from_agent"]: r for r in await _pool(request).fetch(       # the viewer's (cog-gaps): her last word from each
         "SELECT DISTINCT ON (from_agent) from_agent, ts, thread, left(body, 400) AS body FROM messages "
-        "WHERE to_agent = 'owner' AND ts > now() - interval '30 days' AND status IS DISTINCT FROM 'retracted' "
-        "ORDER BY from_agent, id DESC")}
+        "WHERE to_agent = $1 AND ts > now() - interval '30 days' AND status IS DISTINCT FROM 'retracted' "
+        "ORDER BY from_agent, id DESC", _me(request) or "owner")}
     out = []
     for n in names:
         role = ""
@@ -573,12 +593,15 @@ SNIPPET = 160
 SNIPPET_LEAD = 48                                   # context kept before the first match
 SEARCH_TIMEOUT = 5                                  # seconds; a slow search answers 504, never holds a worker
 
+# $4 = the viewer's handle, $5 = everyone (cog-gaps): the threads searched are the ones GET /api/ws/threads lists for
+# the same view, so the owner's own search ($4 'owner', $5 false) is exactly the query it always was
+_SHF = _HUMAN.replace("$1", "$4").replace("$2", "$5")
 SEARCH_SQL = r"""
 WITH owned AS MATERIALIZED (
   SELECT thread FROM messages
    WHERE thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%'
    GROUP BY thread
-  HAVING bool_or(from_agent = 'owner' OR to_agent = 'owner')
+  HAVING bool_or(""" + _SHF.format(c="from_agent") + " OR " + _SHF.format(c="to_agent") + r""")
 ), cand AS MATERIALIZED (
   SELECT m.id, m.ts, m.thread, m.from_agent, m.to_agent, m.body
     FROM messages m
@@ -737,20 +760,23 @@ def search_hits(rows: list[dict], q: str, archived: set[str], limit: int) -> lis
 
 
 @router.get("/api/ws/search")
-async def ws_search(request: Request, q: str = "", limit: int = SEARCH_LIMIT):
+async def ws_search(request: Request, q: str = "", limit: int = SEARCH_LIMIT, scope: str = "mine"):
+    """?scope=mine (default): the viewer's own conversations; ?scope=everyone: every human's (the list's own view)."""
     args = search_args(q)
     if not args:
         return {"q": q, "results": []}
     limit = max(1, min(int(limit), SEARCH_LIMIT_MAX))
     pool = _pool(request)
+    me, everyone = _me(request) or "owner", scope == "everyone"
     try:
-        rows = [dict(r) for r in await pool.fetch(SEARCH_SQL, args[0], args[1], limit * SEARCH_SCAN, timeout=SEARCH_TIMEOUT)]
+        rows = [dict(r) for r in await pool.fetch(SEARCH_SQL, args[0], args[1], limit * SEARCH_SCAN, me, everyone,
+                                                  timeout=SEARCH_TIMEOUT)]
     except asyncio.TimeoutError:
         return JSONResponse({"error": "the search took too long; try more words"}, status_code=504)
     archived: set[str] = set()
     try:
         archived = {r["thread"] for r in await pool.fetch(
-            "SELECT thread FROM canvas_threads WHERE user_name = 'owner' AND archived")}
+            "SELECT thread FROM canvas_threads WHERE (user_name = $1 OR $2) AND archived", canvas_user(me), everyone)}
     except Exception:                               # noqa: BLE001 — an estate without canvas: nothing is archived
         archived = set()
     return {"q": q, "results": search_hits(rows, q[:SEARCH_Q_MAX], archived, limit)}
@@ -762,7 +788,8 @@ LABEL_MAX = 60
 _THREAD_ID = re.compile(r"[\w:.@+\-]{1,200}")
 TITLES_SQL = f"""
 SELECT thread, count(*) AS count, max(ts) AS last_ts,
-       (array_agg(left({_BODY}, 400) ORDER BY id) FILTER (WHERE from_agent = 'owner'))[1] AS first_owner,
+       (array_agg(left({_BODY}, 400) ORDER BY id) FILTER (WHERE from_agent = 'owner' OR from_agent LIKE 'cv-%'))[1]
+         AS first_owner,
        NULL::text AS last_body, NULL::text AS last_from,
        array_agg(DISTINCT from_agent) || array_agg(DISTINCT to_agent) AS parties
   FROM messages
@@ -821,11 +848,12 @@ async def ws_thread_titles(request: Request, ids: str = ""):
     if any(t.startswith("cv:") for t in want):
         try:
             for r in await pool.fetch("SELECT thread, agent, title, archived FROM canvas_threads "
-                                      "WHERE user_name = 'owner' AND thread = ANY($1::text[])", want):
+                                      "WHERE thread = ANY($1::text[])", want):
                 canvas[r["thread"]] = {**dict(r), "archived": False}   # an archived chat still has its name
         except Exception:                           # noqa: BLE001 — an estate without canvas
             canvas = {}
-    rows = build_rows(aggs, read_meta(), [], set(_roster()), canvas)
+    # every human's conversation (cog-gaps): a member's "Also worked in" names her chats and the owner's alike
+    rows = build_rows(aggs, read_meta(), [], set(_roster()), canvas, me=_me(request) or "owner", everyone=True)
     named = {r["thread"] for r in rows}
     firsts = {r["thread"]: r["body"] for r in await pool.fetch(FIRST_SQL, [t for t in want if t not in named])} \
         if any(t not in named for t in want) else {}
@@ -850,9 +878,11 @@ BRIEF_LINE = 120
 BRIEF_TIMEOUT = 5
 
 BRIEF_EDGE_SQL = "SELECT id FROM messages WHERE ts < $1 ORDER BY id DESC LIMIT 1"
+# $4/$5 = the viewer's handle / everyone (cog-gaps): a body is read only on a row TO the viewer (with everyone: to any
+# web human) and org-news; the owner's briefing ($4 'owner', $5 false) reads exactly the rows it always did
 BRIEF_MSGS_SQL = """
 SELECT id, ts, from_agent, to_agent, thread, intent,
-       CASE WHEN to_agent = 'owner' OR thread = 'org-news' THEN left(body, 2000) END AS body
+       CASE WHEN """ + _SHF.format(c="to_agent") + """ OR thread = 'org-news' THEN left(body, 2000) END AS body
   FROM messages
  WHERE id > $1 AND ts >= $2
  ORDER BY id
@@ -965,13 +995,17 @@ def brief_files(said: list[dict], index: dict, versions: dict[str, int]) -> list
 
 
 def brief(rows: list[dict], turns: dict[str, int], did: dict[str, dict], index: dict, versions: dict[str, int],
-          roster: set[str]) -> dict:
+          roster: set[str], me: str = "owner", everyone: bool = False) -> dict:
     """The briefing from the window's rows (BRIEF_MSGS_SQL, oldest first; `body` only on rows to the owner and
     org-news), each agent's turn count, its newest words (`did`: {ts, content}) and the artifact store's index and
     version counts (by store path).
     Agents ordered by what needs the owner first: waiting on the owner, then those who wrote to the owner, then those
-    who only worked; newest activity first within each."""
+    who only worked; newest activity first within each. "The owner" is the VIEWER (cog-gaps): `me`, or with
+    `everyone` any web human (human()), as the thread list's view."""
     ag: dict[str, dict] = {}
+
+    def mine(n: str | None) -> bool:
+        return n == me or (everyone and human(n))
 
     def one(n: str) -> dict:
         if n not in ag:
@@ -993,7 +1027,7 @@ def brief(rows: list[dict], turns: dict[str, int], did: dict[str, dict], index: 
                 if line:
                     news.append({"id": r["id"], "ts": ts, "from": frm, "headline": line})
             continue
-        if frm == "owner":
+        if mine(frm):
             if t:
                 owner_last[t] = max(owner_last.get(t, 0), r["id"])
             continue
@@ -1001,7 +1035,7 @@ def brief(rows: list[dict], turns: dict[str, int], did: dict[str, dict], index: 
             continue
         a = one(frm)
         a["last_ts"] = max(a["last_ts"] or "", ts or "") or None
-        if to == "owner":
+        if mine(to):
             a["to_owner"] += 1
             a["_said"].append({"id": r["id"], "thread": t, "ts": ts, "body": r.get("body") or "", "intent": r.get("intent")})
         elif to in roster and to != frm:
@@ -1068,10 +1102,12 @@ def _store_view() -> tuple[dict, dict]:
 
 
 @router.get("/api/ws/briefing")
-async def ws_briefing(request: Request, since: str = ""):
-    """?since=<iso> (default 12 h ago, at most 48 h back): {since, until, clamped, totals, agents, news}."""
-    if not _owner(request):
-        return JSONResponse({"error": "owner only"}, status_code=403)
+async def ws_briefing(request: Request, since: str = "", scope: str = "mine"):
+    """?since=<iso> (default 12 h ago, at most 48 h back): {since, until, clamped, totals, agents, news}. The viewer's
+    own (cog-gaps): what the agents said TO HER; ?scope=everyone: to any human of the org (a view, not a wall)."""
+    me, everyone = _me(request), scope == "everyone"
+    if not me:                                      # the gate admits only the org's humans; this is the second lock
+        return JSONResponse({"error": "members only"}, status_code=403)
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
     start, clamped = brief_window(since, now)
@@ -1080,7 +1116,8 @@ async def ws_briefing(request: Request, since: str = ""):
     pool = _pool(request)
     try:
         edge = await pool.fetchval(BRIEF_EDGE_SQL, start, timeout=BRIEF_TIMEOUT) or 0
-        rows = [dict(r) for r in await pool.fetch(BRIEF_MSGS_SQL, edge, start, BRIEF_ROWS, timeout=BRIEF_TIMEOUT)]
+        rows = [dict(r) for r in await pool.fetch(BRIEF_MSGS_SQL, edge, start, BRIEF_ROWS, me, everyone,
+                                                  timeout=BRIEF_TIMEOUT)]
         turns = {r["agent"]: r["turns"] for r in await pool.fetch(BRIEF_TURNS_SQL, names, start, timeout=BRIEF_TIMEOUT)}
         did = {r["agent"]: dict(r) for r in await pool.fetch(BRIEF_DID_SQL, names, start, timeout=BRIEF_TIMEOUT)}
     except asyncio.TimeoutError:
@@ -1089,5 +1126,5 @@ async def ws_briefing(request: Request, since: str = ""):
         index, versions = await asyncio.to_thread(_store_view)
     except Exception:                               # noqa: BLE001 — no store (or git hiccup): the embeds' paths stand
         index, versions = {}, {}
-    out = brief(rows, turns, did, index, versions, roster)
+    out = brief(rows, turns, did, index, versions, roster, me=me, everyone=everyone)
     return {"since": start.isoformat(), "until": now.isoformat(), "clamped": clamped, **out}
