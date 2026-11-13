@@ -353,9 +353,11 @@ async def listen_task():
         try:
             conn = await asyncpg.connect(DSN)
             q: asyncio.Queue = asyncio.Queue()
-            for ch in ("astryx_wire", "astryx_steps", "astryx_dag", "astryx_presence"):
-                await conn.add_listener(
-                    ch, lambda c, p, chan, payload: q.put_nowait((chan, payload)))
+            # cog-rls slice 3: the channels carry this org (ax<n>_<suffix>; NOTIFY is database-wide). The database names
+            # them for this login role; below they keep their logical names, so the dispatch reads as before.
+            from astryx.pg import channels
+            await channels.listen(conn, ("wire", "steps", "dag", "presence"),
+                                  lambda chan, payload: q.put_nowait((chan, payload)))
             conn.add_termination_listener(lambda c: q.put_nowait(("__dead__", "")))
             if lost:
                 lost = False
@@ -3624,7 +3626,8 @@ async def cog_new_org(m: NewOrg, request: Request):
     thread = NEW_ORG_THREAD + key
     body = f"COG NEW ORG key={key} name={name} purpose={purpose or '-'}"
     async with pool.acquire() as c, c.transaction():
-        await c.execute("SELECT pg_advisory_xact_lock(hashtext($1))", thread)
+        # keyed by the org too (cog-rls slice 3): an advisory lock is database-wide, a thread name is not
+        await c.execute("SELECT pg_advisory_xact_lock(hashtext(coalesce(cog.tenant(), '') || ':' || $1))", thread)
         # fetchrow, not fetchval: sqlguard's shim counts a fetchrow's rows, so this WHERE can show both sides and climb to
         # RESPONSIVE; a fetchval reads rows=-1 and is capped at EXECUTED (a3 #61777). A row is truthy, None isn't.
         if await c.fetchrow("SELECT id FROM messages WHERE thread = $1 AND ts > now() - interval '1 day' "

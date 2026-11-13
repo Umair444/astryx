@@ -149,7 +149,7 @@ async def notify(payload: dict):
     p = await pool()
     if p:
         try:
-            await p.execute("SELECT pg_notify('astryx_dag', $1)", json.dumps(payload))
+            await p.execute("SELECT pg_notify(cog.chan('dag'), $1)", json.dumps(payload))   # the org's own (cog-rls)
         except Exception:
             pass
 

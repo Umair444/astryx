@@ -33,6 +33,7 @@ names another), and the org's .env gets `ASTRYX_DSN` with user=org_<key>. The ve
     sudo venv/bin/python devtools/cog_roles.py rotate astryx_cog --env /home/astryx/cog/.env --db cogstore
     venv/bin/python devtools/cog_roles.py census --env /opt/astryx/.env --env /home/astryx/cog/.env   # rc 1 if any
                                                                      # DSN there still resolves to a superuser
+    sudo venv/bin/python devtools/cog_roles.py counts --env /opt/astryx/.env   # per tenant table: org role == super
 A .env written while running as root keeps its owner and mode (the services read it as the org's user).
 
 Names are parameters (`Names(prefix)`), so the oracles (tests/test_cog_roles.py, tests/test_rls_leak.py) run this
@@ -185,6 +186,8 @@ def ensure_org(conn, names: Names, key: str, parent: str | None = None, pw: str 
     conn.execute("INSERT INTO cog.orgs (key, parent, path, role) VALUES (%s, %s, %s, %s) ON CONFLICT (key) DO UPDATE "
                  "SET parent = EXCLUDED.parent, path = EXCLUDED.path, role = EXCLUDED.role",
                  (key, parent, f"{ppath}.{key}" if ppath else key, role))
+    if conn.execute("SELECT to_regprocedure('cog.seed(text)')").fetchone()[0]:
+        conn.execute("CALL cog.seed(%s)", (key,))          # its per-org seed rows (slice 3: they name their org)
     return role
 
 
@@ -272,6 +275,29 @@ def census(envs: list[Path], super_roles=None) -> list[str]:
 def _os_user() -> str:
     import pwd
     return pwd.getpwuid(os.geteuid()).pw_name
+
+
+TENANT_TABLES_SQL = ("SELECT quote_ident(n.nspname) || '.' || quote_ident(c.relname) FROM pg_class c "
+                     "JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_attribute a ON a.attrelid = c.oid "
+                     "AND a.attname = 'tenant' AND NOT a.attisdropped WHERE n.nspname IN ('public', 'library') "
+                     "AND c.relkind IN ('r', 'p') AND NOT c.relispartition ORDER BY 1")
+
+
+def counts(super_conn, org_conn, key: str) -> list[str]:
+    """The cutover check (DESIGN.md CORRECTIONS 11-13): for every tenant table, the rows the ORG role sees equal the
+    rows of its tenant as the provisioner counts them (bypassing RLS), and it sees no other tenant's. Sentences."""
+    out = []
+    for (t,) in super_conn.execute(TENANT_TABLES_SQL).fetchall():
+        want = super_conn.execute(f"SELECT count(*) FROM {t} WHERE tenant = %s", (key,)).fetchone()[0]
+        try:
+            got, other = org_conn.execute(f"SELECT count(*), count(*) FILTER (WHERE tenant <> %s) FROM {t}",
+                                          (key,)).fetchone()
+        except Exception as e:                       # noqa: BLE001 (a refused read is the finding)
+            out.append(f"{t}: unreadable as the org ({type(e).__name__})")
+            continue
+        if got != want or other:
+            out.append(f"{t}: the org sees {got} ({other} of other tenants), the provisioner counts {want}")
+    return out
 
 
 # ── the CLI ──────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -362,6 +388,24 @@ def cmd_census(a) -> int:
     return 1 if bad else 0
 
 
+def cmd_counts(a) -> int:
+    import psycopg
+    org = config.read_env(Path(a.env)).get("ASTRYX_DSN", "")   # org-home: the provisioner reads the .env it is NAMED (--env)
+    from psycopg.conninfo import conninfo_to_dict
+    with psycopg.connect(_with_db(super_dsn(a.super_file), conninfo_to_dict(org).get("dbname")), autocommit=True) as s, \
+            psycopg.connect(org, autocommit=True) as o:
+        key = o.execute("SELECT cog.tenant()").fetchone()[0]
+        if key is None:
+            print("counts: RED, the org DSN's role is not in cog.orgs")
+            return 1
+        n = len(s.execute(TENANT_TABLES_SQL).fetchall())
+        bad = counts(s, o, key)
+    for b in bad:
+        print(f"  RED {b}")
+    print(f"counts: {'RED' if bad else 'GREEN'} ({n} tenant tables, org {key})")
+    return 1 if bad else 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="cog_roles", description=__doc__.split("\n")[0])
     ap.add_argument("--super-file", default=None, help=f"the superuser DSN file (default {SUPER_FILE})")
@@ -384,6 +428,9 @@ def main(argv=None) -> int:
     p = sub.add_parser("census")
     p.add_argument("--env", action="append", required=True)
     p.set_defaults(fn=cmd_census)
+    p = sub.add_parser("counts")
+    p.add_argument("--env", required=True)
+    p.set_defaults(fn=cmd_counts)
     a = ap.parse_args(argv)
     return a.fn(a)
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ASTRYX channel — the only doorbell. One instance per resident CLI (AGENT env).
-// Inbound:  pg LISTEN astryx_msg_<agent> + astryx_steps  →  notifications/claude/channel
+// Inbound:  pg LISTEN ax<n>_msg_<agent> + ax<n>_steps (cog.chan)  →  notifications/claude/channel
 // Outbound: MCP tools send / subscribe / query_steps     →  writes to pg (table = truth)
 // No sockets listened on, no keystrokes anywhere. Contract: code.claude.com channels-reference.
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -260,7 +260,7 @@ async function retractSend(id) {
     }
     // the observatory's doorbell: the same channel as a new row, the same payload shape (the id); the screen reads
     // the row's status and drops it. Bridges only re-select status='pending' on this ring, so it delivers nothing.
-    await pool.query(`SELECT pg_notify('astryx_wire', $1)`, [String(id)])
+    await pool.query(`SELECT pg_notify(cog.chan('wire'), $1)`, [String(id)])   // the org's own doorbell (cog-rls)
     console.error(`astryx send: call cancelled, msg ${id} retracted before delivery`)
     return true
   } catch (e) {
@@ -753,11 +753,16 @@ async function listen() {
   client.on('error', () => setTimeout(listen, 3000))       // dead conn → fresh client (v1 bus-listen lesson)
   try {
     await client.connect()
-    await client.query(`LISTEN "astryx_msg_${AGENT}"`)
-    await client.query(`LISTEN astryx_steps`)
+    // cog-rls slice 3: every channel carries the org (ax<n>_…, NOTIFY is database-wide); the database names them for
+    // this login role, so node never builds one by hand. LISTEN takes no parameter: the names are quoted identifiers.
+    const ch = (await client.query(`SELECT cog.chan('msg_' || $1::text) AS msg, cog.chan('steps') AS steps`,
+                                   [AGENT])).rows[0]
+    const q = n => '"' + n.replace(/"/g, '""') + '"'
+    await client.query(`LISTEN ${q(ch.msg)}`)
+    await client.query(`LISTEN ${q(ch.steps)}`)
     client.on('notification', n => {
-      if (n.channel === `astryx_msg_${AGENT}`) deliverMessage(Number(n.payload)).catch(() => {})
-      else maybePushStep(n.payload).catch(() => {})
+      if (n.channel === ch.msg) deliverMessage(Number(n.payload)).catch(() => {})
+      else if (n.channel === ch.steps) maybePushStep(n.payload).catch(() => {})
     })
     // drain: the table is the truth; anything missed while down delivers now.
     // Delayed: a push during the host session's boot is claimed-but-unseen
@@ -804,7 +809,9 @@ async function holdBody(first) {
   let ok
   try {
     await c.connect()
-    ok = (await c.query(`SELECT pg_try_advisory_lock(hashtext('astryx-body'), hashtext($1)) AS ok`, [AGENT])).rows[0].ok
+    // keyed by the ORG too (cog-rls slice 3): advisory locks are database-wide, and two orgs may each run a `seed`
+    ok = (await c.query(`SELECT pg_try_advisory_lock(hashtext('astryx-body:' || coalesce(cog.tenant(), '')), hashtext($1)) AS ok`,
+                        [AGENT])).rows[0].ok
   } catch (e) {
     try { await c.end() } catch {}
     if (first) {

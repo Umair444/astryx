@@ -837,6 +837,7 @@ run "cog CLI: the one writer of accounts and memberships; the cog store's backup
 # is a no-op. RLS stays off.
 run "cog-rls slice 1: tenant column, widened keys, ON CONFLICT targets, tree-scoped members; re-apply idempotent" "$PY" tests/test_tenant_slice1.py
 run "cog-rls slice 2: roles (schema owner, org group, org_<key>), ownership sweep, org DML only, prefixed shared store + its guard, ear helpers, DSN census, registry role" "$PY" tests/test_cog_roles.py
+run "cog-rls slice 3: RLS on (ENABLE+FORCE, tenant policy, default cog.tenant()), security_invoker views, secret per-org NOTIFY tokens, tenant-keyed lock, no cross-org read/write/escape, census" "$PY" tests/test_rls_leak.py
 # cog-rebuild (owner 11-13: "an admin panel in observatory too for each org"): the org's admin API (members through
 # observatory/api/members.py, on either members shape) and the front's account half (one-time invite/reset links,
 # sign out everywhere), every guard: admins below owner, the last owner, cog-wide sessions, one use, expiry.

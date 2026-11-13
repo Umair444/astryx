@@ -49,7 +49,7 @@ END $$;
 -- role to an org key (the registry key, the value `tenant` carries); cog.tenant() reads it for current_user and is
 -- NULL for every unmapped role, which is what makes slice 3's policies fail CLOSED (a SECURITY DEFINER context runs as
 -- its owner, which is unmapped). The recursion fed ⊃ cog ⊃ org ⊃ … lives here once, as parent/path, never smeared
--- over the rows. `n` is the org's short id: NOTIFY channel names carry it (63-byte cap), never the key.
+-- over the rows. `n` is the org's short id; `chan` its secret NOTIFY token (channel names carry it, never the key).
 -- This file names NO role: the roles (astryx_schema owns, astryx_org is granted, org_<key> logs in) and every grant
 -- are the provisioner's (devtools/cog_roles.py), so a fixture on the shared cluster can provision its own
 -- prefixed set and the file applies the same on a database that has never been provisioned.
@@ -62,18 +62,25 @@ CREATE TABLE IF NOT EXISTS cog.orgs (
   key    text PRIMARY KEY CHECK (key ~ '^[a-z0-9][a-z0-9-]{0,62}$'),
   parent text REFERENCES cog.orgs (key),
   path   text NOT NULL,                              -- dotted keys from the root down to this org
-  role   name NOT NULL                               -- the LOGIN role that acts for this org
+  role   name NOT NULL,                              -- the LOGIN role that acts for this org
+  -- its NOTIFY channel token: 12 hex digits (48 bits) from gen_random_uuid's strong source. Postgres has no LISTEN
+  -- privilege, so a channel is private only if its name can't be guessed; an org reads only its own row (below).
+  chan   text NOT NULL DEFAULT substr(replace(gen_random_uuid()::text, '-', ''), 1, 12) CHECK (chan ~ '^[0-9a-f]{12}$')
 );
+ALTER TABLE cog.orgs ADD COLUMN IF NOT EXISTS chan text NOT NULL DEFAULT substr(replace(gen_random_uuid()::text, '-', ''), 1, 12);
 CREATE UNIQUE INDEX IF NOT EXISTS orgs_n ON cog.orgs (n);
 CREATE UNIQUE INDEX IF NOT EXISTS orgs_role ON cog.orgs (role);
 CREATE OR REPLACE FUNCTION cog.tenant() RETURNS text
 LANGUAGE sql STABLE PARALLEL SAFE AS $$ SELECT key FROM cog.orgs WHERE role = current_user $$;
--- the NOTIFY channel `ax<n>_<suffix>` of the session's org (NULL unmapped): listeners ask for their names with this,
--- so SQL, Python and node can't drift. cog.chan_of is the senders' form, for a row's tenant.
+-- the NOTIFY channel `ax<chan>_<suffix>` of the session's org: listeners ask for their names with this, so SQL, Python
+-- and node can't drift. cog.chan_of is the senders' form, for a row's tenant. An org cog.orgs doesn't know (or an
+-- unmapped session) is `ax0_<suffix>`: a doorbell never fails an insert, and ax0 is no registered org's.
 CREATE OR REPLACE FUNCTION cog.chan(suffix text) RETURNS text
-LANGUAGE sql STABLE PARALLEL SAFE AS $$ SELECT 'ax' || n || '_' || suffix FROM cog.orgs WHERE role = current_user $$;
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+  SELECT 'ax' || coalesce((SELECT chan FROM cog.orgs WHERE role = current_user), '0') || '_' || suffix $$;
 CREATE OR REPLACE FUNCTION cog.chan_of(t text, suffix text) RETURNS text
-LANGUAGE sql STABLE PARALLEL SAFE AS $$ SELECT 'ax' || n || '_' || suffix FROM cog.orgs WHERE key = t $$;
+LANGUAGE sql STABLE PARALLEL SAFE AS $$
+  SELECT 'ax' || coalesce((SELECT chan FROM cog.orgs WHERE key = t), '0') || '_' || suffix $$;
 
 CREATE TABLE IF NOT EXISTS steps (
   id          bigserial PRIMARY KEY,
@@ -161,7 +168,7 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 --  the view depends on it.)
 DROP VIEW IF EXISTS turns_v;
 ALTER TABLE turns DROP COLUMN IF EXISTS messages;
-CREATE VIEW turns_v AS
+CREATE VIEW turns_v WITH (security_invoker = true) AS
 SELECT t.*,
   (SELECT string_agg(c->>'text', E'\n\n' ORDER BY mo, co)
      FROM jsonb_array_elements(t.raw_payload->'messages') WITH ORDINALITY AS m(msg, mo),
@@ -201,7 +208,7 @@ CREATE INDEX IF NOT EXISTS usage_polls_fetched ON usage_polls (fetched_at DESC);
 -- fetched_at is the snapshot's own measurement time, uniform across arms.
 DROP VIEW IF EXISTS current_usage;
 DROP VIEW IF EXISTS usage_readings;
-CREATE VIEW usage_readings AS
+CREATE VIEW usage_readings WITH (security_invoker = true) AS
   SELECT (usage_snapshot ->> 'fetched_at')::timestamptz         AS fetched_at,
          'turns'::text                                          AS src,
          agent                                                  AS measured_by,
@@ -234,7 +241,7 @@ CREATE VIEW usage_readings AS
 -- honest staleness ("updated Xh ago") instead of a fake-fresh number. Empty ⇒ no reader ever
 -- shows a stale value as current; they get null. Deterministic tiebreak (src DESC) keeps the
 -- view a function on equal timestamps.
-CREATE VIEW current_usage AS
+CREATE VIEW current_usage WITH (security_invoker = true) AS
   SELECT *, EXTRACT(EPOCH FROM (now() - fetched_at))::numeric AS age_seconds
     FROM usage_readings
    WHERE state = 'fresh'
@@ -325,9 +332,7 @@ CREATE TABLE IF NOT EXISTS funded_by_watermark (
 );
 ALTER TABLE funded_by_watermark ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 CALL pg_temp.widen_key('funded_by_watermark', 'funded_by_watermark_pkey', 'p', '{tenant,singleton}');
-INSERT INTO funded_by_watermark (legacy_max_id)
-  SELECT COALESCE(max(id), 0) FROM goals
-  ON CONFLICT (tenant, singleton) DO NOTHING;
+-- the row itself is per org: cog.seed(key), called below for every org of cog.orgs (cog-rls slice 3)
 CREATE OR REPLACE FUNCTION goals_done_stamp() RETURNS trigger AS $$
 BEGIN
   IF NEW.state IN ('shipped','done') AND (OLD.state IS DISTINCT FROM NEW.state) THEN
@@ -442,14 +447,20 @@ CREATE TABLE IF NOT EXISTS receipts (
 ALTER TABLE receipts ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 
 -- Doorbells. Payloads are tiny (ids); the table is the truth, consumers fetch + drain.
+-- NOTIFY is DATABASE-wide and any role may LISTEN on any name (cog-rls slice 3, RLS.md §2), so every channel carries
+-- the ROW's org's SECRET token: `ax<chan>_<suffix>` (cog.chan_of(tenant, …); chan is cog.orgs.chan, 12 random hex
+-- digits, short because a channel name caps at 63 bytes). There is no LISTEN privilege in Postgres, so the wall is
+-- that the name can't be guessed (48 bits) and each org reads only its own cog.orgs row; a counter id would let any
+-- org hear another's cadence and agent names (measured: ax2_… was heard by org b). A listener asks for its own names
+-- with cog.chan(suffix). A tenant cog.orgs doesn't know rings `ax0_…` (never fails the insert). Payloads: ids only.
 CREATE OR REPLACE FUNCTION notify_message() RETURNS trigger AS $$
 BEGIN
   IF NEW.to_org = 'local' THEN
-    PERFORM pg_notify('astryx_msg_' || NEW.to_agent, NEW.id::text);
+    PERFORM pg_notify(cog.chan_of(NEW.tenant, 'msg_' || NEW.to_agent), NEW.id::text);
   ELSE
-    PERFORM pg_notify('astryx_outbound', NEW.id::text);
+    PERFORM pg_notify(cog.chan_of(NEW.tenant, 'outbound'), NEW.id::text);
   END IF;
-  PERFORM pg_notify('astryx_wire', NEW.id::text);  -- global doorbell (observatory)
+  PERFORM pg_notify(cog.chan_of(NEW.tenant, 'wire'), NEW.id::text);  -- the org's doorbell (observatory)
   RETURN NEW;
 END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS messages_notify ON messages;
@@ -458,7 +469,7 @@ CREATE TRIGGER messages_notify AFTER INSERT ON messages
 
 CREATE OR REPLACE FUNCTION notify_step() RETURNS trigger AS $$
 BEGIN
-  PERFORM pg_notify('astryx_steps',
+  PERFORM pg_notify(cog.chan_of(NEW.tenant, 'steps'),
     json_build_object('id', NEW.id, 'agent', NEW.agent, 'kind', NEW.kind)::text);
   RETURN NEW;
 END $$ LANGUAGE plpgsql;
@@ -553,23 +564,7 @@ CREATE TABLE IF NOT EXISTS capability_census (
 );
 ALTER TABLE capability_census ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
 CALL pg_temp.widen_key('capability_census', 'capability_census_job_key', 'u', '{tenant,job}');
-INSERT INTO capability_census (job, surface, stage, had_to_read, first_call_failure, fix, state, source) VALUES
- ('wake me later or when something changes', 'tool', 'contract', 'cog_backup.py, pulse_run.py, astryx/__init__.py, pulse.py',
-  'the old set amended destructively; kind typos, bad cron and sql re-onset failed silently', 'the trigger tool, plan-12214 slice 1', 'fixed', 'reported'),
- ('watch something that is not sql, or wake another agent', 'tool', 'contract', 'the same four files',
-  'the file format, return protocol and ctx were in no schema', 'the template in the tool''s refusal; measure with a fresh agent', 'open', 'reported'),
- ('watch my mail', 'grant', 'discovery', 'mcp/gmail/server.py, importing it by path',
-  'the tool needs a grant seed lacks; domain_reply still needs python', 'plan-12214 slice 2, with credentials and the personal tier', 'open', 'reported'),
- ('land a change', 'script', 'contract', 'land.sh''s 40-line header', 'unknown flags and rules until refused', NULL, 'open', 'reported'),
- ('write a merge-ready marker', 'script', 'contract', 'merge_ready''s docstring', 'the grammar is in a docstring', NULL, 'open', 'reported'),
- ('query the org''s tables', 'table', 'discovery', NULL, 'guessed columns failed 3 times (triggers.owner, messages.created_at, goals.status); mcp__org__goals existed unreached', NULL, 'open', 'reported'),
- ('is this secret set?', 'none', 'discovery', NULL, 'grep on .env is refused even for variable names, and no tool answers this', NULL, 'open', 'reported'),
- ('run a check that needs node outside mise''s shell', 'script', 'contract', NULL, 'pushed_tree_check went red in a non-interactive shell: node is only on mise''s PATH, on base and tip alike', NULL, 'open', 'reported'),
- ('tell me a python trigger''s wake was swallowed', 'tool', 'verify', 'pulse.py process()', 'a python check''s returned wake can be dropped by an unread one while its own state moves on (F1h, fixed for declarative watches only)', NULL, 'open', 'measured'),
- ('know whether a trigger is on, from one column', 'table', 'contract', 'pulse.normalize(), trigger_tool._seen()',
-  'until the contract land, enabled and off_reason are two writers: an unrespawned resident''s old tools write enabled alone, and the reason lags a tick',
-  'goal 12238: enabled generated from off_reason, the kind CHECK, normalize() and the slice-1 shims deleted', 'open', 'derived')
-ON CONFLICT (tenant, job) DO NOTHING;
+-- its reported rows are per org: cog.seed(key) below (cog-rls slice 3)
 
 -- polls: every WhatsApp poll seen on a routed surface — agent-embedded
 -- ([[poll: q | a | b | multi=N]] in any outbound body), CLI-sent, or
@@ -761,7 +756,7 @@ ALTER TABLE held_wakes ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'as
 -- announced something reads this; a check asking whether a wake was DELIVERED or ACTED ON reads
 -- messages, so a held nudge never reads as delivered-and-ignored.
 DROP VIEW IF EXISTS wire_emitted;
-CREATE VIEW wire_emitted AS
+CREATE VIEW wire_emitted WITH (security_invoker = true) AS
   SELECT from_agent, from_org, to_agent, to_org, thread, intent, body, ts, 'messages'::text AS src
     FROM messages
   UNION ALL
@@ -840,9 +835,9 @@ ALTER TABLE canvas_data ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'a
 CREATE OR REPLACE FUNCTION notify_canvas() RETURNS trigger AS $$
 BEGIN
   IF TG_TABLE_NAME = 'canvas_data' THEN
-    PERFORM pg_notify('astryx_canvas', json_build_object('kind','data','canvas',NEW.canvas_id,'key',NEW.key)::text);
+    PERFORM pg_notify(cog.chan_of(NEW.tenant, 'canvas'), json_build_object('kind','data','canvas',NEW.canvas_id,'key',NEW.key)::text);
   ELSE
-    PERFORM pg_notify('astryx_canvas', json_build_object('kind','canvas','canvas',NEW.id,'ver',NEW.version)::text);
+    PERFORM pg_notify(cog.chan_of(NEW.tenant, 'canvas'), json_build_object('kind','canvas','canvas',NEW.id,'ver',NEW.version)::text);
   END IF;
   RETURN NEW;
 END $$ LANGUAGE plpgsql;
@@ -889,7 +884,7 @@ ALTER TABLE presence ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astr
 CALL pg_temp.widen_key('presence', 'presence_pkey', 'p', '{tenant,agent}');
 CREATE OR REPLACE FUNCTION notify_presence() RETURNS trigger AS $$
 BEGIN
-  PERFORM pg_notify('astryx_presence', json_build_object('agent', NEW.agent)::text);
+  PERFORM pg_notify(cog.chan_of(NEW.tenant, 'presence'), json_build_object('agent', NEW.agent)::text);
   RETURN NEW;
 END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS presence_notify ON presence;
@@ -1307,6 +1302,74 @@ DROP TRIGGER IF EXISTS members_last_owner ON members;
 CREATE TRIGGER members_last_owner BEFORE DELETE OR UPDATE ON members
   FOR EACH ROW EXECUTE FUNCTION members_last_owner();
 
+-- ── ROW-LEVEL SECURITY (cog-rls slice 3, RLS.md §2). LAST-but-one: it covers every table above. ─────────────────────
+-- Every table with a `tenant` column in the core schemas (partitions included: a partition queried directly does not
+-- inherit its parent's policies, so ear_day secures each new day too) is ENABLEd and FORCEd (the owner obeys it as
+-- well) with ONE policy: a row is visible and writable only by the org whose login role current_user is. The column's
+-- default becomes cog.tenant(), so no INSERT site names its org. An unmapped role (the schema owner, a SECURITY DEFINER
+-- body, a role that slipped in) gets NULL and sees nothing: fail-closed. Superusers and BYPASSRLS roles (the
+-- provisioner, astryx_test) are not bound. Judged against the catalog first: a re-apply changes nothing it needn't.
+CREATE OR REPLACE PROCEDURE cog.secure(t regclass) LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $sec$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = t AND relrowsecurity) THEN
+    EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', t);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = t AND relforcerowsecurity) THEN
+    EXECUTE format('ALTER TABLE %s FORCE ROW LEVEL SECURITY', t);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = t AND polname = 'tenant') THEN
+    EXECUTE format('CREATE POLICY tenant ON %s FOR ALL USING (tenant = (SELECT cog.tenant())) '
+                   'WITH CHECK (tenant = (SELECT cog.tenant()))', t);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+                  WHERE d.adrelid = t AND a.attname = 'tenant' AND pg_get_expr(d.adbin, d.adrelid) = 'cog.tenant()') THEN
+    EXECUTE format('ALTER TABLE %s ALTER COLUMN tenant SET DEFAULT cog.tenant()', t);
+  END IF;
+END $sec$;
+DO $$
+DECLARE t regclass;
+BEGIN
+  FOR t IN SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant' AND NOT a.attisdropped
+            WHERE n.nspname IN ('public', 'library') AND c.relkind IN ('r', 'p') LOOP
+    CALL cog.secure(t);
+  END LOOP;
+END $$;
+-- the registry itself: an org role reads ONLY its own row (cog.tenant() and cog.chan() need it; the list of the cog's
+-- orgs and their roles is nobody else's business). ENABLE without FORCE: its owner and the provisioner write it.
+ALTER TABLE cog.orgs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS self ON cog.orgs;
+CREATE POLICY self ON cog.orgs FOR SELECT USING (role = current_user);
+
+-- ── PER-ORG SEED ROWS (cog-rls slice 3). With tenant DEFAULT cog.tenant(), a row this file inserts must NAME its org:
+-- the applier is a superuser or the schema owner, both unmapped (NULL). So each seed is cog.seed(key), run for every
+-- org of cog.orgs at the end of every apply (and by the provisioner when it adds an org; by fixture_db for its own).
+CREATE OR REPLACE PROCEDURE cog.seed(k text) LANGUAGE plpgsql AS $seed$
+BEGIN
+  -- the legacy watermark: the highest goal id of THIS org when it was seeded (captured once: DO NOTHING)
+  INSERT INTO funded_by_watermark (tenant, legacy_max_id)
+    SELECT k, COALESCE(max(id), 0) FROM goals WHERE tenant = k
+    ON CONFLICT (tenant, singleton) DO NOTHING;
+  INSERT INTO capability_census (tenant, job, surface, stage, had_to_read, first_call_failure, fix, state, source)
+    SELECT k, v.* FROM (VALUES
+ ('wake me later or when something changes', 'tool', 'contract', 'cog_backup.py, pulse_run.py, astryx/__init__.py, pulse.py',
+  'the old set amended destructively; kind typos, bad cron and sql re-onset failed silently', 'the trigger tool, plan-12214 slice 1', 'fixed', 'reported'),
+ ('watch something that is not sql, or wake another agent', 'tool', 'contract', 'the same four files',
+  'the file format, return protocol and ctx were in no schema', 'the template in the tool''s refusal; measure with a fresh agent', 'open', 'reported'),
+ ('watch my mail', 'grant', 'discovery', 'mcp/gmail/server.py, importing it by path',
+  'the tool needs a grant seed lacks; domain_reply still needs python', 'plan-12214 slice 2, with credentials and the personal tier', 'open', 'reported'),
+ ('land a change', 'script', 'contract', 'land.sh''s 40-line header', 'unknown flags and rules until refused', NULL, 'open', 'reported'),
+ ('write a merge-ready marker', 'script', 'contract', 'merge_ready''s docstring', 'the grammar is in a docstring', NULL, 'open', 'reported'),
+ ('query the org''s tables', 'table', 'discovery', NULL, 'guessed columns failed 3 times (triggers.owner, messages.created_at, goals.status); mcp__org__goals existed unreached', NULL, 'open', 'reported'),
+ ('is this secret set?', 'none', 'discovery', NULL, 'grep on .env is refused even for variable names, and no tool answers this', NULL, 'open', 'reported'),
+ ('run a check that needs node outside mise''s shell', 'script', 'contract', NULL, 'pushed_tree_check went red in a non-interactive shell: node is only on mise''s PATH, on base and tip alike', NULL, 'open', 'reported'),
+ ('tell me a python trigger''s wake was swallowed', 'tool', 'verify', 'pulse.py process()', 'a python check''s returned wake can be dropped by an unread one while its own state moves on (F1h, fixed for declarative watches only)', NULL, 'open', 'measured'),
+ ('know whether a trigger is on, from one column', 'table', 'contract', 'pulse.normalize(), trigger_tool._seen()',
+  'until the contract land, enabled and off_reason are two writers: an unrespawned resident''s old tools write enabled alone, and the reason lags a tick',
+  'goal 12238: enabled generated from off_reason, the kind CHECK, normalize() and the slice-1 shims deleted', 'open', 'derived')) AS v(job, surface, stage, had_to_read, first_call_failure, fix, state, source)
+    ON CONFLICT (tenant, job) DO NOTHING;
+END $seed$;
+
 -- ── THE ROLES SWEEP (cog-rls slice 2, RLS.md §2 "Roles"). LAST in the file: it covers every object above. ──────────
 -- Once a database is provisioned (devtools/cog_roles.py writes cog.roles), every core object is OWNED by the schema
 -- owner role (astryx_schema: NOLOGIN, NOBYPASSRLS; an org role must never own an RLS table, since an owner can switch
@@ -1412,3 +1475,4 @@ BEGIN
   END IF;
 END $$;
 CALL cog.adopt();
+DO $$ DECLARE k text; BEGIN FOR k IN SELECT key FROM cog.orgs LOOP CALL cog.seed(k); END LOOP; END $$;

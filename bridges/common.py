@@ -597,9 +597,9 @@ async def listen(dsn: str, pending_where: str, deliver, on_step, on_idle=None):
         try:
             conn = await asyncpg.connect(dsn)
             q: asyncio.Queue = asyncio.Queue()
-            for ch in ("astryx_wire", "astryx_steps"):
-                await conn.add_listener(
-                    ch, lambda c, p, chan, payload: q.put_nowait((chan, payload)))
+            # cog-rls slice 3: this org's channels (ax<n>_wire/_steps), dispatched below by their logical names
+            from astryx.pg import channels
+            await channels.listen(conn, ("wire", "steps"), lambda chan, payload: q.put_nowait((chan, payload)))
             conn.add_termination_listener(lambda c: q.put_nowait(("__dead__", "")))
             while True:
                 if on_idle is not None:

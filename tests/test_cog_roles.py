@@ -109,9 +109,13 @@ def r3_org(c, names, orgs):
     with a.connect() as ac, orgs["b"].connect() as bc:
         ta, tb = ac.execute("SELECT cog.tenant(), cog.chan('wire')").fetchone(), bc.execute("SELECT cog.tenant()").fetchone()
         check("R3 cog.tenant()/cog.chan() answer each org's own", ta[0] == "a" and tb[0] == "b"
-              and re.fullmatch(r"ax\d+_wire", ta[1] or ""), f"{ta} {tb}")
-    un = c.execute("SELECT cog.tenant() IS NULL").fetchone()[0]
-    check("R3 an unmapped role (the provisioner) gets NULL", un)
+              and re.fullmatch(r"ax[0-9a-f]{12}_wire", ta[1] or ""), f"{ta} {tb}")
+    c.execute(f'SET ROLE "{names.schema}"')
+    try:
+        un = c.execute("SELECT cog.tenant() IS NULL").fetchone()[0]
+    finally:
+        c.execute("RESET ROLE")
+    check("R3 an unmapped role (the schema owner) gets NULL", un)
 
 
 def r4_dml(names, orgs):
