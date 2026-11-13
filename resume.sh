@@ -35,8 +35,9 @@ port_up() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }   # 0 = something l
 # ANY process whose command line merely CONTAINS the pattern string (e.g. an operator shell
 # running a health-check that quotes it), inflating the count to 2-3 when one loop exists.
 # During an outage recovery a false "loops: 2, must be 1" could prompt a wrong kill. The real
-# loop is setsid-detached → reparents to PID 1, so filter on PPID==1 + exact args.
-pulse_loops() { ps -eo ppid=,args= 2>/dev/null | awk '$1==1 && /while :/ && /nucleus\/pulse\.py/ {n++} END{print n+0}'; }
+# loop's args BEGIN `bash -c cd ... while :` (a shell quoting the pattern begins otherwise). Not PPID==1: until this script
+# exits, the loop it just launched is still its child, so the verify below counted 0 for one live loop (11-13).
+pulse_loops() { ps -eo args= 2>/dev/null | awk '$1=="bash" && $2=="-c" && $3=="cd" && /while :/ && /nucleus\/pulse\.py/ {n++} END{print n+0}'; }
 
 # --- 1. postgres (docker astryx-pg; ~50s to accept after a cold boot) ---
 echo "resume: waiting for postgres..."
