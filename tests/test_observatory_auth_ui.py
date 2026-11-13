@@ -11,7 +11,7 @@ plan-11859's F8 and I9). The screens are built against forge's U1U2 contract (PO
   A2 F8, run: auth.ts's real signIn() under node with a stubbed fetch. Two 401s whose bodies differ ("no such user",
      "wrong password", and an empty body) give ONE outcome, and its words are one constant that names how to fix it;
      signIn never reads a response body (no .json()/.text() on its path); 429 has its own words; 5xx and a network
-     failure read "unreachable"; 200 is ok. The screen shows only WORDS[...]: AuthScreens never reads an `.error`
+     failure read "unreachable"; a 403 (front.py's foreign Origin) is "origin", own words; 200 is ok. The screen shows only WORDS[...]: AuthScreens never reads an `.error`
   A3 /auth/me, run: 401 is signed out, 200 with a user is signed in (malformed orgs dropped), 404 and a network
      failure are `unavailable` (the app then runs as it does without sign-in, never behind a dead form)
   A4 membership, not the building: the org list is switchable(me.orgs, …), run here: in a cog only the account's orgs
@@ -20,8 +20,9 @@ plan-11859's F8 and I9). The screens are built against forge's U1U2 contract (PO
      for an absolute URL, a protocol-relative one, a javascript: one, a sign-in loop or a malformed escape
   A6 the bar (#61877): visible labels tied to their inputs, autocomplete username/current-password, the error is a
      role=alert; "Sign in" → "Signing in…" → "Signed in"; sentence case (no uppercase utility); every control class
-     has a :focus-visible ring and no outline-none; tokens only (no hex in AuthScreens or the auth CSS); nothing moves
-     on its own (no animate-, ax-orb, transition or motion import in the screens: the walk is the one motion)
+     has a :focus-visible ring and no outline-none; tokens only (no hex in AuthScreens or the auth CSS); motion is the
+     sign-in orb's breath and 120ms hover eases ONLY (owner 11-13 redesign, canvas's breathing orb), all stilled under
+     prefers-reduced-motion; no motion library or animate- utility in the screens
 Seams: OBS_SRC_DIR (a mutant observatory/web/src), OBS_PROD_ENV (a mutant .env.production). Exit 0 · 1 · 77 (no node).
 """
 import json
@@ -32,6 +33,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from node_ts import ESBUILD, _strips  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SRC = Path(os.environ.get("OBS_SRC_DIR") or REPO / "observatory" / "web" / "src")
@@ -73,6 +77,7 @@ out.login = {
   wrong: await run(stub(401, { error: 'wrong password' }), () => A.signIn('owner@x.test', 'pw')),
   bare: await run(stub(401, null), () => A.signIn('owner@x.test', 'pw')),
   limited: await run(stub(429, { error: 'slow' }), () => A.signIn('a@x.test', 'pw')),
+  foreign: await run(stub(403, { error: 'origin' }), () => A.signIn('a@x.test', 'pw')),
   down: await run(stub(502, {}), () => A.signIn('a@x.test', 'pw')),
   net: await run(boom, () => A.signIn('a@x.test', 'pw')),
   ok: await run(stub(200, {}), () => A.signIn('a@x.test', 'pw')),
@@ -110,7 +115,15 @@ console.log(JSON.stringify({ cog: switchable(mine, ['astryx', 'lab']).map(o => o
 
 def run_node(tmp: Path, driver: str):
     (tmp / "driver.mjs").write_text(driver)
-    r = subprocess.run(["node", "driver.mjs"], cwd=tmp, capture_output=True, text=True, timeout=60)
+    entry = "driver.mjs"
+    node = shutil.which("node")
+    if not _strips(node):                       # node < 22.6 can't load the .ts: bundle with the web app's esbuild first
+        b = subprocess.run([str(ESBUILD), "driver.mjs", "--bundle", "--platform=node", "--format=esm",
+                            "--log-level=error", "--outfile=driver.bundle.mjs"], cwd=tmp, capture_output=True, text=True, timeout=60)
+        if b.returncode:
+            return None, b.stderr.strip()[-400:]
+        entry = "driver.bundle.mjs"
+    r = subprocess.run(["node", entry], cwd=tmp, capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         return None, r.stderr.strip()[-400:]
     return json.loads(r.stdout.strip().splitlines()[-1]), ""
@@ -163,6 +176,8 @@ def main():
         check("the 401 words name the fix and no part", "Check both" in W["mismatch"]
               and not re.search(r"no account|not found|unknown|wrong password|incorrect password", W["mismatch"], re.I), W["mismatch"])
         check("429 has its own words", L["limited"] == "slow-down" and W["slow-down"] != W["mismatch"] and "Wait" in W["slow-down"])
+        check("the front's 403 (a foreign Origin) names the official address, in its own words",
+              L["foreign"] == "origin" and W["origin"] not in (W["mismatch"], W["unreachable"]) and "official address" in W["origin"], L)
         check("5xx and a network failure read unreachable; 200 is ok",
               L["down"] == L["net"] == "unreachable" and L["ok"] == "ok", L)
         check("the screens show WORDS only, never a server's `.error`",
@@ -212,8 +227,13 @@ def main():
     check("no outline-none in the screens", "outline-none" not in screens)
     check("tokens only: no hex in AuthScreens or the auth CSS",
           not re.search(r"#[0-9a-fA-F]{3,8}\b", screens) and not re.search(r"#[0-9a-fA-F]{3,8}\b", block))
-    check("nothing moves on its own: no animate-, ax-orb, transition or motion import",
-          not re.search(r"animate-|ax-orb|transition|from 'motion", screens) and "animation" not in block and "transition" not in block)
+    check("no motion library, animate- utility or ax-orb in the screens", not re.search(r"animate-|ax-orb|transition|from 'motion", screens))
+    rm = block.find("@media (prefers-reduced-motion: reduce)")
+    moving = re.findall(r"\.([\w-]+)\s*\{[^}]*\b(?:animation|transition)\s*:", block[:rm] if rm >= 0 else block)
+    stilled = block[rm:] if rm >= 0 else ""
+    check("every animation/transition in the auth CSS is stilled under prefers-reduced-motion",
+          rm >= 0 and moving and all(f".{c}" in stilled for c in moving)
+          and "animation: none" in stilled and "transition: none" in stilled, moving)
 
     print(f"\n{'ALL PASS' if not fails else f'{len(fails)} FAIL'}")
     return 1 if fails else 0
