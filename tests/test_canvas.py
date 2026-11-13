@@ -457,7 +457,7 @@ def coverage(url):
                 "owner" in await b.canvas_viewers(f"canvas:{full['id']}") and await b.canvas_viewers("canvas:999999") == set())
             await b.on_presence({"agent": "nobody-at-all"})          # no row: nothing to fan out
             await conn.execute("INSERT INTO presence (agent, surface, state) VALUES ('scout', $1, 'working') "
-                               "ON CONFLICT (agent) DO UPDATE SET surface=EXCLUDED.surface", f"canvas:{full['id']}")
+                               "ON CONFLICT (tenant, agent) DO UPDATE SET surface=EXCLUDED.surface", f"canvas:{full['id']}")
             await b.on_presence({"agent": "scout"})
             arm("a presence row reaches the canvas's cache", b.present.get("scout", {}).get("surface") == f"canvas:{full['id']}")
             await b.on_canvas({"kind": "data", "canvas": 999999, "key": "k"})

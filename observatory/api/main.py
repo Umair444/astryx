@@ -266,7 +266,7 @@ async def _who(request: Request) -> tuple[str | None, str | None]:
         return None, None
     request.state.label = c["name"]
     try:
-        return uid, await pool.fetchval("SELECT role FROM members WHERE uid = $1", uid)
+        return uid, await pool.fetchval("SELECT org_role($1)", uid)   # schema.sql: the root row's, else a subtree's
     except (asyncpg.PostgresError, OSError) as e:   # no members table yet (schema.sql not re-applied), a DB blip:
         print(f"observatory: a signed-in viewer reads as public: {type(e).__name__}", file=sys.stderr)
         return uid, None                              # the public face (D2), never a 500 on it
@@ -1774,7 +1774,7 @@ async def people_answer(body: PeopleAnswer, request: Request):
         await pool.execute(
             "INSERT INTO social_relation (org, pid, kind, closeness, confidence, updated_at) "
             "VALUES (COALESCE((SELECT org FROM social_person WHERE id=$1 LIMIT 1), 'local'), $1, $2, $3, 'owner', now()) "
-            "ON CONFLICT (org, pid) DO UPDATE SET kind=EXCLUDED.kind, closeness=EXCLUDED.closeness, "
+            "ON CONFLICT (tenant, org, pid) DO UPDATE SET kind=EXCLUDED.kind, closeness=EXCLUDED.closeness, "
             "confidence='owner', updated_at=now()", body.pid, body.kind, body.closeness)
     await pool.execute(
         "INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "

@@ -304,7 +304,7 @@ async function handleTool(name, a) {
   if (name === 'subscribe') {
     await pool.query(
       `INSERT INTO subscriptions (watcher, target, filter, active) VALUES ($1,$2,$3,$4)
-       ON CONFLICT (watcher, target) DO UPDATE SET filter=$3, active=$4`,
+       ON CONFLICT (tenant, watcher, target) DO UPDATE SET filter=$3, active=$4`,
       [AGENT, a.target, a.filter || 'milestone,error', a.active !== false])
     return a.active === false ? `unsubscribed from ${a.target}` : `watching ${a.target}`
   }

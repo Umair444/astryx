@@ -219,7 +219,7 @@ def apply_pg(personas: dict) -> int:
                 cur.execute(
                     "INSERT INTO social_relation (org,pid,kind,context,evidence,confidence) "
                     "SELECT org, id, %s, %s, %s, %s FROM social_person WHERE org=%s AND id=%s "
-                    "ON CONFLICT (org,pid) DO UPDATE SET evidence=EXCLUDED.evidence, "
+                    "ON CONFLICT (tenant,org,pid) DO UPDATE SET evidence=EXCLUDED.evidence, "
                     "kind=COALESCE(EXCLUDED.kind,social_relation.kind), "
                     "context=COALESCE(EXCLUDED.context,social_relation.context), "
                     "confidence=COALESCE(EXCLUDED.confidence,social_relation.confidence), "

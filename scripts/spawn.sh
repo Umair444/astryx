@@ -150,7 +150,7 @@ HB=$(grep -m1 '^Heartbeat:' "$CHARTER" | cut -d: -f2- | xargs || true)
 DSN=$("$PY" "$ROOT/src/astryx/config.py" dsn --file)
 [ -z "$RENDER" ] && psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind)
   VALUES ('$AGENT', 'heartbeat', '${HB:-0 9 * * *}', 'heartbeat')
-  ON CONFLICT (agent, name) DO NOTHING" 2>/dev/null || true
+  ON CONFLICT (tenant, agent, name) DO NOTHING" 2>/dev/null || true
 
 # Standard nightly self-review: the growth law made mechanical. Staggered by a
 # hash of the name (02:00-03:59 window) so the org does not wake all at once.
@@ -158,7 +158,7 @@ CK=$(printf '%s' "$AGENT" | cksum | cut -d' ' -f1)
 [ -z "$RENDER" ] && psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind, note)
   VALUES ('$AGENT', 'night-review', '$((CK % 60)) $((2 + CK % 2)) * * *', 'heartbeat',
   'nightly review: FIRST read the org''s shipping log — query_thread(''org-news'') — new capabilities land daily and change what is possible for you. THEN read your own day (query_steps yourself), ask what you should have done better and what tool, trigger, or skill you lack, and take ONE concrete growth action: build it, file it as a goal, or propose it to seed (dedup against org-news first — what you lack may already exist). This review is also YOURS: informed by what the org has become, you are free to reshape who you are — personality, interests, boundaries, any SHELL section of your charter — via self_edit, exactly as far as the understanding moves you. The org grows because you do.')
-  ON CONFLICT (agent, name) DO NOTHING" 2>/dev/null || true
+  ON CONFLICT (tenant, agent, name) DO NOTHING" 2>/dev/null || true
 
 if [ -z "$RENDER" ] && tmux has-session -t "=$SESS" 2>/dev/null; then echo "$AGENT already resident"; exit 0; fi
 

@@ -532,7 +532,7 @@ async def introduce(ctx: Ctx, d: dict, window: float = SKEW):
     await ctx.pool.execute(
         """INSERT INTO peers (org, url, pubkey, status, notes)
            VALUES ($1, $2, $3, 'introduced', 'introduced itself')
-           ON CONFLICT (org) DO UPDATE SET url=$2, pubkey=$3""",
+           ON CONFLICT (tenant, org) DO UPDATE SET url=$2, pubkey=$3""",
         org, url, pub)
     await ctx.pool.execute(
         "INSERT INTO messages (from_agent, from_org, to_agent, intent, body) "
@@ -962,7 +962,7 @@ async def seed_siblings(ctxs: dict[str, Ctx]) -> None:
                 await c.pool.execute(
                     """INSERT INTO peers (org, url, pubkey, status, notes)
                        VALUES ($1, NULL, $2, 'introduced', 'a sibling in this cog (S3c)')
-                       ON CONFLICT (org) DO NOTHING""", s.name, s.pub)
+                       ON CONFLICT (tenant, org) DO NOTHING""", s.name, s.pub)
 
 
 @asynccontextmanager

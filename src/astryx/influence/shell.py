@@ -47,7 +47,7 @@ CACHE_DROP = "DELETE FROM influence_edge WHERE scope = %s"
 CACHE_ADD = ("INSERT INTO influence_edge (scope, kind, src, dst, ts, ask_ts, ref, topic, coverage, computed_at) "
              "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
 VALUE_ADD = ("INSERT INTO influence_value (scope, view, agent, value, unmapped, computed_at) "
-             "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (scope, view, agent, computed_at) "
+             "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (tenant, scope, view, agent, computed_at) "
              "DO UPDATE SET value = EXCLUDED.value, unmapped = EXCLUDED.unmapped")
 
 
