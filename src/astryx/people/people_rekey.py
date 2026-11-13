@@ -14,6 +14,9 @@ every sender in every group's messages. Each jid gives (old id, new id); a row i
   (works with or without a tenant column). It refuses and changes nothing when any id is neither old nor new (the
   channel walk didn't reach that person: raise --msgs) or a moved row would land on a key that already exists.
   A second run finds nothing to move and changes nothing.
+  The people store's files (<people dir>/*.jsonl: the owner's asks and answers, a `pid` per line) move with the tables:
+  their ids count toward the same refusal, and they are rewritten only AFTER the transaction commits, each one atomically
+  (temp + rename) beside a .bak of what it held. A file that fails to write is named loudly (exit 1); its .bak stays.
 
 Derived copies are not touched here: rebuild the graph afterwards (venv/bin/python src/astryx/memory/social_age.py).
 
@@ -29,8 +32,12 @@ from astryx.people import people  # noqa: E402
 
 import argparse
 import hashlib
+import json
+import os
 import re
+import shutil
 import sys
+from pathlib import Path
 
 _ID = re.compile(r"^(p[0-9a-f]{14}|g[0-9a-f]{12})$")
 # (table, column) pairs that hold a social_person.id; each table's rows are scoped by its org column
@@ -74,8 +81,28 @@ def channel_jids(msgs: int) -> set[str] | None:
     return out
 
 
-def plan(cur, org: str, old: str, new: str, jids) -> dict:
-    """Counts, and the old → new map for the ids this org's rows actually hold."""
+def people_dir() -> Path:
+    """Where the observatory keeps the people store's files (its _PEOPLE_DIR)."""
+    return Path(os.environ.get("ASTRYX_PEOPLE_DIR") or paths.estate(people.__file__) / "homes" / "memory" / ".people")
+
+
+def file_ids(d: Path | None) -> dict[Path, list]:
+    """Each *.jsonl's lines, parsed (None for a line that isn't a JSON object, kept verbatim)."""
+    out = {}
+    for f in sorted(d.glob("*.jsonl")) if d and d.is_dir() else []:
+        lines = []
+        for raw in f.read_text().splitlines():
+            try:
+                o = json.loads(raw)
+            except ValueError:
+                o = None
+            lines.append((raw, o if isinstance(o, dict) else None))
+        out[f] = lines
+    return out
+
+
+def plan(cur, org: str, old: str, new: str, jids, files: dict | None = None) -> dict:
+    """Counts, and the old → new map for the ids this org's rows (and the people files) actually hold."""
     pairs = {ids(old, j): ids(new, j) for j in jids}
     news = set(pairs.values())
     held = set()
@@ -84,6 +111,10 @@ def plan(cur, org: str, old: str, new: str, jids) -> dict:
         cur.execute(f"SELECT {c} FROM {t} WHERE org = %s", (org,))
         vals = [r[0] for r in cur.fetchall()]
         rows[f"{t}.{c}"] = len(vals)
+        held |= {v for v in vals if _ID.match(v)}
+    for f, lines in (files or {}).items():
+        vals = [o.get("pid") for _, o in lines if o and isinstance(o.get("pid"), str)]
+        rows[f"file {f.name}"] = len(vals)
         held |= {v for v in vals if _ID.match(v)}
     move = {i: pairs[i] for i in held if i in pairs and pairs[i] != i}
     already = {i for i in held if i in news and i not in move}
@@ -120,9 +151,33 @@ def apply(conn, org: str, p: dict) -> dict:
             after[f"{t}.{c}"] = n
             if left:
                 raise RuntimeError(f"{t}.{c}: {left} old id(s) still present after the update")
-        if after != p["rows"]:
+        if after != {k: v for k, v in p["rows"].items() if not k.startswith("file ")}:
             raise RuntimeError("row counts changed during the re-key")
     return {"rows_updated": moved, "rows": after}
+
+
+def apply_files(files: dict, move: dict) -> tuple[int, list[str]]:
+    """After the commit: rewrite each file whose pids move, atomically, beside a .bak. Returns (lines moved, failures)."""
+    n, failed = 0, []
+    for f, lines in files.items():
+        out, k = [], 0
+        for raw, o in lines:
+            if o and o.get("pid") in move:
+                o = dict(o, pid=move[o["pid"]])
+                raw, k = json.dumps(o, ensure_ascii=False), k + 1
+            out.append(raw)
+        if not k:
+            continue
+        tmp = f.with_name(f".{f.name}.rekey-tmp")
+        try:
+            shutil.copy2(f, f.with_name(f.name + ".bak"))
+            tmp.write_text("\n".join(out) + "\n")
+            os.replace(tmp, f)
+            n += k
+        except OSError as e:
+            failed.append(f"{f.name}: {type(e).__name__}")
+            tmp.unlink(missing_ok=True)
+    return n, failed
 
 
 def report(p: dict) -> str:
@@ -150,8 +205,9 @@ def main(argv=None) -> int:
         return 77
     import psycopg
     org = people._org()
+    files = file_ids(people_dir())
     with psycopg.connect(dsn) as conn:
-        p = plan(conn.cursor(), org, old, new, jids)
+        p = plan(conn.cursor(), org, old, new, jids, files)
         conn.rollback()
         print(report(p))
         if p["unmapped"] or p["clashes"]:
@@ -168,6 +224,12 @@ def main(argv=None) -> int:
         r = apply(conn, org, p)
         print(f"re-keyed: {r['rows_updated']} row value(s) in one transaction; row counts unchanged. "
               "Rebuild the graph: venv/bin/python src/astryx/memory/social_age.py")
+    n, failed = apply_files(files, p["map"])                    # only now: the transaction above has committed
+    print(f"people files: {n} line(s) re-keyed (each rewritten file keeps a .bak beside it)")
+    if failed:
+        print(f"FILE WRITE FAILED: {'; '.join(failed)}. The database IS re-keyed; these files are untouched and still hold the OLD ids "
+              "(any .bak written holds the same). Fix the cause and rerun: the tables are a no-op now, the files move.")
+        return 1
     return 0
 
 
