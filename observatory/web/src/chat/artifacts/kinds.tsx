@@ -16,6 +16,8 @@ const GLYPH: Record<Kind, React.ReactNode> = {
   docx: <>{page}{fold}<path d="M8.5 11.5l1.2 5 1.6-3.6 1.6 3.6 1.2-5" /></>,
   audio: <><path d="M9 18V6l10-2v12" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="16.5" cy="16" r="2.5" /></>,
   video: <><rect x="3" y="6" width="13" height="12" rx="2.5" /><path d="M16 10.5l5-3v9l-5-3" /></>,
+  slides: <><rect x="3" y="5" width="18" height="12" rx="2" /><path d="M12 17v3M8.5 20h7M7 9.5h6M7 12.5h4" /></>,
+  office: <>{page}{fold}<path d="M9 12h6M9 15.5h6" /></>,
   binary: <>{page}{fold}</>,
 }
 export function KindIcon({ kind, className = 'w-4 h-4' }: { kind: Kind; className?: string }) {
@@ -23,12 +25,12 @@ export function KindIcon({ kind, className = 'w-4 h-4' }: { kind: Kind; classNam
 }
 export const KIND_WORD: Record<Kind, string> = {
   text: 'Document', code: 'Code', table: 'Table', sheet: 'Spreadsheet', image: 'Image', pdf: 'PDF', docx: 'Word document',
-  audio: 'Audio', video: 'Video', binary: 'File',
+  slides: 'Presentation', office: 'Office document', audio: 'Audio', video: 'Video', binary: 'File',
 }
 /* the drawer's filters */
 export type Filter = 'all' | 'images' | 'docs' | 'data' | 'code'
 export const FILTER_OF: Record<Kind, Exclude<Filter, 'all'>> = {
-  image: 'images', video: 'images', text: 'docs', pdf: 'docs', docx: 'docs', binary: 'docs', audio: 'docs',
+  image: 'images', video: 'images', text: 'docs', pdf: 'docs', docx: 'docs', slides: 'docs', office: 'docs', binary: 'docs', audio: 'docs',
   table: 'data', sheet: 'data', code: 'code',
 }
 

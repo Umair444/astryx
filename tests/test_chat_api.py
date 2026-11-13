@@ -27,6 +27,7 @@ no OpenAI key is set, so nothing leaves the host.
 CHAT_SRC names another chat.py, SERVE_SRC another serve.py (devtools/mutation_probe.py: tests/mutants_chat_api.py,
 tests/mutants_serve_untrusted.py)."""
 import importlib.util
+import time
 import os
 import re
 import sys
@@ -174,6 +175,38 @@ def main(tmp: Path, url: str):
     tr = cl.post("/api/chat/upload?name=notes.md", content="# a note\nplain".encode(), headers=O)
     t = tr.json() if tr.status_code == 200 else {"status": tr.status_code}
     arm("D3 text is accepted and stored as .txt", t.get("path", "").endswith(".txt") and t.get("type", "").startswith("text/plain"), t)
+
+    # ── P1 Office previews (owner 11-13: every Office file viewable in chat, canvas's standard) ───────────────────
+    import shutil as _sh
+    import subprocess as _sp
+    import tempfile as _tf
+    if _sh.which("soffice") or _sh.which("libreoffice"):
+        with _tf.TemporaryDirectory() as td:
+            src = Path(td) / "deck.txt"
+            src.write_text("Quarterly review\nSlide text\n")
+            made = {}
+            for ext in ("docx", "pptx"):
+                _sp.run([_sh.which("soffice") or _sh.which("libreoffice"), f"-env:UserInstallation=file://{td}/p",
+                         "--headless", "--convert-to", ext if ext == "docx" else "pptx:Impress MS PowerPoint 2007 XML",
+                         "--outdir", td, str(src)], capture_output=True, timeout=180)
+                f = Path(td) / f"deck.{ext}"
+                if f.is_file():
+                    up = cl.post(f"/api/chat/upload?name=Q3 deck.{ext}", content=f.read_bytes(), headers=O)
+                    made[ext] = up.json().get("path", "") if up.status_code == 200 else ""
+            for ext, path in made.items():
+                pv = cl.get("/api/chat/preview", params={"path": path}, headers=O)
+                arm(f"P1 a .{ext} previews as a PDF (as authored)", pv.status_code == 200 and pv.content[:5] == b"%PDF-"
+                    and pv.headers.get("content-type", "").startswith("application/pdf"), (pv.status_code, pv.content[:40]))
+                t0 = time.time()
+                again = cl.get("/api/chat/preview", params={"path": path}, headers=O)
+                arm(f"P1 a .{ext} preview is cached (converted once)", again.status_code == 200 and time.time() - t0 < 3, time.time() - t0)
+            arm("P1 both a docx and a pptx were made to preview", set(made) == {"docx", "pptx"}, made)
+            arm("P1 a ?key= never authenticates the preview",
+                cl.get("/api/chat/preview", params={"path": made.get("docx", ""), "key": O["x-obs-key"]}).status_code == 403)
+        arm("P1 a non-Office file has no preview (415)",
+            cl.get("/api/chat/preview", params={"path": str(p)}, headers=O).status_code == 415)
+    else:
+        print("  SKIP  P1 office previews: LibreOffice isn't installed here")
 
     # ── D1 + G3 the file read ────────────────────────────────────────────────────────────────────────────────
     ok = cl.get("/api/chat/file", params={"path": str(p)}, headers=O)

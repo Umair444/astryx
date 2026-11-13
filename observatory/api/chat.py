@@ -177,6 +177,25 @@ async def file(request: Request, path: str = ""):
     return serve_untrusted(p, inline=True, svg=True)      # an .svg that IS one: image/svg+xml under SVG_CSP
 
 
+@router.get("/api/chat/preview")
+async def preview(request: Request, path: str = ""):
+    """An Office document (pptx, ppt, docx, doc, xlsx, xls, odt, odp, ods, rtf) as the PDF it reads as, authored:
+    converted once by the converter canvas uses (astryx.core.office, LibreOffice headless, cached by content hash),
+    served by serve_untrusted, drawn by the panel's pdf.js. The same gate as /api/chat/file: a ?key= never
+    authenticates it, and a member reaches only a file some message attached (main.member_file)."""
+    if "key" in request.query_params:
+        return Response(status_code=403)
+    p = readable(path)
+    if p is None:
+        return Response(status_code=404)
+    from astryx.core import office
+    try:
+        out = await office.to_pdf(p, MEDIA / ".preview")
+    except office.Unavailable as e:
+        return JSONResponse({"error": e.why}, status_code=e.status)
+    return serve_untrusted(out, inline=True, filename=f"{p.stem}.pdf")
+
+
 # ----------------------------------------------------------------------------------------------------- projects
 # Iteration 5 widened a project from {name, brief, agents, chat: threads} to what claude.ai/ChatGPT call a project
 # plus a TEAM: `instructions` (the old `brief`, read as it until rewritten), pinned artifact `files`, any owner thread
