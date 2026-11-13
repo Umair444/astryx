@@ -388,7 +388,16 @@ export interface TriggerRow {
 export interface WhoAmI {
   owner: boolean
   vega: boolean
+  role?: string | null     // cog-who: this org's members role ('owner' for the key door too); absent on old servers
+  handle?: string | null   // the viewer's wire name: 'owner', or a member's cv-<label>.<uid>
 }
+
+/* cog-who: who may use the chat workspace — the owner, or a signed-in member (no privacy within an org, owner 11-13).
+   And a HUMAN party of a row: the owner, or a named web human (cv-<x>: a member or a canvas guest). The chat's 'owner'
+   comparisons mean "the human side", so they use this. */
+export const talks = (w: WhoAmI) => w.owner || w.role === 'member' || w.role === 'admin'
+export const seesEveryone = (w: WhoAmI) => w.owner || w.role === 'admin'
+export const isHuman = (n: string | null | undefined): boolean => !!n && (n === 'owner' || n.startsWith('cv-'))
 
 /* /api/events SSE payloads */
 /* src/astryx/core/presence.py — where an agent's attention is right now (owner-only) */

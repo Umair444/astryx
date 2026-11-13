@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { api, apiPost, eventsUrl, fetchWhoami, noteServerTime, parseTs } from './api'
-import type { AgentRow, DagEvent, Goal, Msg, Overview, Peer, Presence, WhoAmI, WireEvent } from './types'
+import { talks, type AgentRow, type DagEvent, type Goal, type Msg, type Overview, type Peer, type Presence, type WhoAmI, type WireEvent } from './types'
 
 /* one wire pulse — the network view animates the from→to edge for a moment.
    Orgs ride along so the anonymous map can animate org<->peer boundary edges. */
@@ -132,7 +132,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // agent/goal endpoints are owner-only and must never fire for anonymous
   useEffect(() => {
     if (!whoChecked) return
-    const owner = who.owner
+    const owner = talks(who)        // the owner, or a signed-in member (cog-who): the org's insiders
     if (!owner) {
       setAgents([]) // key forgotten → drop private data immediately
       setGoals([])
@@ -142,7 +142,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (owner) api<AgentRow[]>('/agents').then(setAgents).catch(() => {})
     }
     const slow = () => {
-      if (owner) api<Goal[]>('/goals').then(setGoals).catch(() => {})
+      if (who.owner) api<Goal[]>('/goals').then(setGoals).catch(() => {})
       api<Peer[]>('/peers').then(setPeers).catch(() => {})
     }
     refresh()
@@ -168,8 +168,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [who.owner])
 
   useEffect(() => {
-    if (who.owner) api<Presence[]>('/presence').then(rows => setPresence(Object.fromEntries(rows.map(r => [r.agent, r])))).catch(() => {})
-  }, [who.owner])
+    if (talks(who)) api<Presence[]>('/presence').then(rows => setPresence(Object.fromEntries(rows.map(r => [r.agent, r])))).catch(() => {})
+  }, [who])
 
   // the newest id this tab holds: where a backfill starts after the stream was lost
   const maxIdRef = useRef(0)
@@ -197,7 +197,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let pinged = false             // this server names its pings (an older one sends comments: no watchdog then)
     let lost = false               // the stream dropped since the last good open: the next open backfills
     let hiddenAt = document.hidden ? Date.now() : 0
-    const owner = who.owner
+    const owner = talks(who)
     const state = (st: ConnState) => setConn((c) => (c.state === st ? c : { ...c, state: st, since: Date.now() }))
 
     // steps, folded: an agent at work emits several a second; the roster (and everything reading it) renders once a second

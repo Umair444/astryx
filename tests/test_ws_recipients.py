@@ -60,10 +60,13 @@ def main():
     print("the SQL computes partners from owner rows only")
     sql = re.sub(r"\s+", " ", W.THREADS_SQL)
     arm("THREADS_SQL selects partners", " AS partners" in sql, sql)
+    # cog-who: "the owner" is the VIEWER ($1, 'owner' for him) or, in the everyone view ($2), any web human
+    hf = "(from_agent = $1 OR ($2 AND (from_agent = 'owner' OR from_agent LIKE 'cv-%')))"
+    ht = "(to_agent = $1 OR ($2 AND (to_agent = 'owner' OR to_agent LIKE 'cv-%')))"
     arm("partners: owner→X gives X, X→owner gives X",
-        "CASE WHEN from_agent = 'owner' THEN to_agent ELSE from_agent END" in sql, sql)
+        f"CASE WHEN {hf} THEN to_agent ELSE from_agent END" in sql, sql)
     arm("partners filtered to rows with the owner on one end",
-        "FILTER (WHERE from_agent = 'owner' OR to_agent = 'owner') AS partners" in sql, sql)
+        f"FILTER (WHERE {hf} OR {ht}) AS partners" in sql, sql)
 
     print("the composer's recipients (model.ts participants, esbuild + node)")
     esb = REPO / "observatory/web/node_modules/.bin/esbuild"

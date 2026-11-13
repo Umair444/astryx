@@ -190,7 +190,20 @@ def _nope(status: int = 401, body: bytes = FAILED) -> Response:
 
 
 async def viewer(request: Request, a: _Auth | None) -> str | None:
-    """The signed-in account behind this request, as identity's sub (uid@cog id), or None. The browser must say the
+    """viewer_id's sub alone (uid@cog id), or None."""
+    v = await viewer_id(request, a)
+    return v[0] if v else None
+
+
+def _mint(a: "_Auth", v: tuple[str, str], org: str) -> str:
+    """The signed identity for `org`: the account's sub and its own label (cog-who: the email's local part, so the
+    org can say WHICH human asked; never the whole email)."""
+    return identity.mint(a.key, v[0], org, name=v[1])
+
+
+async def viewer_id(request: Request, a: _Auth | None) -> tuple[str, str] | None:
+    """(sub, label) of the signed-in account behind this request, or None. sub is identity's (uid@cog id), the label
+    its email's local part. The browser must say the
     request started on this origin (Sec-Fetch-Site), and a state-changing method must also come FROM a configured
     origin (D7's Origin check, on top of SameSite=Strict)."""
     tok = request.cookies.get(SESSION)
@@ -208,7 +221,7 @@ async def viewer(request: Request, a: _Auth | None) -> str | None:
         s = await a.db(cogauth.session_of, tok)
     except Exception:  # noqa: BLE001 — a store that can't answer signs nobody in (fail closed), the key still works
         return None
-    return cogauth.sub(s[0], a.cog_id) if s else None
+    return (cogauth.sub(s[0], a.cog_id), str(s[1]).partition("@")[0]) if s else None
 
 
 @app.post("/auth/login")
@@ -345,8 +358,8 @@ async def cog_stream(request: Request):
             try:
                 if r["port"] is None:
                     raise httpx.ConnectError("no registry port")
-                who = await viewer(request, a)    # asked again at EVERY connect: a signed-out session stops here
-                signed = {identity.HEADER: identity.mint(a.key, who, r["org"])} if who else {}
+                who = await viewer_id(request, a)    # asked again at EVERY connect: a signed-out session stops here
+                signed = {identity.HEADER: _mint(a, who, r["org"])} if who else {}
                 async with client().stream("GET", f"http://127.0.0.1:{r['port']}/api/events", params=params,
                                            headers=signed) as s:
                     if s.status_code != 200:
@@ -514,10 +527,10 @@ async def _relay(org: str, path: str, request: Request):
     if r is None or r["port"] is None:
         return JSONResponse({"error": f"no org {org!r} in this cog"}, status_code=404)
     a = auth()
-    who = await viewer(request, a)
+    who = await viewer_id(request, a)
     # the signed identity for THIS org (D1), minted from the session the front verified; a caller's own copy was
     # never on the allowlist. No session: no identity, and the backend answers as it does to anyone (D2)
-    signed = [(identity.HEADER, identity.mint(a.key, who, org))] if who else []
+    signed = [(identity.HEADER, _mint(a, who, org))] if who else []
     # ONE allowlist (src/astryx/security/relay.py): the caller's allowed headers, only this org's own canvas cookie,
     # and the view the front OBSERVED: the Host it was reached at, the scheme its uvicorn resolved from its pinned
     # trusted peer, the client it saw. Never the caller's x-forwarded-* or X-Forwarded-For (plan-11859 X1/X2).

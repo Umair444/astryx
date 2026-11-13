@@ -15,7 +15,9 @@ import MessageHits from './MessageHits'
    SEARCH: titles (and previews, agents) filter the rows as you type; below them, "In messages" lists the messages
    that say it (GET /api/ws/search), and a hit opens its conversation at that message. */
 
-export default function ConversationList({ threads, loaded, current, live, projects, project, onGo, onNew, onProject, onPin, onRename, onClose, className = '', unread, view = 'thread', filter = null, onFilter, onLibrary, onProjects, onNewProject, onMove, onJump }: {
+export default function ConversationList({ threads, loaded, current, live, projects, project, onGo, onNew, onProject, onPin, onRename, onClose, className = '', unread, view = 'thread', filter = null, onFilter, onLibrary, onProjects, onNewProject, onMove, onJump, scope, onScope }: {
+  scope?: 'mine' | 'everyone'                  // cog-who: the list is a VIEW: my chats, or every human's (owner/admin)
+  onScope?: (s: 'mine' | 'everyone') => void   // absent: no toggle (a member's list is their own)
   onJump?: (h: MessageHit) => void            // a message search hit: open its conversation at that message
   view?: View                                  // which page is open (the nav marks it)
   filter?: string | null                       // a project the list is focused on
@@ -70,6 +72,11 @@ export default function ConversationList({ threads, loaded, current, live, proje
       <div className="h-14 shrink-0 flex items-center gap-2 pl-4 pr-2.5">
         <span className="ws-display text-[24px] leading-none tracking-tight text-ink">Chats</span>
         <span className="ml-auto" />
+        {onScope && (
+          <button className="ws-icon !w-auto px-2 text-[12px] text-ink-dim" aria-pressed={scope === 'everyone'}
+            title={scope === 'everyone' ? 'Showing every member\u2019s chats; show only mine' : 'Show every member\u2019s chats'}
+            onClick={() => onScope(scope === 'everyone' ? 'mine' : 'everyone')}>{scope === 'everyone' ? 'Everyone' : 'Mine'}</button>
+        )}
         <button className="ws-icon" onClick={onNew} title="New chat (⌘⇧O)" aria-label="new chat">{I.compose()}</button>
         {onClose && <button className="ws-icon" onClick={onClose} aria-label="close the list">{I.x()}</button>}
       </div>

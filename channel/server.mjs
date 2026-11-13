@@ -11,6 +11,7 @@ import pg from 'pg'
 import { readFileSync } from 'node:fs'
 import { homeFile, homePath, dsn } from './home.mjs'
 import { joinState } from './join.mjs'
+import { asker } from './asker.mjs'
 
 // mode 'repo' (spawn.sh's residents: ASTRYX_AGENT only) is the behaviour this file always had. The Claude Code
 // plugin sets ASTRYX_JOIN_DIR, and then a project that has not run /astryx:join gets a DORMANT server: no database,
@@ -91,6 +92,9 @@ const mcp = new Server(
       `MEDIA: an inbound image arrives as a file PATH — read it directly with your file tools (no ` +
       `caption is added; you see images natively); inbound audio/voice arrives TRANSCRIBED inline. ` +
       `To send back an image/audio/file, embed [[file:/absolute/path]] in the send body. ` +
+      `WHO ASKED: a human's from= is who asked (owner, cv-<name>.<n> a signed-in member with role="member", ` +
+      `cv-<name> a canvas guest, wa-<n> a WhatsApp sender); reply to THAT from= on that thread. Owner-only acts ` +
+      `(spend, the law, the personal tier, GaussDB approvals, permission verdicts) still need the owner himself. ` +
       `To be woken later or when something changes, use the \`trigger\` tool: CronCreate and ScheduleWakeup die with the session.`,
   },
 )
@@ -547,6 +551,7 @@ async function pushMessage(row) {
       meta: {
         from: `${row.from_agent}@${row.from_org}`, thread: row.thread || '',
         intent: row.intent, msg_id: String(row.id),
+        ...(asker(row) ? { role: asker(row) } : {}),
         ...(again ? { redelivered: String(again) } : {}),
       },
     },

@@ -1,5 +1,5 @@
 import { api, obsKey } from '../api'
-import type { Msg, Step } from '../types'
+import { isHuman, type Msg, type Step } from '../types'
 
 /* /chat's data layer (plan-11884). A chat is ONE wire thread, `chat:<id>`. Nothing here writes a message except
    through the store's send (POST /api/messages): one row per recipient, all on the same thread (R4). */
@@ -33,7 +33,7 @@ export function participants(rows: Msg[], roster: string[]): string[] {
   const known = new Set(roster)                     // agents only: pulse, a canvas, a federation peer never join
   const out: string[] = []
   for (const m of rows) {
-    const n = m.from === 'owner' ? m.to : m.to === 'owner' ? m.from : null
+    const n = isHuman(m.from) ? m.to : isHuman(m.to) ? m.from : null      // the human side: the owner or a member
     if (n && known.has(n) && !out.includes(n)) out.push(n)
   }
   return out

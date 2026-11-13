@@ -3,6 +3,7 @@ import '@fontsource/instrument-serif/400.css'
 import '@fontsource/instrument-serif/400-italic.css'
 import { DENIED, fetchWhoami, saveObsKey } from '../api'
 import { useStore } from '../store'
+import { talks } from '../types'
 import { Toasts, dismiss, toast } from './toast'
 import './gate.css'
 import './phone.css'
@@ -44,7 +45,7 @@ export default function ChatGate({ thread, go }: { thread: string | null; go: (t
 
   // signed out: is it the key, or is nobody home?
   const probe = useCallback(async () => { setReach((await reachable()) ? 'up' : 'down') }, [])
-  useEffect(() => { if (whoChecked && !who.owner) void probe() }, [whoChecked, who.owner, probe])
+  useEffect(() => { if (whoChecked && !talks(who)) void probe() }, [whoChecked, who, probe])
   useEffect(() => {
     if (reach !== 'down') return
     const i = setInterval(() => void probe().then(() => recheckWho()), RETRY_MS)
@@ -53,16 +54,16 @@ export default function ChatGate({ thread, go }: { thread: string | null; go: (t
 
   // a keyed 403 somewhere: believe it only when /whoami agrees the key no longer opens the org
   useEffect(() => {
-    if (!who.owner) return
+    if (!talks(who)) return
     let checking = false
     const on = async () => {
       if (checking) return
       checking = true
-      try { const w = await fetchWhoami(); if (!w.owner) setDenied(true) } catch { /* unreachable is not denied */ } finally { checking = false }
+      try { const w = await fetchWhoami(); if (!talks(w)) setDenied(true) } catch { /* unreachable is not denied */ } finally { checking = false }
     }
     addEventListener(DENIED, on)
     return () => removeEventListener(DENIED, on)
-  }, [who.owner])
+  }, [who])
 
   // the network itself: a sticky toast while the browser says it is offline
   useEffect(() => {
@@ -90,7 +91,7 @@ export default function ChatGate({ thread, go }: { thread: string | null; go: (t
 
   let body: React.ReactNode
   if (!whoChecked) body = <Loading />
-  else if (!who.owner) body = reach === 'down' ? <Offline onRetry={async () => { await probe(); await recheckWho() }} /> : reach === 'unknown' ? <Loading /> : <Door onIn={signedIn} />
+  else if (!talks(who)) body = reach === 'down' ? <Offline onRetry={async () => { await probe(); await recheckWho() }} /> : reach === 'unknown' ? <Loading /> : <Door onIn={signedIn} />
   else body = (
     <>
       {/* inert while the door is up: no focus, no click and no screen reader reaches the workspace under it */}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, ApiError, apiSend, displayName } from '../api'
-import type { AgentRow, Msg } from '../types'
+import { isHuman, type AgentRow, type Msg } from '../types'
 
 /* "The team is present" (iteration 6, DESIGN.md wow 1, 2, 6): the data behind the moments the workspace shows work
    MOVING between agents. Handoff payloads (GET /api/ws/handoffs), the Stop button's interrupt, the live team map's
@@ -93,7 +93,7 @@ export function useUnread(threads: { thread: string; last_ts: string | null; las
   }, [threads, open])
   const unread = useMemo(() => {
     const out = new Set<string>()
-    for (const t of threads) if (t.thread !== open && t.last_ts && t.last_from && t.last_from !== 'owner' && seen[t.thread] && t.last_ts > seen[t.thread]) out.add(t.thread)
+    for (const t of threads) if (t.thread !== open && t.last_ts && t.last_from && !isHuman(t.last_from) && seen[t.thread] && t.last_ts > seen[t.thread]) out.add(t.thread)
     return out
   }, [threads, seen, open])
   return unread
