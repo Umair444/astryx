@@ -5,6 +5,7 @@ import { saveObsKey } from './api'
 import { LOGIN, signInHref } from './auth'
 import { useMe, whoLabel } from './me'
 import { StoreProvider, useStore } from './store'
+import { talks } from './types'
 import { CogProvider, useCog } from './cog'
 import { CogChooser, CogSwitcher } from './components/CogBuilding'
 import Sidebar from './components/Sidebar'
@@ -261,7 +262,8 @@ function Shell() {
   const me = useMe()             // signed in: your name and the org's in place of 'local' (owner 11-13)
   const cog = useCog()
   // the Floor and the Network are the org's public faces; everything else is the owner's
-  const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network' || t.key === 'floor')
+  // cog-who: a signed-in member also has the chat workspace (the route itself is ChatGate's, which admits them)
+  const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network' || t.key === 'floor' || (t.key === 'chat' && talks(who)))
   const locked = !who.owner && route.tab !== 'network' && route.tab !== 'floor'
   const openAgent = (n: string) => (who.owner ? setTalking(n) : setAgentOpen(n))
 

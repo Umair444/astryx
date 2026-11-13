@@ -490,7 +490,16 @@ MEMBER_GET = ("/api/ws/threads", "/api/ws/thread-titles", "/api/ws/search", "/ap
 
 
 def member_may(m: str, p: str) -> bool:
-    return (m, p) in MEMBER or (m == "GET" and p.startswith(MEMBER_GET))
+    return (m, p) in MEMBER or (m == "GET" and p.startswith(MEMBER_GET) and p != "/api/chat/file")
+
+
+async def member_file(request: Request) -> bool:
+    """/api/chat/file for a member: only a file some message on the wire ATTACHED ([[file:<path>]]), never any path
+    under the homes (chat.roots() spans whole agent homes; the personal tier binds every user, DESIGN Phase 2)."""
+    path = request.query_params.get("path", "")
+    if not path or pool is None:
+        return False
+    return bool(await pool.fetchval("SELECT 1 FROM messages WHERE strpos(body, $1) > 0 LIMIT 1", f"[[file:{path}]]"))
 
 
 @app.middleware("http")
@@ -499,7 +508,8 @@ async def privacy_gate(request: Request, call_next):
     p = request.url.path
     m = "GET" if request.method == "HEAD" else request.method
     if (p.startswith("/api/") and (m, p) not in PUBLIC and not (m == "GET" and _PUBLIC_AVATAR.match(p))
-            and not is_owner(request) and not (member_may(m, p) and insider(request))):
+            and not is_owner(request) and not (member_may(m, p) and insider(request))
+            and not (m == "GET" and p == "/api/chat/file" and insider(request) and await member_file(request))):
         return Response(status_code=403)
     if _DEV_NO_WIRE and m != "GET" and _WIRE_WRITE.match(p):
         return JSONResponse({"error": "dev server: wire writes are disabled (ASTRYX_DEV_NO_WIRE)"}, status_code=503)

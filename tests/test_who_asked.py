@@ -17,6 +17,7 @@ temp HOME (identity.make_keys), every signed identity minted by identity.mint wi
   R1 A REPLY TO THE HANDLE is delivered on that thread: canvas.py's own CLAIM (executed on the fixture) takes the
      agent->cv-<x>.<n> row on the chat: thread, and leaves the agent->owner reply on a chat: thread alone (as ever);
      /api/thread/read by the member marks only rows to HER handle, the owner's only his.
+  R3 /api/chat/file for a member passes the gate only for a path some message ATTACHED ([[file:…]]); a viewer never.
   R2 the member reads the wire as the owner does (no privacy within an org): GET /api/messages?thread= returns the
      owner-only thread unfiltered for her, and filtered (nothing) for an anonymous caller.
   V1 THE VIEW: /api/ws/threads defaults to the viewer's own conversations (member: hers; owner: his), and
@@ -162,6 +163,34 @@ def main(tmp: Path, url: str):
         to_alice in claimed and st.get(to_alice) == "delivered", (claimed, st))
     arm("R1 ...and leaves the agent->owner reply on a chat: thread alone (owner unchanged)",
         to_owner not in claimed and st.get(to_owner) == "pending", (claimed, st))
+    # canvas.py's claim() then runs thread_user's INSERT for that row: canvas_threads takes a member's bare name
+    ins = re.search(r'"(INSERT INTO canvas_threads \(thread, user_name, agent, title\) VALUES \(\$1,\$2,\$3,\$4\) )"\s*"(ON CONFLICT \(thread\) DO NOTHING)"',
+                    (REPO / "bridges" / "canvas.py").read_text())
+    arm("R1 thread_user's canvas_threads INSERT is the one this oracle runs", bool(ins))
+    if ins:
+        sql = (ins.group(1) + ins.group(2)).replace("$1", "%s").replace("$2", "%s").replace("$3", "%s").replace("$4", "%s")
+        try:
+            with psycopg.connect(url, autocommit=True) as c:
+                c.execute(sql, ("chat:20990101-alice", ALICE[3:], "seed", "reply to alice"))
+                u = c.execute("SELECT user_name FROM canvas_threads WHERE thread='chat:20990101-alice'").fetchone()
+            arm("R1 ...and registers the chat under the member (no FK/CHECK refuses alice.7)", u == (ALICE[3:],), u)
+        except psycopg.Error as e:
+            arm("R1 ...and registers the chat under the member (no FK/CHECK refuses alice.7)", False, e)
+    # /api/chat/file: a member opens what the wire ATTACHED, never any path under the homes
+    att = tmp / "estate-media" / "att.txt"
+    att.parent.mkdir(parents=True, exist_ok=True)
+    att.write_text("attached\n")
+    other = att.parent / "other.txt"
+    other.write_text("not attached\n")
+    with psycopg.connect(url, autocommit=True) as c:
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+                  "('seed', %s, 'chat:20990101-alice', 'chat', %s)", (ALICE, f"here [[file:{att}]]"))
+    fa = cl.get("/api/chat/file", params={"path": str(att)}, headers=as_("7@fxcog", "alice")).status_code
+    fo = cl.get("/api/chat/file", params={"path": str(other)}, headers=as_("7@fxcog", "alice")).status_code
+    fv = cl.get("/api/chat/file", params={"path": str(att)}, headers=as_("9@fxcog", "vic")).status_code
+    arm("R3 a member's /api/chat/file passes the gate for an attached path", fa != 403, fa)
+    arm("R3 ...and is 403 for a path no message attached", fo == 403, fo)
+    arm("R3 ...and a viewer is 403 even for the attached one", fv == 403, fv)
     gm = cl.get("/api/messages", params={"thread": "chat:20990101-owner"}, headers=as_("7@fxcog", "alice")).json()
     ga = anon.get("/api/messages", params={"thread": "chat:20990101-owner"}).json()
     arm("R2 a member reads the owner's thread unfiltered", sorted(m["body"] for m in gm) == ["owner signed", "owner via key", "reply to owner"], gm)
