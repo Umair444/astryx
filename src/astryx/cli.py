@@ -312,11 +312,18 @@ def _pulse_next() -> str:
 
 
 def _overview() -> dict | None:
-    try:
-        with urllib.request.urlopen(OBS_URL + "api/overview", timeout=3) as r:
-            return json.loads(r.read().decode())
-    except Exception:
-        return None
+    # a cog's front speaks TLS on :8090 (its own certificate, often self-signed: loopback only, so unverified is fine
+    # here); a one-org host without one still answers plain http. Try TLS first, then plain.
+    import ssl
+    loose = ssl.create_default_context()
+    loose.check_hostname, loose.verify_mode = False, ssl.CERT_NONE
+    for url, ctx in ((OBS_URL.replace("http://", "https://", 1), loose), (OBS_URL, None)):
+        try:
+            with urllib.request.urlopen(url + "api/overview", timeout=3, context=ctx) as r:
+                return json.loads(r.read().decode())
+        except Exception:
+            continue
+    return None
 
 
 def cmd_status(ctx: Ctx, a) -> int:
