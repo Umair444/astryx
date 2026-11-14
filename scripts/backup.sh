@@ -216,7 +216,9 @@ host_pg_ok() {
   command -v "$1" >/dev/null || return 1
   local cmaj smaj
   cmaj=$("$1" --version 2>/dev/null | grep -oE '[0-9]+' | head -1)
-  smaj=$(psql -Atq -d "$DSN" -c 'SHOW server_version_num' 2>/dev/null || pg_exec psql -Atq -U "$(pg_dsn_user "$DSN")" -c 'SHOW server_version_num' 2>/dev/null)
+  # -w, </dev/null and a connect timeout: the probe fails fast, never waits on a prompt or a dead connect (medic #66298)
+  smaj=$(PGCONNECT_TIMEOUT=10 psql -w -Atq -d "$DSN" -c 'SHOW server_version_num' </dev/null 2>/dev/null \
+    || pg_exec psql -w -Atq -U "$(pg_dsn_user "$DSN")" -c 'SHOW server_version_num' </dev/null 2>/dev/null)
   smaj=$(( ${smaj:-0} / 10000 ))
   [ -n "$cmaj" ] && [ "$cmaj" -ge "$smaj" ]
 }

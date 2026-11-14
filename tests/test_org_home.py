@@ -256,7 +256,8 @@ def arms(fx):
     for name, body in (("pg_isready", "exit 0"),
                        ("pg_dump", f'printf "%s" "$2" > {str(rec)!r}; printf "PGDMP fixture"'),
                        ("pg_dumpall", "echo 'CREATE ROLE fxorg_role;'")):
-        (shim / name).write_text(f"#!/bin/sh\n{body}\n")
+        # each stand-in answers --version with a version, so backup.sh's host_pg_ok keeps the host shim (medic #66296)
+        (shim / name).write_text(f'#!/bin/sh\n[ "$1" = --version ] && {{ echo "{name} (PostgreSQL) 99"; exit 0; }}\n{body}\n')
         (shim / name).chmod(0o755)
     olds = {}
     for o in ("a", "b"):
