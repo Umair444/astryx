@@ -18,7 +18,7 @@ as a logged side effect, never as a session.
 
   R1 a resident renders exactly CLAUDE.md, .mcp.json and .claude/settings.json, and nothing else
   R2 .mcp.json: {astryx, tools, hands, influence}, and with a grant spliced in {astryx, tools, hands, influence,
-     gmail}, valid JSON
+     mail} (the fixture writes `Grants: gmail`, the grant's old name, which must still mount mail), valid JSON
   R11 influence (who_should_i_ask, plan-11324, seed #58432) is the tree's mcp/influence/server.py with
       ASTRYX_AGENT = the agent written into its env (never inherited); `Grants: memory` mounts mcp/memory (ask)
       and adds ONLY memory to the resident set (the tool left that server; the grant gained nothing)
@@ -181,8 +181,8 @@ try:
     except Exception as e:  # noqa: BLE001
         servers, env_ = {}, {}
         check("R2 grant render is valid JSON", False, f"{e}: {r.stderr[-200:]}")
-    check("R2 with a grant spliced: {astryx, tools, hands, influence, gmail}",
-          set(servers) == RESIDENT_SET | {"gmail"}, str(sorted(servers)))
+    check("R2 with a grant spliced (`gmail`, the old name): {astryx, tools, hands, influence, mail}",
+          set(servers) == RESIDENT_SET | {"mail"}, str(sorted(servers)))
     check("R3 Think: off lands (MAX_THINKING_TOKENS=0)", env_.get("MAX_THINKING_TOKENS") == "0",
           str(env_))
     check("R3 the provider token splice lands, as in a real spawn",

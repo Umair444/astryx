@@ -4,8 +4,8 @@ tier-crossing doorbell (signals table, plan-16 / goal 16).
 
 WHY THIS EXISTS. canopus's highest-value inbound is a recruiter reply to a live
 job application; a screen invite is time-sensitive. Detected only by canopus's
-daily 09:00 gmail sweep, worst-case latency is ~24h — too slow. SQL/python
-triggers can't help directly: they see postgres, not gmail. This poller is the
+daily 09:00 mail sweep, worst-case latency is ~24h — too slow. SQL/python
+triggers can't help directly: they see postgres, not mail. This poller is the
 bridge — it lands a WAKE (not the mail) into postgres, where an SQL trigger can
 fire canopus in minutes.
 
@@ -25,7 +25,7 @@ wire or any RAG-reachable store. This poller:
     ever lands in the row (schema forbids it; signals_schema_guard.py watches);
   • keeps its dedup watermark in a 0600 file under gitignored homes/canopus/,
     holding only integers (uidvalidity, last_uid) — no mail content.
-On wake, canopus resolves the actual mail via its OWN gmail grant (re-search;
+On wake, canopus resolves the actual mail via its OWN mail grant (re-search;
 the daily sweep is the backstop if the opaque ref has rotted).
 
 EXPOSURE, NAMED HONESTLY. A same-uid peer can SELECT signals and infer career-
@@ -46,7 +46,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
-from astryx import config, paths  # noqa: E402
+from astryx import config, mail, paths  # noqa: E402
 
 import email
 import email.header
@@ -59,11 +59,10 @@ import psycopg
 
 REPO = repo_root(__file__)
 ESTATE = paths.estate(__file__)       # the org's .env and homes/ (plan-11324 S3a: the HOME in a cog of several orgs)
-# the mailbox login is read when the scan RUNS, never at import (a1 #62275/#62276): a tree with no .env (every
-# pushed-tree clone) must still import this module; a run with the keys missing still fails loudly, at login
-def _login_creds() -> tuple[str, str]:
-    env = config.read_env(ESTATE / ".env")      # the one .env reader (plan-10224 ENVREAD)
-    return env["GMAIL_ADDRESS"], env["GMAIL_APP_PASSWORD"]
+# the mailbox (MAIL_* in the .env, src/astryx/mail.py) is read when the scan RUNS, never at import (a1 #62275/#62276):
+# a tree with no .env (every pushed-tree clone) must still import this module; a run with no mailbox fails loudly
+def _env() -> dict:
+    return config.read_env(ESTATE / ".env")      # the one .env reader (plan-10224 ENVREAD)
 
 
 def _dsn() -> str:   # read when the scan connects, never at import (a1 #62279): the module has no import-time .env read
@@ -122,10 +121,8 @@ URGENT_TOKENS = (
 )
 
 
-def imap() -> imaplib.IMAP4_SSL:
-    m = imaplib.IMAP4_SSL("imap.gmail.com")
-    m.login(*_login_creds())
-    return m
+def imap() -> imaplib.IMAP4:
+    return mail.imap(_env())
 
 
 def dec(v) -> str:

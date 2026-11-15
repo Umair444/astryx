@@ -6,10 +6,10 @@
   ],
   "author": "unknown"
  },
- "gmail": {
+ "mail": {
   "command": "venv/bin/python",
   "args": [
-   "mcp/gmail/server.py"
+   "mcp/mail/server.py"
   ],
   "author": "unknown"
  },

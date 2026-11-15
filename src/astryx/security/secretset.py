@@ -42,7 +42,8 @@ NOT_SECRET = frozenset({
     "GROWBOT_BODY_URL", "ASTRYX_NODE",
     # hearing (plan-8674 S1): switches and tuning for the ear; none is a credential
     "EAR_ENABLED", "EAR_ROOM", "EAR_STT_BACKEND", "EAR_STT_MODEL", "EAR_STT_BEAM", "EAR_TTL_DAYS", "EAR_QUEUE_MAX",
-    "GMAIL_ADDRESS",        # an identifier (tier question, not a credential): see plan-5497 BC-b
+    # mail (src/astryx/mail.py): the address and the servers are identifiers and locations; MAIL_PASSWORD stays secret
+    "MAIL_FROM", "MAIL_USER", "MAIL_SMTP", "MAIL_IMAP", "MAIL_SECURITY",
     # distribution (plan-10224): which repo is upstream and whether this org IS it, the federation relay's
     # public URL, and the docker bridge address; switches and public locations, none grants anything
     "ASTRYX_UPSTREAM", "ASTRYX_UPSTREAM_ROLE", "ASTRYX_RELAY", "ASTRYX_DOCKER_HOST_IP",

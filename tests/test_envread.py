@@ -9,7 +9,7 @@ no variable the fixture .env names inherited (every key an arm reads is planted 
 from T/.env, a1 #62369 A1), and HOME=T/home (no reader reaches a file under the real HOME).
   E0 read_env itself: an unrelated bad line → the other keys read; the asked key's bad line → absent (its later line
      not taken); stderr names file:line, never the planted value
-  E1 contrib/canopus_inbound.py   GMAIL_ADDRESS at login          E2 federation/card_assert.py   _env("ASTRYX_ORG")
+  E1 contrib/canopus_inbound.py   MAIL_FROM at login              E2 federation/card_assert.py   _env("ASTRYX_ORG")
   E3 hands/android.py             sdk() from ANDROID_SDK_ROOT       E4 hands/hands_desktop.py      _env_int("HANDS_STEP_CAP")
   E5 pulse/shipped_triggers/org_backup.py   _org(estate)
   E8 core/upstream_pr.py          setting("ASTRYX_UPSTREAM")        E9 hearing/ear_store.py        _env("EAR_TTL_DAYS")
@@ -32,7 +32,7 @@ from T/.env, a1 #62369 A1), and HOME=T/home (no reader reaches a file under the 
      E7a pins the census on a planted git tree (a reader in mcp/, hooks/, bridges/, devtools/, scripts/, src/, the top
      level, through a module name, a helper, another module; a regex-only and an AST-only site; negative controls), E7b
      runs it on THIS tree.
-  The mcp/, hooks/, bridges/, observatory/ and devtools/ readers migrated with E8–E14 (mcp/{gmail,growbot,imagegen,
+  The mcp/, hooks/, bridges/, observatory/ and devtools/ readers migrated with E8–E14 (mcp/{mail,growbot,imagegen,
   jobs,memory,contacts}/server.py, hooks/nudge.py, bridges/gateway.py, observatory/api/main.py _env_key_names,
   devtools/branch_check_prep.py read_env) can't be imported hermetically (FastMCP, a live bridge, the observatory app,
   psycopg at import): E7 is their gate.
@@ -75,8 +75,8 @@ def seat(t: Path) -> None:
 
 BAD = b"NOTE=\xff\xfe " + PLANTED.encode() + b"\n"       # line 2 of every fixture .env
 ENV = (b"ASTRYX_DSN=postgresql://nobody@127.0.0.1:1/astryx_fx_envread\n" + BAD
-       + b"ASTRYX_ORG=envread.fixture.test\nGMAIL_ADDRESS=fixture@example.invalid\n"
-       b"GMAIL_APP_PASSWORD=fx-not-a-password\nANDROID_SDK_ROOT=/fx/sdk\nHANDS_STEP_CAP=7\n"
+       + b"ASTRYX_ORG=envread.fixture.test\nMAIL_FROM=fixture@example.invalid\n"
+       b"MAIL_PASSWORD=fx-not-a-password\nANDROID_SDK_ROOT=/fx/sdk\nHANDS_STEP_CAP=7\n"
        b"ASTRYX_UPSTREAM=https://example.invalid/fx-PLANTED-up/astryx\nEAR_TTL_DAYS=5\n"
        b"CANVAS_VOICE_DAILY_MINUTES=12.5\nOPENAI_API_KEY=fx-PLANTED-not-a-key\nPEOPLE_SALT=fx-PLANTED-salt\n"
        b"ASTRYX_RELEASE_KEY=fx-PLANTED-release-key-0123456789abcdef\nASTRYX_NODE=/fx/bin/node\n")
@@ -111,7 +111,7 @@ NO_FED = NO_PG + ("_absent = [p for p in ('httpx', 'nacl') if importlib.util.fin
                   "    sys.modules['nacl.signing'].SigningKey = sys.modules['nacl.signing'].VerifyKey = object\n")
 SITES = [
     ("E1", "contrib/canopus_inbound.py", "import sys, types; sys.modules.setdefault('psycopg', types.ModuleType('psycopg'));"
-     " import astryx.contrib.canopus_inbound as m; print(m._login_creds()[0])",   # psycopg is only main()'s: a stub where it's absent
+     " import astryx.contrib.canopus_inbound as m; print(m._env()['MAIL_FROM'])",   # psycopg is only main()'s: a stub where it's absent
      "fixture@example.invalid"),
     ("E2", "federation/card_assert.py", "import astryx.federation.card_assert as m; print(m._env('ASTRYX_ORG'))",
      "envread.fixture.test"),
