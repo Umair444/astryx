@@ -403,6 +403,7 @@
 .ws-calc { background: #0e1014; color: #e6e8ec; border-radius: 6px; box-shadow: 0 0 0 3px #0e1014; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .ws-calc-mark { color: #5d6472; }
 .ws-calc-eq { color: #c3e88d; }
+.ws-calc[data-bad] { box-shadow: 0 0 0 3px #0e1014, 0 0 0 4.5px #e5484d; }   /* a box the server refused */
 
 /* a team's live line: the faces overlap, each cut out of the page by a ring of the page's own colour */
 .ws-team-face { position: relative; display: inline-flex; border-radius: 9999px; box-shadow: 0 0 0 2px var(--t-bg); }

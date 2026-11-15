@@ -62,20 +62,23 @@ export function boxes(text: string): { start: number; end: number; inner: string
    expression when inside the black box"): the box the caret is in shows its EXPRESSION alone, to edit; every other box
    shows "expression = answer". `known` holds the answers already worked out (expression -> answer), so leaving a box
    whose expression is unchanged resolves at once; an expression with no answer yet is returned in `ask`, for the
-   composer to evaluate and settle again. The caret keeps its place in the text around it. Pure. */
-export function settle(text: string, caret: number, known: Map<string, string>): { text: string; caret: number; ask: string[] } {
+   composer to evaluate and settle again, unless `skip` says it already failed (medic 12231: a box the server refuses
+   was asked again at every caret move and spent the viewer's calc quota). `known` is filled by the caller from real
+   answers only, never from text in the box (a pasted "2+2 = 5" must not answer a later 2+2). The caret keeps its
+   place in the text around it. Pure. */
+export function settle(text: string, caret: number, known: Map<string, string>,
+                       skip: (expr: string) => boolean = () => false): { text: string; caret: number; ask: string[] } {
   let out = text, at = caret
   const ask: string[] = []
   for (const b of boxes(text).reverse()) {                 // last first: an edit never moves a box still to be read
     const { expr, result } = splitCalc(b.inner)
     const inside = caret > b.start && caret <= b.end
-    if (result !== null && expr) known.set(expr, result)
     let inner = b.inner
     if (inside) inner = expr ? (result !== null ? expr : b.inner) : b.inner
     else if (expr && result === null) {
       const k = known.get(expr)
       if (k !== undefined) inner = `${expr}${SEP}${k}`
-      else ask.push(expr)
+      else if (!skip(expr)) ask.push(expr)
     }
     if (inner === b.inner) continue
     out = out.slice(0, b.start + 1) + inner + out.slice(b.end)

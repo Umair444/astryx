@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { apiSend, displayName } from '../../api'
+import { ApiError, apiSend, displayName } from '../../api'
 import AgentFace from '../../components/AgentFace'
 import { startDictation, stopDictation, useDictation } from '../dictate'
 import { mentions, upload, type McpTool, type Skill, type Uploaded } from '../model'
@@ -214,8 +214,8 @@ export default forwardRef<ComposerHandle, {
       for (const b of [...boxes(text)].reverse()) {          // a box nobody pressed Enter in is evaluated now
         const { expr, result } = splitCalc(b.inner)
         if (result === null && expr) {
-          try { calcText = setResult(calcText, b, await calculate(expr)).text }
-          catch { throw new Error(`Couldn't calculate “${expr}”. Fix the box or delete it.`) }
+          try { calcText = setResult(calcText, b, await answer(expr)).text }
+          catch (e) { calcErr(expr, e); throw new Error(`Couldn't calculate “${expr}”. Fix the box or delete it.`) }
         }
       }
       if (calcText !== text) setText(calcText)
@@ -242,14 +242,30 @@ export default forwardRef<ComposerHandle, {
   // A BOX IS A CELL (calc.ts settle): on every caret move the box the caret is in shows its expression, the rest show
   // "expression = answer"; an expression with no answer yet is worked out here and the boxes settle again. Leaving
   // the composer counts as leaving every box (caret -1).
-  const known = useRef(new Map<string, string>())
+  const known = useRef(new Map<string, string>())       // expression -> its answer, from the server only
   const asking = useRef(new Set<string>())
+  // an expression the server refused is never asked again while it reads the same (a 400/422 for good; a 429, a 5xx
+  // or a dropped line for a minute): asked at every caret move it spent the viewer's calc quota, Send's too (medic 12231)
+  const failed = useRef(new Map<string, number>())
+  const skip = (expr: string) => (failed.current.get(expr) ?? 0) > Date.now()
+  const calcErr = (expr: string, e: unknown) => {
+    const st = e instanceof ApiError ? e.status : 0
+    failed.current.set(expr, st >= 400 && st < 500 && st !== 429 ? Infinity : Date.now() + 60_000)
+    return `Couldn't calculate “${expr}”: ${String((e as Error).message ?? e).replace(/^\/chat\/calc: /, '')}`
+  }
+  async function answer(expr: string): Promise<string> {   // the one way a box is worked out: known first, then the server
+    const k = known.current.get(expr)
+    if (k !== undefined) return k
+    const v = await calculate(expr)
+    known.current.set(expr, v)
+    return v
+  }
   // an answer that arrives later settles against the box AS IT IS THEN (its value and caret, read from the element):
   // a remembered caret would pull the cursor back while the person types on
   const now = () => { const el = box.current; return el ? { t: el.value, c: document.activeElement === el ? el.selectionStart ?? -1 : -1 } : null }
   function resettle(t: string, caret: number) {
     if (!t.includes(OPEN)) return
-    const r = settle(t, caret, known.current)
+    const r = settle(t, caret, known.current, skip)
     if (r.text !== t) {
       setText(r.text)
       const el = box.current
@@ -258,8 +274,8 @@ export default forwardRef<ComposerHandle, {
     for (const expr of r.ask) {
       if (asking.current.has(expr)) continue
       asking.current.add(expr)
-      calculate(expr).then((v) => { known.current.set(expr, v); const n = now(); if (n) resettle(n.t, n.c) })
-        .catch((e) => setErr(`Couldn't calculate “${expr}”: ${String((e as Error).message ?? e).replace(/^\/chat\/calc: /, '')}`))
+      answer(expr).then(() => { const n = now(); if (n) resettle(n.t, n.c) })
+        .catch((e) => setErr(calcErr(expr, e)))
         .finally(() => asking.current.delete(expr))
     }
   }
@@ -334,7 +350,7 @@ export default forwardRef<ComposerHandle, {
           </div>
         )}
         <div className="relative">
-        {text.includes(OPEN) && <CalcMirror ref={mirror} text={text} hero={hero} />}
+        {text.includes(OPEN) && <CalcMirror ref={mirror} text={text} hero={hero} bad={skip} />}
         <textarea ref={box} value={text} rows={1} aria-label="message" data-composer spellCheck={!text.includes(OPEN)}
           onChange={(e) => {
             const opened = openCalc(e.target.value, e.target.selectionStart ?? e.target.value.length)   // "= " opens a box
@@ -408,13 +424,14 @@ export default forwardRef<ComposerHandle, {
 
 /* THE BOXES, drawn: the composer's text again, behind the (then transparent) textarea, in its exact type and padding,
    each ⟦…⟧ a dark box. The textarea stays the one thing you type in, so a box edits like any text. */
-const CalcMirror = forwardRef<HTMLDivElement, { text: string; hero: boolean }>(function CalcMirror({ text, hero }, ref) {
+const CalcMirror = forwardRef<HTMLDivElement, { text: string; hero: boolean; bad?: (expr: string) => boolean }>(function CalcMirror({ text, hero, bad }, ref) {
   const parts: React.ReactNode[] = []
   let i = 0
   for (const b of boxes(text)) {
     if (b.start > i) parts.push(text.slice(i, b.start))
     const k = b.inner.lastIndexOf(' = ')        // the RAW characters, so the box sits exactly under the typed text
-    parts.push(<span key={b.start} className="ws-calc"><span className="ws-calc-mark">{OPEN}</span>{k < 0 ? b.inner : <>{b.inner.slice(0, k)}<span className="ws-calc-eq">{b.inner.slice(k)}</span></>}<span className="ws-calc-mark">{CLOSE}</span></span>)
+    // a box the server refused keeps saying so (a red edge, its reason on hover is the error line), not just once
+    parts.push(<span key={b.start} className="ws-calc" data-bad={bad?.(splitCalc(b.inner).expr) || undefined}><span className="ws-calc-mark">{OPEN}</span>{k < 0 ? b.inner : <>{b.inner.slice(0, k)}<span className="ws-calc-eq">{b.inner.slice(k)}</span></>}<span className="ws-calc-mark">{CLOSE}</span></span>)
     i = b.end + 1
   }
   parts.push(text.slice(i) + '\u200b')

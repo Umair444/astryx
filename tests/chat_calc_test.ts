@@ -52,4 +52,13 @@ arm('only the box with the caret opens; the others stay resolved', t2.text === t
 const t3 = settle('⟦1+1 = 2⟧ x ⟦2*3⟧', 0, new Map([['2*3', '6']]))   // the caret before every box
 arm('a caret before a box keeps its place when the box resolves', t3.text === '⟦1+1 = 2⟧ x ⟦2*3 = 6⟧' && t3.caret === 0, t3)
 
+// medic 12231: a box that FAILED is never asked again on the next caret moves (it spent the calc quota)
+const bad = 'x ⟦load factor * 2⟧ y'
+let asks = 0
+for (const c of [bad.length, bad.length - 1, 1, 0, bad.length]) asks += settle(bad, c, new Map(), (e) => e === 'load factor * 2').ask.length
+arm('a failed expression is skipped: five caret moves ask nothing', asks === 0, asks)
+const pasted = settle('⟦2+2 = 5⟧ then ⟦2+2⟧', 20, new Map())
+arm('an answer typed or pasted into a box never answers another box (known comes from real answers only)',
+  pasted.text === '⟦2+2 = 5⟧ then ⟦2+2⟧' && pasted.ask.join() === '2+2', pasted)
+
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')
