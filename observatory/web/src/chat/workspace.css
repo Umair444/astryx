@@ -411,3 +411,14 @@
 .ws-check { width: 16px; height: 16px; flex: none; display: grid; place-items: center; border-radius: 5px; font-size: 11px;
   line-height: 1; border: 1.5px solid var(--t-line); color: transparent; }
 .ws-check[data-on] { background: var(--t-accent); border-color: var(--t-accent); color: var(--t-bg); }
+/* a DELIVERABLE card (thread/deliverable.ts): what an agent hands over, framed, with its actions in the bar */
+.ws-dl { margin: 10px 0; border: 1px solid var(--t-line); border-radius: 12px; overflow: hidden; background: var(--t-panel); }
+.ws-dl-bar { display: flex; align-items: center; gap: 8px; padding: 7px 10px 7px 12px; border-bottom: 1px solid var(--t-line);
+  background: color-mix(in srgb, var(--t-fg) 3%, transparent); font-size: 12.5px; }
+.ws-dl-kind { flex: none; font-weight: 600; color: var(--t-accent); text-transform: uppercase; letter-spacing: .04em; font-size: 10.5px; }
+.ws-dl-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--t-fg); font-weight: 500; }
+.ws-dl-btn { flex: none; border: 1px solid var(--t-line); border-radius: 7px; padding: 2px 9px; font-size: 12px; color: var(--t-fg);
+  background: var(--t-panel); text-decoration: none; cursor: pointer; }
+.ws-dl-btn:hover { border-color: var(--t-accent); }
+.ws-dl-body { padding: 10px 14px 4px; }
+.ws-dl-body > .ws-cb { margin: 0 0 8px; }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { useContext, useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { Marked } from 'marked'
 import DOMPurify from 'dompurify'
 import type { Msg } from '../../types'
@@ -6,7 +6,9 @@ import TableActions from './TableActions'
 import { splitProvenance } from './provenance'
 import { codeBlock, fenceBareSql } from './code'
 import { humanHtml } from './md'
-import { PURIFY } from './clip'
+import { clipHtml, clipPlain, copyRich, PURIFY } from './clip'
+import { deliverableBlock, kindOf } from './deliverable'
+import { TurnActionsCtx, type TurnActionsValue } from './TurnActions'
 
 /* An agent's answer as a page: full GFM (tables, lists, code, quotes), the way canvas renders it (canvas/web/src/ui.tsx
    Markdown). components/Md is a deliberately small renderer with no tables, and agents answer BI questions in tables.
@@ -14,7 +16,11 @@ import { PURIFY } from './clip'
 
 /* this answer's own parser (not the shared `marked`): a fenced block draws as code with its language and a Copy
    button (./code.ts), and SQL pasted without a fence is fenced first */
-const md = new Marked({ gfm: true, breaks: true }, { renderer: { code: ({ text, lang }) => codeBlock(text, lang) } })
+// a fence named for a DELIVERABLE kind (```email, ```doc, ```html …) draws as its card (deliverable.ts), any other as code
+const md: Marked = new Marked({ gfm: true, breaks: true }, { renderer: { code: ({ text, lang }) => {
+  const kind = kindOf(lang)
+  return kind ? deliverableBlock(text, kind, (m) => md.parse(fenceBareSql(m), { async: false }) as string) : codeBlock(text, lang)
+} } })
 
 /* `msg` (an agent's turn): its tables get Chart / CSV / Excel on hover (TableActions, iteration 9) */
 // PURIFY: the one sanitizer setting for agent text, shared with the copy (clip.ts), so a paste is never more permissive
@@ -37,7 +43,8 @@ export default function Prose({ text, msg }: { text: string; msg?: Msg }) {
   const foot = useMemo(() => (source ? DOMPurify.sanitize(md.parseInline(source, { async: false }) as string, PURIFY) : ''), [source])
   const [el, setEl] = useState<HTMLDivElement | null>(null)
   useHighlight(el, html)
-  const prose = <div ref={setEl} className="ws-prose" onClick={copyCode} dangerouslySetInnerHTML={{ __html: html }} />
+  const acts = useContext(TurnActionsCtx)
+  const prose = <div ref={setEl} className="ws-prose" onClick={(e) => { copyCode(e); deliver(e, acts, msg) }} dangerouslySetInnerHTML={{ __html: html }} />
   const footer = foot && (
     <div className="ws-source" role="note" aria-label="Where this came from">
       <svg viewBox="0 0 16 16" className="ws-source-glyph" aria-hidden><ellipse cx="8" cy="4" rx="5" ry="2" fill="none" stroke="currentColor" strokeWidth="1.3" /><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
@@ -65,6 +72,28 @@ function useHighlight(el: HTMLElement | null, html: string) {
     }).catch(() => { /* no colour: the code still reads */ })
     return () => { live = false }
   }, [el, html])
+}
+
+/* A DELIVERABLE card's actions (deliverable.ts), delegated like Copy: the card carries its source in data-src (the DOM
+   hands it back decoded). Copy is formatted for a mail client or a document (clip.ts); HTML copies as its source.
+   Open makes it an artifact by that agent (versions, annotations, download, changes sent back): an email opens WITH
+   its subject line, so the file is the whole email. */
+function deliver(e: MouseEvent<HTMLDivElement>, acts: TurnActionsValue | null, msg?: Msg) {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-dl]')
+  const card = btn?.closest<HTMLElement>('.ws-dl')
+  if (!btn || !card) return
+  const { src = '', kind = '', name = 'deliverable.md', subject = '' } = card.dataset
+  const label = btn.textContent
+  const said = (s: string) => { btn.textContent = s; setTimeout(() => { btn.textContent = label }, 1500) }
+  const act = btn.dataset.dl
+  if (act === 'subject') void copyRich(subject, subject).then((ok) => said(ok ? 'Copied' : 'Copy failed'))
+  else if (act === 'copy') void (kind === 'html' ? copyRich(src, src.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!))
+    : copyRich(clipPlain(src), clipHtml(src))).then((ok) => said(ok ? 'Copied' : 'Copy failed'))
+  else if (act === 'open') {
+    if (!acts?.openNamed || !msg) { said('Not here'); return }
+    said('Opening…')
+    acts.openNamed(msg, subject ? `Subject: ${subject}\n\n${src}` : src, name).catch((err) => said(`Not opened: ${(err as Error).message}`.slice(0, 40)))
+  }
 }
 
 /* a code block's Copy (delegated: the sanitized HTML carries no handler). The code's own text, never the bar's; a

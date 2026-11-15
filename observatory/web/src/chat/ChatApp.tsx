@@ -707,6 +707,11 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       const a = await createArtifact({ thread: current, name: docName(text), text, author: m.from, msg: { id: m.id, ts: m.ts } })
       openFile({ path: byId(a.id), label: a.name, from: m.from })
     },
+    // a deliverable (thread/deliverable.ts) → a named artifact by that agent: a second draft under the same name is v2
+    openNamed: async (m, text, name) => {
+      const a = await createArtifact({ thread: current, name, text, author: m.from, msg: { id: m.id, ts: m.ts } })
+      openFile({ path: byId(a.id), label: a.name, from: m.from })
+    },
     // iteration 9: a table in a turn → a CSV artifact by that agent, opened as its chart
     openTable: async (m, csv, name) => {
       const a = await createArtifact({ thread: current, name, text: csv, author: m.from, msg: { id: m.id, ts: m.ts } })
@@ -721,6 +726,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     quote: (t, m) => turnActsRef.current.quote(t, m),
     openDoc: (m, t) => turnActsRef.current.openDoc(m, t),
     openTable: (m, csv, name) => turnActsRef.current.openTable!(m, csv, name),
+    openNamed: (m, t, name) => turnActsRef.current.openNamed!(m, t, name),
   }), [])
   // a quoted ask in the chat: open its file (by name, from this thread's files) at the highlight it came from
   const openAsk = (a: ParsedAsk) => {

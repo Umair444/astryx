@@ -95,6 +95,10 @@ const mcp = new Server(
       `To send back an image/audio/file, embed [[file:/absolute/path]] in the send body. ` +
       `CODE (SQL, Python, a command) always goes in a fenced block with its language (\`\`\`sql … \`\`\`): the chat draws ` +
       `it as code with a Copy button; unfenced, its * and indentation are read as markdown. ` +
+      `A DELIVERABLE (something the person will take elsewhere: an email, a document, a message to forward, HTML) goes, ` +
+      `on the web chat (chat:/obs:/cv: threads), in ONE fenced block named for its kind (\`\`\`email, \`\`\`doc, \`\`\`message, ` +
+      `\`\`\`html; an email's first line is "Subject: …"), with your own words around it short: the chat draws it as a card ` +
+      `the person copies (formatted), opens, or mails in one click. On WhatsApp/Telegram write it plainly, no fence. ` +
       `WHO ASKED: a human's from= is who asked (owner, cv-<name>.<n> a signed-in member with role="member", ` +
       `cv-<name> a canvas guest, wa-<n> a WhatsApp sender); reply to THAT from= on that thread. Owner-only acts ` +
       `(spend, the law, the personal tier, database approvals, permission verdicts) still need the owner himself. ` +

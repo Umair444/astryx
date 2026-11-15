@@ -6,6 +6,7 @@ plain editor (no markdown marks). The rules (chat/thread/clip.ts) are pure TS, r
 
     venv/bin/python tests/test_chat_clip.py
 """
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -31,7 +32,7 @@ def main() -> int:
     clip = (REPO / "observatory/web/src/chat/thread/clip.ts").read_text()
     prose = (REPO / "observatory/web/src/chat/thread/Prose.tsx").read_text()
     shared = ("DOMPurify.sanitize(clipMarkup(markdown), PURIFY)" in clip and "FORBID_ATTR: ['style']" in clip
-              and "import { PURIFY } from './clip'" in prose and "const PURIFY" not in prose)
+              and re.search(r"import \{[^}]*\bPURIFY\b[^}]*\} from './clip'", prose) is not None and "const PURIFY" not in prose)
     print(f"  {'PASS' if shared else 'FAIL'}  the copy sanitizes with the page's own PURIFY (style forbidden), Prose imports it")
     return 1 if rc or "ALL PASS" not in out or not shared else 0
 
