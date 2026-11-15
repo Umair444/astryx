@@ -3,7 +3,8 @@
    A box is plain text in the composer between ⟦ and ⟧, so the cursor moves in and out of it like any text and it
    edits as text; the composer draws it as a dark box behind the textarea (Composer.tsx CalcMirror). Typing "= " where
    a word can start opens one; Enter inside it evaluates (POST /api/chat/calc, Qalculate in a sandbox) and writes
-   "expression = answer"; on send each box becomes its answer alone. Pure: tests/chat_calc_test.ts runs it under node. */
+   "expression = answer"; on send each box becomes its answer alone. Leaving a box resolves it, entering it shows the
+   expression again (settle). Pure: tests/chat_calc_test.ts runs it under node. */
 
 export const OPEN = '⟦', CLOSE = '⟧'
 const SEP = ' = '
@@ -55,6 +56,34 @@ export function boxes(text: string): { start: number; end: number; inner: string
     i = e + 1
   }
   return out
+}
+
+/* A BOX IS A CELL (owner 11-15: "the expression should resolve as the user gets out of it, and be back at the
+   expression when inside the black box"): the box the caret is in shows its EXPRESSION alone, to edit; every other box
+   shows "expression = answer". `known` holds the answers already worked out (expression -> answer), so leaving a box
+   whose expression is unchanged resolves at once; an expression with no answer yet is returned in `ask`, for the
+   composer to evaluate and settle again. The caret keeps its place in the text around it. Pure. */
+export function settle(text: string, caret: number, known: Map<string, string>): { text: string; caret: number; ask: string[] } {
+  let out = text, at = caret
+  const ask: string[] = []
+  for (const b of boxes(text).reverse()) {                 // last first: an edit never moves a box still to be read
+    const { expr, result } = splitCalc(b.inner)
+    const inside = caret > b.start && caret <= b.end
+    if (result !== null && expr) known.set(expr, result)
+    let inner = b.inner
+    if (inside) inner = expr ? (result !== null ? expr : b.inner) : b.inner
+    else if (expr && result === null) {
+      const k = known.get(expr)
+      if (k !== undefined) inner = `${expr}${SEP}${k}`
+      else ask.push(expr)
+    }
+    if (inner === b.inner) continue
+    out = out.slice(0, b.start + 1) + inner + out.slice(b.end)
+    const delta = inner.length - b.inner.length
+    if (inside) at = Math.min(at, b.start + 1 + inner.length)
+    else if (b.end < caret) at += delta
+  }
+  return { text: out, caret: at, ask }
 }
 
 /* the text as it is SENT: each box its answer alone (owner: "only the answer goes to the agent"). `pending` lists the

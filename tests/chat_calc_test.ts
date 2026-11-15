@@ -1,6 +1,6 @@
 // The chat's calculator (owner 11-15): boxes in the composer's text, LaTeX for Qalculate, only the answer is sent.
 // Called by tests/test_chat_calc.py:  node tests/chat_calc_test.ts
-import { calcAt, latexToQalc, openCalc, sendText, setResult, splitCalc } from '../observatory/web/src/chat/thread/calc.ts'
+import { calcAt, latexToQalc, openCalc, sendText, setResult, settle, splitCalc } from '../observatory/web/src/chat/thread/calc.ts'
 
 let fails = 0
 const arm = (name: string, ok: boolean, got?: unknown) => { console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${ok ? '' : `\n        ${JSON.stringify(got)}`}`); if (!ok) fails++ }
@@ -31,5 +31,25 @@ arm('LaTeX: fractions, roots, powers, operators, constants',
   latexToQalc('\\frac{1}{2} + \\sqrt{16} \\cdot 2^{3} - \\pi') === '((1)/(2)) + sqrt(16) * 2^(3) - pi', latexToQalc('\\frac{1}{2} + \\sqrt{16} \\cdot 2^{3} - \\pi'))
 arm('LaTeX: nested fractions and an nth root', latexToQalc('\\frac{\\frac{1}{2}}{3}') === '((((1)/(2)))/(3))' && latexToQalc('\\sqrt[3]{27}') === 'root(27, 3)', [latexToQalc('\\frac{\\frac{1}{2}}{3}'), latexToQalc('\\sqrt[3]{27}')])
 arm('plain Qalculate passes through untouched', latexToQalc('10 usd to pkr') === '10 usd to pkr')
+
+// A BOX IS A CELL (owner 11-15): inside it, the expression alone; outside, "expression = answer"
+const K = new Map<string, string>()
+const t0 = 'fee ⟦10 usd to pkr⟧ ok'
+const left = settle(t0, t0.length, K)                       // the caret has left the box: nothing known, so ask
+arm('leaving an unsolved box asks for its answer, and leaves the text as it is', left.text === t0 && left.ask.join() === '10 usd to pkr', left)
+K.set('10 usd to pkr', '2790')
+const done = settle(t0, t0.length, K)                       // the answer arrived: the box resolves, the caret keeps its place
+arm('...with the answer known, the box shows "expression = answer" and the caret stays after it',
+  done.text === 'fee ⟦10 usd to pkr = 2790⟧ ok' && done.caret === done.text.length && done.ask.length === 0, done)
+const back = settle(done.text, 6, K)                        // the caret goes back inside: the expression alone, to edit
+arm('entering the box shows the expression alone, the caret inside it', back.text === t0 && back.caret === 6, back)
+const edited = 'fee ⟦20 usd to pkr⟧ ok'
+const out2 = settle(edited, edited.length, K)               // edited, then left: the new expression is asked, never the old answer
+arm('an edited expression is asked anew, never shown with the old answer', out2.text === edited && out2.ask.join() === '20 usd to pkr', out2)
+const two = 'a ⟦1+1 = 2⟧ b ⟦2*3⟧'
+const t2 = settle(two, two.length - 2, new Map([['2*3', '6']]))   // inside the second box: the first stays solved
+arm('only the box with the caret opens; the others stay resolved', t2.text === two && t2.caret === two.length - 2, t2)
+const t3 = settle('⟦1+1 = 2⟧ x ⟦2*3⟧', 0, new Map([['2*3', '6']]))   // the caret before every box
+arm('a caret before a box keeps its place when the box resolves', t3.text === '⟦1+1 = 2⟧ x ⟦2*3 = 6⟧' && t3.caret === 0, t3)
 
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')

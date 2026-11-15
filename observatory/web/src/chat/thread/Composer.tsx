@@ -6,7 +6,7 @@ import { mentions, upload, type McpTool, type Skill, type Uploaded } from '../mo
 import { I } from '../icons'
 import { touchFirst } from '../shell/phone'
 import { expandPasteTokens, pasteToken } from './code'
-import { boxes, calcAt, CLOSE, latexToQalc, OPEN, openCalc, sendText, setResult, splitCalc } from './calc'
+import { boxes, calcAt, CLOSE, latexToQalc, OPEN, openCalc, sendText, setResult, settle, splitCalc } from './calc'
 
 const PASTE_LINES = 12, PASTE_CHARS = 1500          // a paste this long folds into a token (code.ts pasteToken)
 /* this tab's pastes, by token number, kept in sessionStorage beside the drafts (a reload keeps a draft, so it must keep
@@ -239,15 +239,29 @@ export default forwardRef<ComposerHandle, {
   const dictate = () => (dict.phase === 'live' || dict.phase === 'connecting' ? stopDictation() : startDictation((t) => insert(t)))
 
   const mirror = useRef<HTMLDivElement>(null)
-  async function solve(b: { start: number; end: number; inner: string }) {
-    const { expr } = splitCalc(b.inner)
-    if (!expr) return
-    setErr('')
-    try {
-      const out = setResult(text, b, await calculate(expr))
-      setText(out.text)
-      requestAnimationFrame(() => { box.current?.focus(); box.current?.setSelectionRange(out.caret, out.caret) })
-    } catch (e) { setErr(`Couldn't calculate “${expr}”: ${String((e as Error).message ?? e).replace(/^\/chat\/calc: /, '')}`) }
+  // A BOX IS A CELL (calc.ts settle): on every caret move the box the caret is in shows its expression, the rest show
+  // "expression = answer"; an expression with no answer yet is worked out here and the boxes settle again. Leaving
+  // the composer counts as leaving every box (caret -1).
+  const known = useRef(new Map<string, string>())
+  const asking = useRef(new Set<string>())
+  // an answer that arrives later settles against the box AS IT IS THEN (its value and caret, read from the element):
+  // a remembered caret would pull the cursor back while the person types on
+  const now = () => { const el = box.current; return el ? { t: el.value, c: document.activeElement === el ? el.selectionStart ?? -1 : -1 } : null }
+  function resettle(t: string, caret: number) {
+    if (!t.includes(OPEN)) return
+    const r = settle(t, caret, known.current)
+    if (r.text !== t) {
+      setText(r.text)
+      const el = box.current
+      if (el && caret >= 0) { el.value = r.text; el.setSelectionRange(r.caret, r.caret) }   // before the next keystroke lands
+    }
+    for (const expr of r.ask) {
+      if (asking.current.has(expr)) continue
+      asking.current.add(expr)
+      calculate(expr).then((v) => { known.current.set(expr, v); const n = now(); if (n) resettle(n.t, n.c) })
+        .catch((e) => setErr(`Couldn't calculate “${expr}”: ${String((e as Error).message ?? e).replace(/^\/chat\/calc: /, '')}`))
+        .finally(() => asking.current.delete(expr))
+    }
   }
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (items.length) {
@@ -256,10 +270,10 @@ export default forwardRef<ComposerHandle, {
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); items[sel]?.apply(); return }
       if (e.key === 'Escape') { e.preventDefault(); if (picker) setPicker(false); else setMenuOff(true); return }
     }
-    // ENTER INSIDE A CALCULATOR BOX evaluates it (calc.ts), on a phone too: the box is the one place Enter means "solve"
+    // ENTER INSIDE A CALCULATOR BOX steps out of it, which resolves it (calc.ts settle), on a phone too
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       const b = calcAt(text, e.currentTarget.selectionStart ?? 0)
-      if (b) { e.preventDefault(); void solve(b); return }
+      if (b) { e.preventDefault(); e.currentTarget.setSelectionRange(b.end + 1, b.end + 1); resettle(text, b.end + 1); return }   // step out: it resolves
     }
     // a phone's Enter is a new line (iteration 16): its keyboard has no Shift+Enter, and a message goes out only by the
     // send button, as in WhatsApp. A hardware keyboard (a desktop, a tablet with keys) sends on Enter.
@@ -321,7 +335,7 @@ export default forwardRef<ComposerHandle, {
         )}
         <div className="relative">
         {text.includes(OPEN) && <CalcMirror ref={mirror} text={text} hero={hero} />}
-        <textarea ref={box} value={text} rows={1} aria-label="message" data-composer
+        <textarea ref={box} value={text} rows={1} aria-label="message" data-composer spellCheck={!text.includes(OPEN)}
           onChange={(e) => {
             const opened = openCalc(e.target.value, e.target.selectionStart ?? e.target.value.length)   // "= " opens a box
             setText(opened ? opened.text : e.target.value); setMenuOff(false); setPicker(false); setErr('')
@@ -329,7 +343,8 @@ export default forwardRef<ComposerHandle, {
           }}
           onScroll={(e) => { if (mirror.current) mirror.current.scrollTop = (e.target as HTMLTextAreaElement).scrollTop }}
           onKeyDown={onKey}
-          onBlur={() => setPicker(false)}
+          onSelect={(e) => resettle(e.currentTarget.value, e.currentTarget.selectionStart ?? -1)}
+          onBlur={() => { setPicker(false); resettle(text, -1) }}
           onPaste={(e) => { const fs = Array.from(e.clipboardData.files); if (fs.length) { e.preventDefault(); addFiles(fs) } else onPasteText(e) }}
           placeholder={hint}
           className={`relative block w-full resize-none bg-transparent px-4 outline-none placeholder:text-ink-mute ${text.includes(OPEN) ? 'text-transparent caret-[var(--t-fg)]' : 'text-ink'} ${hero ? 'pt-4 pb-1 text-[17px] leading-[1.55]' : 'pt-3.5 pb-1 text-[15px] leading-relaxed'}`} />
