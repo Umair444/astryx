@@ -492,23 +492,24 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   // this chat is with (its lead), the screen shown above the box (thread/TerminalPeek.tsx). The owner's alone. A row
   // here is a command; anything else Claude Code knows is typed in the terminal view itself (/terminal).
   const termAgent = who.owner && view === 'thread' ? recipients[0] ?? null : null
-  const typeIn = (text?: string, confirm?: boolean) => {
+  const typeIn = (text?: string) => {
     if (!termAgent) return 'Open a chat with an agent first.'
-    setTerm({ agent: termAgent, run: text ? { id: Date.now(), text, confirm: confirm ? text : undefined } : null })
+    setTerm({ agent: termAgent, run: text ? { id: Date.now(), text } : null })
   }
-  const TERM: { key: string; hint: string; arg?: string; confirm?: boolean }[] = [
-    { key: 'terminal', hint: 'see its screen, type any command, answer what it asks' },
+  // the server's own list (workspace.py TERMINAL_BUILTIN) in words; what changes an agent's guards is not typed from here
+  const TERM: { key: string; hint: string; arg?: string }[] = [
+    { key: 'terminal', hint: 'see its screen, type its commands, answer what it asks' },
     { key: 'compact', hint: 'summarise its context to free room' },
     { key: 'context', hint: 'what is filling its context' },
     { key: 'usage', hint: 'the plan’s limits, as its session sees them' },
+    { key: 'cost', hint: 'what its session has used' },
     { key: 'model', hint: 'change the model it runs on', arg: 'name' },
-    { key: 'mcp', hint: 'its tool servers and their state' },
     { key: 'status', hint: 'its version, model and account' },
-    { key: 'clear', hint: 'wipe its conversation and start it fresh', confirm: true },
+    { key: 'clear', hint: 'wipe its conversation and start it fresh (asks first)' },
   ]
   const termCommands: Command[] = termAgent ? TERM.map((c) => ({
     key: c.key, label: c.key, hint: c.hint, arg: c.arg, group: `${displayName(termAgent)}’s terminal`,
-    run: (arg: string) => typeIn(c.key === 'terminal' ? undefined : `/${c.key}${arg ? ' ' + arg : ''}`, c.confirm),
+    run: (arg: string) => typeIn(c.key === 'terminal' ? undefined : `/${c.key}${arg ? ' ' + arg : ''}`),
   })) : []
   const commands: Command[] = [
     { key: 'new', label: 'New chat', hint: 'start an empty chat', run: newChat },

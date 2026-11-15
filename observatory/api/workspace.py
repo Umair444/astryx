@@ -587,35 +587,68 @@ async def ws_interrupt(name: str, request: Request):
 
 # ------------------------------------------------------------------------------------------------------ terminal
 # THE CHAT IS THE FRONT OF CLAUDE CODE (owner 11-15: "/ command in chat should also have tmux send-key feature to send
-# to terminal, like it is the front of claude code"). A line that starts with "/" and isn't the chat's own command is
-# typed into the agent's pane and entered, exactly as the owner would in its tmux window; the pane's last lines come
-# back so the answer (/context, /cost, a picker) is read where it was asked. A picker is answered with KEYS (arrows,
-# Enter, Escape, a digit). Only that: prose still goes over the wire, as every message does. Owner-only twice, as
-# interrupt is. The text is one printable line sent with -l (literal: tmux reads no key names in it) after "--".
-TERMINAL_TEXT = re.compile(r"/[A-Za-z][\w:.-]{0,60}(?: [^\x00-\x1f\x7f]{1,400})?")
+# to terminal, like it is the front of claude code"). A "/" command is typed into the agent's pane and entered, as the
+# owner would in its tmux window; the pane's last lines come back so the answer is read where it was asked. What it
+# asks is answered with KEYS (arrows, Enter, Escape, a digit). Prose still goes over the wire, as every message does.
+# Owner-only twice, as interrupt is; and this is the one way round the wire, so (medic 12290):
+#   ALLOWLIST   only the read-only and turn-level built-ins below, plus the agent's OWN commands and skills (its
+#               home's and the estate's .claude). Whatever rewrites an agent's guards or reach (/hooks, /permissions,
+#               /mcp, /config, /add-dir), ends it (/exit) or is the fleet's one login is typed at the terminal, never
+#               from a browser: an owner credential here must not be "reconfigure every agent".
+#   LABELLED    a tier-labelled session's screen is its text, which the wall withholds at the write (hooks/step.py
+#               S1d): it is never read here (GET 403; a POST types and returns no screen). Unreadable label: the same.
+#   CONFIRMED   /clear needs {"confirm": true} from the caller: the page's question is only one client of this route.
+#   NO DIALOG   a line typed while the pane is asking something would be read as its answer (Enter takes the default):
+#               refused; a dialog is answered with keys, deliberately.
+#   AUDITED     one steps row per send (kind 'terminal', the command's NAME only), written BEFORE the keys go.
+TERMINAL_TEXT = re.compile(r"/([A-Za-z][\w:.-]{0,60})(?: ([^\x00-\x1f\x7f]{1,400}))?")
+TERMINAL_BUILTIN = {"context", "cost", "status", "usage", "help", "compact", "model", "clear"}
+TERMINAL_CONFIRM = {"clear"}
 TERMINAL_KEYS = {"Enter", "Escape", "Up", "Down", "Left", "Right", "Tab", "BTab", "Space", "BSpace"}
 TERMINAL_CHARS = set("123456789yn")                 # a picker's own answers, typed literally
-# what must not be typed from here: the login is ONE for the whole fleet (login_expired_watch), and only a person at
-# the terminal can finish either flow
-TERMINAL_REFUSED = {"/login": "the login is shared by every agent and is finished in a browser: do it at the terminal",
-                    "/logout": "that would sign every agent out: do it at the terminal if you mean it"}
 TERMINAL_KEYS_MAX = 12
 TERMINAL_TAIL = 40
 TERMINAL_SETTLE = 1.2                               # seconds for the pane to draw its answer before it is read
+TERMINAL_DIALOG = re.compile(r"^\s*❯\s*\d+\.\s|Do you want to", re.M)
+NO_STORE = {"cache-control": "no-store"}            # a screen is session text: no cache keeps it
 
 
-def terminal_check(body) -> tuple[tuple[int, str] | None, str, list[str]]:
-    """(why not, text, keys): ONE of a "/command …" line or a short list of key names. Checked by shape; nothing else
-    reaches tmux."""
+def terminal_own(name: str) -> set[str]:
+    """The agent's OWN commands and skills, by name: what its home's and the estate's .claude define."""
+    out: set[str] = set()
+    for root in ((ESTATE / "homes" / name / ".claude") if ESTATE else None, (ESTATE / ".claude") if ESTATE else None):
+        if root is None:
+            continue
+        try:
+            out |= {p.stem for p in (root / "commands").glob("*.md")}
+            out |= {p.name for p in (root / "skills").iterdir() if p.is_dir()}
+        except OSError:
+            pass
+    return {n.lower() for n in out if re.fullmatch(r"[A-Za-z][\w:.-]{0,60}", n)}
+
+
+def _plain(text: str) -> bool:
+    """Printable, and nothing that reorders or hides what is read (C1 controls, bidi overrides, zero-widths: Cf)."""
+    import unicodedata
+    return text.isprintable() and not any(unicodedata.category(ch) == "Cf" for ch in text)
+
+
+def terminal_check(body, own: set[str] = frozenset()) -> tuple[tuple[int, str] | None, str, list[str]]:
+    """(why not, text, keys): ONE of an allowed "/command …" line or a short list of key names. Checked by shape and
+    by name; nothing else reaches tmux."""
     text, keys = (body or {}).get("text"), (body or {}).get("keys")
     if (text is None) == (keys is None):
         return (400, "send a command line or keys, one of them"), "", []
     if text is not None:
-        if not isinstance(text, str) or not TERMINAL_TEXT.fullmatch(text.strip()):
+        m = TERMINAL_TEXT.fullmatch(text.strip()) if isinstance(text, str) else None
+        if not m or not _plain(text.strip()):
             return (400, "a terminal line starts with / and is one line"), "", []
-        text = text.strip()
-        why = TERMINAL_REFUSED.get(text.split(" ", 1)[0].lower())
-        return ((403, why) if why else None), text, []
+        cmd = m.group(1).lower()
+        if cmd not in TERMINAL_BUILTIN and cmd not in own:
+            return (403, f"/{cmd} isn't typed from here: do it at the terminal"), "", []
+        if cmd in TERMINAL_CONFIRM and (body or {}).get("confirm") is not True:
+            return (409, "confirm"), "", []
+        return None, text.strip(), []
     if (not isinstance(keys, list) or not 0 < len(keys) <= TERMINAL_KEYS_MAX
             or not all(isinstance(k, str) and (k in TERMINAL_KEYS or k in TERMINAL_CHARS) for k in keys)):
         return (400, "keys are: " + ", ".join(sorted(TERMINAL_KEYS)) + ", a digit, y or n"), "", []
@@ -644,9 +677,36 @@ def terminal_tail(raw: str) -> str:
     return "\n".join(lines[-TERMINAL_TAIL:])
 
 
+def terminal_dialog(screen: str) -> bool:
+    """Is the pane asking something (a numbered selector, a permission question) in its last lines?"""
+    return bool(TERMINAL_DIALOG.search("\n".join((screen or "").splitlines()[-15:])))
+
+
+def _labelled(name: str) -> bool:
+    """A tier-labelled session, or one whose label can't be read (hooks/step.py _strip_reason's rule: fail closed)."""
+    try:
+        from astryx.security import release
+        return bool(release.label_of(name, ESTATE / "agents"))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+async def _audit(request: Request, name: str, what: str) -> None:
+    """One row on the agent's own log: who typed what (the command's name or the keys, never its arguments)."""
+    await _pool(request).execute("INSERT INTO steps (agent, kind, content) VALUES ($1, 'terminal', $2)",
+                                 name, f"owner typed {what} in its terminal")
+
+
+def _tmux_fail(e: Exception) -> JSONResponse:
+    if isinstance(e, subprocess.TimeoutExpired):
+        return JSONResponse({"error": "tmux did not answer"}, status_code=504, headers=NO_STORE)
+    return JSONResponse({"error": "tmux is not available here"}, status_code=503, headers=NO_STORE)
+
+
 @router.post("/api/ws/agents/{name}/terminal")
 async def ws_terminal(name: str, request: Request):
-    """Type a Claude Code command (or answer its picker with keys) in an agent's terminal; returns what the pane shows."""
+    """Type an allowed Claude Code command (or answer what it asks with keys) in an agent's terminal; returns what the
+    pane then shows (nothing for a labelled session)."""
     if not _owner(request):
         return JSONResponse({"error": "owner only"}, status_code=403)
     bad = interrupt_check(name, set(_roster()))
@@ -656,41 +716,54 @@ async def ws_terminal(name: str, request: Request):
         body = await request.json()
     except Exception:  # noqa: BLE001
         body = None
-    why, text, keys = terminal_check(body if isinstance(body, dict) else None)
+    why, text, keys = terminal_check(body if isinstance(body, dict) else None, terminal_own(name))
     if why:
-        return JSONResponse({"error": why[1]}, status_code=why[0])
-    tmux = _tmux()
+        return JSONResponse({"error": why[1]}, status_code=why[0], headers=NO_STORE)
+    tmux, private = _tmux(), _labelled(name)
+    run = lambda argv: asyncio.to_thread(subprocess.run, argv, capture_output=True, text=True, timeout=INTERRUPT_TIMEOUT)  # noqa: E731
     try:
+        if text:                                    # a line never lands in a dialog: look first
+            before = await run(terminal_screen_argv(name, tmux))
+            if before.returncode != 0:
+                return JSONResponse({"error": f"{name} is not running"}, status_code=409, headers=NO_STORE)
+            if terminal_dialog(before.stdout):
+                return JSONResponse({"error": "its terminal is asking something: answer it with the keys first"}, status_code=409, headers=NO_STORE)
+        try:                                        # no record, no keys
+            await _audit(request, name, text.split(" ", 1)[0] if text else " ".join(keys))
+        except Exception:  # noqa: BLE001
+            return JSONResponse({"error": "couldn't record it, so nothing was typed"}, status_code=503, headers=NO_STORE)
         for argv in terminal_argvs(name, tmux, text, keys):
-            r = await asyncio.to_thread(subprocess.run, argv, capture_output=True, text=True, timeout=INTERRUPT_TIMEOUT)
+            r = await run(argv)
             if r.returncode != 0:
-                return JSONResponse({"error": f"{name} is not running"}, status_code=409)
-        await asyncio.sleep(TERMINAL_SETTLE)
-        cap = await asyncio.to_thread(subprocess.run, terminal_screen_argv(name, tmux), capture_output=True, text=True, timeout=INTERRUPT_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return JSONResponse({"error": "tmux did not answer"}, status_code=504)
-    except OSError:
-        return JSONResponse({"error": "tmux is not available here"}, status_code=503)
-    return {"ok": True, "agent": name, "sent": text or " ".join(keys), "screen": terminal_tail(cap.stdout) if cap.returncode == 0 else ""}
+                return JSONResponse({"error": f"{name} is not running"}, status_code=409, headers=NO_STORE)
+        screen = ""
+        if not private:
+            await asyncio.sleep(TERMINAL_SETTLE)
+            cap = await run(terminal_screen_argv(name, tmux))
+            screen = terminal_tail(cap.stdout) if cap.returncode == 0 else ""
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return _tmux_fail(e)
+    return JSONResponse({"ok": True, "agent": name, "sent": text or " ".join(keys), "screen": screen, "private": private}, headers=NO_STORE)
 
 
 @router.get("/api/ws/agents/{name}/terminal")
 async def ws_terminal_screen(name: str, request: Request):
-    """What an agent's terminal shows now (its last lines), for the chat's terminal view. Owner-only, as typing is."""
+    """What an agent's terminal shows now (its last lines), for the chat's terminal view. Owner-only, as typing is;
+    never a labelled session's."""
     if not _owner(request):
         return JSONResponse({"error": "owner only"}, status_code=403)
     bad = interrupt_check(name, set(_roster()))
     if bad:
         return JSONResponse({"error": bad[1]}, status_code=bad[0])
+    if _labelled(name):
+        return JSONResponse({"error": "a private session's screen stays in its terminal"}, status_code=403, headers=NO_STORE)
     try:
         cap = await asyncio.to_thread(subprocess.run, terminal_screen_argv(name, _tmux()), capture_output=True, text=True, timeout=INTERRUPT_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return JSONResponse({"error": "tmux did not answer"}, status_code=504)
-    except OSError:
-        return JSONResponse({"error": "tmux is not available here"}, status_code=503)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return _tmux_fail(e)
     if cap.returncode != 0:
-        return JSONResponse({"error": f"{name} is not running"}, status_code=409)
-    return {"agent": name, "screen": terminal_tail(cap.stdout)}
+        return JSONResponse({"error": f"{name} is not running"}, status_code=409, headers=NO_STORE)
+    return JSONResponse({"agent": name, "screen": terminal_tail(cap.stdout)}, headers=NO_STORE)
 
 
 # -------------------------------------------------------------------------------------------------------- search
