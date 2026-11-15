@@ -26,14 +26,10 @@ const SHOWS: { v: Show; label: string; hint: string }[] = [
 export default function ChannelRail() {
   const { data, armed } = useRoutes(true)
   const ch = useChannels(true)
-  // folded by default (owner 11-15: "the default view in the floor should have the channels sidebar hidden"); the
-  // owner's last choice is remembered on this browser
-  const [shut, setShutRaw] = useState(() => { try { return localStorage.getItem('floor.rail.open') !== '1' } catch { return true } })
-  const setShut = (f: (x: boolean) => boolean) => setShutRaw((x) => {
-    const n = f(x)
-    try { localStorage.setItem('floor.rail.open', n ? '0' : '1') } catch { /* private window: not remembered */ }
-    return n
-  })
+  // always starts folded (owner 11-15: "the default view in the floor should have the channels sidebar hidden"; a
+  // remembered "open" brought it back the next visit, which he read as the fix undone)
+  const [shut, setShutRaw] = useState(true)
+  const setShut = (f: (x: boolean) => boolean) => setShutRaw(f)
   const reduce = useReducedMotion()
   const [open, setOpen] = useState<string | null>('whatsapp')
   const rows: ChannelState[] = ch.rows ?? []
