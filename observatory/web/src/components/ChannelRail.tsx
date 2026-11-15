@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { api, displayName } from '../api'
 import type { ContactMatch } from '../types'
 import { BRAND } from '../ui/brands'
@@ -29,7 +29,7 @@ export default function ChannelRail() {
   const [open, setOpen] = useState<string | null>('whatsapp')
   const rows: ChannelState[] = ch.rows ?? []
   return (
-    <aside aria-label="Channels" onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}
+    <aside aria-label="Channels" data-dock onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}
       className={`ws-rail absolute z-40 cursor-default flex flex-col border border-line shadow-xl
         max-sm:left-2 max-sm:right-2 max-sm:bottom-2 max-sm:rounded-2xl ${shut ? 'max-sm:max-h-12' : 'max-sm:max-h-[62dvh]'}
         sm:right-3 sm:top-3 sm:bottom-3 sm:rounded-2xl ${shut ? 'sm:w-14' : 'sm:w-[320px]'}`}
@@ -41,7 +41,7 @@ export default function ChannelRail() {
           {shut ? '‹' : '›'}
         </button>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto p-2 pb-16 flex flex-col gap-1.5" style={{ overscrollBehavior: 'contain' }}>
+      <div className="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-1.5" style={{ overscrollBehavior: 'contain' }}>
         {ch.rows === null && !shut && <div className="text-[12px] text-ink-mute px-2 py-3">Reading the channels…</div>}
         {rows.map((s) => {
           const table = data?.find((c) => c.channel === s.channel)
@@ -62,8 +62,13 @@ export default function ChannelRail() {
             </button>
           )
           const isOpen = open === s.channel
+          // the built-ins (web chat, canvas, the terminal) are always on and have nothing to set: one quiet heading
+          // says so, once, where they begin
+          const firstFixed = s.fixed && !rows[rows.indexOf(s) - 1]?.fixed
           return (
-            <section key={s.channel} className={`rounded-xl border ${isOpen ? 'border-line bg-deck-3/30' : 'border-transparent'}`}>
+            <Fragment key={s.channel}>
+            {firstFixed && <div className="px-2 pt-3 pb-0.5 text-[11.5px] text-ink-mute">Always on</div>}
+            <section className={`rounded-xl border ${isOpen ? 'border-line bg-deck-3/30' : 'border-transparent'}`}>
               <button onClick={() => { setOpen(isOpen ? null : s.channel); arm(null); dismissToast() }} aria-expanded={isOpen}
                 className="w-full flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-deck-3/50 text-left">
                 <span className="relative">
@@ -114,6 +119,7 @@ export default function ChannelRail() {
               )}
               {isOpen && s.fixed && <p className="px-3 pb-2.5 text-[12px] text-ink-mute">{s.shows}</p>}
             </section>
+            </Fragment>
           )
         })}
       </div>
@@ -146,7 +152,9 @@ function ChatRow({ c }: { c: ChatRef }) {
           </span>
           <span className="min-w-0 flex-1">
             <span className="block text-[13px] text-ink truncate">{c.label}</span>
-            <span className="block text-[11px] text-ink-mute truncate">{routed ? `to ${displayName(c.agent!)}` : 'not routed'}</span>
+            <span className="block text-[11px] text-ink-mute truncate">
+              {routed ? `to ${displayName(c.agent!)}, ${c.show === 'steps' ? 'with steps' : 'replies only'}${c.home ? ', home' : ''}` : 'not routed: tap, then tap an agent'}
+            </span>
           </span>
           {routed && <AgentFace name={c.agent!} size={22} />}
         </button>
@@ -155,29 +163,27 @@ function ChatRow({ c }: { c: ChatRef }) {
             onClick={() => act(() => patchChat(c, { enabled: !c.enabled }, `${c.label} ${c.enabled ? 'is paused' : 'is on again'}`))}
             className="ws-switch shrink-0" data-on={c.enabled || undefined} aria-label={`${c.label} on`}><span /></button>
         )}
-        <button disabled={busy} onClick={() => act(() => unrouteChat(c))}
-          className="w-6 h-6 grid place-items-center rounded-full text-ink-mute hover:text-bad hover:bg-bad/10 opacity-0 group-hover:opacity-100 focus:opacity-100 shrink-0"
-          aria-label={`Stop routing ${c.label}`} title="Stop routing this chat">×</button>
-      </div>
-      {routed && (
-        <div className="flex items-center gap-2 mt-1 pl-8" role="radiogroup" aria-label={`What ${c.label} shows`}>
-          <span className="text-[11px] text-ink-mute">Shows</span>
-          <span className="ws-seg">
-            {SHOWS.map((o) => (
-              <button key={o.v} role="radio" aria-checked={c.show === o.v} disabled={busy || c.show === o.v || (o.v === 'steps' && !!c.tier)}
-                title={o.v === 'steps' && c.tier ? `A ${c.tier} chat shows replies only: steps would bypass its door` : o.hint}
-                onClick={() => act(() => patchChat(c, { show: o.v, live_steps: undefined }, `${c.label} now shows ${o.hint}`))}>{o.label}</button>
-            ))}
-          </span>
-          <button onClick={() => setMore((m) => !m)} aria-expanded={more} style={{ fontSize: 11.5 }} className="ml-auto text-ink-mute hover:text-ink underline-offset-2 hover:underline">
-            {more ? 'Less' : 'Details'}
+        {routed && (
+          <button onClick={() => setMore((m) => !m)} aria-expanded={more} aria-label={`${more ? 'Hide' : 'Show'} the settings of ${c.label}`} title={more ? 'Hide its settings' : 'What it shows, and its settings'}
+            className="w-6 h-6 grid place-items-center rounded-full text-ink-mute hover:text-ink hover:bg-deck-3/70 shrink-0">
+            <span className={`transition-transform ${more ? 'rotate-90' : ''}`} aria-hidden>›</span>
           </button>
-        </div>
-      )}
+        )}
+      </div>
       {routed && more && (
-        // what stays rare: the agent's home chat, who may write, the note. Trusted senders are not edited here: they
-        // carry the owner's powers and go away with the identity work (one person, one account)
-        <div className="mt-1.5 ml-8 flex flex-col gap-1.5 text-[11.5px] text-ink-dim">
+        // what a chat shows, then what stays rare: the agent's home chat, who may write, the note, and letting it go.
+        // Trusted senders are not edited here: they carry the owner's powers and go away with the identity work
+        <div className="mt-2 ml-8 mb-1 flex flex-col gap-2 text-[11.5px] text-ink-dim">
+          <div className="flex items-center gap-2" role="radiogroup" aria-label={`What ${c.label} shows`}>
+            <span className="text-ink-mute">Shows</span>
+            <span className="ws-seg">
+              {SHOWS.map((o) => (
+                <button key={o.v} role="radio" aria-checked={c.show === o.v} disabled={busy || c.show === o.v || (o.v === 'steps' && !!c.tier)}
+                  title={o.v === 'steps' && c.tier ? `A ${c.tier} chat shows replies only: steps would bypass its door` : o.hint}
+                  onClick={() => act(() => patchChat(c, { show: o.v, live_steps: undefined }, `${c.label} now shows ${o.hint}`))}>{o.label}</button>
+              ))}
+            </span>
+          </div>
           <label className="flex items-center gap-2">
             <button role="switch" aria-checked={!!c.home} disabled={busy || !!c.home} onClick={() => act(() => homeChat(c))}
               className="ws-switch shrink-0" data-on={c.home || undefined} aria-label={`${c.label} is the home chat`}><span /></button>
@@ -194,6 +200,9 @@ function ChatRow({ c }: { c: ChatRef }) {
               className="flex-1 min-w-0 rounded-lg bg-deck-3/70 border border-line px-2 py-1 text-[12px] text-ink placeholder:text-ink-mute outline-none focus:border-cyan/60" />
             <button disabled={busy || note === (c.note ?? '')} className="rounded-lg px-2 text-[11.5px] text-ink bg-deck-3 border border-line disabled:opacity-40">Save</button>
           </form>
+          <button disabled={busy} onClick={() => act(() => unrouteChat(c))} className="self-start text-ink-mute hover:text-bad underline underline-offset-2">
+            Stop routing this chat
+          </button>
         </div>
       )}
       {err && <div className="text-[11.5px] text-bad mt-1 pl-8" role="alert">{err}</div>}
@@ -219,7 +228,7 @@ function ContactFind({ channel, known }: { channel: string; known: Set<string> }
   return (
     <div className="mt-2 pt-2 border-t border-line">
       <form onSubmit={(e) => { e.preventDefault(); find() }} className="flex gap-1.5">
-        <input value={q} onChange={(e) => setQ(e.currentTarget.value)} placeholder="Find a group or person by name"
+        <input value={q} onChange={(e) => setQ(e.currentTarget.value)} placeholder="Find a chat by name"
           aria-label={`Find a ${BRAND[channel].title} chat`}
           className="flex-1 min-w-0 rounded-lg bg-deck-3/70 border border-line px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-mute outline-none focus:border-cyan/60" />
         <button disabled={busy || !q.trim()} className="rounded-lg px-3 text-[12.5px] text-ink bg-deck-3 border border-line hover:border-line-2 disabled:opacity-40">

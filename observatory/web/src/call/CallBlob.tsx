@@ -59,9 +59,26 @@ export function place(vw: number, vh: number, vegaUp: boolean): Spot {
   }
   // an observatory page: the corner; a phone's tab bar (54px) is under it; Vega's button holds the very corner
   const vega = vegaUp ? (phone ? 62 : 68) : 0
-  return phone
+  const spot = phone
     ? { x: vw - size - GAP_PHONE - vega, y: vh - 54 - safeBottom() - 14 - size, size }
     : { x: vw - size - GAP - vega, y: vh - size - GAP, size }
+  return clearOf(spot, phone)
+}
+
+/* NEVER OVER A DOCKED PANEL (owner 11-15: "voice blob is over it", the Floor's channel rail). Anything a page docks at
+   an edge marks itself [data-dock]; the blob steps aside of whatever it would cover: to the left of a panel standing on
+   the right, above one lying along the bottom (a phone's sheet). One rule for every page and every panel to come. */
+function clearOf(spot: Spot, phone: boolean): Spot {
+  let { x, y } = spot
+  const pad = phone ? 10 : 14
+  for (const el of document.querySelectorAll<HTMLElement>('[data-dock]')) {
+    const r = el.getBoundingClientRect()
+    if (r.width === 0 || r.height === 0) continue
+    if (x + spot.size <= r.left || x >= r.right || y + spot.size <= r.top || y >= r.bottom) continue   // not under it
+    if (r.height > r.width) x = r.left - spot.size - pad      // a standing panel: beside it
+    else y = r.top - spot.size - pad                          // a lying one: above it
+  }
+  return { x: Math.max(pad, x), y: Math.max(pad, y), size: spot.size }
 }
 
 function tokens() {

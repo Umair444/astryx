@@ -33,6 +33,25 @@ export async function interruptAgent(agent: string): Promise<void> {
   }
 }
 
+/* ------------------------------------------------------------------------------------------------- the terminal */
+/* The chat is the front of Claude Code (owner 11-15): a "/command" line, or the keys that answer its picker, typed in
+   an agent's own terminal (POST /api/ws/agents/<agent>/terminal); what the terminal shows comes back. GET reads it. */
+export interface TermScreen { agent: string; screen: string; sent?: string }
+function termError(e: unknown, agent: string): Error {
+  const st = e instanceof ApiError ? e.status : 0
+  if (st === 409) return new Error(`${displayName(agent)} isn't running`)
+  if (st === 403 && e instanceof ApiError && e.message !== 'owner only') return new Error(e.message[0].toUpperCase() + e.message.slice(1))
+  if (st === 403) return new Error('Only the owner can type in an agent’s terminal')
+  if (st === 400) return new Error('A terminal line starts with / and is one line')
+  return new Error(st === 404 ? 'No such agent' : "Couldn't reach its terminal; try again")
+}
+export async function terminalType(agent: string, what: { text: string } | { keys: string[] }): Promise<TermScreen> {
+  try { return await apiSend<TermScreen>('POST', `/ws/agents/${encodeURIComponent(agent)}/terminal`, what) } catch (e) { throw termError(e, agent) }
+}
+export async function terminalScreen(agent: string): Promise<TermScreen> {
+  try { return await api<TermScreen>(`/ws/agents/${encodeURIComponent(agent)}/terminal`) } catch (e) { throw termError(e, agent) }
+}
+
 /* ------------------------------------------------------------------------------------------------- the team map */
 /* the agents/ tree (group_path) as clusters, and the wire's last few minutes as edges between agents */
 export interface Cluster { name: string; agents: string[] }

@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, Fragment, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { ApiError, apiSend, displayName } from '../../api'
 import AgentFace from '../../components/AgentFace'
 import { startDictation, stopDictation, useDictation } from '../dictate'
@@ -44,10 +44,12 @@ function savePastes() {
    the chat to it (`onSwitch`: from then on the default recipient; @mentions still add on top). /switch opens the
    same picker. */
 
-export interface Command { key: string; label: string; hint: string; run: (arg: string) => void | string }
+/* `group` heads the menu section a command sits under (the chat's own when absent); `arg` names what it takes: picking
+   it then fills the box ("/model ") for the argument instead of running it */
+export interface Command { key: string; label: string; hint: string; run: (arg: string) => void | string; group?: string; arg?: string }
 export interface ComposerHandle { focus: () => void; insert: (text: string) => void; set: (text: string) => void; get: () => string; attach: (u: Uploaded) => void; pick: () => void }
 
-interface Item { key: string; label: string; hint: string; kind: 'cmd' | 'skill' | 'tool' | 'agent'; apply: () => void
+interface Item { key: string; label: string; hint: string; kind: 'cmd' | 'skill' | 'tool' | 'agent'; apply: () => void; group?: string; arg?: string
   pick?: { on: boolean; lead: boolean; makeLead?: () => void } }   // the agent picker's row: chosen, leads, or can be made lead
 
 const DRAFTS = 'ws.drafts.v1'
@@ -169,11 +171,19 @@ export default forwardRef<ComposerHandle, {
     if (slash) {
       const q = slash[1].toLowerCase()
       const all: Item[] = [
-        ...commands.map((c) => ({ key: '/' + c.key, label: '/' + c.key, hint: c.hint, kind: 'cmd' as const, apply: () => { setText(''); const r = c.run(''); if (typeof r === 'string') setErr(r) } })),
-        ...skills.map((s) => ({ key: 'skill:' + s.name, label: s.name, hint: s.description, kind: 'skill' as const, apply: () => setText(`Use the ${s.name} skill: `) })),
-        ...tools.map((t) => ({ key: `tool:${t.server}.${t.name}`, label: t.name, hint: `${t.server}${t.description ? ': ' + t.description : ''}`, kind: 'tool' as const, apply: () => setText(`Use the ${t.name} tool (${t.server}): `) })),
+        ...commands.map((c) => ({ key: '/' + c.key, label: '/' + c.key, hint: c.hint, kind: 'cmd' as const, group: c.group ?? 'This chat', arg: c.arg,
+          apply: () => {
+            if (c.arg) { const t = `/${c.key} `; setText(t); requestAnimationFrame(() => { box.current?.focus(); box.current?.setSelectionRange(t.length, t.length) }); return }
+            setText(''); const r = c.run(''); if (typeof r === 'string') setErr(r)
+          } })),
+        ...skills.map((s) => ({ key: 'skill:' + s.name, label: s.name, hint: s.description, kind: 'skill' as const, group: 'Skills', apply: () => setText(`Use the ${s.name} skill: `) })),
+        ...tools.map((t) => ({ key: `tool:${t.server}.${t.name}`, label: t.name, hint: `${t.server}${t.description ? ': ' + t.description : ''}`, kind: 'tool' as const, group: 'Tools', apply: () => setText(`Use the ${t.name} tool (${t.server}): `) })),
       ]
-      return all.filter((i) => !q || i.label.toLowerCase().includes(q) || i.key.toLowerCase().includes(q)).slice(0, 40)
+      // what the word STARTS is offered before what merely contains it, each kept under its own heading (a stable sort)
+      const hit = all.filter((i) => !q || i.label.toLowerCase().includes(q) || i.key.toLowerCase().includes(q))
+      const starts = (i: Item) => (q && i.label.replace(/^\//, '').toLowerCase().startsWith(q) ? 0 : 1)
+      const order = [...new Set(hit.map((i) => i.group))]
+      return hit.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group) || starts(a) - starts(b)).slice(0, 40)
     }
     if (at) {
       const q = at[2].toLowerCase()
@@ -315,12 +325,13 @@ export default forwardRef<ComposerHandle, {
               </li>
             )}
             {items.map((it, i) => (
-              <li key={it.key} role="option" aria-selected={it.pick ? it.pick.on : i === sel} onMouseDown={(e) => { e.preventDefault(); it.apply() }} onMouseEnter={() => setSel(i)}
+              <Fragment key={it.key}>
+              {slash && it.group && it.group !== items[i - 1]?.group && <li role="presentation" className="ws-menu-group">{it.group}</li>}
+              <li role="option" aria-selected={it.pick ? it.pick.on : i === sel} onMouseDown={(e) => { e.preventDefault(); it.apply() }} onMouseEnter={() => setSel(i)}
                 className={`group flex items-center gap-2.5 rounded-[9px] px-2.5 py-1.5 cursor-pointer ${i === sel ? 'bg-[color-mix(in_srgb,var(--t-fg)_7%,transparent)]' : ''}`}>
                 {it.pick && <span className="ws-check" data-on={it.pick.on || undefined} aria-hidden>{it.pick.on ? '✓' : ''}</span>}
-                {it.kind === 'agent' ? <AgentFace name={it.key.slice(1)} size={20} />
-                  : <span className="w-5 text-center text-[11px] text-ink-mute" aria-hidden>{it.kind === 'cmd' ? '/' : it.kind === 'skill' ? '✦' : 'ƒ'}</span>}
-                <span className="text-[13px] text-ink shrink-0">{it.label}</span>
+                {it.kind === 'agent' && <AgentFace name={it.key.slice(1)} size={20} />}
+                <span className="text-[13px] text-ink shrink-0">{it.label}{it.arg && <span className="text-ink-mute"> {it.arg}</span>}</span>
                 <span className="text-[12px] text-ink-mute truncate flex-1 min-w-0">{it.hint}</span>
                 {it.pick?.lead && <span className="ws-lead shrink-0 rounded-full px-1.5 py-[1px] text-[10.5px]">Leads</span>}
                 {it.pick?.makeLead && (
@@ -328,7 +339,13 @@ export default forwardRef<ComposerHandle, {
                     className="shrink-0 rounded-full border border-line px-1.5 py-[1px] text-[10.5px] text-ink-mute opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-ink">Make lead</button>
                 )}
               </li>
+              </Fragment>
             ))}
+            {slash && !picker && (
+              <li role="presentation" className="ws-menu-foot">
+                <span><kbd>↑</kbd><kbd>↓</kbd>choose</span><span><kbd>Enter</kbd>run</span><span><kbd>Esc</kbd>close</span>
+              </li>
+            )}
             {picker && (
               <li role="presentation" className="sticky -bottom-1 z-10 bg-[var(--t-panel)] flex items-center gap-2 px-2.5 pt-1.5 pb-1.5 mt-1 border-t border-line">
                 <span className="text-[11.5px] text-ink-mute flex-1 min-w-0 truncate">Agents you add start fresh: earlier messages aren’t sent to them.</span>

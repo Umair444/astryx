@@ -585,6 +585,114 @@ async def ws_interrupt(name: str, request: Request):
     return {"ok": True, "agent": name}
 
 
+# ------------------------------------------------------------------------------------------------------ terminal
+# THE CHAT IS THE FRONT OF CLAUDE CODE (owner 11-15: "/ command in chat should also have tmux send-key feature to send
+# to terminal, like it is the front of claude code"). A line that starts with "/" and isn't the chat's own command is
+# typed into the agent's pane and entered, exactly as the owner would in its tmux window; the pane's last lines come
+# back so the answer (/context, /cost, a picker) is read where it was asked. A picker is answered with KEYS (arrows,
+# Enter, Escape, a digit). Only that: prose still goes over the wire, as every message does. Owner-only twice, as
+# interrupt is. The text is one printable line sent with -l (literal: tmux reads no key names in it) after "--".
+TERMINAL_TEXT = re.compile(r"/[A-Za-z][\w:.-]{0,60}(?: [^\x00-\x1f\x7f]{1,400})?")
+TERMINAL_KEYS = {"Enter", "Escape", "Up", "Down", "Left", "Right", "Tab", "BTab", "Space", "BSpace"}
+TERMINAL_CHARS = set("123456789yn")                 # a picker's own answers, typed literally
+# what must not be typed from here: the login is ONE for the whole fleet (login_expired_watch), and only a person at
+# the terminal can finish either flow
+TERMINAL_REFUSED = {"/login": "the login is shared by every agent and is finished in a browser: do it at the terminal",
+                    "/logout": "that would sign every agent out: do it at the terminal if you mean it"}
+TERMINAL_KEYS_MAX = 12
+TERMINAL_TAIL = 40
+TERMINAL_SETTLE = 1.2                               # seconds for the pane to draw its answer before it is read
+
+
+def terminal_check(body) -> tuple[tuple[int, str] | None, str, list[str]]:
+    """(why not, text, keys): ONE of a "/command …" line or a short list of key names. Checked by shape; nothing else
+    reaches tmux."""
+    text, keys = (body or {}).get("text"), (body or {}).get("keys")
+    if (text is None) == (keys is None):
+        return (400, "send a command line or keys, one of them"), "", []
+    if text is not None:
+        if not isinstance(text, str) or not TERMINAL_TEXT.fullmatch(text.strip()):
+            return (400, "a terminal line starts with / and is one line"), "", []
+        text = text.strip()
+        why = TERMINAL_REFUSED.get(text.split(" ", 1)[0].lower())
+        return ((403, why) if why else None), text, []
+    if (not isinstance(keys, list) or not 0 < len(keys) <= TERMINAL_KEYS_MAX
+            or not all(isinstance(k, str) and (k in TERMINAL_KEYS or k in TERMINAL_CHARS) for k in keys)):
+        return (400, "keys are: " + ", ".join(sorted(TERMINAL_KEYS)) + ", a digit, y or n"), "", []
+    return None, "", keys
+
+
+def terminal_argvs(name: str, tmux: list[str], text: str, keys: list[str]) -> list[list[str]]:
+    """The tmux calls, in order. The line is literal (-l, after --) and Enter is its own call; a key NAME is never
+    literal, a picker's character always is."""
+    t = f"=ax-{name}:"
+    if text:
+        return [[*tmux, "send-keys", "-t", t, "-l", "--", text], [*tmux, "send-keys", "-t", t, "Enter"]]
+    return [[*tmux, "send-keys", "-t", t, "-l", "--", k] if k in TERMINAL_CHARS else [*tmux, "send-keys", "-t", t, k] for k in keys]
+
+
+def terminal_screen_argv(name: str, tmux: list[str]) -> list[str]:
+    """Read the exact session's pane as plain text (no escape codes), its last lines."""
+    return [*tmux, "capture-pane", "-p", "-t", f"=ax-{name}:", "-S", f"-{TERMINAL_TAIL}"]
+
+
+def terminal_tail(raw: str) -> str:
+    """The pane's last lines as they read: trailing spaces and the empty tail dropped."""
+    lines = [ln.rstrip() for ln in (raw or "").splitlines()]
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines[-TERMINAL_TAIL:])
+
+
+@router.post("/api/ws/agents/{name}/terminal")
+async def ws_terminal(name: str, request: Request):
+    """Type a Claude Code command (or answer its picker with keys) in an agent's terminal; returns what the pane shows."""
+    if not _owner(request):
+        return JSONResponse({"error": "owner only"}, status_code=403)
+    bad = interrupt_check(name, set(_roster()))
+    if bad:
+        return JSONResponse({"error": bad[1]}, status_code=bad[0])
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    why, text, keys = terminal_check(body if isinstance(body, dict) else None)
+    if why:
+        return JSONResponse({"error": why[1]}, status_code=why[0])
+    tmux = _tmux()
+    try:
+        for argv in terminal_argvs(name, tmux, text, keys):
+            r = await asyncio.to_thread(subprocess.run, argv, capture_output=True, text=True, timeout=INTERRUPT_TIMEOUT)
+            if r.returncode != 0:
+                return JSONResponse({"error": f"{name} is not running"}, status_code=409)
+        await asyncio.sleep(TERMINAL_SETTLE)
+        cap = await asyncio.to_thread(subprocess.run, terminal_screen_argv(name, tmux), capture_output=True, text=True, timeout=INTERRUPT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return JSONResponse({"error": "tmux did not answer"}, status_code=504)
+    except OSError:
+        return JSONResponse({"error": "tmux is not available here"}, status_code=503)
+    return {"ok": True, "agent": name, "sent": text or " ".join(keys), "screen": terminal_tail(cap.stdout) if cap.returncode == 0 else ""}
+
+
+@router.get("/api/ws/agents/{name}/terminal")
+async def ws_terminal_screen(name: str, request: Request):
+    """What an agent's terminal shows now (its last lines), for the chat's terminal view. Owner-only, as typing is."""
+    if not _owner(request):
+        return JSONResponse({"error": "owner only"}, status_code=403)
+    bad = interrupt_check(name, set(_roster()))
+    if bad:
+        return JSONResponse({"error": bad[1]}, status_code=bad[0])
+    try:
+        cap = await asyncio.to_thread(subprocess.run, terminal_screen_argv(name, _tmux()), capture_output=True, text=True, timeout=INTERRUPT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return JSONResponse({"error": "tmux did not answer"}, status_code=504)
+    except OSError:
+        return JSONResponse({"error": "tmux is not available here"}, status_code=503)
+    if cap.returncode != 0:
+        return JSONResponse({"error": f"{name} is not running"}, status_code=409)
+    return {"agent": name, "screen": terminal_tail(cap.stdout)}
+
+
 # -------------------------------------------------------------------------------------------------------- search
 # Full text over the owner's conversations: the bodies of the threads GET /api/ws/threads lists (an owner-party
 # chat:/obs:/cv: thread, an archived canvas chat left out). Two matchers, either one is a hit: Postgres full text as

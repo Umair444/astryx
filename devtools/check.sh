@@ -1124,6 +1124,7 @@ run "chat workspace: the while-you-were-away briefing" "$PY" tests/test_ws_brief
 run "chat workspace: the artifact store" "$PY" tests/test_ws_artifacts.py
 run "chat workspace: canvas's read-only window" "$PY" tests/test_ws_canvas.py
 run "chat workspace: Stop interrupts, handoffs show" "$PY" tests/test_ws_interrupt.py
+run "chat workspace: a / line is typed in the agent's terminal (owner only; one literal line or named keys; /login and /logout refused)" "$PY" tests/test_ws_terminal.py
 run "chat workspace: a reply shows without a reload (live heal)" "$PY" tests/test_ws_live_heal.py
 run "chat workspace: who a message goes to by default" "$PY" tests/test_ws_recipients.py
 run "chat workspace: switching a chat's agents" "$PY" tests/test_ws_switch.py

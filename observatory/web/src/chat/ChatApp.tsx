@@ -64,6 +64,7 @@ const CanvasPanel = lazy(() => import('./canvas/CanvasPanel'))
 const TalkMode = lazy(() => import('./talk/TalkMode'))
 import { canvasIdOf, useCanvases } from './canvas/api'
 import { interruptAgent, loadHandoffs, useTabTitle, useUnread, type Handoff } from './live'
+import TerminalPeek, { type TermRun } from './thread/TerminalPeek'
 import ListSeam, { useListWidth } from './shell/ListSeam'
 import MoreMenu from './shell/MoreMenu'
 import { NotifyPrompt, useReplyNotifications } from './shell/notify'
@@ -151,6 +152,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const canvasNext = useRef<number | null>(null)               // ⌘K: open this canvas once its conversation is on screen
   const [talk, setTalk] = useState<{ agent: string; thread: string } | null>(null)
   const composer = useRef<ComposerHandle>(null)
+  const [term, setTerm] = useState<{ agent: string; run: TermRun | null } | null>(null)   // the agent's terminal, open above the box
+  useEffect(() => setTerm(null), [thread])                     // it belongs to the chat it was opened in (and a command is typed once)
   const current = view === 'thread' ? thread ?? '' : ''
   const panel = usePanel(view === 'thread' ? current : thread ?? '')    // the library and a project keep their own tabs
   const go = useCallback((t: string | null) => { setDrawer(false); nav(t) }, [nav])
@@ -485,6 +488,28 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const openAgent = (a: string) => go(deskThread(a))
   const newChat = () => { go(null); requestAnimationFrame(() => composer.current?.focus()) }
 
+  // THE CHAT IS THE FRONT OF CLAUDE CODE (owner 11-15): Claude Code's own commands, typed in the terminal of the agent
+  // this chat is with (its lead), the screen shown above the box (thread/TerminalPeek.tsx). The owner's alone. A row
+  // here is a command; anything else Claude Code knows is typed in the terminal view itself (/terminal).
+  const termAgent = who.owner && view === 'thread' ? recipients[0] ?? null : null
+  const typeIn = (text?: string, confirm?: boolean) => {
+    if (!termAgent) return 'Open a chat with an agent first.'
+    setTerm({ agent: termAgent, run: text ? { id: Date.now(), text, confirm: confirm ? text : undefined } : null })
+  }
+  const TERM: { key: string; hint: string; arg?: string; confirm?: boolean }[] = [
+    { key: 'terminal', hint: 'see its screen, type any command, answer what it asks' },
+    { key: 'compact', hint: 'summarise its context to free room' },
+    { key: 'context', hint: 'what is filling its context' },
+    { key: 'usage', hint: 'the plan’s limits, as its session sees them' },
+    { key: 'model', hint: 'change the model it runs on', arg: 'name' },
+    { key: 'mcp', hint: 'its tool servers and their state' },
+    { key: 'status', hint: 'its version, model and account' },
+    { key: 'clear', hint: 'wipe its conversation and start it fresh', confirm: true },
+  ]
+  const termCommands: Command[] = termAgent ? TERM.map((c) => ({
+    key: c.key, label: c.key, hint: c.hint, arg: c.arg, group: `${displayName(termAgent)}’s terminal`,
+    run: (arg: string) => typeIn(c.key === 'terminal' ? undefined : `/${c.key}${arg ? ' ' + arg : ''}`, c.confirm),
+  })) : []
   const commands: Command[] = [
     { key: 'new', label: 'New chat', hint: 'start an empty chat', run: newChat },
     { key: 'project', label: 'Make this a project', hint: 'name it; its agents work it together', run: () => { setAsking('project') } },
@@ -499,6 +524,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     { key: 'canvas', label: 'Open in canvas', hint: 'build a page with the first agent here', run: () => void window.open(`${canvasBase()}#/new/${encodeURIComponent(inChat[0] ?? 'painter')}`, '_blank') },
     { key: 'switch', label: 'Switch agent', hint: 'hand this chat to another agent (/switch finance); it starts fresh here', run: () => composer.current?.pick() },
     { key: 'keys', label: 'Keyboard', hint: 'every shortcut', run: () => setHelp(true) },
+    ...termCommands,
   ]
   // "/remember text" is sent to memory's proposal route, not to the chat
   // in an open conversation a failed send stays in the OUTBOX with Retry (deliver, above); what still blocks the box (a
@@ -513,6 +539,10 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       await switchTo(agents)
       return
     }
+    // a terminal command typed in full ("/model opus", "/compact keep the plan"): to the agent's terminal, never the wire
+    const tc = /^\/([\w:.-]+)(?:\s+(.*))?$/.exec(text.trim())
+    const tcmd = tc && !files.length ? termCommands.find((c) => c.key === tc[1].toLowerCase()) : undefined
+    if (tcmd) { const r = tcmd.run((tc?.[2] ?? '').trim()); if (typeof r === 'string') throw new Error(r); return }
     try {
       const r = /^\/remember\s+([\s\S]+)/.exec(text)
       if (r) { await apiPost('/memory/propose', { text: r[1], nodes: [] }); setNote('Proposed to the memory agent.'); return }
@@ -810,6 +840,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         </div>
         {note && <div className="mx-auto max-w-[760px] w-full px-6 pb-1 text-[12.5px] text-ink-dim cursor-pointer" role="status" onClick={() => setNote('')}>{note}</div>}
         {view === 'thread' && !home && <NotifyPrompt waiting={pending.length > 0 || outbox.some((o) => o.thread === current)} />}
+        {view === 'thread' && !home && term && termAgent === term.agent && <TerminalPeek agent={term.agent} run={term.run} onClose={() => { setTerm(null); composer.current?.focus() }} />}
         {view === 'thread' && !home && box(false)}
 
         {/* the media drawer: over the conversation's right edge, under the top bar (the whole screen on a phone) */}

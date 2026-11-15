@@ -422,3 +422,20 @@
 .ws-dl-btn:hover { border-color: var(--t-accent); }
 .ws-dl-body { padding: 10px 14px 4px; }
 .ws-dl-body > .ws-cb { margin: 0 0 8px; }
+
+/* ── the agent's terminal in the chat (thread/TerminalPeek.tsx) and the composer menu's groups ───────────────────── */
+.ws-term-box { background: color-mix(in srgb, var(--t-panel) 92%, transparent); border: 1px solid var(--t-line); border-radius: 14px; overflow: hidden; margin-bottom: 8px; }
+.ws-term-screen { margin: 0; max-height: min(260px, 34dvh); overflow: auto; padding: 10px 12px; background: var(--t-bg2); color: var(--t-fg);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; tab-size: 4; overscroll-behavior: contain; }
+.ws-term-screen:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 60%, transparent); outline-offset: -2px; }
+.ws-term-line { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.ws-key { min-width: 30px; height: 28px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--t-line); border-bottom-width: 2px; background: var(--t-panel);
+  color: var(--t-dim); font-size: 12px; line-height: 1; transition: border-color 120ms ease-out, color 120ms ease-out; }
+.ws-key:hover:not(:disabled) { border-color: var(--t-line2); color: var(--t-fg); }
+.ws-key:active:not(:disabled) { border-bottom-width: 1px; transform: translateY(1px); }
+.ws-key:disabled { opacity: .5; }
+.ws-menu-group { position: sticky; top: -4px; z-index: 1; background: var(--t-panel); padding: 8px 10px 4px; font-size: 11.5px; color: var(--t-mute); }
+.ws-menu-foot { position: sticky; bottom: -4px; z-index: 1; background: var(--t-panel); border-top: 1px solid var(--t-line); margin-top: 4px; padding: 6px 10px;
+  display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; color: var(--t-mute); }
+.ws-menu-foot kbd { font: inherit; border: 1px solid var(--t-line); border-radius: 5px; padding: 0 5px; margin-right: 4px; color: var(--t-dim); }
+@media (prefers-reduced-motion: reduce) { .ws-key { transition: none; } .ws-key:active:not(:disabled) { transform: none; } }
