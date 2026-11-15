@@ -86,8 +86,12 @@ try:
             # never break the wake for every agent on the org.
             try:
                 sys.path.insert(0, REPO)
-                from nucleus.econ import econ_line as _render, econ_mirror
+                from astryx.econ.econ import ECON_NEUTRAL, econ_line as _render, econ_mirror
                 econ_line = _render(econ_mirror(conn, agent) if agent else None)
+                # a line that says nothing is not printed: the neutral token rode on every prompt of every agent
+                # while the econ table held no row at all (owner 11-15)
+                if econ_line == ECON_NEUTRAL:
+                    econ_line = ""
             except Exception:
                 econ_line = ""
     except Exception:
@@ -114,9 +118,7 @@ try:
               f"{assumed}{limit // 1000}k){plan}")
     elif plan:
         print(f"[usage]{plan}")
-    # a line that says nothing is not printed: the neutral token rode on every prompt of every agent while the econ
-    # table held no row at all (owner 11-15: "the [econ] which appears in every agent after prompt")
-    if econ_line and "no standing verdict" not in econ_line:
+    if econ_line:
         print(econ_line)
 except Exception:
     pass
