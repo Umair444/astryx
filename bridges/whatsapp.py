@@ -426,7 +426,9 @@ async def hook(request: Request):
 
     agents = await wire_chat(pool, sender, "whatsapp", route["agent"], f"wa:{chat}", text, meta, route=route, said=said)
 
-    if live_steps_ok(route) and trusted:          # S1c: never on a tiered route (its second egress)
+    # progress shows for ANYONE's ask on an org route (owner 11-15: "it should appear to everyone"): the lines
+    # land in the same chat whoever asked, so a trusted sender never saw more than the rest of it did
+    if live_steps_ok(route):                      # S1c: never on a tiered route (its second egress)
         for agent in agents:                      # a team: each member's live steps show it working
             jobs[agent] = {"chat": chat, "thread": f"wa:{chat}", "opened": now,
                            "ph_id": None, "latest": "", "sent": "", "busy": False}

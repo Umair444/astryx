@@ -262,7 +262,9 @@ async def on_message(msg: dict):
                                  or await resolve_quoted_body(pool, rid))
     said = text
     agents = await wire_chat(pool, who, "telegram", route["agent"], f"tg:{chat}", text, meta, route=route, said=said)
-    if live_steps_ok(route) and trusted:           # S1c: never on a tiered route (its second egress)
+    # progress shows for ANYONE's ask on an org route (owner 11-15: "it should appear to everyone"): the lines
+    # land in the same chat whoever asked, so a trusted sender never saw more than the rest of it did
+    if live_steps_ok(route):                      # S1c: never on a tiered route (its second egress)
         for agent in agents:                       # a team: each member's live steps
             jobs[agent] = {"chat": chat, "ph_id": None, "sent": ""}
         try:
