@@ -10,7 +10,7 @@ import { isHuman, type Msg, type Step } from '../../types'
        this turn's.
    `steps`: the lane from where this turn's work starts (b), or since the ask (a). `by` names the asker when it isn't
    the viewer, so the line reads "for Pat". 11-15: (a) once compared from to the literal 'owner'. */
-export interface Pending { agent: string; since: string; steps: Step[]; by?: string }
+export interface Pending { agent: string; since: string; steps: Step[]; by?: string; leads?: boolean }
 
 export function pendingOf(agents: string[], rows: Msg[], live: Record<string, Step[]> | undefined, me: string): Pending[] {
   const out: Pending[] = []
@@ -25,9 +25,12 @@ export function pendingOf(agents: string[], rows: Msg[], live: Record<string, St
     const lane = live?.[a] ?? []
     const ask = [...rows].reverse().find((m) => isHuman(m.from) && m.to === a)
     const saidAt = Math.max(0, ...rows.filter((m) => m.from === a).map((m) => m.id))
-    // a team HELPER waits only until the lead has answered (helpers answer the lead over the wire, not the human; its
-    // real work still shows through its live lane, (b)); everyone else waits for their own word
-    const leadAt = t && a !== t.lead && team.includes(a) ? Math.max(0, ...rows.filter((m) => m.from === t.lead).map((m) => m.id)) : 0
+    // a team HELPER waits only until the lead has ANSWERED THE HUMAN (helpers answer the lead over the wire; its real
+    // work still shows through its live lane, (b)). Keyed on THIS ask's own lead (an older team never ends a later
+    // solo ask), and only the lead's rows to a human count (its wire to a helper is delegation, not an answer: medic
+    // 12222 X1/X2). Everyone else waits for their own word
+    const leadAt = ask?.lead && ask.lead !== a
+      ? Math.max(0, ...rows.filter((m) => m.from === ask.lead && !!m.to && isHuman(m.to)).map((m) => m.id)) : 0
     const asked = !!ask && ask.id > saidAt && ask.id > leadAt
     // (b) the newest step of a turn this thread opened, and nothing after it from a turn another thread opened
     let k = -1
@@ -49,5 +52,6 @@ export function pendingOf(agents: string[], rows: Msg[], live: Record<string, St
   // A TEAM's lead first (LiveActivity draws a team as ONE line, the lead's): the newest human ask here that named one
   const lead = t?.lead
   const i = lead ? out.findIndex((p) => p.agent === lead) : -1
-  return i > 0 ? [out[i], ...out.slice(0, i), ...out.slice(i + 1)] : out
+  if (i < 0) return out
+  return [{ ...out[i], leads: true }, ...out.slice(0, i), ...out.slice(i + 1)]   // `leads`: the line may say "helping"
 }

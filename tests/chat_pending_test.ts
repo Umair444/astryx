@@ -52,5 +52,13 @@ const desk = pendingOf(['db'], team, {}, 'owner')
 arm("on a desk (recipients: the desk's agent alone), the team's other member still works here", desk.map((p) => p.agent).join() === 'db,seed', desk.map((p) => p.agent))
 const answered2 = [...(team as never[]), row(22, 'db', 'owner', '2026-11-15T10:05:00Z')] as never[]
 arm("once the lead has answered, an idle helper is no longer waited for", pendingOf(['db'], answered2, {}, 'owner').length === 0, pendingOf(['db'], answered2, {}, 'owner').map((p) => p.agent))
+// medic 12222 X1: the lead DELEGATING to its helper (db→seed on the same thread) is no answer: seed is still waited for
+const deleg = [...(team as never[]), row(22, 'db', 'seed', '2026-11-15T10:01:00Z')] as never[]
+arm("the lead's wire to its helper doesn't end the helper's wait", pendingOf(['db'], deleg, {}, 'owner').map((p) => p.agent).includes('seed'), pendingOf(['db'], deleg, {}, 'owner').map((p) => p.agent))
+// X2: a team before, then a SOLO ask to seed: db answering something else never ends seed's own ask
+const solo = [...(team as never[]), row(22, 'db', 'owner', '2026-11-15T10:05:00Z'), row(23, 'owner', 'seed', '2026-11-15T10:06:00Z'),
+              row(24, 'db', 'owner', '2026-11-15T10:07:00Z')] as never[]
+arm("an older team never ends a later solo ask", pendingOf(['db'], solo, {}, 'owner').map((p) => p.agent).includes('seed'), pendingOf(['db'], solo, {}, 'owner').map((p) => p.agent))
+arm("the lead, when pending and first, is marked as leading", both[0]?.leads === true && !both[1]?.leads, both)
 
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')

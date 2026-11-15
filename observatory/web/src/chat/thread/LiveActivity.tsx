@@ -90,7 +90,9 @@ function Team({ pending, now, onStop }: { pending: Pending[]; now: number; onSto
   const detail = last?.sub ? `↳ ${helperName(last)} · ${own}` : own
   const since = pending.map((p) => p.since).sort()[0]
   const others = pending.slice(1).map((p) => displayName(p.agent))
-  const helping = others.length === 1 ? `${others[0]} helping` : `${others.length} helping`
+  // "helping" only while the lead is the one at work; once it has answered, the rest are simply working too
+  const word = lead.leads ? 'helping' : 'also working'
+  const helping = others.length === 1 ? `${others[0]} ${word}` : `${others.length} ${word}`
   const faces = pending.slice(0, 4)
   return (
     <div style={{ ['--ws-agent' as string]: agentColor(lead.agent) }}>
