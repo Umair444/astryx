@@ -140,21 +140,6 @@ fi
 
 DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file 2>/dev/null || true)
 [ -n "$DSN" ] || { echo "backup: no ASTRYX_DSN in .env" >&2; exit 1; }   # org-home: a message
-# cog-rls slice 2: a provisioned org's DSN is org_<key>, which can't dump the whole database (row-level security, objects
-# it was never granted) nor read every role. A full dump is the PROVISIONER's: the root-only superuser file, same
-# database. Readable only under sudo/root; otherwise the org DSN is used and pg_dump fails LOUD (never a silent partial).
-SUPER_FILE=${ASTRYX_PG_SUPER_FILE:-/etc/astryx/pg-super.dsn}
-if [ -r "$SUPER_FILE" ]; then
-  # the DSNs ride the environment, never argv (ps shows argv to every user)
-  # a URL stays a URL: pg_dsn_user/pg_dsn_db (the docker path) parse URLs only, and make_conninfo writes key=value
-  DSN=$(ORG_DSN="$DSN" SUPER_FILE="$SUPER_FILE" "$ROOT/venv/bin/python" -c 'import os; from urllib.parse import quote, urlsplit
-from psycopg.conninfo import make_conninfo, conninfo_to_dict
-s = open(os.environ["SUPER_FILE"]).read().strip(); db = conninfo_to_dict(os.environ["ORG_DSN"]).get("dbname")
-if db and "://" in s: s = urlsplit(s)._replace(path="/" + quote(db, safe="")).geturl()
-elif db: s = make_conninfo(s, dbname=db)
-print(s)') \
-    || { echo "backup: the provisioner DSN file is unreadable as a DSN" >&2; exit 1; }
-fi
 
 mkdir -p backups   # org-home: relative to $ORGH, the org's HOME (cd above)
 ts=$(date +%Y%m%dT%H%M%S)
@@ -231,7 +216,9 @@ host_pg_ok() {
   command -v "$1" >/dev/null || return 1
   local cmaj smaj
   cmaj=$("$1" --version 2>/dev/null | grep -oE '[0-9]+' | head -1)
-  smaj=$(psql -Atq -d "$DSN" -c 'SHOW server_version_num' 2>/dev/null || pg_exec psql -Atq -U "$(pg_dsn_user "$DSN")" -c 'SHOW server_version_num' 2>/dev/null)
+  # -w, </dev/null and a connect timeout: the probe fails fast, never waits on a prompt or a dead connect (medic #66298)
+  smaj=$(PGCONNECT_TIMEOUT=10 psql -w -Atq -d "$DSN" -c 'SHOW server_version_num' </dev/null 2>/dev/null \
+    || pg_exec psql -w -Atq -U "$(pg_dsn_user "$DSN")" -c 'SHOW server_version_num' </dev/null 2>/dev/null)
   smaj=$(( ${smaj:-0} / 10000 ))
   [ -n "$cmaj" ] && [ "$cmaj" -ge "$smaj" ]
 }

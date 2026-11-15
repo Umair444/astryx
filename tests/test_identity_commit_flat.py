@@ -11,6 +11,9 @@ Hermetic: a temp git repo whose .gitignore holds agents/, the scribe loaded from
   F4  ...and a SECOND self_edit then edits the folder-form charter in place
   F5  CORE is still refused on the migrated path (Heartbeat changed → REFUSED, charter unchanged)
   C1  control: a TRACKED flat charter still migrates through `git mv` (the rename is staged)
+  U1  an UNTRACKED but NOT ignored flat charter in the shared repo (`git mv` exits 128 there too) migrates on disk
+  U2  ...and is never staged or committed by the scribe, on the first edit or the second
+  O1  control: where agents/ is a repo of its own, an untracked flat charter migrates and IS committed there
 Run: venv/bin/python tests/test_identity_commit_flat.py   (also wired into devtools/check.sh)
 """
 import importlib.util
@@ -100,7 +103,36 @@ with tempfile.TemporaryDirectory() as td:
          rc == 0 and (r / "agents" / "tracked" / "yy" / "yy.md").is_file()
          and "agents/tracked/yy/yy.md" in git(r, "ls-files", "agents/tracked"), f"rc={rc} {out[-200:]}")
 
+    head = git(r, "rev-parse", "HEAD")
+    (r / "agents" / "tracked" / "ww.md").write_text(CHARTER)          # in an un-ignored dir, never added
+    rc, out = edit(m, "ww", "ww.md", CHARTER.replace("old step", "new step"))
+    ww = r / "agents" / "tracked" / "ww" / "ww.md"
+    want("U1 an untracked, NOT ignored flat charter's first self_edit migrates it on disk with the new content",
+         rc == 0 and ww.is_file() and "new step" in ww.read_text() and not (r / "agents" / "tracked" / "ww.md").exists(),
+         f"rc={rc} {out[-200:]}")
+    rc2, out2 = edit(m, "ww", "ww.md", CHARTER.replace("old step", "third step"))
+    want("U2 ...and the scribe never stages or commits it (first edit or second)",
+         rc2 == 0 and "third step" in ww.read_text() and git(r, "rev-parse", "HEAD") == head
+         and "ww" not in git(r, "ls-files", "agents/tracked") and "ww" not in git(r, "diff", "--cached", "--name-only"),
+         f"rc={rc2} {out2[-200:]} {git(r, 'status', '--porcelain')}")
+
+with tempfile.TemporaryDirectory() as td:
+    a = Path(td) / "agents"                                             # agents/ IS the repo (its own identity history)
+    a.mkdir()
+    git(Path(td), "init", "-q", "-b", "main", str(a))
+    for k, v in (("user.email", "t@t"), ("user.name", "t")):
+        git(a, "config", k, v)
+    (a / "seed.md").write_text(CHARTER)
+    git(a, "add", "seed.md")
+    git(a, "commit", "-qm", "base")
+    (a / "vv.md").write_text(CHARTER)                                   # untracked: a charter dropped in, not yet added
+    m = scribe(a)
+    rc, out = edit(m, "vv", "vv.md", CHARTER.replace("old step", "new step"))
+    want("O1 control: agents/ its own repo: an untracked flat charter migrates and IS committed there",
+         rc == 0 and (a / "vv" / "vv.md").is_file() and "vv/vv.md" in git(a, "ls-files")
+         and git(a, "status", "--porcelain") == "", f"rc={rc} {out[-200:]} {git(a, 'status', '--porcelain')}")
+
 if fails:
     print(f"FAIL: {len(fails)} arm(s)")
     sys.exit(1)
-print("PASS: a flat charter's first self_edit migrates it to folder form on a gitignored agents/, CORE still guarded")
+print("PASS: a flat charter's first self_edit migrates it to folder form whether tracked, ignored or merely untracked; CORE still guarded")
