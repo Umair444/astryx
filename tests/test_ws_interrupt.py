@@ -39,14 +39,14 @@ def arm(name, ok, detail=""):
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"\n        {detail}"))
 
 
-ROSTER = {"seed", "db", "abstractor-1", "lending_ai"}
+ROSTER = {"seed", "db", "abstractor-1", "ops_ai"}
 
 print("name shape")
 for bad in ["", "DB", "db;ls", "db x", "../db", "db/..", "db:1", "=db", "db.0", "-db", "1db", "d" * 42, "db\n", "ax-db:"]:
     arm(f"refuses {bad!r}", W.interrupt_check(bad, ROSTER | {bad}) == (400, "not an agent name"), W.interrupt_check(bad, ROSTER))
 arm("refuses a non-string", W.interrupt_check(None, ROSTER) == (400, "not an agent name"))
 arm("well-shaped but not on the roster -> 404", W.interrupt_check("ghost", ROSTER) == (404, "no such agent"))
-for good in ["seed", "db", "abstractor-1", "lending_ai"]:
+for good in ["seed", "db", "abstractor-1", "ops_ai"]:
     arm(f"accepts {good}", W.interrupt_check(good, ROSTER) is None)
 
 print("argv")
