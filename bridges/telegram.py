@@ -181,7 +181,7 @@ async def on_step(ev: dict):
     job = jobs.get(agent)
     if not job:
         return
-    line = await step_line(pool, ev.get("id", 0), kind, agent=agent)
+    line = await step_line(pool, ev.get("id", 0), kind, agent=agent, thread=job["thread"])   # only this chat's work
     if not line or line == job.get("sent"):
         return
     job["sent"] = line
@@ -262,9 +262,11 @@ async def on_message(msg: dict):
                                  or await resolve_quoted_body(pool, rid))
     said = text
     agents = await wire_chat(pool, who, "telegram", route["agent"], f"tg:{chat}", text, meta, route=route, said=said)
-    if live_steps_ok(route) and trusted:           # S1c: never on a tiered route (its second egress)
+    # progress shows for ANYONE's ask on an org route (owner 11-15: "it should appear to everyone"), scoped to the work
+    # this chat asked for: on_step's step_line(thread=...) drops a step whose turn another thread opened (medic 12159)
+    if live_steps_ok(route):                      # S1c: never on a tiered route (its second egress)
         for agent in agents:                       # a team: each member's live steps
-            jobs[agent] = {"chat": chat, "ph_id": None, "sent": ""}
+            jobs[agent] = {"chat": chat, "thread": f"tg:{chat}", "ph_id": None, "sent": ""}
         try:
             await tg("sendChatAction", chat_id=int(chat), action="typing")
         except Exception:

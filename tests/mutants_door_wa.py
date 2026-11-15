@@ -16,7 +16,7 @@ MUTANTS = {
     "W3 a stamped row's destination comes from its thread":
         ("        chat = stamped[0][\"chat\"]", "        chat = thread[3:] or stamped[0][\"chat\"]"),
     "W4 the live_steps job starts on any route that asks (its second egress ungated)":
-        ("    if live_steps_ok(route) and trusted:", "    if route.get(\"live_steps\") and trusted:"),
+        ("    if live_steps_ok(route):", "    if route.get(\"live_steps\"):"),
     "W5 a released row is not recognised (it takes the thread path)":
         ("    if released(row) is not None:\n        # plan-9139 S1c", "    if False:\n        # plan-9139 S1c"),
     "W6 a released row's receipt REPLACES its delivery (the release record lost)":
