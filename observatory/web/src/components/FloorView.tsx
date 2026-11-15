@@ -175,6 +175,10 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
     const el = box.current
     if (!el) return
     const onWheel = (e: WheelEvent) => {
+      // a panel docked over the floor ([data-dock]: the channel rail, and any to come) scrolls itself. This listener is
+      // native and runs before React's, so the panel's own stopPropagation never reached it (owner 11-15: "scroll on
+      // channel side bar doesn't work, it scrolls the floor in the back")
+      if ((e.target as Element | null)?.closest?.('[data-dock]')) return
       e.preventDefault()
       const r = el.getBoundingClientRect()
       const c = camRef.current
