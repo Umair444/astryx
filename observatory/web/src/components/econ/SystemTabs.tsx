@@ -358,10 +358,18 @@ function Market({ s }: { s: Sys }) {
 function Game({ s }: { s: Sys }) {
   const rows = s.commons.filter((r) => r.share != null)
   const gave = (r: Sys['commons'][number]) => r.tool_callers + r.ideas_reused + r.was_asked
-  const maxX = Math.max(0.05, ...rows.map((r) => r.share ?? 0)), maxY = Math.max(1, ...rows.map(gave))
+  const maxX = Math.max(0.05, ...rows.map((r) => r.share ?? 0)) * 1.08, maxY = Math.max(1, ...rows.map(gave))
   const W = 640, H = 340, L = 48, R = 16, T = 14, B = 36
   const x = (v: number) => L + (v / maxX) * (W - L - R), y = (v: number) => T + (1 - Math.sqrt(v / maxY)) * (H - T - B)
   const fair = 1 / Math.max(1, rows.length)
+  // labels never sit on each other: walked top to bottom, one that would overlap a neighbour's is pushed below it;
+  // a point near the right edge is labelled on its left
+  const placed = [...rows].sort((a, b) => y(gave(a)) - y(gave(b))).reduce<{ r: typeof rows[number]; ly: number; left: boolean }[]>((acc, r) => {
+    const left = x(r.share!) > W * 0.72
+    let ly = y(gave(r)) + 4
+    for (const o of acc) if (o.left === left && Math.abs(x(o.r.share!) - x(r.share!)) < 90 && Math.abs(o.ly - ly) < 13) ly = o.ly + 13
+    return [...acc, { r, ly, left }]
+  }, [])
   const law = Object.entries(s.game.law)
   const lawMax = Math.max(1, ...law.map(([, v]) => v.bytes))
   return (
@@ -377,11 +385,11 @@ function Game({ s }: { s: Sys }) {
             <line x1={L} x2={W - R} y1={H - B} y2={H - B} stroke="var(--t-line)" />
             <text x={W - R} y={H - 10} fontSize={10} textAnchor="end" fill="var(--t-mute)">share of energy taken →</text>
             <text x={L - 8} y={T + 4} fontSize={10} textAnchor="end" fill="var(--t-mute)">gave</text>
-            {rows.map((r) => (
+            {placed.map(({ r, ly, left }) => (
               <g key={r.agent}>
                 <circle cx={x(r.share!)} cy={y(gave(r))} r={6 + Math.min(10, r.tools_used_by_others * 2)} fill="var(--t-accent)" opacity={0.25} />
                 <circle cx={x(r.share!)} cy={y(gave(r))} r={3} fill="var(--t-accent)"><title>{`${displayName(r.agent)}: ${fmtPct(r.share)} of the energy; gave ${gave(r)}`}</title></circle>
-                <text x={x(r.share!) + 8} y={y(gave(r)) + 4} fontSize={11} fill="var(--t-dim)">{displayName(r.agent)}</text>
+                <text x={x(r.share!) + (left ? -8 : 8)} y={ly} fontSize={11} fill="var(--t-dim)" textAnchor={left ? 'end' : 'start'}>{displayName(r.agent)}</text>
               </g>
             ))}
           </svg>
