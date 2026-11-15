@@ -1,27 +1,35 @@
 #!/usr/bin/env python
-"""astryx · people_rekey — move people ids from the salt the old .env line order picked to the one _salt() picks now.
+"""astryx · people_rekey — move people ids hashed under a salt _salt() no longer picks onto the one it picks now.
 
-Before the salt-order fix, people._salt() returned whichever of PEOPLE_SALT / ASTRYX_ORG the .env named FIRST, so an
-install whose ASTRYX_ORG line sits above PEOPLE_SALT hashed every id with the public org name. With the fix the ids
-change (PEOPLE_SALT wins), and every row keyed by the old ids would stop matching: social_relation is not rebuilt by
-the nightly sweep, so its details would orphan. This re-keys them in place.
+An id is `p`+sha256(salt|jid)[:14] (groups `g`+…[:12]). Two changes moved the salt under existing rows:
+  - single-org: _salt() used to return whichever of PEOPLE_SALT / ASTRYX_ORG the .env named FIRST, so an ASTRYX_ORG line
+    above PEOPLE_SALT hashed with the public org name; the salt-order fix made PEOPLE_SALT win;
+  - multi-org (cog) hosts: the split began earlier, when people.py started reading the salt through config.org_env.
+The nightly sweep rewrites social_person/social_edge under the current salt, but social_relation (the details) and the
+people store's files are never rebuilt, so their rows keyed by a superseded id match nobody.
 
-An id is a hash of a channel id (jid) that is never stored, so the map is rebuilt from the channel: every chat, and
-every sender in every group's messages. Each jid gives (old id, new id); a row is re-keyed by lookup.
+So ids are ATTRIBUTED, not derived from a rule: each held id is classified by which candidate salt explains it (the
+.env's PEOPLE_SALT, its ASTRYX_ORG, the last-resort unsalted value), and anything a non-current candidate explains is
+re-keyed to the id the current _salt() gives the same jid. The jid is never stored, so the map is rebuilt from the
+channel: every chat, and every sender in every group's messages (`--msgs` deep).
 
-  Dry run (the default) prints COUNTS only, never an id or a jid, and changes nothing.
-  --apply does it in ONE transaction: social_person.id, social_edge.src/dst, social_relation.pid, for this org only
-  (works with or without a tenant column). It refuses and changes nothing when any id is neither old nor new (the
-  channel walk didn't reach that person: raise --msgs) or a moved row would land on a key that already exists.
-  A second run finds nothing to move and changes nothing.
-  The people store's files (<people dir>/*.jsonl: the owner's asks and answers, a `pid` per line) move with the tables:
-  their ids count toward the same refusal, and they are rewritten only AFTER the transaction commits, each one atomically
-  (temp + rename) beside a .bak of what it held. A file that fails to write is named loudly (exit 1); its .bak stays.
+  Dry run (the default) prints COUNTS only (never an id, jid or salt) and changes nothing.
+  --apply does it in ONE transaction, for this org only, with or without a tenant column:
+    social_person.id   moved; an old row whose new twin already exists is a duplicate the sweep re-made: dropped
+    social_edge        src/dst moved; an old edge whose (src, dst, rel) twin already exists is a duplicate: dropped
+    social_relation    moved; where BOTH old and new ids hold details it is a clash: reported by count and kind
+                       (same / different / one side empty) and left untouched under its old id. How to merge two
+                       sets of the owner's details is not this tool's call.
+  It refuses, changing nothing, only when a held id matches no channel jid under any candidate (raise --msgs), or when
+  two superseded ids collapse onto one new id. A second run moves nothing.
+  The people store's files (<people dir>/*.jsonl, a `pid` per line) move with the tables: their ids count toward the
+  same refusal, and they are rewritten only AFTER the transaction commits, each atomically (temp + rename) beside a .bak.
+  A file that fails to write is named loudly (exit 1) and a rerun moves only the files.
 
 Derived copies are not touched here: rebuild the graph afterwards (venv/bin/python src/astryx/memory/social_age.py).
 
 Run: venv/bin/python src/astryx/people/people_rekey.py [--apply] [--msgs N]
-Exit: 0 done or nothing to do · 1 refused, nothing changed · 77 the channel or the database is unreachable.
+Exit: 0 done or nothing to do · 1 refused or a file write failed · 77 the channel or the database is unreachable.
 """
 from __future__ import annotations
 if not __package__:  # run by path: the checkout root goes first on sys.path so `astryx` resolves (goal 10224 S4)
@@ -42,6 +50,7 @@ from pathlib import Path
 _ID = re.compile(r"^(p[0-9a-f]{14}|g[0-9a-f]{12})$")
 # (table, column) pairs that hold a social_person.id; each table's rows are scoped by its org column
 KEYED = (("social_person", "id"), ("social_edge", "src"), ("social_edge", "dst"), ("social_relation", "pid"))
+UNSALTED = "astryx-unsalted"        # people._salt()'s last resort
 
 
 def ids(salt: str, jid: str) -> str:
@@ -50,19 +59,21 @@ def ids(salt: str, jid: str) -> str:
     return "g" + h[:12] if jid.endswith("@g.us") else "p" + h[:14]
 
 
-def old_salt(env: dict, environ: dict | None = None) -> str:
-    """The salt _salt() returned before the fix: an environment value first (unchanged by the fix), then whichever of
-    PEOPLE_SALT / ASTRYX_ORG the .env names FIRST."""
+def env_path() -> Path:
+    return paths.estate(people.__file__) / ".env"
+
+
+def candidates(env: dict) -> dict[str, str]:
+    """Every salt this org's ids could have been hashed under, read from its .env FILE only (never the environment
+    routing _salt() itself uses: on a multi-org host that routing is the post-change answer, so deriving the old salt
+    through it returns the new one)."""
+    out = {}
     for k in ("PEOPLE_SALT", "ASTRYX_ORG"):
-        v = config.org_env(k, environ=environ)
+        v = (env.get(k) or "").strip()
         if v:
-            return v
-    salt, org = env.get("PEOPLE_SALT"), env.get("ASTRYX_ORG")
-    if salt is not None and org is not None:
-        return salt if list(env).index("PEOPLE_SALT") < list(env).index("ASTRYX_ORG") else org
-    if salt is not None or org is not None:
-        return salt if salt is not None else org
-    return "astryx-unsalted"
+            out[k] = v
+    out["unsalted"] = UNSALTED
+    return out
 
 
 def channel_jids(msgs: int) -> set[str] | None:
@@ -101,59 +112,108 @@ def file_ids(d: Path | None) -> dict[Path, list]:
     return out
 
 
-def plan(cur, org: str, old: str, new: str, jids, files: dict | None = None) -> dict:
-    """Counts, and the old → new map for the ids this org's rows (and the people files) actually hold."""
-    pairs = {ids(old, j): ids(new, j) for j in jids}
-    news = set(pairs.values())
-    held = set()
-    rows = {}
+def plan(cur, org: str, cands: dict, target: str, jids, files: dict | None = None) -> dict:
+    """Attribution counts per keyed column and file, the old → new map, and the row operations --apply would do."""
+    jids = set(jids)
+    explains = {label: {ids(salt, j): j for j in jids} for label, salt in cands.items()}
+    cur_ids = {ids(target, j) for j in jids}
+    pairs = {}
+    for label, salt in cands.items():
+        if salt != target:
+            for i, j in explains[label].items():
+                if i not in cur_ids:
+                    pairs.setdefault(i, ids(target, j))
+    held_by = {}
     for t, c in KEYED:
         cur.execute(f"SELECT {c} FROM {t} WHERE org = %s", (org,))
-        vals = [r[0] for r in cur.fetchall()]
-        rows[f"{t}.{c}"] = len(vals)
-        held |= {v for v in vals if _ID.match(v)}
+        held_by[f"{t}.{c}"] = [r[0] for r in cur.fetchall()]
     for f, lines in (files or {}).items():
-        vals = [o.get("pid") for _, o in lines if o and isinstance(o.get("pid"), str)]
-        rows[f"file {f.name}"] = len(vals)
-        held |= {v for v in vals if _ID.match(v)}
-    move = {i: pairs[i] for i in held if i in pairs and pairs[i] != i}
-    already = {i for i in held if i in news and i not in move}
-    unmapped = held - set(move) - already
-    clash = 0
-    for t, key in (("social_person", "id"), ("social_relation", "pid")):
-        cur.execute(f"SELECT {key} FROM {t} WHERE org = %s", (org,))
-        have = {r[0] for r in cur.fetchall()}
-        clash += sum(1 for o, n in move.items() if o in have and n in have)
+        held_by[f"file {f.name}"] = [o.get("pid") for _, o in lines if o and isinstance(o.get("pid"), str)]
+    attribution, held = {}, set()
+    for k, vals in held_by.items():
+        h = {v for v in vals if _ID.match(v)}
+        held |= h
+        a = {"rows": len(vals), "ids": len(h), "current": len(h & cur_ids)}
+        for label in cands:
+            if cands[label] != target:
+                a[label] = len(h & set(explains[label]) - cur_ids)
+        a["none"] = len(h - cur_ids - set(pairs))
+        attribution[k] = a
+    move = {i: pairs[i] for i in held if i in pairs}
+    unmapped = held - cur_ids - set(move)
+    collapse = len(move) - len(set(move.values()))              # two superseded ids onto one new id
+
+    persons = set(held_by["social_person.id"])
+    ops = {"person_update": 0, "person_drop": 0, "edge_update": 0, "edge_drop": 0,
+           "relation_update": 0, "relation_kept_same": 0, "relation_kept_different": 0, "relation_kept_one_empty": 0,
+           "file_lines": 0}
+    for i in held_by["social_person.id"]:
+        if i in move:
+            ops["person_drop" if move[i] in persons else "person_update"] += 1
     cur.execute("SELECT src, dst, rel FROM social_edge WHERE org = %s", (org,))
     edges = cur.fetchall()
     have = set(edges)
-    clash += sum(1 for s, d, r in edges if (s in move or d in move)
-                 and (move.get(s, s), move.get(d, d), r) in have)
-    return {"jids": len(set(jids)), "rows": rows, "ids_held": len(held), "to_move": len(move),
-            "already_new": len(already), "unmapped": len(unmapped), "clashes": clash, "map": move}
+    for s, d, r in edges:
+        if s in move or d in move:
+            ops["edge_drop" if (move.get(s, s), move.get(d, d), r) in have else "edge_update"] += 1
+    cur.execute("SELECT pid, kind FROM social_relation WHERE org = %s", (org,))
+    rel = dict(cur.fetchall())
+    for i, kind in rel.items():
+        if i in move:
+            if move[i] not in rel:
+                ops["relation_update"] += 1
+            else:
+                k2 = rel[move[i]]
+                ops["relation_kept_one_empty" if not kind or not k2 else
+                    "relation_kept_same" if kind == k2 else "relation_kept_different"] += 1
+    for f, lines in (files or {}).items():
+        ops["file_lines"] += sum(1 for _, o in lines if o and o.get("pid") in move)
+    kept = ops["relation_kept_same"] + ops["relation_kept_different"] + ops["relation_kept_one_empty"]
+    work = sum(v for k, v in ops.items() if not k.startswith("relation_kept"))
+    return {"jids": len(jids), "attribution": attribution, "unmapped": len(unmapped), "collapse": collapse,
+            "ops": ops, "kept": kept, "work": work, "map": move,
+            "rows": {k: len(v) for k, v in held_by.items() if not k.startswith("file ")}}
 
 
 def apply(conn, org: str, p: dict) -> dict:
-    """Re-key in ONE transaction; any count that doesn't hold afterwards rolls it all back."""
+    """Re-key in ONE transaction; any count that doesn't match the plan afterwards rolls it all back."""
+    o = p["ops"]
     with conn.transaction():
         cur = conn.cursor()
         cur.execute("CREATE TEMP TABLE _rekey (old text PRIMARY KEY, new text NOT NULL) ON COMMIT DROP")
         cur.executemany("INSERT INTO _rekey VALUES (%s, %s)", list(p["map"].items()))
-        moved = 0
+        cur.execute("DELETE FROM social_person x USING _rekey m WHERE x.org = %s AND x.id = m.old AND EXISTS "
+                    "(SELECT 1 FROM social_person y WHERE y.org = x.org AND y.id = m.new)", (org,))
+        dropped_p = cur.rowcount
+        cur.execute("UPDATE social_person x SET id = m.new FROM _rekey m WHERE x.org = %s AND x.id = m.old", (org,))
+        moved_p = cur.rowcount
+        new_of = "COALESCE((SELECT new FROM _rekey WHERE old = e.{c}), e.{c})"
+        touches = "(e.src IN (SELECT old FROM _rekey) OR e.dst IN (SELECT old FROM _rekey))"
+        cur.execute(f"DELETE FROM social_edge e WHERE e.org = %s AND {touches} AND EXISTS (SELECT 1 FROM social_edge t "
+                    f"WHERE t.org = e.org AND t.rel = e.rel AND t.src = {new_of.format(c='src')} "
+                    f"AND t.dst = {new_of.format(c='dst')})", (org,))
+        dropped_e = cur.rowcount
+        cur.execute(f"UPDATE social_edge e SET src = {new_of.format(c='src')}, dst = {new_of.format(c='dst')} "
+                    f"WHERE e.org = %s AND {touches}", (org,))
+        moved_e = cur.rowcount
+        cur.execute("UPDATE social_relation x SET pid = m.new FROM _rekey m WHERE x.org = %s AND x.pid = m.old AND "
+                    "NOT EXISTS (SELECT 1 FROM social_relation y WHERE y.org = x.org AND y.pid = m.new)", (org,))
+        moved_r = cur.rowcount
+        got = (dropped_p, moved_p, dropped_e, moved_e, moved_r)
+        want = (o["person_drop"], o["person_update"], o["edge_drop"], o["edge_update"], o["relation_update"])
+        if got != want:
+            raise RuntimeError(f"the re-key did {got}, the plan said {want} (drop/move person, drop/move edge, "
+                               "move relation): rolled back")
+        left = {}
         for t, c in KEYED:
-            cur.execute(f"UPDATE {t} x SET {c} = m.new FROM _rekey m WHERE x.org = %s AND x.{c} = m.old", (org,))
-            moved += cur.rowcount
-        after = {}
-        for t, c in KEYED:
-            cur.execute(f"SELECT count(*), count(*) FILTER (WHERE {c} IN (SELECT old FROM _rekey)) "
+            cur.execute(f"SELECT count(*) FILTER (WHERE {c} IN (SELECT old FROM _rekey)), count(*) "
                         f"FROM {t} WHERE org = %s", (org,))
-            n, left = cur.fetchone()
-            after[f"{t}.{c}"] = n
-            if left:
-                raise RuntimeError(f"{t}.{c}: {left} old id(s) still present after the update")
-        if after != {k: v for k, v in p["rows"].items() if not k.startswith("file ")}:
-            raise RuntimeError("row counts changed during the re-key")
-    return {"rows_updated": moved, "rows": after}
+            left[f"{t}.{c}"] = cur.fetchone()
+        if any(n for k, (n, _) in left.items() if k != "social_relation.pid") or \
+                left["social_relation.pid"][0] != p["kept"]:
+            raise RuntimeError("superseded ids remain beyond the reported relation clashes: rolled back")
+        rows = {k: total for k, (_, total) in left.items()}
+    return {"rows_updated": moved_p + moved_e + moved_r, "rows_dropped": dropped_p + dropped_e, "rows": rows}
 
 
 def apply_files(files: dict, move: dict) -> tuple[int, list[str]]:
@@ -181,11 +241,14 @@ def apply_files(files: dict, move: dict) -> tuple[int, list[str]]:
 
 
 def report(p: dict) -> str:
-    """Counts only: never an id, never a jid."""
-    rows = ", ".join(f"{k} {v}" for k, v in p["rows"].items())
-    return (f"channel ids walked: {p['jids']}\nrows: {rows}\ndistinct ids held: {p['ids_held']}: "
-            f"to move {p['to_move']}, already new {p['already_new']}, unmapped {p['unmapped']}; "
-            f"key clashes {p['clashes']}")
+    """Counts only: never an id, a jid or a salt."""
+    lines = [f"channel ids walked: {p['jids']}"]
+    for k, a in p["attribution"].items():
+        lines.append(f"{k}: " + ", ".join(f"{n} {v}" for n, v in a.items()))
+    o = p["ops"]
+    lines.append("would: " + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in o.items()))
+    lines.append(f"unmapped {p['unmapped']}, collapsed {p['collapse']}")
+    return "\n".join(lines)
 
 
 def main(argv=None) -> int:
@@ -193,11 +256,7 @@ def main(argv=None) -> int:
     ap.add_argument("--apply", action="store_true", help="re-key, in one transaction (default: dry run, counts only)")
     ap.add_argument("--msgs", type=int, default=5000, help="messages read per group to find its senders")
     a = ap.parse_args(argv)
-    old = old_salt(config.read_env(paths.estate(people.__file__) / ".env"))
-    new = people._salt()
-    if old == new:
-        print("old and new salt are the same here: nothing to re-key")
-        return 0
+    cands, target = candidates(config.read_env(env_path())), people._salt()
     dsn = people._dsn()
     jids = channel_jids(a.msgs)
     if not dsn or jids is None:
@@ -207,28 +266,32 @@ def main(argv=None) -> int:
     org = people._org()
     files = file_ids(people_dir())
     with psycopg.connect(dsn) as conn:
-        p = plan(conn.cursor(), org, old, new, jids, files)
+        p = plan(conn.cursor(), org, cands, target, jids, files)
         conn.rollback()
         print(report(p))
-        if p["unmapped"] or p["clashes"]:
-            print("REFUSED: " + (f"{p['unmapped']} id(s) match no channel id under either salt (raise --msgs)"
-                                 if p["unmapped"] else f"{p['clashes']} moved row(s) would land on an existing key")
+        if p["unmapped"] or p["collapse"]:
+            print("REFUSED: " + (f"{p['unmapped']} held id(s) match no channel id under any candidate salt (raise --msgs)"
+                                 if p["unmapped"] else f"{p['collapse']} superseded id(s) collapse onto one new id")
                   + "; nothing changed")
             return 1
-        if not p["to_move"]:
+        if p["kept"]:
+            print(f"{p['kept']} relation clash(es) (old and new id both hold details) are KEPT untouched under the old id: "
+                  "merging the owner's two sets of details is not this tool's call")
+        if not p["work"]:
             print("nothing to move")
             return 0
         if not a.apply:
             print("dry run: nothing changed (--apply to re-key)")
             return 0
         r = apply(conn, org, p)
-        print(f"re-keyed: {r['rows_updated']} row value(s) in one transaction; row counts unchanged. "
-              "Rebuild the graph: venv/bin/python src/astryx/memory/social_age.py")
+        print(f"re-keyed: {r['rows_updated']} row(s) moved, {r['rows_dropped']} duplicate row(s) dropped, in one "
+              "transaction. Rebuild the graph: venv/bin/python src/astryx/memory/social_age.py")
     n, failed = apply_files(files, p["map"])                    # only now: the transaction above has committed
     print(f"people files: {n} line(s) re-keyed (each rewritten file keeps a .bak beside it)")
     if failed:
-        print(f"FILE WRITE FAILED: {'; '.join(failed)}. The database IS re-keyed; these files are untouched and still hold the OLD ids "
-              "(any .bak written holds the same). Fix the cause and rerun: the tables are a no-op now, the files move.")
+        print(f"FILE WRITE FAILED: {'; '.join(failed)}. The database IS re-keyed; these files are untouched and still hold "
+              "the OLD ids (any .bak written holds the same). Fix the cause and rerun: the tables are a no-op now, "
+              "the files move.")
         return 1
     return 0
 

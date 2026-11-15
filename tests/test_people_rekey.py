@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """Oracle: src/astryx/people/people_rekey.py on a fixture database (schema.sql applied whole).
 
-Seeds rows the way the sweep wrote them under the OLD salt (the public org name the .env named first), then:
-  S1  old_salt() is the pre-fix rule (file order), _salt() the fixed one, and ids() is people.pid() byte for byte.
-  D1  the dry run's plan counts every id to move and changes nothing; its report holds no id and no jid.
-  A1  --apply re-keys social_person, social_edge (src and dst) and social_relation to the NEW ids, row counts unchanged,
-      another org's rows untouched.
+Seeds rows the way the sweep wrote them under a SUPERSEDED salt (the public org name), then:
+  S1  candidates() reads the .env FILE only (an environment value never stands in for it); ids() is people.pid().
+  M1  the multi-org false green: with _salt() routed the way a multi-org host routes it (org_env → the HOME's .env,
+      so PEOPLE_SALT), main() still finds the org-name rows and moves them. RED control: the pre-fix derivation run
+      through that same routing returns the NEW salt, i.e. "nothing to re-key".
+  D1  the dry run counts by attribution and changes nothing; its report holds no id, no jid and no salt.
+  A1  --apply moves social_person, social_edge (src, dst) and social_relation to the new ids, another org untouched.
   I1  a second run moves nothing and changes nothing.
-  R1  an id no channel jid explains → refused, nothing changed.  R2  a move onto an existing key → refused.
-  T1  the same re-key with a tenant column leading the keys.
-  F*  the people store's *.jsonl move with the tables, through main(): dry run touches nothing; --apply rewrites them
-      atomically AFTER the commit beside a .bak, other lines byte for byte; a rerun changes nothing; an unexplained
-      file id refuses everything; a failed transaction leaves the files alone; a failed file write is loud (exit 1).
+  C1  clashes don't stop the run: an old person or edge whose new twin exists is dropped as the duplicate it is; a
+      relation clash is counted by kind (same / different / one side empty) and KEPT untouched under its old id.
+  R1  an id no channel jid explains → refused (exit 1), nothing changed.
+  T1  D1/A1/I1 again with a tenant column leading the keys.
+  F*  the people store's *.jsonl move with the tables, through main(): dry run touches nothing; a failed transaction
+      leaves them alone; --apply rewrites them atomically after the commit beside a .bak; a rerun changes nothing; an
+      unexplained file id refuses everything; a failed file write is loud (exit 1) and a rerun moves only the files.
 Needs a reachable DSN that can CREATE DATABASE (sqlguard fixture), else 77.
 """
 import json
@@ -29,12 +33,16 @@ try:
 except Exception as e:                                              # noqa: BLE001
     print(f"SKIP: {type(e).__name__}: {e}")
     sys.exit(77)
+from astryx import config  # noqa: E402
 from astryx.people import people  # noqa: E402
 from astryx.people import people_rekey as R  # noqa: E402
 
 fails = []
-PDIR = Path(tempfile.mkdtemp(prefix="rekey-people-"))
+TMP = Path(tempfile.mkdtemp(prefix="rekey-"))
+PDIR = TMP / "people"
+PDIR.mkdir()
 os.environ["ASTRYX_PEOPLE_DIR"] = str(PDIR)                         # never the estate's real people store
+ENV = TMP / ".env"                                                  # never the estate's real .env
 
 
 def want(label, cond, why=""):
@@ -44,16 +52,17 @@ def want(label, cond, why=""):
 
 
 OLD, NEW, ORG = "fixture-org", "fixture-secret-salt", "fixture-org"
+CANDS = {"PEOPLE_SALT": NEW, "ASTRYX_ORG": OLD, "unsalted": R.UNSALTED}
 P1, P2, P3 = "111@s.whatsapp.net", "222@s.whatsapp.net", "333@s.whatsapp.net"
 G1 = "999-1@g.us"
 JIDS = {P1, P2, P3, G1}
+ENV.write_text(f"ASTRYX_ORG={OLD}\nPEOPLE_SALT={NEW}\n")            # ASTRYX_ORG named first: the bug's layout
 
-# S1: the two rules and the hash
-env = {"ASTRYX_ORG": OLD, "PEOPLE_SALT": NEW}                       # ASTRYX_ORG named first: the bug's layout
-want("S1 old_salt() follows the old file-order rule (ASTRYX_ORG first → the org name)", R.old_salt(env, environ={}) == OLD)
-want("S1 ...and a PEOPLE_SALT named first was the salt then too",
-     R.old_salt({"PEOPLE_SALT": NEW, "ASTRYX_ORG": OLD}, environ={}) == NEW)
+# S1: the candidates and the hash
 saved = {k: os.environ.pop(k, None) for k in ("PEOPLE_SALT", "ASTRYX_ORG")}
+os.environ["PEOPLE_SALT"] = "an-environment-value"
+want("S1 candidates() reads the .env FILE only (the environment never stands in for it)",
+     R.candidates(config.read_env(ENV)) == CANDS)
 os.environ["PEOPLE_SALT"] = NEW
 want("S1 ids() is people.pid() byte for byte", R.ids(NEW, P1) == people.pid(P1))
 for k, v in saved.items():
@@ -62,7 +71,13 @@ for k, v in saved.items():
         os.environ[k] = v
 
 
-def seed(cur, org, salt):
+def multi_org_env(key, default=None, path=None, environ=None):
+    """config.org_env as a multi-org host answers it: the HOME's .env, never the environment."""
+    v = config.read_env(ENV).get(key)
+    return v if v else default
+
+
+def seed(cur, org, salt, rel=(P1, P3)):
     o = lambda j: R.ids(salt, j)                                    # noqa: E731
     for j in (P1, P2, P3):
         cur.execute("INSERT INTO social_person (org, id, label) VALUES (%s, %s, 'someone')", (org, o(j)))
@@ -70,8 +85,12 @@ def seed(cur, org, salt):
     for j in (P1, P2):
         cur.execute("INSERT INTO social_edge (org, src, dst, rel) VALUES (%s, %s, %s, 'member-of')", (org, o(j), o(G1)))
     cur.execute("INSERT INTO social_edge (org, src, dst, rel) VALUES (%s, 'owner', %s, 'dm')", (org, o(P3)))
-    for j in (P1, P3):
+    for j in rel:
         cur.execute("INSERT INTO social_relation (org, pid, kind) VALUES (%s, %s, 'friend')", (org, o(j)))
+
+
+def wipe(cur):
+    cur.execute("DELETE FROM social_edge; DELETE FROM social_relation; DELETE FROM social_person")
 
 
 def snap(cur):
@@ -94,24 +113,34 @@ def expect(salt):
             ("social_relation", "pid"): sorted([o(P1), o(P3)])}
 
 
-def run(conn, label, tenant=False):
+def files_bytes():
+    return {f: f.read_bytes() for f in sorted(PDIR.glob("*.jsonl"))}
+
+
+def run(conn, label):
     cur = conn.cursor()
-    p = R.plan(cur, ORG, OLD, NEW, JIDS)
-    want(f"{label} D1 the plan finds every held id to move (4) and none unmapped",
-         p["to_move"] == 4 and p["unmapped"] == 0 and p["clashes"] == 0, str({k: v for k, v in p.items() if k != "map"}))
+    p = R.plan(cur, ORG, CANDS, NEW, JIDS)
+    a = p["attribution"]
+    want(f"{label} D1 attribution: every held id explained by ASTRYX_ORG, none current, none unexplained",
+         a["social_person.id"] == {"rows": 4, "ids": 4, "current": 0, "ASTRYX_ORG": 4, "unsalted": 0, "none": 0}
+         and a["social_relation.pid"]["ASTRYX_ORG"] == 2 and not p["unmapped"], str(a))
+    want(f"{label} D1 the plan's operations: 4 person, 3 edge, 2 relation moves; no drops, nothing kept",
+         p["ops"]["person_update"] == 4 and p["ops"]["edge_update"] == 3 and p["ops"]["relation_update"] == 2
+         and p["ops"]["person_drop"] == p["ops"]["edge_drop"] == 0 and p["kept"] == 0, str(p["ops"]))
     before = snap(cur)
     text = R.report(p)
-    leaks = [x for x in list(p["map"]) + list(p["map"].values()) + [j.split("@")[0] for j in JIDS] if x in text]
-    want(f"{label} D1 the report names no id and no jid", not leaks, f"{len(leaks)} leaked")
+    leaks = [x for x in list(p["map"]) + list(p["map"].values()) + [j.split("@")[0] for j in JIDS] + [OLD, NEW]
+             if x in text]
+    want(f"{label} D1 the report names no id, no jid and no salt", not leaks, f"{len(leaks)} leaked")
     want(f"{label} D1 planning changed nothing", snap(cur) == before)
     r = R.apply(conn, ORG, p)
     want(f"{label} A1 every keyed column now holds the NEW ids", keyset(cur, ORG) == expect(NEW))
     want(f"{label} A1 row counts unchanged", r["rows"] == p["rows"], f"{r['rows']} vs {p['rows']}")
     want(f"{label} A1 another org's rows untouched", keyset(cur, "other-org") == expect(OLD))
     after = snap(cur)
-    p2 = R.plan(cur, ORG, OLD, NEW, JIDS)
-    want(f"{label} I1 a second run finds nothing to move", p2["to_move"] == 0 and p2["already_new"] == 4
-         and p2["unmapped"] == 0, str({k: v for k, v in p2.items() if k != "map"}))
+    p2 = R.plan(cur, ORG, CANDS, NEW, JIDS)
+    want(f"{label} I1 a second run finds nothing to do", p2["work"] == 0 and not p2["unmapped"]
+         and p2["attribution"]["social_person.id"]["current"] == 4, str(p2["ops"]))
     R.apply(conn, ORG, p2)
     want(f"{label} I1 ...and applying it changes nothing", snap(cur) == after)
 
@@ -124,44 +153,75 @@ try:
             seed(cur, "other-org", OLD)
             run(conn, "plain")
 
+            # main()'s seams: this fixture's DSN and org, this .env, this channel. _salt() and candidates() run REAL.
+            R.channel_jids = lambda msgs: JIDS
+            R.env_path = lambda: ENV
+            people._org, people._dsn = (lambda: ORG), (lambda: fx["dsn"])
+            real_org_env = config.org_env
+            config.org_env = multi_org_env
+
+            # M1: the multi-org false green
+            wipe(cur)
+            seed(cur, ORG, OLD)
+
+            def prefix_old_salt(env):                                # the shipped derivation #16 replaced
+                for k in ("PEOPLE_SALT", "ASTRYX_ORG"):
+                    v = config.org_env(k)
+                    if v:
+                        return v
+                return env.get("PEOPLE_SALT") or env.get("ASTRYX_ORG")
+            want("M1 control: the old derivation through multi-org routing answers the NEW salt (the false green)",
+                 prefix_old_salt(config.read_env(ENV)) == NEW == people._salt())
+            db0 = snap(cur)
+            rc = R.main([])
+            want("M1 under multi-org routing, main()'s dry run still sees the org-name rows (exit 0, nothing moved)",
+                 rc == 0 and snap(cur) == db0, f"rc={rc}")
+            rc = R.main(["--apply"])
+            want("M1 ...and --apply moves them to the current salt", rc == 0 and keyset(cur, ORG) == expect(NEW), f"rc={rc}")
+
+            # C1: clashes don't stop the run
+            wipe(cur)
+            seed(cur, ORG, OLD)
+            seed(cur, ORG, NEW, rel=())                              # a post-change sweep ran: persons + edges re-made
+            cur.execute("INSERT INTO social_relation (org, pid, kind) VALUES (%s, %s, 'friend')", (ORG, R.ids(NEW, P1)))
+            cur.execute("INSERT INTO social_relation (org, pid, kind) VALUES (%s, %s, 'colleague')", (ORG, R.ids(NEW, P3)))
+            p = R.plan(cur, ORG, CANDS, NEW, JIDS)
+            o = p["ops"]
+            want("C1 the plan: 4 duplicate persons and 3 duplicate edges to drop, 2 relation clashes kept (1 same, 1 "
+                 "different kind)", o["person_drop"] == 4 and o["edge_drop"] == 3 and o["person_update"] == 0
+                 and o["relation_kept_same"] == 1 and o["relation_kept_different"] == 1 and p["kept"] == 2, str(o))
+            rc = R.main(["--apply"])
+            k = keyset(cur, ORG)
+            want("C1 --apply runs (exit 0): duplicates gone, persons and edges on the new ids only",
+                 rc == 0 and k[("social_person", "id")] == expect(NEW)[("social_person", "id")]
+                 and k[("social_edge", "src")] == expect(NEW)[("social_edge", "src")], f"rc={rc}")
+            want("C1 ...both clashing relations kept untouched: the old rows under their old ids beside the new",
+                 k[("social_relation", "pid")] == sorted([R.ids(OLD, P1), R.ids(OLD, P3), R.ids(NEW, P1), R.ids(NEW, P3)]))
+            db1 = snap(cur)
+            rc = R.main(["--apply"])
+            want("C1 a rerun: nothing to do, the kept clashes still kept", rc == 0 and snap(cur) == db1, f"rc={rc}")
+
             # R1: an id that no channel jid explains
-            cur.execute("DELETE FROM social_edge; DELETE FROM social_relation; DELETE FROM social_person")
+            wipe(cur)
             seed(cur, ORG, OLD)
             cur.execute("INSERT INTO social_person (org, id) VALUES (%s, %s)", (ORG, R.ids(OLD, "444@s.whatsapp.net")))
             before = snap(cur)
-            p = R.plan(cur, ORG, OLD, NEW, JIDS)
-            want("R1 an id no channel jid explains is counted unmapped", p["unmapped"] == 1)
-            R.channel_jids = lambda msgs: JIDS                     # main()'s seams: this fixture, these salts
-            R.old_salt = lambda env, environ=None: OLD
-            people._salt, people._org, people._dsn = (lambda: NEW), (lambda: ORG), (lambda: fx["dsn"])
             rc = R.main(["--apply"])
-            want("R1 main(--apply) refuses it (exit 1) and changes nothing", rc == 1 and snap(cur) == before, f"rc={rc}")
+            want("R1 an unexplained id: main(--apply) exits 1 and changes nothing", rc == 1 and snap(cur) == before,
+                 f"rc={rc}")
 
-            # R2: the new id already exists beside the old one (a post-fix sweep ran first and kept old details)
-            cur.execute("DELETE FROM social_person WHERE id = %s", (R.ids(OLD, "444@s.whatsapp.net"),))
-            cur.execute("INSERT INTO social_relation (org, pid, kind) VALUES (%s, %s, 'colleague')", (ORG, R.ids(NEW, P1)))
-            want("R2 a move onto an existing key is a clash", R.plan(cur, ORG, OLD, NEW, JIDS)["clashes"] >= 1)
-
-            # F: the people store's files, end to end through main() (seams set in R1 above)
-            cur.execute("DELETE FROM social_edge; DELETE FROM social_relation; DELETE FROM social_person")
+            # F: the people store's files, end to end through main()
+            wipe(cur)
             seed(cur, ORG, OLD)
-            o, n = (lambda j: R.ids(OLD, j)), (lambda j: R.ids(NEW, j))
+            o_, n_ = (lambda j: R.ids(OLD, j)), (lambda j: R.ids(NEW, j))
             asks, answers = PDIR / "asks.jsonl", PDIR / "answers.jsonl"
-            asks.write_text(json.dumps({"pid": o(P1), "q": "who?"}) + "\nnot json at all\n"
-                            + json.dumps({"pid": o(P2), "q": "and?"}) + "\n" + json.dumps({"note": "no pid"}) + "\n")
-            answers.write_text(json.dumps({"pid": o(P1), "kind": "friend"}) + "\n")
-            files0 = {f: f.read_bytes() for f in (asks, answers)}
-
-            def lines(f):
-                return f.read_text().splitlines()
-            db0 = snap(cur)
+            asks.write_text(json.dumps({"pid": o_(P1), "q": "who?"}) + "\nnot json at all\n"
+                            + json.dumps({"pid": o_(P2), "q": "and?"}) + "\n" + json.dumps({"note": "no pid"}) + "\n")
+            answers.write_text(json.dumps({"pid": o_(P1), "kind": "friend"}) + "\n")
+            files0, db0 = files_bytes(), snap(cur)
             rc = R.main([])
             want("F-D1 dry run: exit 0, tables and files untouched", rc == 0 and snap(cur) == db0
-                 and all(f.read_bytes() == b for f, b in files0.items()), f"rc={rc}")
-            p = R.plan(cur, ORG, OLD, NEW, JIDS, R.file_ids(PDIR))
-            want("F-D1 the plan counts the file ids (rows per file, nothing unmapped)",
-                 p["rows"].get("file asks.jsonl") == 2 and p["rows"].get("file answers.jsonl") == 1 and not p["unmapped"])
-
+                 and files_bytes() == files0, f"rc={rc}")
             real_apply = R.apply
             R.apply = lambda *a: (_ for _ in ()).throw(RuntimeError("simulated failed transaction"))
             try:
@@ -170,36 +230,30 @@ try:
                 pass
             R.apply = real_apply
             want("F-O1 a failed transaction leaves the files alone (they move only after the commit)",
-                 all(f.read_bytes() == b for f, b in files0.items()) and snap(cur) == db0)
-
+                 files_bytes() == files0 and snap(cur) == db0)
             rc = R.main(["--apply"])
-            la, ln = lines(asks), lines(answers)
-            want("F-A1 --apply: exit 0, the files hold the NEW ids", rc == 0 and json.loads(la[0])["pid"] == n(P1)
-                 and json.loads(la[2])["pid"] == n(P2) and json.loads(ln[0])["pid"] == n(P1), f"rc={rc}")
+            la, ln = asks.read_text().splitlines(), answers.read_text().splitlines()
+            want("F-A1 --apply: exit 0, the files hold the NEW ids", rc == 0 and json.loads(la[0])["pid"] == n_(P1)
+                 and json.loads(la[2])["pid"] == n_(P2) and json.loads(ln[0])["pid"] == n_(P1), f"rc={rc}")
             want("F-A1 ...every other line byte for byte, the same line count",
-                 la[1] == "not json at all" and la[3] == json.dumps({"note": "no pid"}) and len(la) == 4 and len(ln) == 1
-                 and json.loads(la[0])["q"] == "who?")
-            want("F-A1 ...a .bak beside each holds what it held", all(f.with_name(f.name + ".bak").read_bytes() == b
-                                                                    for f, b in files0.items()))
-            want("F-A1 ...no temp file left behind", not list(PDIR.glob(".*rekey-tmp")))
-            files1, db1 = {f: f.read_bytes() for f in (asks, answers)}, snap(cur)
+                 la[1] == "not json at all" and la[3] == json.dumps({"note": "no pid"}) and len(la) == 4 and len(ln) == 1)
+            want("F-A1 ...a .bak beside each holds what it held, no temp file left",
+                 all(f.with_name(f.name + ".bak").read_bytes() == b for f, b in files0.items())
+                 and not list(PDIR.glob(".*rekey-tmp")))
+            files1, db1 = files_bytes(), snap(cur)
             rc = R.main(["--apply"])
             want("F-I1 a second --apply: exit 0, tables and files unchanged", rc == 0 and snap(cur) == db1
-                 and all(f.read_bytes() == b for f, b in files1.items()), f"rc={rc}")
-
-            # F-R1: a file id no jid explains refuses EVERYTHING, tables included
-            cur.execute("DELETE FROM social_edge; DELETE FROM social_relation; DELETE FROM social_person")
+                 and files_bytes() == files1, f"rc={rc}")
+            wipe(cur)
             seed(cur, ORG, OLD)
             for f, b in files0.items():
                 f.write_bytes(b)
             with asks.open("a") as fh:
                 fh.write(json.dumps({"pid": R.ids(OLD, "555@s.whatsapp.net")}) + "\n")
-            files2, db2 = {f: f.read_bytes() for f in (asks, answers)}, snap(cur)
+            files2, db2 = files_bytes(), snap(cur)
             rc = R.main(["--apply"])
             want("F-R1 an unexplained file id: exit 1, tables and files unchanged", rc == 1 and snap(cur) == db2
-                 and all(f.read_bytes() == b for f, b in files2.items()), f"rc={rc}")
-
-            # F-W1: a file that can't be written: loud, exit 1, the file keeps its old content, the tables moved
+                 and files_bytes() == files2, f"rc={rc}")
             asks.write_bytes(files0[asks])
             PDIR.chmod(0o555)
             try:
@@ -210,12 +264,13 @@ try:
                  and asks.read_bytes() == files0[asks] and keyset(cur, ORG) == expect(NEW), f"rc={rc}")
             rc = R.main(["--apply"])
             want("F-W1 ...a rerun once it's writable moves the files (the tables are a no-op)", rc == 0
-                 and json.loads(lines(asks)[0])["pid"] == n(P1) and keyset(cur, ORG) == expect(NEW), f"rc={rc}")
+                 and json.loads(asks.read_text().splitlines()[0])["pid"] == n_(P1), f"rc={rc}")
             for f in list(PDIR.iterdir()):
                 f.unlink()
+            config.org_env = real_org_env
 
             # T1: the tenant column leading every key
-            cur.execute("DELETE FROM social_edge; DELETE FROM social_relation; DELETE FROM social_person")
+            wipe(cur)
             for t, pk in (("social_person", "org, id"), ("social_edge", "org, src, dst, rel"),
                           ("social_relation", "org, pid")):
                 cur.execute(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 't1'")
