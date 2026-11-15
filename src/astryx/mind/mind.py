@@ -22,6 +22,8 @@ autopoiesis." Design: homes/seed/mind/DESIGN.md. The loop, each step a function 
              fruitless think doubling the wait (Herrmann & Schmidhuber: the chance of progress falls with stagnation),
              and is dropped after MAX_THINKS.
 
+ENERGY IS A BOUND, NEVER THE GOAL: the owner tried token minimisation and it made no ideas (thrift rewards doing less;
+thinking costs energy up front). The org must not starve, and when it is fed its surplus is FOR thinking.
 VALUE IS INTERNAL: nothing here asks whether a human accepted anything. The org's own measures are its HEAT (how much
 of its doing is hand-repetition it has already felt) and what it has understood (insights alive, used by others, built
 upon). Triggers are senses: a watcher that wakes an agent for nothing is itself tedium, so the agent feels it.
@@ -425,9 +427,18 @@ def state(c) -> dict:
     itches = c.execute(f"""SELECT id, agent, kind, what, n, also, round(strength::numeric, 1)::float AS strength, state, thinks,
             last_think, why, insight_id, source, evidence FROM {_t('itch')}
         ORDER BY (state = 'open') DESC, strength / power(2, thinks) DESC LIMIT 120""").fetchall()
+    # ENERGY IS A BOUND, NEVER THE GOAL (owner 11-15: minimising tokens was tried and made no ideas: thrift rewards
+    # doing less, and thinking costs energy up front). What is shown is the INVESTMENT: the share of the window's energy
+    # that went to self-started thinking (turns a mind wake opened).
+    th = c.execute(f"""SELECT coalesce(sum(t.tokens_total) FILTER (WHERE m.thread = 'mind'), 0) AS think,
+            coalesce(sum(t.tokens_total), 0) AS total, count(*) FILTER (WHERE m.thread = 'mind') AS wakes
+        FROM turns t LEFT JOIN messages m ON m.id = t.input_msg_id
+        WHERE t.started_at > now() - make_interval(days => {DAYS})""").fetchone()
     trials = c.execute(f"""SELECT id, agent, {SENSE} AS sense, what, state, thinks, last_think, why, insight_id FROM {_t('itch')}
         WHERE thinks > 0 ORDER BY last_think DESC LIMIT 40""").fetchall()
     return {"energy": energy(c), "drives": drives(c), "itches": itches, "insights": ins, "yields": yields(c), "trials": trials,
+            "thinking": {"tokens": int(th["think"]), "total": int(th["total"]), "wakes": th["wakes"],
+                         "share": round(float(th["think"]) / float(th["total"]), 4) if th["total"] else 0.0},
             "heat": {"hand_calls": hand, "felt_as_tedium": int(felt), "share": round(felt / hand, 3) if hand else 0.0, "days": DAYS},
             "rules": {"pressure": PRESSURE, "idle_min": IDLE_MIN, "rest_h": REST_H, "max_thinks": MAX_THINKS,
                       "fed_below": {"seven_day_pct": ENERGY_7D, "five_hour_pct": ENERGY_5H}}}

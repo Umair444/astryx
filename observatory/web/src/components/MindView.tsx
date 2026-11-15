@@ -27,6 +27,7 @@ interface Mind {
   drives: Drive[]; itches: Itch[]; insights: Insight[]
   yields: Record<string, { trials: number; kept: number; let_go: number; open: number; yield: number }>
   heat: { hand_calls: number; felt_as_tedium: number; share: number; days: number }
+  thinking: { tokens: number; total: number; wakes: number; share: number }
   rules: { pressure: number; idle_min: number; rest_h: number; max_thinks: number; fed_below: { seven_day_pct: number; five_hour_pct: number } }
 }
 
@@ -97,7 +98,8 @@ export default function MindView() {
                 <div className="text-[11px] uppercase tracking-wider text-ink-mute">Energy</div>
                 <div className="mt-1 text-[22px] font-semibold text-ink">{m.energy.fed ? 'Fed' : 'Fasting'}</div>
                 <div className="text-[12.5px] text-ink-dim mt-1">{pct(m.energy.seven_day_pct)} of the week's tokens used, {pct(m.energy.five_hour_pct)} of the 5 hours'.
-                  It thinks freely below {m.rules.fed_below.seven_day_pct}% and {m.rules.fed_below.five_hour_pct}%.</div>
+                  It thinks freely below {m.rules.fed_below.seven_day_pct}% and {m.rules.fed_below.five_hour_pct}%.
+                  {' '}{(m.thinking.share * 100).toFixed(1)}% of this week's energy went to thinking it started itself ({m.thinking.wakes} wake{m.thinking.wakes === 1 ? '' : 's'}). Energy is a bound, never the goal.</div>
               </Panel>
               <Panel className="p-4">
                 <div className="text-[11px] uppercase tracking-wider text-ink-mute">Heat</div>
