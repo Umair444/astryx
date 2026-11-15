@@ -69,6 +69,8 @@ export interface Step {
   goal_id: number | null
   tokens_in: number | null
   tokens_out: number | null
+  turn_msgs?: number[] | null    // the msg_ids that opened this step's turn (hooks/step.py; /api/chat/work only)
+  sub?: { id?: string; type?: string; desc?: string } | null   // a helper (sub-agent) the agent launched did it
 }
 
 export type GoalState = 'proposed' | 'active' | 'hibernated' | 'done' | 'refused'

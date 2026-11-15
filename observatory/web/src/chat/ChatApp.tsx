@@ -321,9 +321,15 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const inChat = useMemo(() => {
     const since = lastSwitch ? Date.parse(lastSwitch.ts) : -Infinity
     const out = lastSwitch ? lastSwitch.agents.filter((a) => names.includes(a)) : [...(currentRow?.agents ?? [])]
+    // AN AGENT'S DESK (obs:<agent>) writes to that agent; anyone else is reached by @mentioning them in the message
+    // (the composer's mentions win over this default). An agent that merely posted on the desk (seed answering a
+    // member, 11-15) had made itself a default recipient: the box read "To: Db, Seed" and a message went where its
+    // author didn't mean (owner 11-15: "the message never happened"). A /switch still decides, as everywhere.
+    const desk = current ? deskAgent(current, names) : null
+    if (desk && !lastSwitch) return [desk]
     for (const a of participants(lastSwitch ? rows.filter((m) => Date.parse(m.ts) >= since) : rows, names)) if (!out.includes(a)) out.push(a)
     return out.length || !lastSwitch ? out : [...(currentRow?.agents ?? [])]
-  }, [currentRow, rows, names, lastSwitch])
+  }, [currentRow, rows, names, lastSwitch, current])
   const seedOnly = names.includes('seed') ? ['seed'] : []
   const recipients = current ? inChat : homeTo ?? (activeProject?.agents.length ? activeProject.agents : seedOnly)
   const lanes = activeProject && !current ? activeProject.agents : inChat

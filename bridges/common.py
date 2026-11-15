@@ -598,7 +598,22 @@ async def step_line(pool, step_id: int, kind: str, *, agent: str, label: str = "
         return None
     content = "writing a reply" if kind == "response" else row["content"]
     prefix = f"{label} · " if label else ""
+    sub = _sub_of(row["meta"])
+    if sub:                                        # a helper the agent launched (hooks/step.py scope): say whose step
+        prefix += f"↳ {sub} · "
     return f"{MARK[kind]} {prefix}{content[:140]}"
+
+
+def _sub_of(meta) -> str:
+    """A helper's name for its step's line: its task description, else its type ("helper" when neither is known)."""
+    try:
+        m = json.loads(meta) if isinstance(meta, str) else (meta or {})
+        sub = m.get("sub")
+        if not isinstance(sub, dict):
+            return ""
+        return (str(sub.get("desc") or sub.get("type") or "helper"))[:40]
+    except Exception:
+        return ""
 
 
 async def _serves(pool, meta, thread: str) -> bool:

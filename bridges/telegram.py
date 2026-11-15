@@ -57,6 +57,7 @@ ROUTES_FILE = ESTATE / "bridges" / "routes-telegram.json"
 
 pool: asyncpg.Pool | None = None
 http: httpx.AsyncClient | None = None
+JOB_TIMEOUT = 1800    # a progress job is forgotten 30 min after it opened (or after its last reply)
 jobs: dict[str, dict] = {}            # agent -> live progress job
 
 
@@ -97,6 +98,8 @@ async def deliver(row):
     out = Outcome()
     try:
         job = jobs.pop(agent, None)
+        if job and job["chat"] == chat and live_steps_ok(routes().chat(chat)):   # a reply is not the end of the work: next steps get a new bubble
+            jobs[agent] = {**job, "ph_id": None, "sent": "", "opened": time.time()}
         sent = False
         if text and job and job["chat"] == chat and job["ph_id"]:
             try:                                   # replace the progress bubble
@@ -180,6 +183,9 @@ async def on_step(ev: dict):
     agent, kind = ev.get("agent", ""), ev.get("kind", "")
     job = jobs.get(agent)
     if not job:
+        return
+    if time.time() - job.get("opened", 0) > JOB_TIMEOUT:     # a job outlives its reply now: forget it after 30 min
+        jobs.pop(agent, None)
         return
     line = await step_line(pool, ev.get("id", 0), kind, agent=agent, thread=job["thread"])   # only this chat's work
     if not line or line == job.get("sent"):
@@ -266,7 +272,7 @@ async def on_message(msg: dict):
     # this chat asked for: on_step's step_line(thread=...) drops a step whose turn another thread opened (medic 12159)
     if live_steps_ok(route):                      # S1c: never on a tiered route (its second egress)
         for agent in agents:                       # a team: each member's live steps
-            jobs[agent] = {"chat": chat, "thread": f"tg:{chat}", "ph_id": None, "sent": ""}
+            jobs[agent] = {"chat": chat, "thread": f"tg:{chat}", "ph_id": None, "sent": "", "opened": time.time()}
         try:
             await tg("sendChatAction", chat_id=int(chat), action="typing")
         except Exception:

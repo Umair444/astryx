@@ -50,6 +50,7 @@ from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of
 ROUTES_FILE = ESTATE / "bridges" / "routes-discord.json"
 
 pool: asyncpg.Pool | None = None
+JOB_TIMEOUT = 1800    # a progress job is forgotten 30 min after it opened (or after its last reply)
 jobs: dict[str, dict] = {}            # agent -> live progress job
 
 intents = discord.Intents.default()
@@ -134,6 +135,8 @@ async def deliver(row):
         if not hook:                               # the bot speaks for every agent: name the sender, as WhatsApp does
             text = signed(agent, text, route, "**")
         job = jobs.pop(agent, None)
+        if job and job["chat"] == cid and live_steps_ok(route):   # a reply is not the end of the work: next steps get a new bubble
+            jobs[agent] = {**job, "ph": None, "sent": "", "opened": time.time()}
         sent = False
         if text and job and job["chat"] == cid and job.get("ph"):
             try:                                   # replace the progress bubble
@@ -228,6 +231,9 @@ async def on_step(ev: dict):
     job = jobs.get(agent)
     if not job:
         return
+    if time.time() - job.get("opened", 0) > JOB_TIMEOUT:     # a job outlives its reply now: forget it after 30 min
+        jobs.pop(agent, None)
+        return
     line = await step_line(pool, ev.get("id", 0), kind, agent=agent, thread=job["thread"])   # only this chat's work
     if not line or line == job.get("sent"):
         return
@@ -303,7 +309,7 @@ async def on_message(msg: discord.Message):
     # this chat asked for: on_step's step_line(thread=...) drops a step whose turn another thread opened (medic 12159)
     if live_steps_ok(route):                      # S1c: never on a tiered route (its second egress)
         for agent in agents:                       # a team: each member's live steps
-            jobs[agent] = {"chat": cid, "thread": f"dc:{cid}", "ph": None, "sent": ""}
+            jobs[agent] = {"chat": cid, "thread": f"dc:{cid}", "ph": None, "sent": "", "opened": time.time()}
         try:
             await msg.channel.typing()
         except Exception:
