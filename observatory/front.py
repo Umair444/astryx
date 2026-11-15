@@ -224,11 +224,13 @@ _sends: dict[str, deque] = defaultdict(deque)
 
 def _send_capped(keys: tuple[str, ...]) -> bool:
     now = time.monotonic()
-    for k in keys:
+    for k in list(_sends):                       # every key, so a client or link seen once doesn't stay forever
         q = _sends[k]
         while q and now - q[0] > SIGNUP_WINDOW:
             q.popleft()
-    return any(len(_sends[k]) >= CODE_SENDS[k[:2]] for k in keys)
+        if not q:
+            del _sends[k]
+    return any(len(_sends.get(k, ())) >= CODE_SENDS[k[:2]] for k in keys)
 
 
 async def _prove_email(a: _Auth, email: str, code, ck: str, link: str = "") -> Response | None:
