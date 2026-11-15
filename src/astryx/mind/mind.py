@@ -108,9 +108,13 @@ def ensure(c) -> None:
 _DIGITS = re.compile(r"\d{7,}")
 
 
+_TAG = re.compile(r"<[^>]{1,300}>")
+
+
 def _line(s) -> str:
-    """One evidence line: flat, short, and never a long digit run (a customer number can't ride in)."""
-    return _DIGITS.sub("N", " ".join(str(s or "").split()))[:170]
+    """One evidence line: the words alone (a message's wrapper tags gone), flat, short, and never a long digit run
+    (a customer number can't ride in)."""
+    return _DIGITS.sub("N", " ".join(_TAG.sub(" ", str(s or "")).split()))[:170]
 
 
 def _org_agents(c) -> set:
@@ -139,9 +143,9 @@ def feel(c) -> dict:
     found = {"tool": 0, "sense": 0, "ask": 0}
     # 1. a TOOL called by hand again and again: per agent and tool, with the asks it was doing it for, side by side
     rows = c.execute(f"""
-        WITH s AS (SELECT agent, split_part(content, ':', 1) AS tool, turn_id FROM steps
+        WITH s AS (SELECT agent, split_part(content, ':', 1) AS tool FROM steps
                    WHERE kind = 'tool' AND ts > now() - make_interval(days => {DAYS}) AND content !~ %s)
-        SELECT tool, agent, count(*) AS n, count(DISTINCT turn_id) AS turns FROM s GROUP BY 1, 2""", (BASE,)).fetchall()
+        SELECT tool, agent, count(*) AS n, 0 AS turns FROM s GROUP BY 1, 2""", (BASE,)).fetchall()
     by_tool: dict = {}
     for r in rows:
         if r["agent"] in ok:
@@ -158,16 +162,23 @@ def feel(c) -> dict:
             if n < TOOL_N or tool in medium:
                 continue
             others = {a: v[0] for a, v in who.items() if a != agent and v[0] >= 3}
-            ev = c.execute("""
-                SELECT t.agent, to_char(t.started_at, 'MM-DD HH24:MI') AS at, left(t.input_prompt, 400) AS prompt, count(*) AS calls
-                FROM steps s JOIN turns t ON t.id = s.turn_id
-                WHERE s.kind = 'tool' AND s.ts > now() - make_interval(days => %s) AND split_part(s.content, ':', 1) = %s
-                  AND (t.agent = %s OR t.agent = ANY(%s))
-                GROUP BY t.id ORDER BY (t.agent = %s) DESC, count(*) DESC LIMIT 7""",
-                (DAYS, tool, agent, list(others), agent)).fetchall()
+            # the asks it was doing this for: each call's turn (the agent's turn open at that moment), by who asked and
+            # what; its own first, then the other agents' beside them
+            got = c.execute("""
+                SELECT t.agent, to_char(t.started_at, 'MM-DD HH24:MI') AS at, x.calls,
+                       coalesce(m.from_agent || ': ' || left(m.body, 300), left(t.input_prompt, 300)) AS line
+                FROM (SELECT s.agent, count(*) AS calls,
+                             (SELECT t2.id FROM turns t2 WHERE t2.agent = s.agent AND t2.started_at <= s.ts
+                              ORDER BY t2.started_at DESC LIMIT 1) AS tid
+                      FROM steps s WHERE s.kind = 'tool' AND s.ts > now() - make_interval(days => %s)
+                        AND split_part(s.content, ':', 1) = %s AND (s.agent = %s OR s.agent = ANY(%s)) GROUP BY 1, 3) x
+                JOIN turns t ON t.id = x.tid LEFT JOIN messages m ON m.id = t.input_msg_id
+                WHERE coalesce(m.body, t.input_prompt, '') !~ '^\\s*<(task-notification|system-reminder|local-command)'
+                ORDER BY x.calls DESC LIMIT 40""", (DAYS, tool, agent, list(others))).fetchall()
+            ev = [e for e in got if e["agent"] == agent][:4] + [e for e in got if e["agent"] != agent][:3]
             short = tool.replace("mcp__", "").replace("__", ".")
             _upsert(c, agent, "tedium", f"tool:{tool}",
-                    f"you called {short} by hand {n} times in {turns} turns over {DAYS} days",
+                    f"you called {short} by hand {n} times in {DAYS} days",
                     [{"agent": e["agent"], "at": e["at"], "calls": e["calls"], "line": _line(e["prompt"])} for e in ev],
                     n, others, round(n / DAYS * (1 + 0.5 * len(others)), 2))
             found["tool"] += 1
