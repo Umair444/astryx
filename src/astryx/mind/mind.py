@@ -146,9 +146,16 @@ def feel(c) -> dict:
     for r in rows:
         if r["agent"] in ok:
             by_tool.setdefault(r["tool"], {})[r["agent"]] = (r["n"], r["turns"])
+    # a tool MOST agents use heavily is a medium of work here (running a query, for a data org), like speech: no one
+    # idea comes of "you spoke 300 times". Its tedium needs a finer sense (the shape of what was run), not this one
+    active = {a for who in by_tool.values() for a in who}
+    medium = {t for t, who in by_tool.items() if sum(1 for v in who.values() if v[0] >= 3) >= max(4, len(active) / 2)}
+    if medium:
+        c.execute(f"""UPDATE {_t('itch')} SET state = 'dropped', why = 'a medium of work here (most agents use it), not a tedium'
+                      WHERE state = 'open' AND key = ANY(%s)""", ([f"tool:{t}" for t in medium],))
     for tool, who in by_tool.items():
         for agent, (n, turns) in who.items():
-            if n < TOOL_N:
+            if n < TOOL_N or tool in medium:
                 continue
             others = {a: v[0] for a, v in who.items() if a != agent and v[0] >= 3}
             ev = c.execute("""
@@ -252,7 +259,7 @@ def packet(c, agent: str, itch: dict) -> str:
     also = f" {', '.join(itch['also'])} lived it too." if itch.get("also") else ""
     known = recall(c, itch["what"] + " " + " ".join(e.get("line", "") for e in ev[:3]))
     known = [k for k in known if k["hit"] >= 2]
-    me = f"venv/bin/python src/astryx/mind/mind.py"
+    me = f"{sys.executable} {os.path.realpath(__file__)}"
     out = [f"[mind] Nobody is waiting on you and the org has energy. This time is yours; it is not a task.",
            "", f"Your strongest itch ({itch['kind']}, #{itch['id']}): {itch['what']}.{also}", "Side by side:", *lines]
     if known:
@@ -295,9 +302,14 @@ def want(c, say=None, dry: bool = False) -> dict:
     return {"woke": None, "why": "nobody both wants to think and is free to"}
 
 
+def _wake(c, to: str, body: str) -> None:
+    """Deliver a wake on the wire as the pulse does (a row; the doorbell rings by itself)."""
+    c.execute("INSERT INTO messages (from_agent, from_org, to_agent, intent, thread, body) VALUES ('pulse', 'local', %s, 'drive', 'mind', %s)", (to, body))
+
+
 def tick(say=None, dry: bool = False) -> dict:
     with connect() as c:
-        return {"felt": feel(c), **want(c, say, dry)}
+        return {"felt": feel(c), **want(c, say or (lambda to, body: _wake(c, to, body)), dry)}
 
 
 def _news(c, agent: str, body: str) -> None:
@@ -325,7 +337,7 @@ def keep(c, agent, name, thought, kind, lives, itches=(), on=(), check="") -> di
     if itches:
         c.execute(f"UPDATE {_t('itch')} SET state = 'resolved', insight_id = %s WHERE id = ANY(%s) AND state = 'open'", (r["id"], list(itches)))
     _news(c, agent, f"New idea from {agent}: {name} ({kind}). {thought}" + (f" Lives at {lives}." if lives else "")
-          + f" Recall it with: venv/bin/python src/astryx/mind/mind.py recall {name.split()[0].lower()}")
+          + f" Recall it with: {sys.executable} {os.path.realpath(__file__)} recall {name.split()[0].lower()}")
     return {"kept": r["id"], "name": name}
 
 
@@ -400,7 +412,7 @@ def main(argv=None) -> int:
     ids = lambda s: [int(x) for x in re.findall(r"\d+", s or "")]
     with connect() as c:
         if a.cmd == "tick":
-            out = {"felt": feel(c), **want(c, None, a.dry)}
+            out = {"felt": feel(c), **want(c, lambda to, body: _wake(c, to, body), a.dry)}
         elif a.cmd == "me":
             ensure(c)
             mine = c.execute(f"SELECT id, kind, what, n, also, strength, thinks FROM {_t('itch')} WHERE agent = %s AND state = 'open' ORDER BY strength / power(2, thinks) DESC LIMIT 12", (a.agent,)).fetchall()
