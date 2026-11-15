@@ -26,7 +26,14 @@ const SHOWS: { v: Show; label: string; hint: string }[] = [
 export default function ChannelRail() {
   const { data, armed } = useRoutes(true)
   const ch = useChannels(true)
-  const [shut, setShut] = useState(false)
+  // folded by default (owner 11-15: "the default view in the floor should have the channels sidebar hidden"); the
+  // owner's last choice is remembered on this browser
+  const [shut, setShutRaw] = useState(() => { try { return localStorage.getItem('floor.rail.open') !== '1' } catch { return true } })
+  const setShut = (f: (x: boolean) => boolean) => setShutRaw((x) => {
+    const n = f(x)
+    try { localStorage.setItem('floor.rail.open', n ? '0' : '1') } catch { /* private window: not remembered */ }
+    return n
+  })
   const reduce = useReducedMotion()
   const [open, setOpen] = useState<string | null>('whatsapp')
   const rows: ChannelState[] = ch.rows ?? []
@@ -64,7 +71,7 @@ export default function ChannelRail() {
           // the server can't read ("unknown": no declared port) is not accused of being down; WhatsApp's unknown still warns
           const needs = !s.fixed && s.state !== 'connected' && !(s.state === 'unknown' && !CONNECTABLE.includes(s.channel))
           if (shut) return (
-            <button key={s.channel} onClick={() => { setShut(false); setOpen(s.channel) }} title={title} className="relative self-center my-0.5">
+            <button key={s.channel} onClick={() => { setShut(() => false); setOpen(s.channel) }} title={title} className="relative self-center my-0.5">
               <ChannelMark channel={s.channel} size={26} ring="transparent" />
               {needs && <span className="absolute -right-0.5 -top-0.5 w-2 h-2 rounded-full bg-warn" aria-hidden />}
             </button>
