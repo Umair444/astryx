@@ -8,8 +8,8 @@ understood, read from the mind's own store. One read, nothing written:
     POST /api/mind/insight/{id}/retire    {why}   the owner retires an idea (its epitaph)
     POST /api/mind/wonder                 {agent, what}   the owner shares a question with an agent: a wonder, not a task
 
-OWNER-ONLY: the read by omission (the path is in no public or member list: an itch's evidence quotes the org's own
-asks), every write by the owner predicate main binds here.
+OWNER-ONLY: every read and every write checks the owner predicate main binds here, positively (an itch's evidence
+quotes the org's own asks); the paths are in no public or member list either.
 """
 from __future__ import annotations
 

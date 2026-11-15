@@ -33,11 +33,43 @@ arm("I1 never computed: launch, nothing said", d(now, 0, {}) == ("launch", None)
 arm("I1 newest older than DUE_H: launch", d(now, now - (N.DUE_H + 1) * H, {})[0] == "launch")
 arm("I1 a fresh graph: wait", d(now, now - H, {}) == ("wait", None))
 arm("I2 a run in flight: not launched again", d(now, 0, {"started": now - 60})[0] == "wait")
-arm("I3 a run past its grace that moved nothing: said once", d(now, 0, {"started": now - N.RUN_GRACE_S - 1}) == ("wait", "fail"))
-arm("I3 …not again, and a new run may start", d(now, 0, {"started": now - N.RUN_GRACE_S - 1, "told_fail": True})[0] == "launch")
+arm("I2 a 45-minute run, nothing written yet: no failure, no launch (medic 12299)", d(now, 0, {"started": now - 45 * 60}) == ("wait", None))
+arm("I2 the grace outlasts the run's own timeout", N.RUN_GRACE_S > N.RUN_MAX_S)
+arm("I2 its pid alive past the grace: still in flight", d(now, 0, {"started": now - N.RUN_GRACE_S - 60}, alive=True) == ("wait", None))
+arm("I3 a run that ended and moved nothing: a failure, said", d(now, 0, {"started": now - N.RUN_GRACE_S - 1}) == ("wait", "fail"))
 arm("I4 stale past STALE_H: said", d(now, now - (N.STALE_H + 1) * H, {"started": now - 60})[1] == "stale")
 arm("I4 …re-nagged only after RENAG_S", d(now, now - (N.STALE_H + 1) * H, {"started": now - 60, "nagged": now - 60})[1] is None)
 arm("I4 a run that wrote is not a failure", d(now, now - 60, {"started": now - N.RUN_GRACE_S - 1}) == ("wait", None))
+
+
+# I3 THE LOOP (medic 12299): the trigger itself over simulated hours, every compute failing; then one landing
+class Ctx:
+    def __init__(self):
+        self.state, self.at = {}, 0.0
+
+    def sql(self, q, a=()):
+        return [{"at": self.at}]
+
+
+launches, said = [], []
+N._launch = lambda estate: launches.append(N.time.time()) or 4242
+N._alive = lambda pid: bool(launches) and N.time.time() - launches[-1] < 50 * 60   # each run lasts 50 minutes
+N._estate = lambda: Path("/nonexistent")
+clock = [now]
+N.time.time = lambda: clock[0]
+c = Ctx()
+for hour in range(24 * 6):
+    clock[0] = now + hour * H
+    r = N.influence_nightly(c)
+    if r:
+        said.append((hour, r))
+gaps = [round((b - a) / H) for a, b in zip(launches, launches[1:])]
+arm("I3 always failing for six days: the relaunch gap doubles (2x, 4x DUE_H, to the next hourly tick), never hourly", len(gaps) >= 2 and all(w <= g <= w + 2 for g, w in zip(gaps, [N.DUE_H * 2, N.DUE_H * 4, N.DUE_H * 8])) and len(launches) <= 4, (gaps, len(launches)))
+arm("I3 …and the agent hears of it at most every RENAG_S", all(b[0] - a[0] >= N.RENAG_S / H for a, b in zip(said, said[1:])) and 1 <= len(said) <= len(launches), [h for h, _ in said])
+c.at = clock[0] + 10
+clock[0] += H
+N.influence_nightly(c)
+arm("I3 a compute that lands clears the failures", not c.state.get("fails"), c.state)
 
 S = importlib.import_module("astryx.pulse.shipped_triggers.shims")
 arm("I5 the shim imports the module, and registers one name",

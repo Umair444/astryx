@@ -533,6 +533,7 @@ run "org auth: each org of a cog runs its agents on its own login, never another
 run "org backup: a cog org's own dump and restore-verify triggers, the shims' one source (plan-10224 add-org-parity)" "$PY" tests/test_org_backup.py
 run "init.sh schedules a one-org backup, deferentially by either name (seed 61526)" "$PY" tests/test_init_orgbackup.py
 run "influence nightly: every org computes its influence graph, so the floor draws it (owner 11-15)" "$PY" tests/test_influence_nightly.py
+run "economy: the tab's one read runs on this tree's schema, an empty org included (medic 12299)" "$PY" tests/test_econ_system.py
 run "cog rehearsal: the runbook's steps 2-6 end to end on a fixture registry, the double spawn seen and refused (plan-11324 S3f S6)" "$PY" tests/test_cog_rehearsal.py
 run "doctor in a cog: the primary served, its units-drift its own units only, its seats on its own server; another org refused (plan-11324 S3f S7)" "$PY" tests/test_doctor_cog.py
 run "ops cog: pause, smoke, refresh and vitals act on THIS org in a cog (plan-11324 S3f S4)" "$PY" tests/test_ops_cog.py
