@@ -8,9 +8,23 @@ import { touchFirst } from '../shell/phone'
 import { expandPasteTokens, pasteToken } from './code'
 
 const PASTE_LINES = 12, PASTE_CHARS = 1500          // a paste this long folds into a token (code.ts pasteToken)
-const PASTES = new Map<number, string>()             // this tab's pastes, by token number
+/* this tab's pastes, by token number, kept in sessionStorage beside the drafts (a reload keeps a draft, so it must keep
+   the pastes its tokens name); the counter is kept too, so a number is never reused in the tab (medic 12168) */
+const PASTE_KEY = 'ws.pastes', PASTE_STORE_MAX = 2_000_000
+const PASTES = new Map<number, string>()
 let pasteSeq = 0
-const expandPastes = (text: string) => expandPasteTokens(text, PASTES)
+try {
+  const saved = JSON.parse(sessionStorage.getItem(PASTE_KEY) || '{}') as { seq?: number; items?: [number, string][] }
+  for (const [k, v] of saved.items ?? []) PASTES.set(Number(k), String(v))
+  pasteSeq = Math.max(Number(saved.seq) || 0, ...PASTES.keys())
+} catch { /* private mode: pastes live as long as the page */ }
+function savePastes() {
+  try {
+    let items = [...PASTES.entries()], size = items.reduce((n, [, v]) => n + v.length, 0)
+    while (size > PASTE_STORE_MAX && items.length > 1) size -= items.shift()![1].length     // the oldest go first
+    sessionStorage.setItem(PASTE_KEY, JSON.stringify({ seq: pasteSeq, items }))
+  } catch { /* full or private: the token still works until a reload, and a lost one is refused, never sent empty */ }
+}
 
 /* The composer (plan-11884 C3; restyled for the workspace after canvas's Composer + Home). Everything is a key:
      Enter sends, Shift+Enter breaks a line, ↑ in an empty box brings back your last message,
@@ -90,6 +104,7 @@ export default forwardRef<ComposerHandle, {
     e.preventDefault()
     const id = ++pasteSeq
     PASTES.set(id, t)
+    savePastes()
     insert(`${pasteToken(id, n)}\n`)
   }
   const insert = (s: string) => {
@@ -183,7 +198,12 @@ export default forwardRef<ComposerHandle, {
     setBusy(true); setErr('')
     try {
       const sentFrom = owner
-      await onSend(expandPastes(text).trim(), files, to)
+      const out = expandPasteTokens(text, PASTES)
+      if (out.missing.length) throw new Error(`Pasted text #${out.missing.join(', #')} was lost when the page reloaded. Delete the token and paste it again.`)
+      if (out.broken) throw new Error('A [Pasted text …] token was edited. Delete it whole, or paste the text again.')
+      await onSend(out.text.trim(), files, to)
+      for (const m of text.matchAll(/\[Pasted text #(\d+) /g)) PASTES.delete(Number(m[1]))   // sent: freed
+      savePastes()
       keepDraft(sentFrom, ''); FILES.delete(sentFrom)     // sent: that conversation's draft is spent, even if we moved on
       if (ownerRef.current === sentFrom) { setText(''); setFiles([]) }
     } catch (e) { setErr(String((e as Error).message ?? e)) } finally { setBusy(false) }

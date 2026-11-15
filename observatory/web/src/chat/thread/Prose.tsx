@@ -4,7 +4,8 @@ import DOMPurify from 'dompurify'
 import type { Msg } from '../../types'
 import TableActions from './TableActions'
 import { splitProvenance } from './provenance'
-import { codeBlock, fenceBareCode, fenceBareSql } from './code'
+import { codeBlock, fenceBareSql } from './code'
+import { humanHtml } from './md'
 
 /* An agent's answer as a page: full GFM (tables, lists, code, quotes), the way canvas renders it (canvas/web/src/ui.tsx
    Markdown). components/Md is a deliberately small renderer with no tables, and agents answer BI questions in tables.
@@ -19,9 +20,9 @@ const PURIFY = { FORBID_TAGS: ['style', 'form', 'input', 'iframe', 'img'], FORBI
 
 /* A HUMAN's words as markdown (owner 11-15: "the standard of modern chat interfaces is md"): the same parser and
    sanitizer as an answer, with every kind of code detected (code.ts fenceBareCode: a pasted query or function draws as
-   a code block even without a fence), no provenance footer, no table actions. */
+   a code block even without a fence) and raw HTML shown as text (md.ts), no provenance footer, no table actions. */
 export function HumanText({ text }: { text: string }) {
-  const html = useMemo(() => DOMPurify.sanitize(md.parse(fenceBareCode(text), { async: false }) as string, PURIFY), [text])
+  const html = useMemo(() => DOMPurify.sanitize(humanHtml(text), PURIFY), [text])
   const [el, setEl] = useState<HTMLDivElement | null>(null)
   useHighlight(el, html)
   return <div ref={setEl} className="ws-prose ws-prose-human" onClick={copyCode} dangerouslySetInnerHTML={{ __html: html }} />

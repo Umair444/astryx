@@ -1,5 +1,6 @@
 // Code in an answer (owner 11-15): fenced blocks draw as code; SQL pasted without a fence is fenced first.
 // Called by tests/test_chat_code.py:  node tests/chat_code_test.ts
+import { humanHtml } from '../observatory/web/src/chat/thread/md.ts'
 import { codeBlock, codeLang, expandPasteTokens, fenceBareCode, fenceBareSql, fencePaste, pasteToken } from '../observatory/web/src/chat/thread/code.ts'
 
 let fails = 0
@@ -46,12 +47,29 @@ arm('a pasted query is fenced sql in a human message too', fenceBareCode('SELECT
 arm('fencePaste: code goes fenced with its language', fencePaste('SELECT a\nFROM t') === '```sql\nSELECT a\nFROM t\n```')
 arm('fencePaste: prose goes as pasted', fencePaste('a long note\nthat is just words.') === 'a long note\nthat is just words.')
 const pastes = new Map([[1, 'SELECT a\nFROM t'], [2, 'just words here.\nmore words.']])
-const out = expandPasteTokens(`look at ${pasteToken(1, 2)} and ${pasteToken(2, 2)} and ${pasteToken(9, 40)}`, pastes)
-arm('expand: each token becomes its paste (code fenced), an unknown token stays as it reads',
-  out.includes('\n```sql\nSELECT a\nFROM t\n```\n') && out.includes('\njust words here.\nmore words.\n') && out.includes('[Pasted text #9 +40 lines]'), out)
+const ex = expandPasteTokens(`look at ${pasteToken(1, 2)} and ${pasteToken(2, 2)}`, pastes)
+arm('expand: each token becomes its paste (code fenced, words as pasted)',
+  ex.text.includes('\n```sql\nSELECT a\nFROM t\n```\n') && ex.text.includes('\njust words here.\nmore words.\n') && !ex.missing.length && !ex.broken, ex)
+const lost = expandPasteTokens(`old draft ${pasteToken(9, 40)} end`, pastes)
+arm('a token whose paste is gone is reported missing (the composer refuses to send it), never expanded to another',
+  lost.missing.length === 1 && lost.missing[0] === 9 && lost.text.includes('[Pasted text #9 +40 lines]'), lost)
+arm('a token edited out of its shape is reported broken', expandPasteTokens('see [Pasted text #1 +2 lin', pastes).broken)
 
 const asked = fenceBareCode('why are partner names missing here\n<div class="card" id="bnpl">\n  <div class="chead"><h3>BNPL</h3></div>\n  <span class="k"><b>Rs 1M</b></span>\n</div>')
 arm('a question on the line above pasted code stays words, the code below it is the block',
   asked.startsWith('why are partner names missing here\n```') && asked.split('```').length === 3, asked)
+
+// medic 12168: four plain chat messages that the first cut fenced
+for (const w of ["Can you check this:\nfor each row in the table: what's missing?", "Quick question:\nwhile you're at it: also send the deck",
+  'cd ops team asked\ngit the latest numbers pls', 'Hi db,\n    please run the usual\n    and send it'])
+  arm(`words stay words: ${JSON.stringify(w.slice(0, 32))}`, codeLang(w) === null && !fenceBareCode(w).includes('```'), [codeLang(w), fenceBareCode(w)])
+arm('python control flow with a code head is still python', codeLang('for row in rows:\n    total += row.amount\nprint(total)') === 'python')
+arm('a real shell session is still bash', codeLang('cd /opt/astryx\ngit status\nls -la logs') === 'bash')
+
+// medic 12168: raw HTML in a human's words is shown, never rendered (no overlay drawn on a reader's screen)
+const spoof = humanHtml('hello <div class="fixed inset-0 z-50"><a href="https://x.example">Sign in again</a></div> there')
+arm("a human's raw HTML is escaped text", !spoof.includes('<div class="fixed') && spoof.includes('&lt;div class=&quot;fixed'), spoof)
+const mdOk = humanHtml('**bold** and a [link](https://example.com)\n\n```sql\nSELECT 1\n```')
+arm('...while markdown still renders (bold, a link, a code block)', mdOk.includes('<strong>bold</strong>') && mdOk.includes('<a href="https://example.com"') && mdOk.includes('class="ws-cb"'), mdOk)
 
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')

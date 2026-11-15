@@ -58,10 +58,15 @@ export function fenceBareSql(md: string): string {
    join into one block (a function's blank lines don't split it). Conservative: a list, a sentence, a short line is
    never taken; a fence the human wrote is never touched. Agents fence their own (the wire's instructions), and their
    answers keep only fenceBareSql. */
-const PY = /^\s*(def |class |import |from \S+ import |if __name__|@\w+|elif |except\b|try:|with .+:|for .+ in .+:|while .+:|return\b|print\()/
-const JS = /^\s*(const |let |var |function\b|async function|export |import .+ from|class \w+|=>|console\.|document\.|module\.exports)/
-const SH = /^\s*(\$ |sudo |cd |ls\b|git |npm |npx |pip |python3? |curl |docker |kubectl |export \w+=|ssh |scp |chmod |mkdir |cat |grep |systemctl |tmux |psql )/
-const LINE_CODE = /([;{}]\s*$|^\s*[}\])]|^\s*(#include|\/\/|<\/?[a-z][\w-]*[ >])|\)\s*:\s*$|=>|:=|==|!=|\w+\(.*\)\s*;?$|^\s{4,}\S)/
+// each form needs a CODE-SHAPED head: "for each row in the table: what's missing?" and "while you're at it: …" are
+// words (medic 12168); `for x in rows:` and `while n > 0:` end at the colon with nothing after
+const PY = /^\s*(def \w+\(|class \w+[(:]|import [\w.]+( as \w+)?(, [\w.]+)*$|from [\w.]+ import |if __name__|@\w+(\(.*\))?$|elif .+:$|except( \w+)?( as \w+)?:$|try:$|with .+ as \w+:$|for \w+(, ?\w+)* in \S+:$|while \S.*[^?!]:$|return\b|print\()/
+const JS = /^\s*(const \w+ =|let \w+ =|var \w+ =|function \w*\(|async function|export (default |const |function |class )|import .+ from ['"]|class \w+ \{|console\.\w+\(|document\.\w+|module\.exports)/
+// a shell line is a command WITH an argument shape: "cd ops team asked" and "git the latest numbers" are words
+const SH = /^\s*(\$ \S|sudo \S|cd [~./\w-]+\/?\S*$|ls( -\w+)*( \S+)?$|git (status|log|pull|push|clone|checkout|switch|diff|add|commit|fetch|merge|rebase|branch|stash|reset|show)\b|npm (install|i|ci|run|test)\b|npx \S|pip3? install\b|python3? [\w./-]+\.py\b|python3? -[mc]\b|curl (-\S+ )*\S*:\/\/|docker (run|ps|exec|build|compose|logs|pull)\b|kubectl \w+|export [A-Z_]+=|ssh [\w.-]+@?[\w.-]+$|scp \S+ \S+$|chmod [0-7+\w]+ \S+$|mkdir (-p )?\S+$|cat \S+$|grep (-\S+ )*\S+ \S+|systemctl \w+ \S+$|tmux \w+|psql \S)/
+const LINE_CODE = /([;{}]\s*$|^\s*[}\])]|^\s*(#include|\/\/|<\/?[a-z][\w-]*[ >])|\)\s*:\s*$|=>|:=|==|!=|\w+\(.*\)\s*;?$)/
+// a line that reads as words whatever else it holds: a contraction, or a question/exclamation at its end
+const WORDY = /\b\w+'(s|re|t|ll|ve|d|m)\b|[?!]\s*$/
 
 export function codeLang(block: string): string | null {
   const lines = block.split('\n').filter((l) => l.trim())
@@ -72,7 +77,7 @@ export function codeLang(block: string): string | null {
   }
   if (OPENS.test(lines[0]) && lines.some((l) => /\bFROM\b/.test(l))) return 'sql'
   const share = (re: RegExp) => lines.filter((l) => re.test(l)).length / lines.length
-  const prose = lines.filter((l) => /^[A-Z][^;{}()=<>]*[.?!]$/.test(l.trim()) || /^\s*([-*•]|\d+[.)])\s+\w/.test(l)).length / lines.length
+  const prose = lines.filter((l) => /^[A-Z][^;{}()=<>]*[.?!]$/.test(l.trim()) || /^\s*([-*•]|\d+[.)])\s+\w/.test(l) || WORDY.test(l)).length / lines.length
   if (prose > 0.3) return null                       // sentences and lists are words, whatever else they hold
   if (share(SH) >= 0.6) return 'bash'
   const code = share(LINE_CODE)
@@ -141,12 +146,19 @@ export function fencePaste(text: string): string {
 }
 
 /* the composer's long-paste token (Claude Code's shape) and its expansion on send: each token becomes its paste on
-   lines of its own, code fenced; a token whose paste is gone (a reload) stays as it reads */
+   lines of its own, code fenced. Ids are never reused in a tab (the composer persists its counter with the pastes),
+   so an old token can't pick up a new paste. `missing`: a token whose paste is gone (a reload past the store) and
+   `broken`: a token edited out of its shape; the composer refuses to send either, rather than lose the text quietly
+   (medic 12168). */
 export const pasteToken = (id: number, lines: number) => `[Pasted text #${id} +${lines} lines]`
 const PASTE_TOKEN = /\[Pasted text #(\d+) \+\d+ lines\]/g
-export function expandPasteTokens(text: string, pastes: Map<number, string>): string {
-  return text.replace(PASTE_TOKEN, (tok, id) => {
+export function expandPasteTokens(text: string, pastes: Map<number, string>): { text: string; missing: number[]; broken: boolean } {
+  const missing: number[] = []
+  const out = text.replace(PASTE_TOKEN, (tok, id) => {
     const t = pastes.get(Number(id))
-    return t === undefined ? tok : `\n${fencePaste(t)}\n`
+    if (t === undefined) { missing.push(Number(id)); return tok }
+    return `\n${fencePaste(t)}\n`
   })
+  const broken = /\[Pasted text #/.test(text.replace(PASTE_TOKEN, ''))
+  return { text: out, missing, broken }
 }
