@@ -5,6 +5,27 @@ import { startDictation, stopDictation, useDictation } from '../dictate'
 import { mentions, upload, type McpTool, type Skill, type Uploaded } from '../model'
 import { I } from '../icons'
 import { touchFirst } from '../shell/phone'
+import { expandPasteTokens, pasteToken } from './code'
+
+const PASTE_LINES = 12, PASTE_CHARS = 1500          // a paste this long folds into a token (code.ts pasteToken)
+/* this tab's pastes, by token number, kept in sessionStorage beside the drafts (a reload keeps a draft, so it must keep
+   the pastes its tokens name); the counter is kept too, so a number is never reused in the tab (medic 12168) */
+const PASTE_KEY = 'ws.pastes', SEQ_KEY = 'ws.pastes.seq', PASTE_STORE_MAX = 2_000_000
+const PASTES = new Map<number, string>()
+let pasteSeq = 0
+try {
+  const saved = JSON.parse(sessionStorage.getItem(PASTE_KEY) || '{}') as { seq?: number; items?: [number, string][] }
+  for (const [k, v] of saved.items ?? []) PASTES.set(Number(k), String(v))
+  pasteSeq = Math.max(Number(saved.seq) || 0, Number(sessionStorage.getItem(SEQ_KEY)) || 0, ...PASTES.keys())
+} catch { /* private mode: pastes live as long as the page */ }
+function savePastes() {
+  try { sessionStorage.setItem(SEQ_KEY, String(pasteSeq)) } catch { /* nothing fits: the ids still never repeat until a reload */ }
+  try {
+    let items = [...PASTES.entries()], size = items.reduce((n, [, v]) => n + v.length, 0)
+    while (size > PASTE_STORE_MAX && items.length > 1) size -= items.shift()![1].length     // the oldest go first
+    sessionStorage.setItem(PASTE_KEY, JSON.stringify({ seq: pasteSeq, items }))
+  } catch { /* full or private: the token still works until a reload, and a lost one is refused, never sent empty */ }
+}
 
 /* The composer (plan-11884 C3; restyled for the workspace after canvas's Composer + Home). Everything is a key:
      Enter sends, Shift+Enter breaks a line, ↑ in an empty box brings back your last message,
@@ -74,6 +95,19 @@ export default forwardRef<ComposerHandle, {
   const fileIn = useRef<HTMLInputElement>(null)
   const dict = useDictation()
 
+  /* A LONG PASTE (owner 11-15, the way Claude Code does it): it sits in the box as one token, "[Pasted text #2 +40
+     lines]", so the box stays readable, and goes out whole on send: code fenced (code.ts fencePaste), anything else as
+     pasted. Delete the token and the paste goes with it. The text lives in PASTES (this tab), keyed by its number. */
+  function onPasteText(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const t = e.clipboardData.getData('text/plain')
+    const n = t.split('\n').length
+    if (n < PASTE_LINES && t.length < PASTE_CHARS) return       // short: it types in like anything else
+    e.preventDefault()
+    const id = ++pasteSeq
+    PASTES.set(id, t)
+    savePastes()
+    insert(`${pasteToken(id, n)}\n`)
+  }
   const insert = (s: string) => {
     const el = box.current
     if (!el) { setText((t) => t + s); return }
@@ -165,7 +199,12 @@ export default forwardRef<ComposerHandle, {
     setBusy(true); setErr('')
     try {
       const sentFrom = owner
-      await onSend(text.trim(), files, to)
+      const out = expandPasteTokens(text, PASTES)
+      if (out.missing.length) throw new Error(`Pasted text #${out.missing.join(', #')} was lost when the page reloaded. Delete the token and paste it again.`)
+      if (out.broken) throw new Error('A [Pasted text …] token was edited. Delete it whole, or paste the text again.')
+      await onSend(out.text.trim(), files, to)
+      for (const m of text.matchAll(/\[Pasted text #(\d+) /g)) PASTES.delete(Number(m[1]))   // sent: freed
+      savePastes()
       keepDraft(sentFrom, ''); FILES.delete(sentFrom)     // sent: that conversation's draft is spent, even if we moved on
       if (ownerRef.current === sentFrom) { setText(''); setFiles([]) }
     } catch (e) { setErr(String((e as Error).message ?? e)) } finally { setBusy(false) }
@@ -230,7 +269,7 @@ export default forwardRef<ComposerHandle, {
           onChange={(e) => { setText(e.target.value); setMenuOff(false); setPicker(false); setErr('') }}
           onKeyDown={onKey}
           onBlur={() => setPicker(false)}
-          onPaste={(e) => { const fs = Array.from(e.clipboardData.files); if (fs.length) { e.preventDefault(); addFiles(fs) } }}
+          onPaste={(e) => { const fs = Array.from(e.clipboardData.files); if (fs.length) { e.preventDefault(); addFiles(fs) } else onPasteText(e) }}
           placeholder={hint}
           className={`block w-full resize-none bg-transparent px-4 outline-none text-ink placeholder:text-ink-mute ${hero ? 'pt-4 pb-1 text-[17px] leading-[1.55]' : 'pt-3.5 pb-1 text-[15px] leading-relaxed'}`} />
         {(live || dict.phase === 'connecting') && (

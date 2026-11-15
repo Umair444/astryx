@@ -27,3 +27,13 @@ export function highlight(code: string, ext: string): string {
   return lang ? hljs.highlight(code, { language: lang, ignoreIllegals: true }).value : escape(code)
 }
 const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+/* a chat code block (thread/code.ts): by its fence's LANGUAGE name (sql, python, js, sh…), else the best guess among
+   the registered ones; long blocks stay plain */
+const ALIAS: Record<string, string> = { js: 'javascript', ts: 'typescript', py: 'python', sh: 'bash', shell: 'bash', zsh: 'bash', html: 'xml', yml: 'yaml' }
+export function highlightLang(code: string, lang: string): string {
+  if (code.length > 100_000) return escape(code)
+  const l = ALIAS[lang] ?? lang
+  if (l && hljs.getLanguage(l)) return hljs.highlight(code, { language: l, ignoreIllegals: true }).value
+  return hljs.highlightAuto(code).value
+}
