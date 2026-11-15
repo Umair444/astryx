@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { api, fmtAgo, obsKey } from '../api'
 import { useCog } from '../cog'
 import { useStore } from '../store'
-import type { Msg, ThreadInfo } from '../types'
+import { isHuman, type Msg, type ThreadInfo } from '../types'
 import AgentFace from './AgentFace'
 
 /* A NEW ORG in this install's cog, from the Agents view (the owner's ask 10-19: "in agents view make sure we can also
@@ -64,7 +64,7 @@ export function CogPending({ tick }: { tick: number }) {
       <div className="text-[11px] uppercase tracking-[.08em] text-ink-mute mb-3">rooms in the making</div>
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
         {pending.map(p => {
-          const heard = p.last && p.last.from !== 'owner'
+          const heard = p.last && !isHuman(p.last.from)
           return (
             <a key={p.key} href={`#/wire/${encodeURIComponent(p.thread)}`}
               className="relative flex items-start gap-3 rounded-2xl border border-dashed border-line-2 bg-ink/[.03] p-4 hover:border-cyan/45 transition-colors no-underline">

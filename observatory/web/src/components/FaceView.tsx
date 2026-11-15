@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, apiPost, obsKey, saveObsKey } from '../api'
-import type { Msg } from '../types'
+import { isHuman, type Msg } from '../types'
 
 /* The creature's FACE — the fullscreen surface for the phone mounted on the
    GrowBot body. Not an app with buttons: a being with eyes. Brit's creature app
@@ -92,7 +92,7 @@ export default function FaceView() {
         if (!alive || !ms.length) return
         if (lastSeenId.current === 0) { lastSeenId.current = ms[ms.length - 1].id; return }
         for (const m of ms) {
-          if (m.id > lastSeenId.current && m.from !== 'owner') {
+          if (m.id > lastSeenId.current && !isHuman(m.from)) {
             lastSeenId.current = m.id
             speak(m.body)
           } else if (m.id > lastSeenId.current) {

@@ -52,7 +52,7 @@ MEDIA: Path | None = None
 REPO: Path | None = None
 _roster = lambda: set()                            # noqa: E731 — the live agent names (main.agent_meta)
 _me = lambda request: "owner"                      # noqa: E731 — main.wire_handle: the viewer's wire handle (cog-who)
-_sees = lambda request: (lambda agent: True)       # noqa: E731 — main.sees: which agents' insides the viewer reads
+_sees = lambda request: (lambda agent: False)      # noqa: E731 — main.sees; unbound = no agent's insides (closed)
 
 
 def bind(get_pool, estate: Path, media: Path, repo: Path, roster=None, me=None, sees=None) -> None:

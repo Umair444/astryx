@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Drawer } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { AnimatePresence, motion } from 'motion/react'
-import { apiPost, fmtAgo, fmtDay } from '../api'
+import { apiPost, fmtAgo, fmtDay, isMine } from '../api'
 import { useStore } from '../store'
 import { nav } from '../App'
 import type { Route } from '../App'
-import type { Msg } from '../types'
+import { isHuman, type Msg } from '../types'
 import Message, { IntentChip, partyLabel } from './Message'
 import Composer from './Composer'
 import OrgNewsView from './OrgNewsView'
@@ -113,7 +113,7 @@ function ThreadPane({ thread, onOpenAgent }: { thread: string; onOpenAgent: (n: 
   // Opening the pane is the owner reading it: the server marks the pending replies to him on this thread,
   // up to the newest one shown here (never the feed, which only shows). A reply arriving while it is open is
   // read too, so the mark follows the newest id.
-  const toOwner = msgs.filter((m) => m.to === 'owner' && m.from !== 'owner' && (m.to_org ?? 'local') === 'local')
+  const toOwner = msgs.filter((m) => isMine(m.to) && !isHuman(m.from) && (m.to_org ?? 'local') === 'local')
   const upto = toOwner.length ? toOwner[toOwner.length - 1].id : 0
   useEffect(() => {
     if (who.owner && upto) apiPost('/thread/read', { thread, upto }).catch(() => {})

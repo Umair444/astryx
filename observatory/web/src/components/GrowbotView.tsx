@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ScrollArea, Slider, Textarea } from '@mantine/core'
 import { api, apiPost, obsKey } from '../api'
 import type { Msg } from '../types'
-import { displayName } from '../api'
+import { isMine, personName } from '../api'
 import AgentFace from './AgentFace'
 import { Empty, LiveDot, Panel, SectionHead, ViewHeader } from '../ui/kit'
 
@@ -268,12 +268,12 @@ export default function GrowbotView() {
             <div className="mt-4 flex flex-col gap-2.5 max-h-64 overflow-y-auto">
               {thread.slice(-12).map((m) => (
                 <div key={m.id} className="flex gap-2.5 text-[13px] leading-relaxed">
-                  {m.from === 'owner'
+                  {isMine(m.from)
                     ? <span className="w-6 h-6 shrink-0 rounded-full grid place-items-center text-[10px] font-semibold ax-action">you</span>
                     : <AgentFace name={m.from} size={24} />}
                   <div className="min-w-0">
-                    <span className={`font-semibold text-[12px] ${m.from === 'owner' ? 'text-cyan-soft' : 'text-ink'}`}>
-                      {m.from === 'owner' ? 'you' : displayName(m.from)}
+                    <span className={`font-semibold text-[12px] ${isMine(m.from) ? 'text-cyan-soft' : 'text-ink'}`}>
+                      {personName(m.from, 'you')}
                     </span>
                     <div className="text-ink-dim whitespace-pre-wrap">{m.body.length > 400 ? m.body.slice(0, 400) + '…' : m.body}</div>
                   </div>

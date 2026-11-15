@@ -22,6 +22,7 @@ butler (gmail: the owner's personal tier). Dummy keys only; nothing leaves the h
   M8 an agent's profile and charter: a member 200 for seed while seed's grants are org work, 404 once they hold gmail;
      the owner 200 either way
   M9 acts stay the owner's: a member's interrupt is 403
+  M10 the briefing's turn counts are insides too: butler's counted for the owner, not for a member
 Exit 0 pass · 1 fail · 77 fixture unavailable."""
 import os
 import sys
@@ -188,6 +189,12 @@ def main(tmp: Path, url: str):
         arm("M8 ...the owner 200 either way", owner == (200, 200), owner)
     else:
         print("  NOT VERIFIED  M8: no agents/seed/seed.md in this tree")
+
+    print("M the briefing (medic's review)")
+    turns_of = lambda h: {a["agent"]: a.get("turns") for a in cl.get("/api/ws/briefing", params={"since": "2000-01-01T00:00:00Z"}, headers=h).json().get("agents", [])}  # noqa: E731
+    bm, bo = turns_of(A()), turns_of(O)
+    arm("M10 the briefing counts butler's turns for the owner, not for a member", bo.get("butler") == 1 and not bm.get("butler"),
+        (bo.get("butler"), bm.get("butler")))
 
     print("M acts stay the owner's")
     arm("M9 a member's interrupt is 403", cl.post("/api/ws/agents/db/interrupt", headers=A()).status_code == 403)

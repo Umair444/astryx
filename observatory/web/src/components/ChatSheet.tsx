@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
-import { api, apiPost, displayName, fmtAgo, fmtTime } from '../api'
+import { api, apiPost, displayName, fmtAgo, fmtTime, isMine } from '../api'
 import { useStore } from '../store'
-import type { Msg } from '../types'
+import { isHuman, type Msg } from '../types'
 import { canvasBase } from '../cog'
 import { moodOf, nowLine } from '../ui/life'
 import { GlyphStack } from '../ui/glyphs'
@@ -57,7 +57,7 @@ export default function ChatSheet({ name, onClose, onProfile }: { name: string; 
   }, [history, messages, thread])
 
   // the replies this pane shows are read (the same explicit act as the Wire's thread pane, /api/thread/read)
-  const newestReply = convo.filter((m) => m.from !== 'owner').at(-1)?.id ?? 0
+  const newestReply = convo.filter((m) => !isHuman(m.from)).at(-1)?.id ?? 0
   useEffect(() => {
     if (newestReply) apiPost('/thread/read', { thread, upto: newestReply }).catch(() => {})
   }, [thread, newestReply])
@@ -74,7 +74,7 @@ export default function ChatSheet({ name, onClose, onProfile }: { name: string; 
   }, [onClose])
 
   const last = convo.at(-1)
-  const waiting = last?.from === 'owner'                    // the agent hasn't answered the newest thing you said
+  const waiting = isMine(last?.from)                    // the agent hasn't answered the newest thing you said
   const working = waiting && mood === 'working'
 
   async function submit(text = body) {
@@ -141,7 +141,7 @@ export default function ChatSheet({ name, onClose, onProfile }: { name: string; 
               </div>
             </div>
           )}
-          {convo.map((m, i) => <Bubble key={m.id} m={m} mine={m.from === 'owner'} fresh={history !== null && !history.some((h) => h.id === m.id)} firstOfRun={i === 0 || convo[i - 1].from !== m.from} name={name} />)}
+          {convo.map((m, i) => <Bubble key={m.id} m={m} mine={isMine(m.from)} fresh={history !== null && !history.some((h) => h.id === m.id)} firstOfRun={i === 0 || convo[i - 1].from !== m.from} name={name} />)}
           {waiting && (
             <div className="flex items-center gap-2 text-[12px] text-ink-mute pl-1" role="status">
               {working ? <><Dots /> {displayName(name)} is working{p?.say ? `: ${p.say}` : ''}</>

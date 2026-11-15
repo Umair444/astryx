@@ -497,13 +497,15 @@ async def ws_agents(request: Request):
 
 
 # ------------------------------------------------------------------------------------------------------ handoffs
+# a human's message opening a turn is no handoff (human_sql: the owner's or a member's); handoffs_of() also keeps only
+# a sender on the roster, so this is the one spelling rather than the only guard
 HANDOFFS_SQL = """
 SELECT DISTINCT ON (t.id) t.id AS turn_id, t.agent, m.id AS at,
        i.id, i.ts, i.from_agent, i.to_agent, i.thread, i.intent, left(i.body, $2) AS body
   FROM messages m
   JOIN turns t ON t.id = m.turn_id
   JOIN messages i ON i.id = t.input_msg_id
- WHERE m.thread = $1 AND i.from_agent <> 'owner' AND i.thread IS DISTINCT FROM $1
+ WHERE m.thread = $1 AND NOT """ + human_sql("i.from_agent") + """ AND i.thread IS DISTINCT FROM $1
  ORDER BY t.id, m.id
  LIMIT 200"""
 HANDOFF_BODY_MAX = 4000
@@ -1126,10 +1128,10 @@ async def ws_briefing(request: Request, since: str = "", scope: str = "mine"):
         edge = await pool.fetchval(BRIEF_EDGE_SQL, start, timeout=BRIEF_TIMEOUT) or 0
         rows = [dict(r) for r in await pool.fetch(BRIEF_MSGS_SQL, edge, start, BRIEF_ROWS, me, everyone,
                                                   timeout=BRIEF_TIMEOUT)]
-        turns = {r["agent"]: r["turns"] for r in await pool.fetch(BRIEF_TURNS_SQL, names, start, timeout=BRIEF_TIMEOUT)}
-        see = _sees(request)                        # an agent's own words are its insides (main.sees)
-        did = {r["agent"]: dict(r) for r in await pool.fetch(BRIEF_DID_SQL, [a for a in names if see(a)], start,
-                                                             timeout=BRIEF_TIMEOUT)}
+        see = _sees(request)                        # an agent's turn count and own words are its insides (main.sees)
+        seen = [a for a in names if see(a)]
+        turns = {r["agent"]: r["turns"] for r in await pool.fetch(BRIEF_TURNS_SQL, seen, start, timeout=BRIEF_TIMEOUT)}
+        did = {r["agent"]: dict(r) for r in await pool.fetch(BRIEF_DID_SQL, seen, start, timeout=BRIEF_TIMEOUT)}
     except asyncio.TimeoutError:
         return JSONResponse({"error": "the briefing took too long"}, status_code=504)
     try:

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { displayName } from '../api'
+import { displayName, isMine } from '../api'
+import { humanName, isHuman } from '../types'
 import { useStore } from '../store'
 import AgentFace from './AgentFace'
 
@@ -19,7 +20,7 @@ function Party({ name, org, agents }: { name: string | null; org: string | null;
       </span>
     )
   }
-  const label = org && org !== 'local' ? org : name === 'owner' ? 'you' : 'outside'
+  const label = org && org !== 'local' ? org : isMine(name) ? 'you' : name && isHuman(name) ? humanName(name) : 'outside'
   return <span className="px-1.5 py-px rounded-full border border-line text-ink-mute truncate">{label}</span>
 }
 
