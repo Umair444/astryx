@@ -114,7 +114,9 @@ try:
               f"{assumed}{limit // 1000}k){plan}")
     elif plan:
         print(f"[usage]{plan}")
-    if econ_line:
+    # a line that says nothing is not printed: the neutral token rode on every prompt of every agent while the econ
+    # table held no row at all (owner 11-15: "the [econ] which appears in every agent after prompt")
+    if econ_line and "no standing verdict" not in econ_line:
         print(econ_line)
 except Exception:
     pass
