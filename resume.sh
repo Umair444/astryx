@@ -47,6 +47,10 @@ for _ in $(seq 1 60); do
 done
 
 # --- 2. the four services — launch only if the port is dead ---
+# Every uvicorn here stops within GRACE seconds: its graceful shutdown otherwise waits on the open SSE streams, which
+# never end, so a stopped server lived on serving every open tab its OLD code (11-15: two stale observatory backends
+# found hours after their deploys, each still feeding live streams).
+GRACE="--timeout-graceful-shutdown 5"
 start_svc() {  # name  port  workdir  cmd...
   local name="$1" port="$2" wd="$3"; shift 3
   if port_up "$port"; then
@@ -56,7 +60,7 @@ start_svc() {  # name  port  workdir  cmd...
     echo "resume: launched $name on :$port (pid ~$!)"
   fi
 }
-start_svc bridge      8477 "$ROOT"                 "$ROOT/venv/bin/uvicorn bridges.whatsapp:app --host 0.0.0.0 --port 8477"
+start_svc bridge      8477 "$ROOT"                 "$ROOT/venv/bin/uvicorn bridges.whatsapp:app --host 0.0.0.0 --port 8477 $GRACE"
 # The observatory: in a cog (a registry with a `cog` block, /etc/astryx/cog.json or ASTRYX_COG_REGISTRY) the org's
 # backend is main:app on 127.0.0.1 at its registry port and the cog's FRONT owns :8090 (sign-in, relay); without one,
 # main:app on :8090 as before. Relaunching the old layout under a cog would silently drop sign-in (cog-rebuild P1).
@@ -75,14 +79,14 @@ if [ -n "$COG_HOME" ] && [ -f "$COG_HOME/tls/cert.pem" ] && [ -f "$COG_HOME/tls/
   OBS_TLS="--ssl-certfile $COG_HOME/tls/cert.pem --ssl-keyfile $COG_HOME/tls/key.pem"
 fi
 if [ -n "$OBS_ORG_PORT" ]; then
-  start_svc observatory-org "$OBS_ORG_PORT" "$ROOT/observatory/api" "$ROOT/venv/bin/uvicorn main:app --host 127.0.0.1 --port $OBS_ORG_PORT --proxy-headers --forwarded-allow-ips 127.0.0.1"
-  start_svc observatory 8090 "$ROOT/observatory" "$ROOT/venv/bin/uvicorn front:app --host 0.0.0.0 --port 8090 --proxy-headers --forwarded-allow-ips 127.0.0.1 $OBS_TLS"
+  start_svc observatory-org "$OBS_ORG_PORT" "$ROOT/observatory/api" "$ROOT/venv/bin/uvicorn main:app --host 127.0.0.1 --port $OBS_ORG_PORT --proxy-headers --forwarded-allow-ips 127.0.0.1 $GRACE"
+  start_svc observatory 8090 "$ROOT/observatory" "$ROOT/venv/bin/uvicorn front:app --host 0.0.0.0 --port 8090 --proxy-headers --forwarded-allow-ips 127.0.0.1 $OBS_TLS $GRACE"
 else
-  start_svc observatory 8090 "$ROOT/observatory/api" "$ROOT/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8090"
+  start_svc observatory 8090 "$ROOT/observatory/api" "$ROOT/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8090 $GRACE"
 fi
-start_svc gateway     8845 "$ROOT/bridges"         "$ROOT/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845"
-start_svc frontends   8998 "$ROOT"                 "$ROOT/venv/bin/uvicorn bridges.frontends:app --host 0.0.0.0 --port 8998"
-start_svc canvas      8091 "$ROOT"                 "$ROOT/venv/bin/uvicorn bridges.canvas:root --host 127.0.0.1 --port 8091"
+start_svc gateway     8845 "$ROOT/bridges"         "$ROOT/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845 $GRACE"
+start_svc frontends   8998 "$ROOT"                 "$ROOT/venv/bin/uvicorn bridges.frontends:app --host 0.0.0.0 --port 8998 $GRACE"
+start_svc canvas      8091 "$ROOT"                 "$ROOT/venv/bin/uvicorn bridges.canvas:root --host 127.0.0.1 --port 8091 $GRACE"
 
 # --- 3. the pulse loop — EXACTLY ONE (one-clock ruling) ---
 # No systemd timer here, so the clock is a shell loop: pulse.py is one-shot, the loop
