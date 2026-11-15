@@ -17,7 +17,7 @@ import { Presence } from '../shell/AgentRail'
    adds the measured server-browser offset (api.ts). A bare `Date.now() - Date.parse(since)` froze at 00:00 for the
    first ~3 minutes of every turn while the org host's clock ran ahead (11-11: +183 s), clock() clamping the negative. */
 
-/* `by` (thread/pending.ts): who asked, when it isn't the viewer: the line says "for Faran". STOP is the owner's act
+/* `by` (thread/pending.ts): who asked, when it isn't the viewer: the line says "for Pat". STOP is the owner's act
    (the server refuses anyone else), so onStop comes only to the owner's view. */
 export type { Pending } from './pending'
 

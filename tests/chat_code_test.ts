@@ -36,7 +36,7 @@ arm('python is python', codeLang('def load(path):\n    df = pd.read_csv(path)\n 
 arm('a JSON object is json', codeLang('{\n  "a": 1,\n  "b": [2, 3]\n}') === 'json')
 arm('shell commands are bash', codeLang('cd /opt/astryx\ngit pull\nnpm run build') === 'bash')
 arm('javascript is javascript', codeLang('const x = await fetch(url);\nconst j = await x.json();\nconsole.log(j);') === 'javascript')
-arm('a list is words, never code', codeLang('- check the za space\n- drop the May tables\n- tell Faran') === null)
+arm('a list is words, never code', codeLang('- check the za space\n- drop the May tables\n- tell Pat') === null)
 arm('sentences are words, never code', codeLang('Please check the dashboard.\nIt failed again today.\nThanks.') === null)
 arm('one line is never code', codeLang('x = 1') === null)
 const mixed = fenceBareCode(`can you check this?\n\n${py}\n\nthanks`)

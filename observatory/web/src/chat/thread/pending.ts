@@ -9,7 +9,7 @@ import { isHuman, type Msg, type Step } from '../../types'
        is still working … I'm not seeing anything"). A step stamped [] (the turn absorbed a message mid-way) is still
        this turn's.
    `steps`: the lane from where this turn's work starts (b), or since the ask (a). `by` names the asker when it isn't
-   the viewer, so the line reads "for Faran". 11-15: (a) once compared from to the literal 'owner'. */
+   the viewer, so the line reads "for Pat". 11-15: (a) once compared from to the literal 'owner'. */
 export interface Pending { agent: string; since: string; steps: Step[]; by?: string }
 
 export function pendingOf(agents: string[], rows: Msg[], live: Record<string, Step[]> | undefined, me: string): Pending[] {

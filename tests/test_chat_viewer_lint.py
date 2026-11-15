@@ -2,15 +2,15 @@
 """Oracle: the observatory's web client never spells "the human" or "me" as the literal 'owner' (11-15).
 
 The workspace was built for one human, and ~49 sites compared a name to 'owner' to mean either "a human wrote this" or
-"this is mine". A member is a viewer too: her ask drew no live line, her uploads read "Cv Faran Khalid.2", the owner's
-words read "You" on her screen. The two meanings have one spelling each: types.isHuman(name) and api.isMine(name) /
+"this is mine". A member is a viewer too: their ask drew no live line, their uploads read "Cv Pat Lee.2", the owner's
+words read "You" on their screen. The two meanings have one spelling each: types.isHuman(name) and api.isMine(name) /
 api.personName(name). This scan fails on any new comparison against the literal, so the regression can't come back
 one site at a time.
 
   L1 no `=== 'owner'` / `!== 'owner'` (either side, either quote) anywhere in web/src, outside the allowlist below
      (each entry says why it is the literal and not a viewer). The whole tree, not only chat/: a member mounts the
      header (PulseStrip), the Floor, the Network and agent profiles too (medic's review, 11-15: PulseStrip read the
-     owner's words as "you" on her screen while the chat-only scan stayed green)
+     owner's words as "you" on their screen while the chat-only scan stayed green)
   L2 the scan sees the tree (a real hit is found in a synthetic file: the regex is not vacuous)
 Exit 0 pass · 1 fail."""
 import re
