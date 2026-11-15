@@ -17,11 +17,18 @@ export function pendingOf(agents: string[], rows: Msg[], live: Record<string, St
   const here = new Set(rows.map((m) => m.id))
   const serves = (s: Step) => !!s.turn_msgs?.some((id) => here.has(id))
   const elsewhere = (s: Step) => !!s.turn_msgs?.length && !serves(s)
-  for (const a of agents) {
+  // the newest TEAM ask's members work here too, even where the chat's own recipients are one agent (a desk, where
+  // "@db @seed …" reaches seed by its @mention): its rows share the lead and the moment they were sent
+  const t = [...rows].reverse().find((m) => isHuman(m.from) && m.lead)
+  const team = t ? rows.filter((m) => m.lead === t.lead && m.from === t.from && m.to && Math.abs(Date.parse(m.ts) - Date.parse(t.ts)) < 5000).map((m) => m.to!) : []
+  for (const a of [...agents, ...team.filter((x, i) => !agents.includes(x) && team.indexOf(x) === i)]) {
     const lane = live?.[a] ?? []
     const ask = [...rows].reverse().find((m) => isHuman(m.from) && m.to === a)
     const saidAt = Math.max(0, ...rows.filter((m) => m.from === a).map((m) => m.id))
-    const asked = !!ask && ask.id > saidAt
+    // a team HELPER waits only until the lead has answered (helpers answer the lead over the wire, not the human; its
+    // real work still shows through its live lane, (b)); everyone else waits for their own word
+    const leadAt = t && a !== t.lead && team.includes(a) ? Math.max(0, ...rows.filter((m) => m.from === t.lead).map((m) => m.id)) : 0
+    const asked = !!ask && ask.id > saidAt && ask.id > leadAt
     // (b) the newest step of a turn this thread opened, and nothing after it from a turn another thread opened
     let k = -1
     for (let i = lane.length - 1; i >= 0; i--) { if (serves(lane[i])) { k = i; break } if (elsewhere(lane[i])) break }
@@ -39,5 +46,8 @@ export function pendingOf(agents: string[], rows: Msg[], live: Record<string, St
     out.push({ agent: a, since: ask!.ts, by: ask!.from === me ? undefined : ask!.from!,
                steps: lane.filter((s) => Date.parse(s.ts) >= t0) })
   }
-  return out
+  // A TEAM's lead first (LiveActivity draws a team as ONE line, the lead's): the newest human ask here that named one
+  const lead = t?.lead
+  const i = lead ? out.findIndex((p) => p.agent === lead) : -1
+  return i > 0 ? [out[i], ...out.slice(0, i), ...out.slice(i + 1)] : out
 }

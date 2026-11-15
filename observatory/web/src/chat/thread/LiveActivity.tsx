@@ -9,7 +9,7 @@ import { Presence } from '../shell/AgentRail'
 /* THE LIVE ACTIVITY LINE (DESIGN.md "presence beats spinners"): under the last turn, one line per agent that was
    asked and hasn't answered: "● Db is running a query · get_schema za · 00:42". It names the agent, the action in
    plain words, and the time since you asked; a click opens its recent steps (the same steps /api/chat/work files as
-   the agent's live lane). Three at most, then "+2 working".
+   the agent's live lane). Several agents: one line for the team (Team, below).
    STOP (iteration 6): the line's one action. It interrupts that agent's CURRENT TURN (POST /api/ws/agents/<a>/interrupt:
    one Escape into its pane, as the owner would press in tmux); the first use in a session asks once, inline, never a
    modal. Optimistic: "Stopping…" at once, then "Stopped" until the agent's next word, or the reason it didn't.
@@ -67,14 +67,59 @@ type StopState = 'confirm' | 'stopping' | 'stopped' | { err: string }
 const OK_KEY = 'ws.stop.confirmed'
 const confirmed = () => { try { return sessionStorage.getItem(OK_KEY) === '1' } catch { return false } }
 
+/* A TEAM AT WORK (owner 11-15: "multiple working messages appearing is a bad interface … both icons should appear
+   and consolidated working should be shown"): two or more agents on this chat are ONE line, the lead's (the chat's
+   first agent, the one that replies): its face in front of the others', what it is doing now, "+N helping", one
+   timer from the earliest ask. A click opens each agent's own line (its steps, its own Stop). One agent: its line. */
 export default function LiveActivity({ pending, onStop }: { pending: Pending[]; onStop?: StopFn }) {
   const now = useNow(1000)
   if (!pending.length) return null
-  const shown = pending.slice(0, 3)
   return (
-    <div className="flex flex-col gap-2" aria-live="polite">
-      {shown.map((p) => <Line key={p.agent} p={p} now={now} onStop={onStop} />)}
-      {pending.length > 3 && <div className="text-[12px] text-ink-mute pl-9">+{pending.length - 3} working</div>}
+    <div aria-live="polite">
+      {pending.length === 1 ? <Line p={pending[0]} now={now} onStop={onStop} /> : <Team pending={pending} now={now} onStop={onStop} />}
+    </div>
+  )
+}
+
+function Team({ pending, now, onStop }: { pending: Pending[]; now: number; onStop?: StopFn }) {
+  const [open, setOpen] = useState(false)
+  const lead = pending[0]
+  const steps = lead.steps.filter(visible)
+  const last = steps.at(-1)
+  const { verb, detail: own } = actionOf(last)
+  const detail = last?.sub ? `↳ ${helperName(last)} · ${own}` : own
+  const since = pending.map((p) => p.since).sort()[0]
+  const others = pending.slice(1).map((p) => displayName(p.agent))
+  const helping = others.length === 1 ? `${others[0]} helping` : `${others.length} helping`
+  const faces = pending.slice(0, 4)
+  return (
+    <div style={{ ['--ws-agent' as string]: agentColor(lead.agent) }}>
+      <button onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        aria-label={`${displayName(lead.agent)} and ${others.join(', ')} are working: show each`}
+        className="w-full text-left flex items-center gap-3 rounded-[12px] -mx-2 px-2 py-1.5 hover:bg-[color-mix(in_srgb,var(--t-fg)_4%,transparent)]">
+        <span className="ws-team-faces shrink-0 flex items-center" aria-hidden>
+          {faces.map((p, i) => (
+            <span key={p.agent} className="ws-team-face" style={{ zIndex: faces.length - i, marginLeft: i ? -5 : 0 }}>
+              <Presence agent={p.agent} status={i ? undefined : 'working'} size={i ? 20 : 24} ring={i === 0} />
+            </span>
+          ))}
+        </span>
+        <span className="min-w-0 flex-1 flex items-baseline gap-2 text-[13.5px]">
+          <span className="min-w-0 truncate sm:shrink-0 text-ink">
+            <span className="font-medium">{displayName(lead.agent)}</span>{' '}
+            <span className="text-ink-dim">is {verb}{lead.by ? ` for ${humanName(lead.by)}` : ''}</span>
+            <span className="ml-1.5 text-[11.5px] text-ink-mute rounded-full border border-line px-1.5 py-[1px]" title={others.join(', ')}>+ {helping}</span>
+          </span>
+          {detail && <span className="ws-shimmer font-mono text-[12px] truncate max-sm:hidden">{detail}</span>}
+        </span>
+        <span className="shrink-0 font-mono text-[12px] tabular-nums text-ink-mute">{clock(elapsedSince(since, now))}</span>
+        <span className={`shrink-0 text-ink-mute transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden>›</span>
+      </button>
+      {open && (
+        <div className="mt-1 ml-[11px] border-l-2 border-line pl-3 flex flex-col gap-1">
+          {pending.map((p) => <Line key={p.agent} p={p} now={now} onStop={onStop} />)}
+        </div>
+      )}
     </div>
   )
 }

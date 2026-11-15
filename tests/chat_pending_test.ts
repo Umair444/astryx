@@ -42,4 +42,15 @@ const helper = { db: [st(1, '2026-11-15T09:00:05Z', [10]), st(2, '2026-11-15T09:
 const h = pendingOf(['db'], replied, helper, 'owner')
 arm("a helper's step for this thread keeps the line, and carries who it is", h.length === 1 && (h[0].steps.at(-1) as { sub?: { desc?: string } }).sub?.desc === 'check partitions', h)
 
+// a TEAM (owner 11-15: one line for several agents, the lead's): the lead the ask named comes first, whatever the order
+const team = [{ ...row(20, 'owner', 'seed', '2026-11-15T10:00:00Z'), lead: 'db' }, { ...row(21, 'owner', 'db', '2026-11-15T10:00:00Z'), lead: 'db' }] as never[]
+const both = pendingOf(['seed', 'db'], team, {}, 'owner')
+arm("a team's ask: both agents are pending, the named lead first", both.map((p) => p.agent).join() === 'db,seed', both.map((p) => p.agent))
+const nolead = pendingOf(['seed', 'db'], [row(20, 'owner', 'seed', '2026-11-15T10:00:00Z'), row(21, 'owner', 'db', '2026-11-15T10:00:01Z')], {}, 'owner')
+arm('...with no lead named, the chat\'s own order stands', nolead.map((p) => p.agent).join() === 'seed,db', nolead.map((p) => p.agent))
+const desk = pendingOf(['db'], team, {}, 'owner')
+arm("on a desk (recipients: the desk's agent alone), the team's other member still works here", desk.map((p) => p.agent).join() === 'db,seed', desk.map((p) => p.agent))
+const answered2 = [...(team as never[]), row(22, 'db', 'owner', '2026-11-15T10:05:00Z')] as never[]
+arm("once the lead has answered, an idle helper is no longer waited for", pendingOf(['db'], answered2, {}, 'owner').length === 0, pendingOf(['db'], answered2, {}, 'owner').map((p) => p.agent))
+
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')

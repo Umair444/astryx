@@ -47,7 +47,8 @@ function savePastes() {
 export interface Command { key: string; label: string; hint: string; run: (arg: string) => void | string }
 export interface ComposerHandle { focus: () => void; insert: (text: string) => void; set: (text: string) => void; get: () => string; attach: (u: Uploaded) => void; pick: () => void }
 
-interface Item { key: string; label: string; hint: string; kind: 'cmd' | 'skill' | 'tool' | 'agent'; apply: () => void }
+interface Item { key: string; label: string; hint: string; kind: 'cmd' | 'skill' | 'tool' | 'agent'; apply: () => void
+  pick?: { on: boolean; lead: boolean; makeLead?: () => void } }   // the agent picker's row: chosen, leads, or can be made lead
 
 const DRAFTS = 'ws.drafts.v1'
 const FILES = new Map<string, Uploaded[]>()           // attachments waiting in a conversation's box (this page only)
@@ -151,10 +152,13 @@ export default forwardRef<ComposerHandle, {
     if (menuOff) return []
     if (picker && onSwitch) {           // the roster, the chat's current agent(s) first; picking one switches
       const cur = inChat.filter((n) => roster.includes(n))
+      // A MULTI-SELECT (owner 11-15: "the selection of multiple agents is not good"): every row a tick box; picking
+      // adds the agent or takes it out, the first chosen LEADS (it replies, the rest help), any other can be made the
+      // lead. The last one can't be removed (a message always goes somewhere).
       return [...cur, ...roster.filter((n) => !cur.includes(n))].map((n) => ({
-        key: '@' + n, label: displayName(n), hint: cur.includes(n) ? (cur.length === 1 ? '✓ in To (the only one)' : cur[0] === n ? '✓ in To · leads' : '✓ in To · click to remove') : (roles[n] ? `${roles[n]} · click to add` : 'click to add'), kind: 'agent' as const,
-        // a TOGGLE (owner 11-13): picking adds the agent to the "To" chips or takes it out; the first stays the lead.
-        // The last one can't be removed (a message always goes somewhere).
+        key: '@' + n, label: displayName(n), hint: roles[n] ?? '', kind: 'agent' as const,
+        pick: { on: cur.includes(n), lead: cur.length > 1 && cur[0] === n,
+                makeLead: cur.length > 1 && cur.includes(n) && cur[0] !== n ? () => onSwitch([n, ...cur.filter((x) => x !== n)]) : undefined },
         apply: () => {
           const next = cur.includes(n) ? cur.filter((x) => x !== n) : [...cur, n]
           if (next.length) onSwitch(next)
@@ -273,17 +277,35 @@ export default forwardRef<ComposerHandle, {
         onDragLeave={() => setDrop(false)}
         onDrop={(e) => { setDrop(false); if (e.dataTransfer.files.length) { e.preventDefault(); addFiles(e.dataTransfer.files) } }}>
         {items.length > 0 && (
-          <ul ref={menu} role="listbox" aria-label={picker ? 'switch this chat to an agent' : slash ? 'commands' : 'agents'} className="ws-menu absolute left-0 right-0 bottom-full mb-2 max-h-[300px] overflow-y-auto p-1 z-20">
-            {picker && <li role="presentation" className="px-2.5 pt-1.5 pb-1 text-[11.5px] text-ink-mute">Switch this chat to… <span className="max-sm:hidden">the new agent starts fresh: earlier messages aren’t sent to it</span></li>}
+          <ul ref={menu} role="listbox" aria-multiselectable={picker || undefined} aria-label={picker ? 'who works on this chat' : slash ? 'commands' : 'agents'} className="ws-menu absolute left-0 right-0 bottom-full mb-2 max-h-[340px] overflow-y-auto p-1 z-20">
+            {picker && (
+              <li role="presentation" className="sticky -top-1 z-10 bg-[var(--t-panel)] flex items-baseline gap-2 px-2.5 pt-2 pb-1.5">
+                <span className="text-[13px] font-medium text-ink">Who works on this?</span>
+                <span className="text-[11.5px] text-ink-mute truncate">Pick one or more. The first leads and replies; the others help.</span>
+              </li>
+            )}
             {items.map((it, i) => (
-              <li key={it.key} role="option" aria-selected={i === sel} onMouseDown={(e) => { e.preventDefault(); it.apply() }} onMouseEnter={() => setSel(i)}
-                className={`flex items-center gap-2.5 rounded-[9px] px-2.5 py-1.5 cursor-pointer ${i === sel ? 'bg-[color-mix(in_srgb,var(--t-fg)_7%,transparent)]' : ''}`}>
+              <li key={it.key} role="option" aria-selected={it.pick ? it.pick.on : i === sel} onMouseDown={(e) => { e.preventDefault(); it.apply() }} onMouseEnter={() => setSel(i)}
+                className={`group flex items-center gap-2.5 rounded-[9px] px-2.5 py-1.5 cursor-pointer ${i === sel ? 'bg-[color-mix(in_srgb,var(--t-fg)_7%,transparent)]' : ''}`}>
+                {it.pick && <span className="ws-check" data-on={it.pick.on || undefined} aria-hidden>{it.pick.on ? '✓' : ''}</span>}
                 {it.kind === 'agent' ? <AgentFace name={it.key.slice(1)} size={20} />
                   : <span className="w-5 text-center text-[11px] text-ink-mute" aria-hidden>{it.kind === 'cmd' ? '/' : it.kind === 'skill' ? '✦' : 'ƒ'}</span>}
                 <span className="text-[13px] text-ink shrink-0">{it.label}</span>
-                <span className="text-[12px] text-ink-mute truncate">{it.hint}</span>
+                <span className="text-[12px] text-ink-mute truncate flex-1 min-w-0">{it.hint}</span>
+                {it.pick?.lead && <span className="ws-lead shrink-0 rounded-full px-1.5 py-[1px] text-[10.5px]">Leads</span>}
+                {it.pick?.makeLead && (
+                  <button type="button" onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); it.pick!.makeLead!() }}
+                    className="shrink-0 rounded-full border border-line px-1.5 py-[1px] text-[10.5px] text-ink-mute opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-ink">Make lead</button>
+                )}
               </li>
             ))}
+            {picker && (
+              <li role="presentation" className="sticky -bottom-1 z-10 bg-[var(--t-panel)] flex items-center gap-2 px-2.5 pt-1.5 pb-1.5 mt-1 border-t border-line">
+                <span className="text-[11.5px] text-ink-mute flex-1 min-w-0 truncate">Agents you add start fresh: earlier messages aren’t sent to them.</span>
+                <button type="button" onMouseDown={(e) => { e.preventDefault(); setPicker(false); requestAnimationFrame(() => box.current?.focus()) }}
+                  className="shrink-0 rounded-[8px] px-2.5 py-1 text-[12px] font-medium text-ink bg-[color-mix(in_srgb,var(--t-fg)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--t-fg)_12%,transparent)]">Done</button>
+              </li>
+            )}
           </ul>
         )}
         {(files.length > 0 || uploading > 0) && (
