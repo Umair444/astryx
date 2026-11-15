@@ -27,6 +27,13 @@ assertion is on a status, a name or a row count, never a printed secret.
      budget and decided_by on the row, provision 'deferred' naming provision_org(<key>, <uid>@<cog>) (the stub);
      again → 409; an unknown id → 404. Through REC: the recorder got exactly (key, owner uid), provision 'done'
   U8 REJECT: → rejected with the note, the account's /auth/me shows it, and the key is free for a new sign-up
+  U9 THE EMAIL CODE (owner 11-15: "an email otp so people don't sign themselves up with wrong emails"), on MAIL (the
+     flag and a mailbox: MAIL_SMTP on a loopback SMTP sink) and DOWN (a mailbox nothing listens on): a new email → 202
+     {code: sent}, NO account or request, one mail to it holding six digits, and the store keeps no code (a digest);
+     again at once → 202 and no second mail; a wrong code → 400 {field: code}, nothing written; the right one → 200,
+     the account and its pending request, and the code is used up; five wrong guesses and the right code no longer
+     opens it; an EXISTING account proves its password and gets no mail; mail that can't be sent → 503 and no code
+     left standing; ON (no mailbox) asks for no code (U2 made accounts with one submit)
   G  THE SPAWN BUDGET GATE (runtime_env.py --gate, and spawn.sh's real path with stubbed psql/tmux/pgrep/node):
      a non-primary org with no budget → rc 4 / spawn rc 1 and NOTHING written (no psql, no homes/<agent>); a budget
      but only the host's ambient login → refused; a budget and its own login → passes (spawn reaches its first psql);
@@ -57,6 +64,7 @@ from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate('test_signup', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'httpx', 'uvicorn', 'cryptography'), env=False)
 from astryx.security.sqlguard import propagate  # noqa: E402
 from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
+from tests._smtp_sink import SmtpSink, dead_port  # noqa: E402
 
 PY = sys.executable
 fails = []
@@ -165,7 +173,8 @@ def run(t, da, ds, dc, procs):
     pid = os.getpid()
     oa = f"fxsu-a-{pid}"
     cid = f"fxsucog-{pid:08d}"
-    names = ("a", "off", "on", "rec", "cap")
+    names = ("a", "off", "on", "rec", "cap", "mail", "down")
+    sink, dead = SmtpSink(), dead_port()
     socks = {k: listener() for k in names}
     port = {k: s.getsockname()[1] for k, s in socks.items()}
     ha = t / oa
@@ -217,7 +226,11 @@ def run(t, da, ds, dc, procs):
     regs = {"off": regf,
             "on": cog_home("on", ds["url"], "ASTRYX_COG_SIGNUP=1\nASTRYX_COG_SIGNUP_PER_IP=5\nASTRYX_COG_SIGNUP_DAILY=50\n"),
             "rec": cog_home("rec", ds["url"], "ASTRYX_COG_SIGNUP=on\n"),
-            "cap": cog_home("cap", dc["url"], "ASTRYX_COG_SIGNUP=1\nASTRYX_COG_SIGNUP_DAILY=2\n")}
+            "cap": cog_home("cap", dc["url"], "ASTRYX_COG_SIGNUP=1\nASTRYX_COG_SIGNUP_DAILY=2\n"),
+            "mail": cog_home("mail", ds["url"], "ASTRYX_COG_SIGNUP=1\nASTRYX_COG_SIGNUP_PER_IP=50\nASTRYX_COG_SIGNUP_DAILY=500\n"
+                             f"MAIL_FROM=codes@fx-signup.invalid\nMAIL_SMTP=127.0.0.1:{sink.port}\n"),
+            "down": cog_home("down", ds["url"], "ASTRYX_COG_SIGNUP=1\nASTRYX_COG_SIGNUP_PER_IP=50\n"
+                             f"MAIL_FROM=codes@fx-signup.invalid\nMAIL_SMTP=127.0.0.1:{dead}\n")}
 
     s = socks["a"]
     procs.append(subprocess.Popen(
@@ -234,7 +247,7 @@ def run(t, da, ds, dc, procs):
             'ROOT = Path(__file__).resolve().parent', f'ROOT = Path({str(REPO / "observatory")!r})'))
     (t / "recorder.py").write_text(RECORDER)
     plog = t / "provision.log"
-    for k in ("off", "on", "rec", "cap"):
+    for k in ("off", "on", "rec", "cap", "mail", "down"):
         s = socks[k]
         launch = [PY, "-m", "uvicorn"] if k != "rec" else [PY, str(t / "recorder.py"), str(REPO / "src")]
         procs.append(subprocess.Popen(
@@ -248,11 +261,12 @@ def run(t, da, ds, dc, procs):
                                                  if (t / f"{k}.err").exists()))
     if not up:
         return
-    OFF, ON, REC, CAP = port["off"], port["on"], port["rec"], port["cap"]
+    OFF, ON, REC, CAP, MAIL, DOWN = port["off"], port["on"], port["rec"], port["cap"], port["mail"], port["down"]
     O = {"origin": ORIGIN}
 
-    def signup(p, email, pw, key, name="Fixture Org", ip="198.51.100.1", headers=None):
-        return call(p, "/auth/signup", "POST", {"email": email, "password": pw, "org_name": name, "org_key": key},
+    def signup(p, email, pw, key, name="Fixture Org", ip="198.51.100.1", headers=None, code=None):
+        return call(p, "/auth/signup", "POST", {"email": email, "password": pw, "org_name": name, "org_key": key,
+                                                **({"code": code} if code is not None else {})},
                     headers={**O, "x-forwarded-for": ip, **(headers or {})})
 
     def login(p, email, pw, ip="198.51.100.200"):
@@ -415,6 +429,53 @@ def run(t, da, ds, dc, procs):
     check("through the recorder: provision_org got exactly (key, '<uid>@<cog id>', budget), once, and the row says 'done'",
           st_ra == 200 and calls == [[k3, f"{uid5}@{cid}", 1234]] and q(
               ds["url"], "SELECT provision FROM org_requests WHERE id = %s", rid5) == [("done",)], f"{st_ra} {calls}")
+
+    print("\nU9 THE EMAIL CODE")
+    code_of = lambda text: (re.findall(r"\b(\d{6})\b", text) or [""])[0]
+    has = lambda email: q(ds["url"], "SELECT count(*) FROM users WHERE email = %s", email)[0][0]
+    nr = n_reqs()
+    e1, k9 = "mailed@fx-signup.invalid", f"fx-mail-{pid}"
+    st, _, b = signup(MAIL, e1, PW["x"], k9, ip="198.51.100.90")
+    mails = [m for m in sink.mails if m[0] == [e1]]
+    got = code_of(mails[0][1]) if mails else ""
+    stored = q(ds["url"], "SELECT encode(digest, 'hex'), tries FROM email_codes WHERE email = %s", e1)
+    check("a new email: 202 {code: sent}, NO account and no request", st == 202 and jl(b).get("code") == "sent"
+          and not has(e1) and n_reqs() == nr, f"{st} {b[:120]}")
+    check("...one mail, to that address only, from the cog's MAIL_FROM, holding six digits",
+          len(mails) == 1 and len(got) == 6 and "From: codes@fx-signup.invalid" in mails[0][1], [m[0] for m in sink.mails])
+    check("...and the store keeps a digest, never the code", len(stored) == 1 and got not in stored[0][0]
+          and stored[0][1] == 0, stored)
+    st, _, _ = signup(MAIL, e1, PW["x"], k9, ip="198.51.100.90")
+    check("again at once: 202, and NO second mail (one a minute; the first code stands)",
+          st == 202 and len([m for m in sink.mails if m[0] == [e1]]) == 1, f"{st} {len(sink.mails)}")
+    wrong = "000000" if got != "000000" else "111111"
+    st, _, b = signup(MAIL, e1, PW["x"], k9, ip="198.51.100.90", code=wrong)
+    check("a wrong code: 400 {field: code}, nothing written", st == 400 and jl(b).get("field") == "code"
+          and not has(e1) and n_reqs() == nr, f"{st} {b[:120]}")
+    st, hs, b = signup(MAIL, e1, PW["x"], k9, ip="198.51.100.90", code=got)
+    check("the right code: 200, a session, the account and its pending request", st == 200 and bool(session_of(hs))
+          and has(e1) == 1 and q(ds["url"], "SELECT state FROM org_requests WHERE key = %s", k9) == [("pending",)],
+          f"{st} {b[:120]}")
+    check("...and the code is used up", not q(ds["url"], "SELECT 1 FROM email_codes WHERE email = %s", e1))
+    e2, k10 = "guesser@fx-signup.invalid", f"fx-guess-{pid}"
+    signup(MAIL, e2, PW["x"], k10, ip="198.51.100.91")
+    real = code_of(next((m[1] for m in sink.mails if m[0] == [e2]), ""))
+    for g in range(5):
+        signup(MAIL, e2, PW["x"], k10, ip=f"198.51.100.{100 + g}", code=f"{(int(real or 0) + 1 + g) % 10**6:06d}")
+    st, _, _ = signup(MAIL, e2, PW["x"], k10, ip="198.51.100.110", code=real)
+    check("five wrong guesses, then the right code: refused (400 or the account's 429), and no account",
+          len(real) == 6 and st in (400, 429) and not has(e2), f"{st} {real!r}")
+    check("...the store counted the five tries", q(ds["url"], "SELECT tries FROM email_codes WHERE email = %s", e2)
+          == [(5,)], q(ds["url"], "SELECT tries FROM email_codes WHERE email = %s", e2))
+    before_mails = len(sink.mails)
+    st, _, _ = signup(MAIL, users["own"], PW["own"], f"fx-own-{pid}", ip="198.51.100.92")
+    check("an EXISTING account proves its password: 200 with no code and no mail",
+          st == 200 and len(sink.mails) == before_mails, f"{st}")
+    e3 = "down@fx-signup.invalid"
+    st, _, b = signup(DOWN, e3, PW["x"], f"fx-down-{pid}", ip="198.51.100.93")
+    check("mail that can't be sent: 503, no account, and no code left standing (a retry mails at once)",
+          st == 503 and not has(e3) and not q(ds["url"], "SELECT 1 FROM email_codes WHERE email = %s", e3), f"{st} {b}")
+    sink.sock.close()
 
 
 # ---------------------------------------------------------------- G: the spawn budget gate

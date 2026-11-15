@@ -3,7 +3,7 @@ import type { FormEvent, ReactNode } from 'react'
 import '@fontsource/instrument-serif/400.css'
 import '@fontsource/instrument-serif/400-italic.css'
 import { Menu } from '@mantine/core'
-import { ACCEPT_WORDS, ORG_KEY, SIGNUP_WORDS, WORDS, acceptLink, linkToken, nextHash, orgKey, readLink, readMe, roleWords, signIn, signInHref, signOut, signUp } from '../auth'
+import { ACCEPT_WORDS, CODE_WORDS, ORG_KEY, SIGNUP_WORDS, WORDS, acceptLink, linkToken, nextHash, orgKey, readLink, readMe, roleWords, signIn, signInHref, signOut, signUp } from '../auth'
 import type { Accept, AuthOrg, LinkInfo, Me, MeState, OrgRequest } from '../auth'
 import { agentColor, saveObsKey } from '../api'
 import { chooseOrg, chosenOrg, safeBase, setOrg, useCog } from '../cog'
@@ -49,6 +49,19 @@ function Field({ id, label, type, auto, value, onChange, invalid, inputRef, trai
           onChange={(e) => onChange(e.currentTarget.value)} className="auth-field" data-trailing={trailing ? '' : undefined} />
         {trailing}
       </div>
+    </div>
+  )
+}
+
+/* THE EMAIL CODE's box (auth.ts codeStep): shown once the front has mailed one, under the email it went to */
+function CodeField({ sentTo, value, onChange, inputRef, invalid }: {
+  sentTo: string; value: string; onChange: (v: string) => void; inputRef: React.Ref<HTMLInputElement>; invalid: boolean
+}) {
+  return (
+    <div>
+      <Field id="auth-code" label="Code from your email" type="text" auto="one-time-code" value={value}
+        inputRef={inputRef} invalid={invalid} onChange={(v) => onChange(v.replace(/\D/g, '').slice(0, 6))} />
+      <p className="mt-2 text-[13px] text-ink-mute" aria-live="polite">{CODE_WORDS.sent(sentTo)}</p>
     </div>
   )
 }
@@ -196,6 +209,9 @@ function CreateOrg({ taken, onBack }: { taken: string[]; onBack: () => void }) {
   const [reveal, setReveal] = useState(false)
   const [phase, setPhase] = useState<Phase>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [sentTo, setSentTo] = useState<string | null>(null)
+  const [code, setCode] = useState('')
+  const codeRef = useRef<HTMLInputElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
   const keyRef = useRef<HTMLInputElement>(null)
   const emailRef = useRef<HTMLInputElement>(null)
@@ -216,7 +232,13 @@ function CreateOrg({ taken, onBack }: { taken: string[]; onBack: () => void }) {
     if (keyBad || keyTaken) { setError(keyBad ? SIGNUP_WORDS.key : SIGNUP_WORDS.taken); keyRef.current?.focus(); return }
     if (password.length < 12) { setError(SIGNUP_WORDS.short); pwRef.current?.focus(); return }
     setPhase('pending'); setError(null)
-    const { out, field } = await signUp(email.trim(), password, name.trim(), k)
+    const { out, field } = await signUp(email.trim(), password, name.trim(), k, sentTo ? code : '')
+    if (out === 'code-sent' || out === 'bad-code') {          // the password stays: the same submit finishes it
+      setPhase('idle'); setSentTo(email.trim()); setCode('')
+      setError(out === 'bad-code' ? SIGNUP_WORDS['bad-code'] : null)
+      setTimeout(() => codeRef.current?.focus())
+      return
+    }
     if (out !== 'ok') {
       setPhase('idle'); setPassword(''); setError(SIGNUP_WORDS[out])
       ;(out === 'taken' || field === 'org_key' ? keyRef : field === 'org_name' ? nameRef
@@ -252,7 +274,7 @@ function CreateOrg({ taken, onBack }: { taken: string[]; onBack: () => void }) {
           </p>
         </div>
         <Field id="signup-email" label="Email" type="email" auto="username" value={email} inputRef={emailRef}
-          onChange={(v) => { setEmail(v); setError(null) }} invalid={!!error && !email.trim()} />
+          onChange={(v) => { setEmail(v); setError(null); setSentTo(null) }} invalid={!!error && !email.trim()} />
         <Field id="signup-password" label="Password" type={reveal ? 'text' : 'password'} auto="new-password"
           value={password} inputRef={pwRef} onChange={(v) => { setPassword(v); setError(null) }} invalid={!!error && !password}
           trailing={
@@ -263,11 +285,13 @@ function CreateOrg({ taken, onBack }: { taken: string[]; onBack: () => void }) {
             </button>
           } />
         <p className="-mt-2 text-[13px] text-ink-mute">At least 12 characters. Already have an account? Use its password.</p>
+        {sentTo && <CodeField sentTo={sentTo} value={code} inputRef={codeRef} invalid={!!error}
+          onChange={(v) => { setCode(v); setError(null) }} />}
         <p id="auth-error" role="alert" aria-live="assertive" className="auth-error" data-shown={error ? '' : undefined}>
           {error && <><ErrIcon />{error}</>}
         </p>
         <button type="submit" disabled={phase !== 'idle'} className="auth-primary w-full">
-          {phase === 'pending' ? 'Creating…' : phase === 'done' ? 'Sent for approval' : 'Create your org'}
+          {phase === 'pending' ? 'Creating…' : phase === 'done' ? 'Sent for approval' : sentTo ? 'Confirm and create' : 'Create your org'}
         </button>
       </form>
       <p className="mt-6 text-[13px]">
@@ -655,6 +679,9 @@ export function AcceptScreen() {
   const [reveal, setReveal] = useState(false)
   const [phase, setPhase] = useState<Phase>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [sentTo, setSentTo] = useState<string | null>(null)
+  const [code, setCode] = useState('')
+  const codeRef = useRef<HTMLInputElement>(null)
   const emailRef = useRef<HTMLInputElement>(null)
   const pwRef = useRef<HTMLInputElement>(null)
   useEffect(() => { readLink(token).then(setInfo) }, [token])
@@ -680,9 +707,15 @@ export function AcceptScreen() {
       return
     }
     setPhase('pending'); setError(null)
-    const { out, org } = await acceptLink(token, reset ? '' : email.trim(), password)
+    const { out, org } = await acceptLink(token, reset ? '' : email.trim(), password, sentTo ? code : '')
+    if (out === 'code-sent' || out === 'bad-code') {
+      setPhase('idle'); setSentTo(email.trim()); setCode('')
+      setError(out === 'bad-code' ? ACCEPT_WORDS['bad-code'] : null)
+      setTimeout(() => codeRef.current?.focus())
+      return
+    }
     if (out !== 'ok') {
-      setPhase('idle'); setPassword(''); setError(ACCEPT_WORDS[out as Exclude<Accept, 'ok'>])
+      setPhase('idle'); setPassword(''); setError(ACCEPT_WORDS[out as Exclude<Accept, 'ok' | 'code-sent'>])
       ;(out === 'mismatch' && !reset ? emailRef : pwRef).current?.focus()
       return
     }
@@ -701,7 +734,7 @@ export function AcceptScreen() {
       <form noValidate onSubmit={submit} className="space-y-5">
         {!reset && (
           <Field id="accept-email" label="Email" type="email" auto="username" value={email} inputRef={emailRef}
-            onChange={(v) => { setEmail(v); setError(null) }} invalid={!!error} />
+            onChange={(v) => { setEmail(v); setError(null); setSentTo(null) }} invalid={!!error} />
         )}
         <Field id="accept-password" label={reset ? 'New password' : 'Password'} type={reveal ? 'text' : 'password'}
           auto="new-password" value={password} inputRef={pwRef}
@@ -716,6 +749,8 @@ export function AcceptScreen() {
         <p className="-mt-2 text-[13px] text-ink-mute">
           {reset ? 'At least 12 characters.' : 'New here? Pick a password of at least 12 characters. Already have an account? Use its password.'}
         </p>
+        {sentTo && <CodeField sentTo={sentTo} value={code} inputRef={codeRef} invalid={!!error}
+          onChange={(v) => { setCode(v); setError(null) }} />}
         <p id="auth-error" role="alert" aria-live="assertive" className="auth-error" data-shown={error ? '' : undefined}>
           {error && <><ErrIcon />{error}</>}
         </p>

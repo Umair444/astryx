@@ -147,15 +147,31 @@ export async function readLink(t: string): Promise<LinkInfo | 'gone' | 'unavaila
   const j = await r.json().catch(() => null)
   return j && (j.kind === 'invite' || j.kind === 'reset') && typeof j.org === 'string' ? j as LinkInfo : 'unavailable'
 }
-export type Accept = 'ok' | 'mismatch' | 'short' | 'gone' | 'refused' | 'slow-down' | 'origin' | 'unreachable'
-export async function acceptLink(token: string, email: string, password: string): Promise<{ out: Accept; org?: string }> {
+/* AN EMAIL CODE (front.py _prove_email): a NEW account on a cog with a mailbox is made only once the six digits mailed
+   to its address come back. The first submit answers 202 `code-sent`; the same submit with the code finishes it, and
+   a wrong or spent code is 400 {field: code}, `bad-code`. */
+async function codeStep(r: Response): Promise<'code-sent' | 'bad-code' | null> {
+  if (r.status === 202) return 'code-sent'
+  if (r.status !== 400) return null
+  const j = await r.clone().json().catch(() => ({}))
+  return j.field === 'code' ? 'bad-code' : null
+}
+export const CODE_WORDS = {
+  sent: (email: string) => `We mailed a 6-digit code to ${email}. Enter it to finish. It lasts 10 minutes.`,
+  bad: 'That code is wrong or has expired. Check the latest mail, or leave the box empty and submit for a new one.',
+}
+
+export type Accept = 'ok' | 'code-sent' | 'bad-code' | 'mismatch' | 'short' | 'gone' | 'refused' | 'slow-down' | 'origin' | 'unreachable'
+export async function acceptLink(token: string, email: string, password: string, code = ''): Promise<{ out: Accept; org?: string }> {
   let r: Response
   try {
     r = await fetch('/auth/accept', {
       method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token, email, password }),
+      body: JSON.stringify({ token, email, password, ...(code ? { code } : {}) }),
     })
   } catch { return { out: 'unreachable' } }
+  const step = await codeStep(r)
+  if (step) return { out: step }
   if (r.ok) {
     const j = await r.json().catch(() => ({}))
     return { out: 'ok', org: typeof j.org === 'string' ? j.org : undefined }
@@ -163,7 +179,8 @@ export async function acceptLink(token: string, email: string, password: string)
   return { out: r.status === 401 ? 'mismatch' : r.status === 400 ? 'short' : r.status === 410 ? 'gone'
     : r.status === 429 ? 'slow-down' : r.status === 403 ? 'origin' : r.status === 409 ? 'refused' : 'unreachable' }
 }
-export const ACCEPT_WORDS: Record<Exclude<Accept, 'ok'> | 'empty', string> = {
+export const ACCEPT_WORDS: Record<Exclude<Accept, 'ok' | 'code-sent'> | 'empty', string> = {
+  'bad-code': CODE_WORDS.bad,
   mismatch: 'That email already has an account, and that is not its password. Use its password to join.',
   short: 'Use at least 12 characters for your password, and enter your email.',
   gone: 'This link has expired or was already used. Ask for a new one.',
@@ -184,15 +201,17 @@ export function orgKey(name: string): string {
 }
 export const ORG_KEY = /^[a-z0-9][a-z0-9-]{0,62}$/
 
-export type SignUp = 'ok' | 'mismatch' | 'taken' | 'waiting' | 'invalid' | 'slow-down' | 'origin' | 'closed' | 'unreachable'
-export async function signUp(email: string, password: string, orgName: string, key: string): Promise<{ out: SignUp; field?: string }> {
+export type SignUp = 'ok' | 'code-sent' | 'bad-code' | 'mismatch' | 'taken' | 'waiting' | 'invalid' | 'slow-down' | 'origin' | 'closed' | 'unreachable'
+export async function signUp(email: string, password: string, orgName: string, key: string, code = ''): Promise<{ out: SignUp; field?: string }> {
   let r: Response
   try {
     r = await fetch('/auth/signup', {
       method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email, password, org_name: orgName, org_key: key }),
+      body: JSON.stringify({ email, password, org_name: orgName, org_key: key, ...(code ? { code } : {}) }),
     })
   } catch { return { out: 'unreachable' } }
+  const step = await codeStep(r)
+  if (step) return { out: step, field: step === 'bad-code' ? 'code' : undefined }
   if (r.ok) return { out: 'ok' }
   if (r.status === 401) return { out: 'mismatch' }          // an existing account, not its password: the body is never read (F8)
   const j = r.status === 400 || r.status === 409 ? await r.json().catch(() => ({})) : {}
@@ -201,7 +220,8 @@ export async function signUp(email: string, password: string, orgName: string, k
   return { out: r.status === 400 ? 'invalid' : r.status === 429 ? 'slow-down' : r.status === 403 ? 'origin'
     : r.status === 404 ? 'closed' : 'unreachable', field }
 }
-export const SIGNUP_WORDS: Record<Exclude<SignUp, 'ok'> | 'empty' | 'short' | 'key', string> = {
+export const SIGNUP_WORDS: Record<Exclude<SignUp, 'ok' | 'code-sent'> | 'empty' | 'short' | 'key', string> = {
+  'bad-code': CODE_WORDS.bad,
   mismatch: 'That email already has an account, and that is not its password. Use its password to ask for an org.',
   taken: 'That org address is taken. Change the name or the address.',
   waiting: 'This account already has an org waiting for approval.',

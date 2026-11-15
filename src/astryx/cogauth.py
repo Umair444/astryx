@@ -106,6 +106,42 @@ def digest(token: str) -> bytes:
     return hashlib.sha256(token.encode()).digest()
 
 
+# ------------------------------------------------------------------ email codes (cog_schema.sql email_codes)
+CODE_MINUTES, CODE_TRIES, CODE_RESEND = 10, 5, 60      # a code lives 10 min and takes 5 guesses; one mail a minute
+
+
+def _code_digest(email: str, code: str) -> bytes:
+    return digest(f"{email}\n{code}")
+
+
+async def code_issue(conn, email: str) -> str | None:
+    """A fresh code for `email`, replacing any earlier one, or None while the last was mailed under a minute ago (it
+    still stands). The caller mails it; only its digest is stored."""
+    code = f"{secrets.randbelow(10**6):06d}"
+    cur = await conn.execute(
+        "INSERT INTO email_codes (email, digest, expires) VALUES (%s, %s, now() + make_interval(mins => %s)) "
+        "ON CONFLICT (email) DO UPDATE SET digest = EXCLUDED.digest, sent = now(), expires = EXCLUDED.expires, tries = 0 "
+        "WHERE email_codes.sent < now() - make_interval(secs => %s) RETURNING 1",
+        (email, _code_digest(email, code), CODE_MINUTES, CODE_RESEND))
+    return code if await cur.fetchone() else None
+
+
+async def code_drop(conn, email: str) -> None:
+    await conn.execute("DELETE FROM email_codes WHERE email = %s", (email,))
+
+
+async def code_check(conn, email: str, code: str) -> bool:
+    """True once, for the live code of `email`. Every guess spends a try FIRST, in one statement, so racing guesses
+    can't share one; a right one is then used up."""
+    cur = await conn.execute("UPDATE email_codes SET tries = tries + 1 WHERE email = %s AND expires > now() "
+                             "AND tries < %s RETURNING digest", (email, CODE_TRIES))
+    row = await cur.fetchone()
+    if row is None or not secrets.compare_digest(bytes(row[0]), _code_digest(email, code.strip())):
+        return False
+    await code_drop(conn, email)
+    return True
+
+
 # ------------------------------------------------------------------ the front's sessions (async: psycopg)
 async def sign_in(run, email: str, pw: str, check=None) -> tuple[int, str] | None:
     """(uid, a new session token), or None. `run(fn, *args)` runs fn on the store's connection (the front's lock);

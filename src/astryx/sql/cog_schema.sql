@@ -84,3 +84,15 @@ CREATE TABLE IF NOT EXISTS cog_grants (
   granted  timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (uid, role)
 );
+
+-- an EMAIL CODE (owner 11-15: "an email otp so people don't sign themselves up with wrong emails"): the proof that
+-- whoever makes a NEW account reads that address. Six digits mailed by the front (src/astryx/mail.py, the cog .env's
+-- MAIL_*); only their digest is kept, with an expiry and a count of tries; one live code per address, used once. A cog
+-- with no mailbox asks for no code.
+CREATE TABLE IF NOT EXISTS email_codes (
+  email    text PRIMARY KEY CHECK (email = lower(email) AND email <> ''),
+  digest   bytea NOT NULL,
+  sent     timestamptz NOT NULL DEFAULT now(),
+  expires  timestamptz NOT NULL,
+  tries    int NOT NULL DEFAULT 0
+);

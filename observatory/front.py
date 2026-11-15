@@ -64,7 +64,7 @@ ROOT = Path(__file__).resolve().parent                 # observatory/
 REPO = ROOT.parent
 DIST = ROOT / "web" / "dist"
 sys.path.insert(0, str(REPO / "src"))
-from astryx import cog_provision, cogauth, config, orgs  # noqa: E402
+from astryx import cog_provision, cogauth, config, mail, orgs  # noqa: E402
 from astryx.security import identity, relay  # noqa: E402   the ONE relay header policy (plan-11859 D3)
 
 BACKEND = "astryx-observatory-org"     # the per-org backend's stem (data/org_units.json): its port is the registry's
@@ -137,6 +137,8 @@ class _Auth:
         self.signup = env.get("ASTRYX_COG_SIGNUP", "").strip().lower() in ("1", "true", "yes", "on")
         self.signup_per_client = _count(env.get("ASTRYX_COG_SIGNUP_PER_IP"), SIGNUP_PER_CLIENT)
         self.signup_daily = _count(env.get("ASTRYX_COG_SIGNUP_DAILY"), SIGNUP_DAILY)
+        # the cog's MAILBOX (src/astryx/mail.py): with one, a NEW account first proves its email by a mailed code
+        self.mail = {k: v for k, v in env.items() if k.startswith("MAIL_")} if mail.configured(env) else None
         try:     # the cog store's DSN, through the ONE resolver (file only; it refuses an org's database)
             self.dsn = config.dsn(c["home"] / ".env", env_first=False)
         except (LookupError, config.ForeignDSN) as e:
@@ -211,6 +213,36 @@ def _limited(*keys: str) -> bool:
 
 def _nope(status: int = 401, body: bytes = FAILED) -> Response:
     return Response(body, status_code=status, media_type="application/json", headers={"cache-control": "no-store"})
+
+
+CODE_SENT = {"code": "sent", "minutes": cogauth.CODE_MINUTES}
+
+
+async def _prove_email(a: _Auth, email: str, code, ck: str) -> Response | None:
+    """A NEW account's email, proven (owner 11-15: "so people don't sign themselves up with wrong emails"). None: go on
+    (the cog has no mailbox, or the code is right). Else the reply: 202 when a code was just mailed (or one mailed
+    under a minute ago still stands), 400 {field: code} for a wrong or spent one (it counts as a failed sign-in), 503
+    when the mail didn't go."""
+    if a.mail is None:
+        return None
+    if isinstance(code, str) and code.strip():
+        if await a.db(cogauth.code_check, email, code):
+            return None
+        now = time.monotonic()
+        _fails[ck].append(now)
+        _fails["a:" + email].append(now)
+        return _json({"error": "that code is wrong or has expired", "field": "code"}, 400)
+    fresh = await a.db(cogauth.code_issue, email)
+    if fresh:
+        try:
+            await asyncio.to_thread(mail.send, a.mail, email, f"{fresh} is your astryx code",
+                                    f"Your astryx code is {fresh}. It expires in {cogauth.CODE_MINUTES} minutes.\n\n"
+                                    "If you didn't ask for it, ignore this mail: nothing happens without the code.\n")
+        except Exception as e:  # noqa: BLE001 — the reason goes to the journal, never to the caller
+            await a.db(cogauth.code_drop, email)
+            print(f"front: an email code could not be sent: {type(e).__name__}: {e}", file=sys.stderr)
+            return _nope(503, b'{"error":"the code could not be sent; try again in a moment"}')
+    return _json(CODE_SENT, 202)
 
 
 async def viewer(request: Request, a: _Auth | None) -> str | None:
@@ -374,8 +406,10 @@ async def _role_in(a: "_Auth", who: str, r: dict) -> str | None:
 #   POST /auth/admin/reset               {org, uid} → {link, expires}: a reset LINK, never a password
 #   POST /auth/admin/revoke-sessions     {org, uid} → {revoked}: sign out everywhere
 #   GET  /auth/link?t=                   what a link is (kind, org, role, node; a reset's email) | 410
-#   POST /auth/accept                    {token, email?, password}: an invite creates the account when the email is
-#                                        new (an existing one proves its password), then the role is granted; a reset
+#   POST /auth/accept                    {token, email?, password, code?}: an invite creates the account when the email
+#                                        is new (an existing one proves its password; a new one, on a cog with a
+#                                        mailbox, first gets 202 {code: sent} and proves the mailed code), then the
+#                                        role is granted; a reset
 #                                        sets the password and revokes every session. Either way, signed in after
 #
 # WHO MAY: the owner or an admin OF THAT ORG, as its backend answers (/api/auth/role, as /auth/me asks), through a
@@ -699,6 +733,8 @@ async def accept(request: Request):
         if _limited(ck, "a:" + email):     # login's per-account limit holds here too: a link is no side door
             return _nope(429, b'{"error":"too many tries"}')
         acct = await a.db(cogauth._account, email)
+        if not acct and (held := await _prove_email(a, email, j.get("code"), ck)):
+            return held
     _inflight += 1
     try:
         if acct:      # an existing account joins: it proves its own password (a link is no way into someone's account)
@@ -741,7 +777,9 @@ async def accept(request: Request):
 # org's agents would otherwise run on the host owner's login and spend his treasury (DESIGN.md Phase 3).
 #
 #   GET  /auth/signup                        {open: true, min_password} | 404 while the flag is off
-#   POST /auth/signup                        {email, password, org_name, org_key} → 200 + the session cookie,
+#   POST /auth/signup                        {email, password, org_name, org_key, code?} → 200 + the session cookie,
+#                                            (a NEW email on a cog with a mailbox: 202 {code: sent} first, then the
+#                                            same body with the mailed code; a wrong one is 400 {field: code})
 #                                            {request: {id, key, name, state: pending}} | 400 | 401 | 403 | 404 | 409
 #                                            (the key is taken, or the account already has a request waiting) | 429
 #   GET  /auth/cog/requests?state=           the cog admin's queue: [{id, key, name, state, email, created, budget_tokens,
@@ -841,15 +879,19 @@ async def signup(request: Request):
     ck = "c:" + (request.client.host if request.client else "?")
     if _signup_limited(a, ck) or _limited(ck, "a:" + email):
         return _nope(429, b'{"error":"too many tries"}')
-    _signups[ck].append(time.monotonic())        # every validated attempt counts, so probing keys is capped too
+    if not j.get("code"):                        # every validated attempt counts, so probing keys is capped too; the
+        _signups[ck].append(time.monotonic())    # code's own second step does not (its guesses count as failed sign-ins)
     if _inflight >= INFLIGHT:
         return _nope(503, b'{"error":"sign-up is busy, try again in a moment"}')
     try:
         if await a.db(_signups_today) >= a.signup_daily:
             return _nope(429, b'{"error":"this cog takes no more sign-ups today"}')
         acct = await a.db(cogauth._account, email)
+        held = None if acct else await _prove_email(a, email, j.get("code"), ck)
     except Exception:  # noqa: BLE001 — no store (or no Phase 3 tables): no sign-up, and no word on the account
         return _nope(503, b'{"error":"sign-up is unavailable"}')
+    if held:
+        return held
     _inflight += 1
     try:
         if acct:        # an existing account asks for an org of its own: it proves its own password, as login does

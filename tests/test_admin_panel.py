@@ -28,11 +28,16 @@ observatory/api/members.py is exercised on both. Dummy passwords and keys only; 
   M9 LINKS EXPIRE: past `expires` /auth/link and /auth/accept are 410; an invite whose inviter has since lost the role
      is refused at accept (409) and leaves no account behind and the link open
   M10 ACTIVITY: counts only; with no attribution on the wire it says so (attributed false), never a zero
+  M11 THE EMAIL CODE AT ACCEPT (owner 11-15), on MAILF (the same cog and store, its .env naming a loopback SMTP sink):
+      a NEW email accepting an invite → 202 {code: sent}, one mail to it, no account, and the link still open; a wrong
+      code → 400 {field: code}, the link still open; the right one → 200, signed in with the invited role; an
+      EXISTING account accepting proves its password and gets no mail. The front with no mailbox (M4) asks for none
 Exit 0 · 1 · 77 (no database, uvicorn or httpx).
 """
 import atexit
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -52,13 +57,15 @@ from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate('test_admin_panel', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'httpx', 'uvicorn', 'cryptography'), env=False)
 from astryx.security.sqlguard import propagate  # noqa: E402
 from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
+from tests._smtp_sink import SmtpSink  # noqa: E402
 
 PY = sys.executable
 fails = []
 ORIGIN = "http://fx-admin.invalid"
 PW = {"owner": "fx-dummy-pass-owner-0001", "adm": "fx-dummy-pass-admin-0002", "mem": "fx-dummy-pass-membr-0003",
       "cross": "fx-dummy-pass-cross-0004", "new": "fx-dummy-pass-newbie-005", "node": "fx-dummy-pass-noder-0006",
-      "reset": "fx-dummy-pass-reset-0007", "late": "fx-dummy-pass-later-0008"}
+      "reset": "fx-dummy-pass-reset-0007", "late": "fx-dummy-pass-later-0008",
+      "mailed": "fx-dummy-pass-mailed-009"}
 KEY = {"a": "fx-dummy-obskey-a-0001", "b": "fx-dummy-obskey-b-0002"}
 
 # THE CONTRACT the members table moves to (feat/cog-rls slice 1, from 3f8d5d1), its tenant column aside: applied to org
@@ -189,7 +196,7 @@ def run(t, da, dbb, procs):
     pid = os.getpid()
     oa, ob = f"fxad-a-{pid}", f"fxad-b-{pid}"
     cid = f"fxcog-{pid:08d}"
-    socks = {k: listener() for k in ("a", "b", "front")}
+    socks = {k: listener() for k in ("a", "b", "front", "mailf")}
     port = {k: s.getsockname()[1] for k, s in socks.items()}
     reg = {"orgs": {}}
     for o, d, k in ((oa, da, "a"), (ob, dbb, "b")):
@@ -249,17 +256,28 @@ def run(t, da, dbb, procs):
             env=propagate.env_for_child({**base, "ASTRYX_COG_REGISTRY": str(regf), "ASTRYX_HOME": str(t / o),
                                          "ASTRYX_DSN": d["url"], "OBS_KEY": KEY[k]}),
             stdout=subprocess.DEVNULL, stderr=(t / f"{k}.err").open("w")))
-    s = socks["front"]
-    procs.append(subprocess.Popen(
-        [PY, "-m", "uvicorn", "front:app", "--fd", str(s.fileno())], pass_fds=(s.fileno(),), cwd=REPO / "observatory",
-        env=propagate.env_for_child({**cogbase, "ASTRYX_COG_REGISTRY": str(regf)}),
-        stdout=subprocess.DEVNULL, stderr=(t / "front.err").open("w")))
+    # MAILF: the same cog (its key, copied) and store, with a mailbox on a loopback sink
+    sink = SmtpSink()
+    mh = t / "cog-mail"
+    shutil.copytree(home / "keys", mh / "keys")
+    shutil.copy2(home / "identity.key", mh / "identity.key")
+    (mh / ".env").write_text(f"ASTRYX_DSN={dbb['url']}\nASTRYX_COG_ORIGINS={ORIGIN}\n"
+                             f"MAIL_FROM=codes@fx-admin.invalid\nMAIL_SMTP=127.0.0.1:{sink.port}\n")
+    mregf = t / "cog-mail.json"
+    mregf.write_text(json.dumps({**reg, "cog": {"id": cid, "home": str(mh)}}))
+    for k, rf in (("front", regf), ("mailf", mregf)):
+        s = socks[k]
+        procs.append(subprocess.Popen(
+            [PY, "-m", "uvicorn", "front:app", "--fd", str(s.fileno())], pass_fds=(s.fileno(),),
+            cwd=REPO / "observatory", env=propagate.env_for_child({**cogbase, "ASTRYX_COG_REGISTRY": str(rf)}),
+            stdout=subprocess.DEVNULL, stderr=(t / f"{k}.err").open("w")))
     for s in socks.values():
         s.close()
     F = port["front"]
-    up = all(wait(port[k], "/api/whoami" if k != "front" else "/api/cog", procs[i])
-             for i, k in enumerate(("a", "b", "front")))
-    check("every server starts", up, " | ".join((t / f"{k}.err").read_text()[-400:] for k in ("a", "b", "front")))
+    up = all(wait(port[k], "/api/whoami" if k in ("a", "b") else "/api/cog", procs[i])
+             for i, k in enumerate(("a", "b", "front", "mailf")))
+    check("every server starts", up, " | ".join((t / f"{k}.err").read_text()[-400:]
+                                                 for k in ("a", "b", "front", "mailf")))
     if not up:
         return
 
@@ -533,6 +551,37 @@ def run(t, da, dbb, procs):
           st == 200 and aj.get("attributed") is False and aj.get("messages") is None and "body" not in json.dumps(aj),
           f"{st} {aj}")
 
+
+    print("\nM11 THE EMAIL CODE AT ACCEPT")
+    MF = port["mailf"]
+    st, _, inv = call(F, "/auth/admin/invite", "POST", {"org": oa, "role": "member"}, headers=as_("owner"))
+    tok_m = inv.get("link", "").partition("#/accept?t=")[2] if st == 200 else ""
+    em = users["mailed"]
+
+    def accept_m(code=None, email=em, pw=PW["mailed"], token=None):
+        return call(MF, "/auth/accept", "POST", {"token": token or tok_m, "email": email, "password": pw,
+                                                 **({"code": code} if code is not None else {})},
+                    headers={"origin": ORIGIN})
+    st, _, b = accept_m()
+    mails = [m for m in sink.mails if m[0] == [em]]
+    got = (re.findall(r"\b(\d{6})\b", mails[0][1]) or [""])[0] if mails else ""
+    check("a NEW email accepting: 202 {code: sent}, one mail to it, no account, the link still open",
+          st == 202 and b.get("code") == "sent" and len(mails) == 1 and len(got) == 6 and acct(em) is None
+          and call(F, f"/auth/link?t={tok_m}")[0] == 200, f"{st} {b} {len(mails)}")
+    st, _, b = accept_m(code="000000" if got != "000000" else "111111")
+    check("a wrong code: 400 {field: code}, no account, the link still open", st == 400 and b.get("field") == "code"
+          and acct(em) is None and call(F, f"/auth/link?t={tok_m}")[0] == 200, f"{st} {b}")
+    st, hs, b = accept_m(code=got)
+    stm, roles = me(session_of(hs))
+    check("the right code: 200, signed in with the invited role, the link used",
+          st == 200 and roles == {oa: "member"} and call(F, f"/auth/link?t={tok_m}")[0] == 410, f"{st} {b} {roles}")
+    st, _, inv = call(F, "/auth/admin/invite", "POST", {"org": ob, "role": "member"}, headers=as_("cross"))
+    tok_x = inv.get("link", "").partition("#/accept?t=")[2] if st == 200 else ""
+    n = len(sink.mails)
+    st, _, b = accept_m(email=users["adm"], pw=PW["adm"], token=tok_x)
+    check("an EXISTING account accepting proves its password: 200 with no code and no mail",
+          bool(tok_x) and st == 200 and len(sink.mails) == n, f"{st} {b}")
+    sink.sock.close()
 
 if __name__ == "__main__":
     sys.exit(main())
