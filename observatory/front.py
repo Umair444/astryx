@@ -396,7 +396,7 @@ async def _role_in(a: "_Auth", who: str, r: dict) -> str | None:
 # ---------------------------------------------------------------- the admin panel's ACCOUNT half (cog-rebuild, owner 11-13)
 # "an option to create new user … whoever is the owner of org can decide the roles of other users … managed by an
 # admin". Accounts are the cog's (this store); roles are each org's (its backend, observatory/api/admin.py). There is
-# no mail on this host, so a new user and a forgotten password are both a ONE-TIME LINK the owner or an admin copies
+# no mail sent for these, so a new user and a forgotten password are both a ONE-TIME LINK the owner or an admin copies
 # to the person: a random token, only its sha256 stored (cog_schema.sql `links`), one use, an expiry.
 #
 #   GET  /auth/admin/users?org=          the accounts with a role in org: uid, email, created, last sign-in, live
@@ -879,14 +879,16 @@ async def signup(request: Request):
     ck = "c:" + (request.client.host if request.client else "?")
     if _signup_limited(a, ck) or _limited(ck, "a:" + email):
         return _nope(429, b'{"error":"too many tries"}')
-    if not j.get("code"):                        # every validated attempt counts, so probing keys is capped too; the
-        _signups[ck].append(time.monotonic())    # code's own second step does not (its guesses count as failed sign-ins)
     if _inflight >= INFLIGHT:
         return _nope(503, b'{"error":"sign-up is busy, try again in a moment"}')
     try:
         if await a.db(_signups_today) >= a.signup_daily:
             return _nope(429, b'{"error":"this cog takes no more sign-ups today"}')
         acct = await a.db(cogauth._account, email)
+        # every validated attempt counts, so probing keys is capped too; only a NEW email's code step on a cog that
+        # mails codes does not (its guesses count as failed sign-ins). A code sent anywhere else changes nothing
+        if acct or not (a.mail and j.get("code")):
+            _signups[ck].append(time.monotonic())
         held = None if acct else await _prove_email(a, email, j.get("code"), ck)
     except Exception:  # noqa: BLE001 — no store (or no Phase 3 tables): no sign-up, and no word on the account
         return _nope(503, b'{"error":"sign-up is unavailable"}')

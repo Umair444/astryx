@@ -33,7 +33,8 @@ assertion is on a status, a name or a row count, never a printed secret.
      again at once → 202 and no second mail; a wrong code → 400 {field: code}, nothing written; the right one → 200,
      the account and its pending request, and the code is used up; five wrong guesses and the right code no longer
      opens it; an EXISTING account proves its password and gets no mail; mail that can't be sent → 503 and no code
-     left standing; ON (no mailbox) asks for no code (U2 made accounts with one submit)
+     left standing; ON (no mailbox) asks for no code (U2 made accounts with one submit), and a `code` sent to it
+     still counts against the per-client cap
   G  THE SPAWN BUDGET GATE (runtime_env.py --gate, and spawn.sh's real path with stubbed psql/tmux/pgrep/node):
      a non-primary org with no budget → rc 4 / spawn rc 1 and NOTHING written (no psql, no homes/<agent>); a budget
      but only the host's ambient login → refused; a budget and its own login → passes (spawn reaches its first psql);
@@ -476,6 +477,9 @@ def run(t, da, ds, dc, procs):
     check("mail that can't be sent: 503, no account, and no code left standing (a retry mails at once)",
           st == 503 and not has(e3) and not q(ds["url"], "SELECT 1 FROM email_codes WHERE email = %s", e3), f"{st} {b}")
     sink.sock.close()
+    sts = [signup(ON, f"capped{i}@fx-signup.invalid", PW["x"], k1, ip="198.51.100.150", code="x")[0] for i in range(6)]
+    check("a code sent to a cog with no mailbox changes nothing: those tries still count, the 6th is 429 (PER_IP 5)",
+          sts == [409] * 5 + [429], sts)
 
 
 # ---------------------------------------------------------------- G: the spawn budget gate
