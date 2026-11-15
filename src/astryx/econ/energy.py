@@ -181,15 +181,18 @@ def feel(c, now: datetime | None = None, relearn_after_h: float | None = 1.0) ->
     b, name = ws[binding], {"h5": "the 5-hour window", "d7": "the week"}[binding]
     tired = b["tired"]
     if b["left"] <= 0:
-        say = f"spent · {name} is used up until {_clock(b['resets_at'], now)}"
+        fact = f"{name} is used up until {_clock(b['resets_at'], now)}"
     elif b["dry_at"]:
-        say = (f"{word(tired)} · at the usual pace {name} runs out around {_clock(b['dry_at'], now)}, "
-               f"before its reset at {_clock(b['resets_at'], now)}")
+        fact = (f"at the usual pace {name} runs out around {_clock(b['dry_at'], now)}, "
+                f"before its reset at {_clock(b['resets_at'], now)}")
     else:
-        say = (f"{word(tired)} · {name}: {b['left']:.0f}% left, about {b['need']:.0f}% usually needed before the reset at "
-               f"{_clock(b['resets_at'], now)}, so about {b['spare']:.0f}% would go unused")
-    return {"known": True, "tired": tired, "word": "spent" if b["left"] <= 0 else word(tired), "binding": binding,
-            "windows": ws, "say": say, "think": p.get("think") or THINK,
+        fact = (f"{name}: {b['left']:.0f}% left, about {b['need']:.0f}% usually needed before the reset at "
+                f"{_clock(b['resets_at'], now)}, so about {b['spare']:.0f}% would go unused")
+    w = "spent" if b["left"] <= 0 else word(tired)
+    # `fact` is what every prompt carries: the reading with no verdict word (owner 08-21: numbers, no advice; medic
+    # 12281: a word injected unread into every prompt steers the whole fleet). `say` adds the word, for people.
+    return {"known": True, "tired": tired, "word": w, "binding": binding,
+            "windows": ws, "say": f"{w} · {fact}", "fact": fact, "think": p.get("think") or THINK,
             "think_pct": {k: round((p.get("think") or THINK) * p["rate"][k], 2) for k in ws}, "learned_at": p["at"],
             "hourly": p["hourly"], "rate": p["rate"], "usual": p.get("usual") or {}}
 
@@ -249,24 +252,51 @@ def felt(total: float, before: float, usual) -> int:
     return 2 ** k if before < usual * 2 ** k else 0
 
 
-def during(c, agent: str, transcript: str) -> str:
-    """The mid-turn line, at a doubling only: what this turn has taken against the agent's usual, and how the org feels."""
+def claim(d: str, x: int) -> bool:
+    """ONE NOTICE PER DOUBLING PER TURN (medic 12281): `d` is the agent's own 0700 directory, one empty file per
+    multiple already said this turn. True only for the first caller of a multiple above every one said: parallel tool
+    calls in one model message race on an exclusive create, and a transcript tail that slid back under a doubling and
+    climbed again finds its file. `rest(d)` at the turn's end forgets them."""
+    import os
+    try:
+        if any(int(n) >= x for n in os.listdir(d) if n.isdigit()):
+            return False
+        os.close(os.open(os.path.join(d, str(int(x))), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def rest(d: str) -> None:
+    """The turn ended: the next one feels its own doublings afresh."""
+    import os
+    try:
+        for n in os.listdir(d):
+            if n.isdigit():
+                os.unlink(os.path.join(d, n))
+    except OSError:
+        pass
+
+
+def during(c, agent: str, transcript: str, said: str | None = None) -> str:
+    """The mid-turn line, at a doubling only: what this turn has taken against the agent's usual, and how the org
+    feels. `said` is the directory claim() keeps this turn's notices in (None: no memory, the pure reading)."""
     p = pace(c)
     usual = ((p or {}).get("usual") or {}).get(agent)
     if not usual:
         return ""
     total, before = effort(transcript)
     x = felt(total, before, usual)
-    if not x:
+    if not x or (said is not None and not claim(said, x)):
         return ""
     f = feel(c, relearn_after_h=None)
     return (f"[energy] this turn has taken {x}× your usual so far{_share(p, total)}"
-            + (f" · the org is {f['say']}" if f.get("known") else ""))
+            + (f" · {f['fact']}" if f.get("known") else ""))
 
 
 def line(f: dict, own: str = "") -> str:
     """The per-prompt line: the feeling as a fact (owner 08-21: numbers, no advice)."""
-    return "[energy] " + f["say"] + (f" · {own}" if own else "") if f.get("known") else ""
+    return "[energy] " + f["fact"] + (f" · {own}" if own else "") if f.get("known") else ""
 
 
 if __name__ == "__main__":

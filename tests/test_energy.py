@@ -10,7 +10,8 @@ Pure arms on the arithmetic, then a fixture database (this tree's schema.sql; fi
   E4 NO SWITCH: ease() is smooth and strictly falling in tiredness, strictly rising in payback, 1 when rested
   E5 UNKNOWN IS NOT RESTED: no gauge or no learned rate gives no feeling
   E6 LEARNED FROM THE ORG'S OWN HISTORY: the hourly profile leaves self-started thinking out; the rate is gauge points per token
-  E7 the per-prompt line states the feeling and an agent's own heavier-than-usual turn, as facts
+  E7 the per-prompt line states the reading with no verdict word, and an agent's own heavier-than-usual turn, as facts
+  E8 ONE NOTICE PER DOUBLING PER TURN: parallel calls, a tail that slides back and climbs again, a new turn (medic 12281)
 Exit 0 · 1 · 77 (no database).
 """
 import sys
@@ -75,11 +76,24 @@ arm("E5 no gauge reading: no feeling", E.window(None, None, 5, RATE, HOURLY, NOW
 arm("E5 no learned rate: no feeling", E.window(50, None, 5, None, HOURLY, NOW) is None)
 
 print("E7 the line")
-f = {"known": True, "say": "rested · the week: 74% left"}
+f = {"known": True, "say": "rested · the week: 74% left", "fact": "the week: 74% left"}
 p = {"usual": {"a": 100_000.0}, "rate": {"d7": 5e-7}}
 arm("E7 a turn at 4x the usual is said, with its share of the week", "4× your usual" in E.line(f, E.mine(p, "a", 400_000)) and "0.2% of the week" in E.mine(p, "a", 400_000),
     E.line(f, E.mine(p, "a", 400_000)))
+arm("E7 the prompt line carries the reading and no verdict word", E.line(f) == "[energy] the week: 74% left", E.line(f))
 arm("E7 a usual turn says nothing of itself; an unknown feeling prints nothing", E.mine(p, "a", 90_000) == "" and E.line({"known": False}) == "")
+
+
+print("E8 one notice per doubling per turn")
+import tempfile
+with tempfile.TemporaryDirectory() as said:
+    arm("E8 felt: the doubling is felt on the call that passes it, not again on the next", [E.felt(t, b, 100) for t, b in ((150, 100), (210, 150), (390, 210), (410, 390), (900, 790), (900, 810))] == [0, 2, 0, 4, 8, 0])
+    arm("E8 two hook runs on one transcript state (a parallel batch): one notice", [E.claim(said, 4), E.claim(said, 4)] == [True, False])
+    arm("E8 the tail slid back under 4× and climbed again, or reads a lower multiple: no second notice", [E.claim(said, 4), E.claim(said, 2)] == [False, False])
+    arm("E8 the next doubling of the same turn is said", E.claim(said, 8) is True)
+    E.rest(said)
+    arm("E8 after the turn's end, a new turn's 2× is said", E.claim(said, 2) is True)
+arm("E8 a directory that isn't there claims nothing (fail closed: no notice)", E.claim("/nonexistent/astryx-effort", 2) is False)
 
 
 def main():
@@ -107,7 +121,7 @@ def main():
         turn(0, 100_000, 14)
         fl = E.feel(c, relearn_after_h=None)
         arm("E6 feel: known, the tighter window binds, a word and a sentence",
-            fl.get("known") and fl["binding"] in ("h5", "d7") and fl["word"] in fl["say"] and fl["tired"] == max(w["tired"] for w in fl["windows"].values()), fl.get("say"))
+            fl.get("known") and fl["binding"] in ("h5", "d7") and fl["say"] == f"{fl['word']} · {fl['fact']}" and fl["tired"] == max(w["tired"] for w in fl["windows"].values()), fl.get("say"))
 
 
 try:

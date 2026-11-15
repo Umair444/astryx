@@ -881,7 +881,7 @@ def main():
             if not sub and not strip and h.get("transcript_path"):
                 try:
                     from astryx.econ import energy as _energy
-                    said = _energy.during(conn, agent, h["transcript_path"])
+                    said = _energy.during(conn, agent, h["transcript_path"], _subs_dir(agent, "effort"))
                     if said:
                         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
                                                                  "additionalContext": said}}), flush=True)
@@ -890,6 +890,11 @@ def main():
 
         elif ev == "Stop":
             launch_close(agent)                        # the turn ended: no launch of it is still in flight
+            try:                                       # …and the next turn feels its own doublings afresh (energy.claim)
+                from astryx.econ import energy as _energy
+                _energy.rest(_subs_dir(agent, "effort"))
+            except Exception:  # noqa: BLE001
+                pass
             res = handle_stop(cur, agent, h, strip)
             # short response step for the wall/status line (full text lives in turns)
             if res:
