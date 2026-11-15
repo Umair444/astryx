@@ -37,6 +37,9 @@ def arm(name, ok, detail=""):
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"\n        {detail}"))
 
 
+sys.path.insert(0, str(REPO / "src"))
+from astryx.security.sqlguard.estate import gate  # noqa: E402
+gate("test_progress_scope", REPO, deps=('psycopg', 'asyncpg'), env=False)   # a clean clone (no venv): 77, not an import crash
 spec = importlib.util.spec_from_file_location("step_hook", REPO / "hooks" / "step.py")
 H = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(H)

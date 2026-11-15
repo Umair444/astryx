@@ -20,6 +20,9 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "src"))
 
 SUBJECT = Path(os.environ.get("WS_SRC") or REPO / "observatory" / "api" / "workspace.py")
+sys.path.insert(0, str(REPO / "src"))
+from astryx.security.sqlguard.estate import gate  # noqa: E402
+gate("test_ws_threads", REPO, deps=('fastapi', 'asyncpg', 'psycopg'), env=False)   # a clean clone (no venv): 77, not an import crash
 spec = importlib.util.spec_from_file_location("ws_subject", SUBJECT)
 W = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(W)

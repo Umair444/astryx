@@ -38,6 +38,9 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "src"))
 
 SUBJECT = Path(os.environ.get("ART_SRC") or REPO / "observatory" / "api" / "artifacts.py")
+sys.path.insert(0, str(REPO / "src"))
+from astryx.security.sqlguard.estate import gate  # noqa: E402
+gate("test_ws_artifacts", REPO, deps=('fastapi', 'asyncpg', 'psycopg'), env=False)   # a clean clone (no venv): 77, not an import crash
 spec = importlib.util.spec_from_file_location("art_subject", SUBJECT)
 A = importlib.util.module_from_spec(spec)
 sys.modules["art_subject"] = A          # pydantic resolves the models' annotations through it

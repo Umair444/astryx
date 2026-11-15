@@ -7,6 +7,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(REPO / "src"))
+from astryx.security.sqlguard.estate import gate  # noqa: E402
+gate("test_role_dsn", REPO, deps=('psycopg',), env=False)   # a clean clone (no venv): 77, not an import crash
 spec = importlib.util.spec_from_file_location("cog_roles", REPO / "devtools" / "cog_roles.py")
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)

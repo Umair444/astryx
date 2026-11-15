@@ -20,6 +20,9 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "src"))
 
 SUBJECT = Path(os.environ.get("WSCV_SRC") or REPO / "observatory" / "api" / "ws_canvas.py")
+sys.path.insert(0, str(REPO / "src"))
+from astryx.security.sqlguard.estate import gate  # noqa: E402
+gate("test_ws_canvas", REPO, deps=('fastapi', 'asyncpg', 'psycopg'), env=False)   # a clean clone (no venv): 77, not an import crash
 spec = importlib.util.spec_from_file_location("wscv_subject", SUBJECT)
 M = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(M)

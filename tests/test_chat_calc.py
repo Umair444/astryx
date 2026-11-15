@@ -31,6 +31,9 @@ def arm(name, ok, detail=""):
 if not shutil.which("qalc") or subprocess.run(["unshare", "-rn", "true"], capture_output=True).returncode:
     print("  NOT VERIFIED: qalc or unprivileged user namespaces are missing on this host")
     sys.exit(77)
+sys.path.insert(0, str(REPO / "src"))
+from astryx.security.sqlguard.estate import gate  # noqa: E402
+gate("test_chat_calc", REPO, deps=('fastapi',), env=False)   # a clean clone (no venv): 77, not an import crash
 from observatory.api import calc as C  # noqa: E402
 
 print("C answers")
