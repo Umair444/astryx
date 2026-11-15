@@ -9,6 +9,7 @@ Seeds rows the way the sweep wrote them under a SUPERSEDED salt (the public org 
   D1  the dry run counts by attribution and changes nothing; its report holds no id, no jid and no salt.
   A1  --apply moves social_person, social_edge (src, dst) and social_relation to the new ids, another org untouched.
   I1  a second run moves nothing and changes nothing.
+  Z1  an org with people but no relations and no edges: plan()'s relation and edge reads return 0 rows, nothing moves.
   C1  clashes don't stop the run: an old person or edge whose new twin exists is dropped as the duplicate it is; a
       relation clash is counted by kind (same / different / one side empty) and KEPT untouched under its old id.
   R1  an id no channel jid explains → refused (exit 1), nothing changed.
@@ -152,6 +153,20 @@ try:
             seed(cur, ORG, OLD)
             seed(cur, "other-org", OLD)
             run(conn, "plain")
+
+            # Z1: an org with people but NO relations and NO edges: plan()'s social_relation and social_edge reads
+            # return 0 rows here (they return ≥1 in every other arm), and nothing moves
+            for j in (P1, P2):
+                cur.execute("INSERT INTO social_person (org, id, label) VALUES ('people-only', %s, 'someone')",
+                            (R.ids(NEW, j),))
+            before = snap(cur)
+            z = R.plan(cur, "people-only", CANDS, NEW, JIDS)
+            want("Z1 an org with people but no relations and no edges: 0 rows read from each, nothing to move",
+                 z["rows"]["social_edge.src"] == z["rows"]["social_relation.pid"] == 0
+                 and z["attribution"]["social_person.id"]["current"] == 2 and z["work"] == 0 and z["kept"] == 0
+                 and not z["map"] and not z["unmapped"], str(z["ops"]))
+            want("Z1 ...and its plan changed nothing", snap(cur) == before)
+            cur.execute("DELETE FROM social_person WHERE org = 'people-only'")
 
             # main()'s seams: this fixture's DSN and org, this .env, this channel. _salt() and candidates() run REAL.
             R.channel_jids = lambda msgs: JIDS
