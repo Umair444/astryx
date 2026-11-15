@@ -426,8 +426,8 @@ async def hook(request: Request):
 
     agents = await wire_chat(pool, sender, "whatsapp", route["agent"], f"wa:{chat}", text, meta, route=route, said=said)
 
-    # progress shows for ANYONE's ask on an org route (owner 11-15: "it should appear to everyone"): the lines
-    # land in the same chat whoever asked, so a trusted sender never saw more than the rest of it did
+    # progress shows for ANYONE's ask on an org route (owner 11-15: "it should appear to everyone"), scoped to the work
+    # this chat asked for: on_step's step_line(thread=...) drops a step whose turn another thread opened (medic 12159)
     if live_steps_ok(route):                      # S1c: never on a tiered route (its second egress)
         for agent in agents:                      # a team: each member's live steps show it working
             jobs[agent] = {"chat": chat, "thread": f"wa:{chat}", "opened": now,
@@ -455,7 +455,7 @@ async def on_step(ev: dict):
         jobs.pop(agent, None)
         return
     line = await step_line(pool, int(ev.get("id", 0)), ev.get("kind", ""), agent=agent,
-                           label=agent)
+                           label=agent, thread=job["thread"])     # only the work this chat asked for
     if not line:
         return
     job["latest"] = line

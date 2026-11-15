@@ -228,7 +228,7 @@ async def on_step(ev: dict):
     job = jobs.get(agent)
     if not job:
         return
-    line = await step_line(pool, ev.get("id", 0), kind, agent=agent)
+    line = await step_line(pool, ev.get("id", 0), kind, agent=agent, thread=job["thread"])   # only this chat's work
     if not line or line == job.get("sent"):
         return
     job["sent"] = line
@@ -299,11 +299,11 @@ async def on_message(msg: discord.Message):
         meta["reply_to_body"] = (rbody or "").strip() or await resolve_quoted_body(pool, ref.message_id)
     said = text
     agents = await wire_chat(pool, who, "discord", route["agent"], f"dc:{cid}", text, meta, route=route, said=said)
-    # progress shows for ANYONE's ask on an org route (owner 11-15: "it should appear to everyone"): the lines
-    # land in the same chat whoever asked, so a trusted sender never saw more than the rest of it did
+    # progress shows for ANYONE's ask on an org route (owner 11-15: "it should appear to everyone"), scoped to the work
+    # this chat asked for: on_step's step_line(thread=...) drops a step whose turn another thread opened (medic 12159)
     if live_steps_ok(route):                      # S1c: never on a tiered route (its second egress)
         for agent in agents:                       # a team: each member's live steps
-            jobs[agent] = {"chat": cid, "ph": None, "sent": ""}
+            jobs[agent] = {"chat": cid, "thread": f"dc:{cid}", "ph": None, "sent": ""}
         try:
             await msg.channel.typing()
         except Exception:

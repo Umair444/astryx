@@ -575,23 +575,43 @@ async def describe_media(path: Path | str, kind: str = "") -> str:
 
 
 # -------------------------------------------------------------------- progress
-async def step_line(pool, step_id: int, kind: str, *, agent: str, label: str = "") -> str | None:
+async def step_line(pool, step_id: int, kind: str, *, agent: str, label: str = "", thread: str | None = None) -> str | None:
     """The steps doorbell payload is {id, agent, kind} only — fetch the content.
 
     `agent` is the payload's agent and is REQUIRED: the row must belong to it, so a payload
     whose id names another agent's step resolves to nothing (defense in depth, a4 #22117).
     It is deliberately separate from `label`, the optional display prefix (useful on
     group-chat surfaces), because telegram/discord show no label, and matching on their ""
-    would be matching on nothing. An empty agent never matches."""
+    would be matching on nothing. An empty agent never matches.
+
+    `thread` (a progress job's own chat, owner 11-15): only a step of a turn THIS thread opened is a line for it. The
+    hook stamps meta.turn_msgs, the msg_ids that opened the step's turn (hooks/step.py turn_msgs); a step whose turn was
+    opened on another thread (a member's web ask, seed's task, another group) is the agent's work for someone else and
+    never lands here (medic 12159). A step with no stamp has no known scope: nothing, never everything."""
     if kind not in MARK or not agent:
         return None
-    row = await pool.fetchrow("SELECT content FROM steps WHERE id=$1 AND agent=$2",
+    row = await pool.fetchrow("SELECT content, meta FROM steps WHERE id=$1 AND agent=$2",
                               step_id, agent)
     if not row:
+        return None
+    if thread is not None and not await _serves(pool, row["meta"], thread):
         return None
     content = "writing a reply" if kind == "response" else row["content"]
     prefix = f"{label} · " if label else ""
     return f"{MARK[kind]} {prefix}{content[:140]}"
+
+
+async def _serves(pool, meta, thread: str) -> bool:
+    """Was the step's turn opened by a message on `thread`? (meta.turn_msgs; see step_line)"""
+    try:
+        m = json.loads(meta) if isinstance(meta, str) else (meta or {})
+        ids = [int(x) for x in (m.get("turn_msgs") or [])][:20]
+    except Exception:
+        return False
+    if not ids:
+        return False
+    return bool(await pool.fetchval("SELECT 1 FROM messages WHERE id = ANY($1::bigint[]) AND thread = $2 LIMIT 1",
+                                    ids, thread))
 
 
 # -------------------------------------------------------------------- doorbell

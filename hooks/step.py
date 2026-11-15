@@ -71,6 +71,96 @@ def ledger_meta(tool, tool_input, response=None):
         return None
 
 
+# TURN SCOPE (owner 11-15: a chat's live progress is for everyone in it): which messages opened the turn a step belongs
+# to. steps.turn_id is back-filled only at Stop, so a live reader (a bridge's progress line) couldn't tell a step that
+# serves this chat's ask from one serving another thread, and streamed them all into the group (medic 12159). Each
+# Pre/PostToolUse step now carries meta.turn_msgs: the msg_ids in the turn's opening prompt (a redelivered batch holds
+# several). Read from the session's own transcript, which the hook is handed anyway; a cache per transcript keeps the
+# offset already read, so a call reads only what the session wrote since. Never raises: an unknown is [] (no scope,
+# so a scoped reader shows nothing rather than everything).
+TURN_CACHE = "/tmp/astryx-turn-{agent}.json"
+TURN_SCAN = 1 << 20                      # a cold start scans back from the end this many bytes at a time
+COMPACT_LEAD = "This session is being continued from a previous conversation"
+
+
+def _opening_msgs(line: str):
+    """The msg_ids a transcript line opens a turn with, or None when the line opens no turn."""
+    try:
+        e = json.loads(line)
+    except Exception:
+        return None
+    if e.get("type") != "user":
+        return None
+    c = (e.get("message") or {}).get("content")
+    if is_tool_result(c) or e.get("isCompactSummary"):
+        return None
+    text = c if isinstance(c, str) else json.dumps(c)
+    # a channel wake is written isMeta (so isMeta is NOT a "skip"); the one user line inside a turn is the compaction
+    # summary, which shares its turn's index (seen in medic's and db's transcripts, 11-15)
+    if text.lstrip().startswith(COMPACT_LEAD):
+        return None
+    return [int(x) for x in re.findall(r'msg_id=\\?"(\d+)', text)][:20]
+
+
+def turn_msgs(path, agent) -> list:
+    try:
+        if not path or not os.path.isfile(path):
+            return []
+        size = os.path.getsize(path)
+        cache_f = TURN_CACHE.format(agent=re.sub(r"[^a-z0-9_-]", "", agent))
+        try:
+            with open(cache_f) as f:
+                c = json.load(f)
+        except Exception:
+            c = {}
+        msgs, off = c.get("msgs", []), c.get("off", 0)
+        with open(path, "rb") as f:
+            if c.get("path") != path or off > size:   # a new session (or a rewritten file): find the last opening
+                msgs, pos, tail = [], size, b""
+                while pos > 0:
+                    step = min(TURN_SCAN, pos)
+                    pos -= step
+                    f.seek(pos)
+                    tail = f.read(step) + tail
+                    lines = tail.split(b"\n")
+                    found = next((m for m in (_opening_msgs(l.decode("utf-8", "replace")) for l in reversed(lines[1 if pos else 0:]))
+                                  if m is not None), None)
+                    if found is not None:
+                        msgs = found
+                        break
+                    tail = lines[0] if pos else b""
+                off = size
+            else:
+                f.seek(off)
+                chunk = f.read(size - off)
+                end = chunk.rfind(b"\n") + 1         # only whole lines; a half-written one is read next time
+                for l in chunk[:end].split(b"\n"):
+                    m = _opening_msgs(l.decode("utf-8", "replace"))
+                    if m is not None:
+                        msgs = m
+                off += end
+        tmp = cache_f + ".tmp"
+        with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+            json.dump({"path": path, "off": off, "msgs": msgs}, f)
+        os.replace(tmp, cache_f)
+        return msgs
+    except Exception:
+        return []
+
+
+def step_meta(base, msgs):
+    """steps.meta: the ledger's (a Jsonb or None) plus the turn's opening msg_ids, when there are any."""
+    if not msgs:
+        return base
+    try:
+        from psycopg.types.json import Jsonb
+        d = dict(base.obj) if base is not None else {}
+        d["turn_msgs"] = msgs
+        return Jsonb(d)
+    except Exception:
+        return base
+
+
 def wall_label(cmd) -> str:
     """The public label for a description-less Bash call. It must never raise, and it must never
     fall back to the command itself."""
@@ -616,7 +706,8 @@ def main():
                 detail = f"DENIED, {'child spawn' if strip and denied.startswith('a ' + MARK) else 'secret holder'}: " \
                          f"{brief(detail, 200)}"
             cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool',%s,%s)",
-                        (agent, f"{tool}: {brief(detail)}", ledger_meta(tool, ti)))
+                        (agent, f"{tool}: {brief(detail)}",
+                         step_meta(ledger_meta(tool, ti), turn_msgs(h.get("transcript_path"), agent))))
             if guard_err:
                 cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
                             (agent, guard_err))
@@ -624,7 +715,8 @@ def main():
         elif ev == "PostToolUse":
             tool = h.get("tool_name", "?")
             r = h.get("tool_response")
-            meta = ledger_meta(tool, h.get("tool_input") or {}, r if r is not None else "")
+            meta = step_meta(ledger_meta(tool, h.get("tool_input") or {}, r if r is not None else ""),
+                             turn_msgs(h.get("transcript_path"), agent))
             err = r.get("error") or ("" if r.get("success", True) else "failed") \
                 if isinstance(r, dict) else ""
             if err:
