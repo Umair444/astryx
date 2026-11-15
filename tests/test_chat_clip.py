@@ -37,7 +37,7 @@ def main() -> int:
     # a card's buttons act only on the answer's own map by the card's render id; nothing is read back from the page's
     # data-* (medic 12245 F1), and the subject's html copy is escaped (12245 small 1)
     own = ("own.get(btn?.closest<HTMLElement>('.ws-dl')?.dataset.dlId" in prose and "card.dataset" not in prose
-           and "copyRich(subject, escapeHtml(subject))" in prose)
+           and "copyRich(subject, escapeHtml(subject))" in prose and "randomUUID" not in prose and "getRandomValues" in prose)
     print(f"  {'PASS' if own else 'FAIL'}  a card acts only on its render's own data (a raw-HTML card is inert); the subject copy is escaped")
     shared = shared and own
     return 1 if rc or "ALL PASS" not in out or not shared else 0

@@ -23,7 +23,8 @@ let cards: Map<string, Card> | null = null
 const md: Marked = new Marked({ gfm: true, breaks: true }, { renderer: { code: ({ text, lang }) => {
   const kind = kindOf(lang)
   if (!kind || !cards) return codeBlock(text, lang)
-  const id = crypto.randomUUID()
+  // getRandomValues works on any origin; randomUUID only in a secure one (an http LAN page would fail to render: medic 12247)
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (x) => x.toString(16).padStart(2, '0')).join('')
   cards.set(id, cardData(text, kind))
   return deliverableBlock(text, kind, (m) => md.parse(fenceBareSql(m), { async: false }) as string, id)
 } } })
