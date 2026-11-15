@@ -10,15 +10,16 @@ import { expandPasteTokens, pasteToken } from './code'
 const PASTE_LINES = 12, PASTE_CHARS = 1500          // a paste this long folds into a token (code.ts pasteToken)
 /* this tab's pastes, by token number, kept in sessionStorage beside the drafts (a reload keeps a draft, so it must keep
    the pastes its tokens name); the counter is kept too, so a number is never reused in the tab (medic 12168) */
-const PASTE_KEY = 'ws.pastes', PASTE_STORE_MAX = 2_000_000
+const PASTE_KEY = 'ws.pastes', SEQ_KEY = 'ws.pastes.seq', PASTE_STORE_MAX = 2_000_000
 const PASTES = new Map<number, string>()
 let pasteSeq = 0
 try {
   const saved = JSON.parse(sessionStorage.getItem(PASTE_KEY) || '{}') as { seq?: number; items?: [number, string][] }
   for (const [k, v] of saved.items ?? []) PASTES.set(Number(k), String(v))
-  pasteSeq = Math.max(Number(saved.seq) || 0, ...PASTES.keys())
+  pasteSeq = Math.max(Number(saved.seq) || 0, Number(sessionStorage.getItem(SEQ_KEY)) || 0, ...PASTES.keys())
 } catch { /* private mode: pastes live as long as the page */ }
 function savePastes() {
+  try { sessionStorage.setItem(SEQ_KEY, String(pasteSeq)) } catch { /* nothing fits: the ids still never repeat until a reload */ }
   try {
     let items = [...PASTES.entries()], size = items.reduce((n, [, v]) => n + v.length, 0)
     while (size > PASTE_STORE_MAX && items.length > 1) size -= items.shift()![1].length     // the oldest go first
