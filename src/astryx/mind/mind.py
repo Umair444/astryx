@@ -249,6 +249,24 @@ def drives(c) -> list[dict]:
         ORDER BY p.pressure DESC""").fetchall()
 
 
+SENSE = "CASE WHEN source = 'noted' THEN kind ELSE split_part(key, ':', 1) END"
+
+
+def yields(c) -> dict:
+    """THE MIND'S OWN EXPERIMENT (owner 11-15: "set your objective and work on it again and again"; the shape of
+    Karpathy's autoresearch: one measure, try, keep or discard, never stop). Every wake is a TRIAL of the sense that
+    raised its itch (tool habit, empty watcher, repeated ask, a noted surprise, a noted wonder). A sense's yield is
+    how often its wakes ended in a kept idea, smoothed so one trial decides nothing: (kept + 1) / (trials + 2). want()
+    weighs each itch by its sense's yield, so the senses that produce ideas are trusted and the others fade."""
+    out = {}
+    for r in c.execute(f"""SELECT {SENSE} AS sense, count(*) FILTER (WHERE thinks > 0) AS trials,
+            count(*) FILTER (WHERE state = 'resolved') AS kept,
+            count(*) FILTER (WHERE state = 'dropped' AND thinks > 0) AS let_go,
+            count(*) FILTER (WHERE state = 'open') AS open FROM {_t('itch')} GROUP BY 1""").fetchall():
+        out[r["sense"]] = {**r, "yield": round((r["kept"] + 1) / (r["kept"] + r["let_go"] + 2), 2)}
+    return out
+
+
 def recall(c, words: str, limit: int = 3) -> list[dict]:
     """What the org already understands about these words: living insights ranked by the words they share."""
     ensure(c)
@@ -273,13 +291,19 @@ def packet(c, agent: str, itch: dict) -> str:
     me = f"{sys.executable} {os.path.realpath(__file__)}"
     out = [f"[mind] Nobody is waiting on you and the org has energy. This time is yours; it is not a task.",
            "", f"Your strongest itch ({itch['kind']}, #{itch['id']}): {itch['what']}.{also}", "Side by side:", *lines]
+    gone = c.execute(f"""SELECT agent, why FROM {_t('itch')} WHERE key = %s AND agent <> %s AND state = 'dropped' AND thinks > 0
+                         AND why IS NOT NULL ORDER BY last_think DESC NULLS LAST LIMIT 2""", (itch["key"], agent)).fetchall()
+    if gone:
+        out += ["", "Others who felt the same thing let it go:", *[f"  - {g['agent']}: {g['why']}" for g in gone]]
     if known:
         out += ["", "The org already understands, nearby:",
                 *[f"  - {k['name']} ({k['kind']}, by {k['author']}): {k['thought']}" for k in known]]
     out += ["",
             "Stop and look. Is there ONE idea that makes these the same thing: a tool, a concept, a method, or a rule "
-            "that could be deleted? If you see it: name it in one sentence, make it real, check it against these "
-            "very instances and that it breaks nothing the org could already do, then keep it:",
+            "that could be deleted? Work on it the way research is done: say what would be better and how you would "
+            "measure it, try the smallest thing, measure, keep it or throw it away, and try again until it is met or "
+            "stops improving. When you have it: name it in one sentence, make it real, check it against these very "
+            "instances and that it breaks nothing the org could already do, then keep it:",
             f"  {me} keep --as {agent} --name \"…\" --thought \"one sentence\" --kind tool|concept|method|law --lives <path or page> --itch {itch['id']} --check \"how you verified it\"",
             "Built on an earlier insight? add --on <its id>. The org hears of what you keep.",
             f"If it isn't worth an idea, say why and let it go:  {me} drop --as {agent} --itch {itch['id']} --why \"…\"",
@@ -292,6 +316,7 @@ def want(c, say=None, dry: bool = False) -> dict:
     """Let ONE agent that wants to think wake itself: fed org, idle agent, nobody waiting, pressure over the line, not
     thought within REST_H, and an itch whose back-off has passed. `say(to, body)` delivers the wake (the pulse's)."""
     e = energy(c)
+    y = yields(c)
     if not e["fed"]:
         return {"woke": None, "why": f"fasting: energy at {e['seven_day_pct']}% of the week, {e['five_hour_pct']}% of 5 h"}
     for d in drives(c):
@@ -299,11 +324,15 @@ def want(c, say=None, dry: bool = False) -> dict:
             continue
         if d["thought_h_ago"] is not None and d["thought_h_ago"] < REST_H:
             continue
-        itch = c.execute(f"""SELECT * FROM {_t('itch')} WHERE agent = %s AND state = 'open'
-            AND (last_think IS NULL OR last_think < now() - make_interval(hours => ({REST_H} * power(2, thinks))::int))
-            ORDER BY strength / power(2, thinks) DESC LIMIT 1""", (d["agent"],)).fetchone()
-        if not itch:
+        ready = c.execute(f"""SELECT *, {SENSE} AS sense FROM {_t('itch')} WHERE agent = %s AND state = 'open'
+            AND (last_think IS NULL OR last_think < now() - make_interval(hours => ({REST_H} * power(2, thinks))::int))""",
+            (d["agent"],)).fetchall()
+        if not ready:
             continue
+        # an itch another agent already let go counts half: its reason travels with the wake
+        gone = {r["key"] for r in c.execute(f"SELECT DISTINCT key FROM {_t('itch')} WHERE state = 'dropped' AND thinks > 0")}
+        itch = max(ready, key=lambda i: i["strength"] / 2 ** i["thinks"] * y.get(i["sense"], {}).get("yield", 0.5)
+                   * (0.5 if i["key"] in gone else 1))
         body = packet(c, d["agent"], itch)
         if not dry:
             c.execute(f"UPDATE {_t('itch')} SET thinks = thinks + 1, last_think = now() WHERE id = %s", (itch["id"],))
@@ -396,7 +425,9 @@ def state(c) -> dict:
     itches = c.execute(f"""SELECT id, agent, kind, what, n, also, round(strength::numeric, 1)::float AS strength, state, thinks,
             last_think, why, insight_id, source, evidence FROM {_t('itch')}
         ORDER BY (state = 'open') DESC, strength / power(2, thinks) DESC LIMIT 120""").fetchall()
-    return {"energy": energy(c), "drives": drives(c), "itches": itches, "insights": ins,
+    trials = c.execute(f"""SELECT id, agent, {SENSE} AS sense, what, state, thinks, last_think, why, insight_id FROM {_t('itch')}
+        WHERE thinks > 0 ORDER BY last_think DESC LIMIT 40""").fetchall()
+    return {"energy": energy(c), "drives": drives(c), "itches": itches, "insights": ins, "yields": yields(c), "trials": trials,
             "heat": {"hand_calls": hand, "felt_as_tedium": int(felt), "share": round(felt / hand, 3) if hand else 0.0, "days": DAYS},
             "rules": {"pressure": PRESSURE, "idle_min": IDLE_MIN, "rest_h": REST_H, "max_thinks": MAX_THINKS,
                       "fed_below": {"seven_day_pct": ENERGY_7D, "five_hour_pct": ENERGY_5H}}}

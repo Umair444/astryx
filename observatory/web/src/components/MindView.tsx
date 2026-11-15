@@ -25,8 +25,15 @@ interface Drive { agent: string; pressure: number; itches: number; busy: boolean
 interface Mind {
   energy: { seven_day_pct: string | number | null; five_hour_pct: string | number | null; fed: boolean }
   drives: Drive[]; itches: Itch[]; insights: Insight[]
+  yields: Record<string, { trials: number; kept: number; let_go: number; open: number; yield: number }>
   heat: { hand_calls: number; felt_as_tedium: number; share: number; days: number }
   rules: { pressure: number; idle_min: number; rest_h: number; max_thinks: number; fed_below: { seven_day_pct: number; five_hour_pct: number } }
+}
+
+/* the mind's senses, in words: each wake is a trial of the sense that raised it (mind.py yields) */
+const SENSES: Record<string, string> = {
+  tool: 'a tool called by hand again and again', sense: 'a watcher that keeps waking it for nothing', ask: 'the same ask again',
+  surprise: 'a surprise it noted', wonder: 'a question it asked itself',
 }
 
 const KIND: Record<Itch['kind'], { label: string; tone: string }> = {
@@ -124,6 +131,21 @@ export default function MindView() {
                     </div>
                   )
                 })}
+              </Panel>
+            </section>
+
+            <section>
+              <h2 className="text-[13px] font-semibold text-ink mb-1">How well its senses work</h2>
+              <p className="text-[12.5px] text-ink-mute mb-2 max-w-[760px]">Every wake is a trial. A sense whose wakes end in kept ideas is trusted more; one whose itches are let go fades. The mind tunes itself this way, hour after hour.</p>
+              <Panel className="p-2">
+                {Object.entries(m.yields).sort((a, b) => b[1].trials - a[1].trials).map(([k, v]) => (
+                  <div key={k} className="flex items-center gap-3 px-2.5 py-1.5 text-[13px]">
+                    <span className="flex-1 min-w-0 text-ink truncate">{SENSES[k] ?? k}</span>
+                    <span className="w-24 text-right text-ink-dim tabular-nums">{v.open} open</span>
+                    <span className="w-44 text-right text-ink-dim tabular-nums max-sm:hidden">{v.trials} trial{v.trials === 1 ? '' : 's'}: {v.kept} kept, {v.let_go} let go</span>
+                    <span className="w-24 text-right tabular-nums text-ink" title="(kept + 1) / (trials + 2): one trial decides nothing">trust {Math.round(v.yield * 100)}%</span>
+                  </div>
+                ))}
               </Panel>
             </section>
 
