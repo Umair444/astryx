@@ -620,6 +620,11 @@ async def deliver(row):
         job = jobs.pop(agent, None)
         while job and job["busy"]:                # let an in-flight edit finish
             await asyncio.sleep(0.2)
+        if job and job["chat"] == chat and live_steps_ok(routes().chat(chat)):
+            # a reply is not the end of the work (owner 11-15: "it replied but is still working … I'm not seeing
+            # anything"): the job stays, with no bubble, so the agent's next steps for THIS chat (its turn going on,
+            # a helper it launched) open a fresh progress bubble under the reply. Scoped like every line (step_line)
+            jobs[agent] = {**job, "opened": time.time(), "ph_id": None, "latest": "", "sent": "", "busy": False}
         sent = False
         if text and job and job["chat"] == chat and job["ph_id"] and len(text) < 3500:
             try:                                  # reuse the live progress bubble

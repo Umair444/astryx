@@ -27,4 +27,19 @@ const again = [...answered, row(12, FARAN, 'db', '2026-11-15T07:40:00Z')]
 const p2 = pendingOf(['db'], again, live, FARAN)
 arm('a new ask after the answer is pending again, timed from the new ask', p2.length === 1 && p2[0].since === '2026-11-15T07:40:00Z', p2)
 
+// 11-15: an agent that REPLIED and kept working stays on the line while its open turn serves this thread
+const st = (id: number, ts: string, turn_msgs: number[] | null, sub?: object) => ({ id, ts, agent: 'db', kind: 'tool', content: 'Bash: q', turn_msgs, sub }) as never
+const replied = [row(10, FARAN, 'db', '2026-11-15T09:00:00Z'), row(11, 'db', FARAN, '2026-11-15T09:05:00Z')]
+const going = { db: [st(1, '2026-11-15T09:00:05Z', [10]), st(2, '2026-11-15T09:06:00Z', [10]), st(3, '2026-11-15T09:07:00Z', [])] }
+const g = pendingOf(['db'], replied, going, 'owner')
+arm('replied but its turn goes on: still on the line, every step of the turn, the asker named',
+  g.length === 1 && g[0].steps.length === 3 && g[0].by === FARAN && g[0].since === '2026-11-15T09:00:05Z', g)
+arm('...for the asker herself, no name', pendingOf(['db'], replied, going, FARAN)[0]?.by === undefined)
+const moved = { db: [st(1, '2026-11-15T09:00:05Z', [10]), st(2, '2026-11-15T09:08:00Z', [999])] }
+arm('a later step from a turn another thread opened: not working HERE', pendingOf(['db'], replied, moved, 'owner').length === 0)
+arm('an empty lane (the turn ended) after the reply: nothing', pendingOf(['db'], replied, { db: [] }, 'owner').length === 0)
+const helper = { db: [st(1, '2026-11-15T09:00:05Z', [10]), st(2, '2026-11-15T09:06:00Z', [10], { id: 'a1', desc: 'check partitions' })] }
+const h = pendingOf(['db'], replied, helper, 'owner')
+arm("a helper's step for this thread keeps the line, and carries who it is", h.length === 1 && (h[0].steps.at(-1) as { sub?: { desc?: string } }).sub?.desc === 'check partitions', h)
+
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')

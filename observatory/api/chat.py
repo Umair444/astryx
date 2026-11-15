@@ -396,7 +396,7 @@ async def work(request: Request, thread: str = ""):
              FROM turns t JOIN ids ON ids.id = t.id ORDER BY t.ended_at LIMIT 300""", thread)
     tids = [r["id"] for r in turns]
     steps = await pool.fetch(
-        "SELECT id, ts, agent, kind, left(content, 300) AS content, turn_id FROM steps "
+        "SELECT id, ts, agent, kind, left(content, 300) AS content, turn_id, meta->'turn_msgs' AS turn_msgs, meta->'sub' AS sub FROM steps "
         "WHERE turn_id = ANY($1::bigint[]) AND kind <> ALL($2::text[]) ORDER BY id LIMIT 6000", tids, list(QUIET)) if tids else []
     see = _sees(request)                           # a member reads every agent's work the owner does, short of the
     by_turn: dict[int, list] = {}                  # personal tier (main.sees, 11-15): a refused agent's turn keeps
@@ -412,7 +412,7 @@ async def work(request: Request, thread: str = ""):
     for a in parties:
         end = await pool.fetchval("SELECT max(ended_at) FROM turns WHERE agent = $1", a)
         rows = await pool.fetch(
-            "SELECT id, ts, agent, kind, left(content, 300) AS content, turn_id FROM steps WHERE agent = $1 "
+            "SELECT id, ts, agent, kind, left(content, 300) AS content, turn_id, meta->'turn_msgs' AS turn_msgs, meta->'sub' AS sub FROM steps WHERE agent = $1 "
             "AND turn_id IS NULL AND ($2::timestamptz IS NULL OR ts > $2) AND kind <> ALL($3::text[]) "
             "ORDER BY id DESC LIMIT 30", a, end, list(QUIET))
         live[a] = [_step(r) for r in reversed(rows)]
@@ -431,8 +431,24 @@ def _iso(t):
 
 
 def _step(r) -> dict:
+    """`turn_msgs` (hooks/step.py): the msg_ids that opened the step's turn, so the page can tell which conversation an
+    agent's LIVE work serves (11-15: db replied, kept working, and the chat went blank)."""
+    tm = r["turn_msgs"] if "turn_msgs" in r.keys() else None
+    if isinstance(tm, str):
+        try:
+            tm = json.loads(tm)
+        except ValueError:
+            tm = None
+    sub = r["sub"] if "sub" in r.keys() else None
+    if isinstance(sub, str):
+        try:
+            sub = json.loads(sub)
+        except ValueError:
+            sub = None
+    sub = ({k: str(sub[k])[:80] for k in ("id", "type", "desc") if sub.get(k)} or None) if isinstance(sub, dict) else None
     return {"id": r["id"], "ts": _iso(r["ts"]), "agent": r["agent"], "kind": r["kind"], "content": r["content"],
-            "turn_id": r["turn_id"]}
+            "turn_id": r["turn_id"], "turn_msgs": [int(x) for x in tm][:20] if isinstance(tm, list) else None,
+            "sub": sub}     # a helper (sub-agent) the agent launched did this step (hooks/step.py scope)
 
 
 # ------------------------------------------------------------------------------------------------------ dictate

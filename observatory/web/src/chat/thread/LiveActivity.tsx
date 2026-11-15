@@ -59,6 +59,9 @@ export function actionOf(s: Step | undefined): { verb: string; detail: string } 
   return { verb: 'thinking', detail: line }
 }
 
+/* a helper's name on the line: its task description, else its type */
+export const helperName = (s: Step) => (s.sub?.desc || s.sub?.type || 'helper').slice(0, 40)
+
 export type StopFn = (agent: string) => Promise<void>
 type StopState = 'confirm' | 'stopping' | 'stopped' | { err: string }
 const OK_KEY = 'ws.stop.confirmed'
@@ -81,7 +84,11 @@ function Line({ p, now, onStop }: { p: Pending; now: number; onStop?: StopFn }) 
   const [stop, setStop] = useState<StopState | null>(null)
   const steps = p.steps.filter(visible)
   const last = steps.at(-1)
-  const { verb, detail } = actionOf(last)
+  const { verb, detail: own } = actionOf(last)
+  // HELPERS (owner 11-15: "agents use forks and sub-agents … it should appear in chat"): a step a sub-agent took names
+  // it; the line counts the helpers active in the last 90 s, the way Claude Code lists its running agents
+  const detail = last?.sub ? `↳ ${helperName(last)} · ${own}` : own
+  const helpers = new Set(steps.filter((s) => s.sub && now - Date.parse(s.ts) < 90_000).map((s) => s.sub!.id ?? helperName(s))).size
   const name = displayName(p.agent)
   const halted = stop === 'stopping' || stop === 'stopped'
   async function fire() {
@@ -97,7 +104,8 @@ function Line({ p, now, onStop }: { p: Pending; now: number; onStop?: StopFn }) 
         <span className={`pointer-events-none ${halted ? 'opacity-60 transition-opacity' : ''}`}><Presence agent={p.agent} status={halted ? 'awake' : 'working'} size={24} ring={!halted} /></span>
         <span className="min-w-0 flex-1 flex items-baseline gap-2 text-[13.5px] pointer-events-none">
           <span className="min-w-0 truncate sm:shrink-0 text-ink"><span className="font-medium">{name}</span> <span className="text-ink-dim">{
-            stop === 'stopping' ? 'is stopping…' : stop === 'stopped' ? 'stopped its turn' : `is ${verb}${p.by ? ` for ${humanName(p.by)}` : ''}`}</span></span>
+            stop === 'stopping' ? 'is stopping…' : stop === 'stopped' ? 'stopped its turn' : `is ${verb}${p.by ? ` for ${humanName(p.by)}` : ''}`}</span>
+            {helpers > 0 && !halted && <span className="ml-1.5 text-[11.5px] text-ink-mute rounded-full border border-line px-1.5 py-[1px]">{helpers} helper{helpers > 1 ? 's' : ''}</span>}</span>
           {detail && !halted && <span className="ws-shimmer font-mono text-[12px] truncate max-sm:hidden">{detail}</span>}
         </span>
         {stop === 'confirm' ? (
@@ -124,7 +132,7 @@ function Line({ p, now, onStop }: { p: Pending; now: number; onStop?: StopFn }) 
         <ol className="mt-1 ml-[19px] border-l-2 pl-4 flex flex-col gap-0.5 max-h-[260px] overflow-y-auto" style={{ borderColor: 'color-mix(in srgb, var(--ws-agent) 40%, transparent)' }}>
           {steps.slice(-14).map((s) => (
             <li key={s.id} className={`font-mono text-[11.5px] leading-[1.6] truncate ${s.kind === 'error' ? 'text-bad' : 'text-ink-dim'}`}>
-              <span className="text-ink-mute mr-2 tabular-nums">{fmtTime(s.ts)}</span>{stepLine(s)}
+              <span className="text-ink-mute mr-2 tabular-nums">{fmtTime(s.ts)}</span>{s.sub && <span className="text-ink mr-1.5">↳ {helperName(s)}</span>}{stepLine(s)}
             </li>
           ))}
         </ol>

@@ -160,14 +160,67 @@ def turn_msgs(path, agent) -> list:
         return []
 
 
-def step_meta(base, msgs):
-    """steps.meta: the ledger's (a Jsonb or None) plus the turn's opening msg_ids, when there are any."""
-    if not msgs:
+# SUB-AGENTS (owner 11-15: "agents use forks and sub-agents … it should also appear in chat"). Measured on this host the
+# same day: a sub-agent's tool events carry agent_id/agent_type and the PARENT's transcript_path, and the parent's
+# PostToolUse(Agent) response carries the same id as `agentId`. Reading the transcript for a sub-agent's step would give
+# the parent's CURRENT turn, wrong for a background helper that outlives the turn that launched it, so each helper is
+# BOUND, at its launch, to the turn that launched it (SUBS beside the turn cache). An unbound helper is a foreground one
+# (or one whose first call raced its launch): it runs inside the parent's open turn, which is then the right scope.
+SUBS_MAX = 200
+
+
+def _subs_file(agent):
+    return TURN_CACHE.format(agent=re.sub(r"[^a-z0-9_-]", "", agent) + ".subs")
+
+
+def _subs(agent) -> dict:
+    try:
+        with open(_subs_file(agent)) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def bind_sub(agent, aid, msgs, desc, kind):
+    """The parent launched helper `aid` from the turn `msgs` opened: remember it (newest SUBS_MAX)."""
+    try:
+        d = _subs(agent)
+        d[str(aid)] = {"msgs": msgs, "desc": (desc or "")[:80], "type": (kind or "")[:40], "t": int(datetime.now().timestamp())}
+        if len(d) > SUBS_MAX:
+            d = dict(sorted(d.items(), key=lambda kv: kv[1].get("t", 0))[-SUBS_MAX:])
+        os.makedirs(os.path.dirname(_subs_file(agent)), mode=0o700, exist_ok=True)
+        tmp = _subs_file(agent) + ".tmp"
+        with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600), "w") as f:
+            json.dump(d, f)
+        os.replace(tmp, _subs_file(agent))
+    except Exception:
+        pass
+
+
+def scope(h, agent):
+    """(turn_msgs, sub) for one hook event: the parent's own turn, or a helper's bound turn and who the helper is."""
+    aid = h.get("agent_id")
+    if not aid:
+        return turn_msgs(h.get("transcript_path"), agent), None
+    b = _subs(agent).get(str(aid))
+    sub = {"id": str(aid)[:12], "type": (h.get("agent_type") or (b or {}).get("type") or "")[:40]}
+    if b and b.get("desc"):
+        sub["desc"] = b["desc"]
+    return (b.get("msgs", []) if b else turn_msgs(h.get("transcript_path"), agent)), sub
+
+
+def step_meta(base, msgs, sub=None):
+    """steps.meta: the ledger's (a Jsonb or None) plus the turn's opening msg_ids and, for a helper's step, who it is."""
+    if not msgs and not sub:
         return base
     try:
         from psycopg.types.json import Jsonb
         d = dict(base.obj) if base is not None else {}
-        d["turn_msgs"] = msgs
+        if msgs:
+            d["turn_msgs"] = msgs
+        if sub:
+            d["sub"] = sub
         return Jsonb(d)
     except Exception:
         return base
@@ -717,9 +770,9 @@ def main():
             if denied:
                 detail = f"DENIED, {'child spawn' if strip and denied.startswith('a ' + MARK) else 'secret holder'}: " \
                          f"{brief(detail, 200)}"
+            msgs, sub = scope(h, agent)
             cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool',%s,%s)",
-                        (agent, f"{tool}: {brief(detail)}",
-                         step_meta(ledger_meta(tool, ti), turn_msgs(h.get("transcript_path"), agent))))
+                        (agent, f"{tool}: {brief(detail)}", step_meta(ledger_meta(tool, ti), msgs, sub)))
             if guard_err:
                 cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
                             (agent, guard_err))
@@ -727,8 +780,11 @@ def main():
         elif ev == "PostToolUse":
             tool = h.get("tool_name", "?")
             r = h.get("tool_response")
-            meta = step_meta(ledger_meta(tool, h.get("tool_input") or {}, r if r is not None else ""),
-                             turn_msgs(h.get("transcript_path"), agent))
+            msgs, sub = scope(h, agent)
+            meta = step_meta(ledger_meta(tool, h.get("tool_input") or {}, r if r is not None else ""), msgs, sub)
+            if tool in ("Agent", "Task") and isinstance(r, dict) and r.get("agentId"):   # a helper launched: bind it
+                ti2 = h.get("tool_input") or {}
+                bind_sub(agent, r["agentId"], msgs, ti2.get("description"), ti2.get("subagent_type"))
             err = r.get("error") or ("" if r.get("success", True) else "failed") \
                 if isinstance(r, dict) else ""
             if err:
