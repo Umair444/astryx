@@ -66,7 +66,8 @@ def decide(now: float, at: float, st: dict, alive: bool = False) -> tuple[str, s
     that ended without writing is a failure: counted once (st['fails'] is the caller's to bump on 'fail'), and the next
     launch waits DUE_H x 2^fails. Told at most every RENAG_S."""
     started = float(st.get("started") or 0)
-    in_flight = bool(started) and (alive or now - started < RUN_GRACE_S)
+    # a live pid counts only while the real child could still be running: past its timeout the pid may be recycled
+    in_flight = bool(started) and ((alive and now - started < RUN_MAX_S + RUN_GRACE_S) or now - started < RUN_GRACE_S)
     fails = int(st.get("fails") or 0)
     if started and not in_flight and at < started and not st.get("counted"):
         say = "fail" if now - float(st.get("told") or 0) > RENAG_S else None

@@ -36,6 +36,7 @@ arm("I2 a run in flight: not launched again", d(now, 0, {"started": now - 60})[0
 arm("I2 a 45-minute run, nothing written yet: no failure, no launch (medic 12299)", d(now, 0, {"started": now - 45 * 60}) == ("wait", None))
 arm("I2 the grace outlasts the run's own timeout", N.RUN_GRACE_S > N.RUN_MAX_S)
 arm("I2 its pid alive past the grace: still in flight", d(now, 0, {"started": now - N.RUN_GRACE_S - 60}, alive=True) == ("wait", None))
+arm("I2 a recycled pid long past the timeout is not a run in flight (medic 12301)", d(now, 0, {"started": now - N.RUN_MAX_S - N.RUN_GRACE_S - 60}, alive=True)[1] == "fail")
 arm("I3 a run that ended and moved nothing: a failure, said", d(now, 0, {"started": now - N.RUN_GRACE_S - 1}) == ("wait", "fail"))
 arm("I4 stale past STALE_H: said", d(now, now - (N.STALE_H + 1) * H, {"started": now - 60})[1] == "stale")
 arm("I4 …re-nagged only after RENAG_S", d(now, now - (N.STALE_H + 1) * H, {"started": now - 60, "nagged": now - 60})[1] is None)
