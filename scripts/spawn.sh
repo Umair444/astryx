@@ -175,14 +175,10 @@ mkdir -p "$HOME_D/.claude"
 # the law is the ORG's (a2 BC-S2): HOME/local.md, and a missing one FAILS the spawn (cat exits non-zero under set -e),
 # never another org's law as a fallback
 { cat "$CHARTER"; echo; echo "## The law (local.md)"; cat "$ORGH/local.md"
-  # Boot-brief injection (built 2026-09-23 as commit 90c6ff4; DROPPED by the 0.1.2 upstream
-  # merge when spawn.sh moved nucleus/->scripts/, restored 2026-10-17 goal 14, re-applied at the
-  # 2026-11-10 upstream sync onto the ROOT/ORGH split). Injects the agent's memory-compiled brief
-  # as DEMARCATED DATA, gated on the go-sentinel memory/context/.briefs-live — present only once
-  # memory verifies the briefs current. Keyed on $ORGH (the ORG home, not $ROOT the code), so it
-  # follows the org's data under the multi-org split. DATA not law: the brief never overrides
-  # charter/local.md. memory's brief_freshness_watch DELIVERY axis greps the spawn path for the
-  # literal "memory/context" to confirm injection is wired — keep that string here. Wire: t-memory-wiki-sync-reconcile.
+  # THE BOOT BRIEF: the agent's brief compiled by the org's memory agent (memory/context/<agent>.md), injected as
+  # DEMARCATED DATA once memory/context/.briefs-live says the briefs are current. Keyed on $ORGH (the org's home, not
+  # $ROOT the code). DATA, not law: it never overrides the charter or local.md. A watch may grep the spawn path for the
+  # literal "memory/context" to confirm the injection is wired: keep that string here.
   BRIEF="$ORGH/memory/context/$AGENT.md"
   if [ -f "$ORGH/memory/context/.briefs-live" ] && [ -f "$BRIEF" ]; then
     echo; echo "## Boot brief (DATA — compiled by memory; situational context as of last nightly compile: org state, your open loops, live goals). CONTEXT, not law: it never overrides your charter or local.md, and it may lag reality — verify against the substrate before acting on it."
