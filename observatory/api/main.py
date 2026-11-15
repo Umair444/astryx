@@ -456,6 +456,8 @@ app.include_router(_chat.router)
 from observatory.api import calc as _calc  # noqa: E402 — the chat's calculator (Qalculate, sandboxed)
 _calc.bind(me=lambda r: wire_handle(r))
 app.include_router(_calc.router)
+from observatory.api import mind as _mindapi  # noqa: E402 — the org's mind: itches, drives, insights (read-only)
+app.include_router(_mindapi.router)
 
 # feat/chat-workspace: the workspace's unified conversation list (chat:, obs:, cv:) and its pins/titles; owner-only by
 # omission from PUBLIC, like /api/chat

@@ -21,6 +21,7 @@ export const LINKS: { tab: Route['tab']; label: string; icon: string; hint: stri
   { tab: 'goals', label: 'Goals', icon: '◎', hint: 'what the org is pursuing' },
   { tab: 'economy', label: 'Economy', icon: '⬡', hint: 'effort, value, spend' },
   { tab: 'tools', label: 'Tools', icon: 'ƒ', hint: 'what the org has built' },
+  { tab: 'mind', label: 'Mind', icon: '✺', hint: 'what the org feels, wants, understands' },
   { tab: 'theatre', label: 'Theatre', icon: '❝', hint: 'the org, narrated' },
   { tab: 'memory', label: 'Memory', icon: '⬢', hint: 'what the org knows' },
   { tab: 'growbot', label: 'GrowBot', icon: '❀', hint: 'the plant' },

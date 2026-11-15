@@ -36,6 +36,7 @@ const EconomyView = lazy(() => import('./components/EconomyView'))
 const ToolsView = lazy(() => import('./components/ToolsView'))
 const SystemView = lazy(() => import('./components/SystemView'))
 const TheatreView = lazy(() => import('./components/TheatreView'))
+const MindView = lazy(() => import('./components/MindView'))
 const MemoryView = lazy(() => import('./components/MemoryView'))
 const GrowbotView = lazy(() => import('./components/GrowbotView'))
 const FaceView = lazy(() => import('./components/FaceView'))
@@ -70,6 +71,7 @@ export type Route =
   | { tab: 'tools' }
   | { tab: 'monitor' }
   | { tab: 'theatre' }
+  | { tab: 'mind' }
   | { tab: 'memory' }
   | { tab: 'growbot' }
   | { tab: 'face' }
@@ -87,6 +89,7 @@ function parseHash(): Route {
   if (tab === 'tools') return { tab: 'tools' }
   if (tab === 'monitor') return { tab: 'monitor' }
   if (tab === 'theatre') return { tab: 'theatre' }
+  if (tab === 'mind') return { tab: 'mind' }
   if (tab === 'memory') return { tab: 'memory' }
   if (tab === 'growbot') return { tab: 'growbot' }
   if (tab === 'face') return { tab: 'face' }
@@ -112,6 +115,7 @@ const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'goals', label: 'Goals', icon: '◎' },
   { key: 'economy', label: 'Economy', icon: '⬡' },
   { key: 'tools', label: 'Tools', icon: 'ƒ' },
+  { key: 'mind', label: 'Mind', icon: '✺' },
   { key: 'theatre', label: 'Theatre', icon: '❝' },
   { key: 'memory', label: 'Memory', icon: '⬢' },
   { key: 'growbot', label: 'GrowBot', icon: '🤖' },
@@ -362,6 +366,7 @@ function Shell() {
               {route.tab === 'tools' && <ToolsView />}
               {route.tab === 'monitor' && <SystemView />}
               {route.tab === 'theatre' && <TheatreView />}
+              {route.tab === 'mind' && <MindView />}
               {route.tab === 'memory' && <MemoryView />}
               {route.tab === 'growbot' && <GrowbotView />}
               {route.tab === 'admin' && <AdminView />}
