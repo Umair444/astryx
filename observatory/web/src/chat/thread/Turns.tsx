@@ -4,7 +4,7 @@ import { agentColor, displayName, fmtDay, fmtTime } from '../../api'
 import { humanName, isHuman, type Msg, type Step } from '../../types'
 import { placeHuman } from './sides'
 import AgentFace from '../../components/AgentFace'
-import Prose from './Prose'
+import Prose, { HumanText } from './Prose'
 import { embeds, parts, PROJECT_BLOCK, stripEmbeds, type Turn as WTurn, type Work } from '../model'
 import { InlineFile } from './Inline'
 import { inlineParts } from './flow'
@@ -283,7 +283,7 @@ function Mine({ m, to, by = null, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to:
         {!ch && <div className={long && !more ? 'max-h-[11.5em] overflow-hidden [mask-image:linear-gradient(#000_70%,transparent)]' : ''}>
           {ask ? text : flow.map((p, i) => ('embed' in p
             ? <InlineFile key={`f:${p.embed.path}`} e={p.embed} from={m.from} msg={m} onOpen={onOpenFile} />
-            : <div key={`t:${i}`}>{p.text}</div>))}
+            : <HumanText key={`t:${i}`} text={p.text} />))}
         </div>}
         {long && <button onClick={() => setMore((x) => !x)} className="mt-1 text-[12px] text-ink-mute hover:text-ink">{more ? 'Show less' : 'Show all'}</button>}
         {files.length > 0 && <div className={`${text || ch ? 'mt-2' : ''} flex flex-wrap gap-1.5`}>{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} msg={m} onOpen={onOpenFile} />)}</div>}

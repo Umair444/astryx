@@ -68,13 +68,24 @@
 .ws-prose pre code { background: none; border: 0; padding: 0; }
 /* a fenced block (thread/code.ts): the language and Copy on a bar, the code under it; lines and indentation kept,
    long lines scroll sideways inside the block, never the page */
-.ws-prose .ws-code { margin: .7em 0; border: 1px solid var(--t-line); border-radius: 12px; background: var(--t-panel); overflow: hidden; }
-.ws-prose .ws-code-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 4px 12px; border-bottom: 1px solid var(--t-line); background: var(--t-panel2); }
-.ws-prose .ws-code-lang { font-family: var(--font-mono); font-size: 11px; letter-spacing: .02em; color: var(--t-mute); text-transform: lowercase; }
-.ws-prose .ws-code-copy { font: 500 11.5px/1 "Inter Variable", Inter, system-ui, sans-serif; color: var(--t-dim); padding: 5px 9px; border-radius: 7px; border: 1px solid transparent; background: none; cursor: pointer; }
-.ws-prose .ws-code-copy:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 6%, transparent); border-color: var(--t-line); }
-.ws-prose .ws-code-copy:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 1px; }
-.ws-prose .ws-code pre { margin: 0; border: 0; border-radius: 0; background: none; white-space: pre; tab-size: 4; }
+.ws-prose .ws-cb { margin: .7em 0; border: 1px solid #23262d; border-radius: 12px; background: #0e1014; color: #e6e8ec; overflow: hidden; }
+.ws-prose .ws-cb-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 4px 12px; border-bottom: 1px solid #23262d; background: #16191f; }
+.ws-prose .ws-cb-lang { font-family: var(--font-mono); font-size: 11px; letter-spacing: .02em; color: #9aa1ad; text-transform: lowercase; }
+.ws-prose .ws-cb-copy { font: 500 11.5px/1 "Inter Variable", Inter, system-ui, sans-serif; color: #b9bfca; padding: 5px 9px; border-radius: 7px; border: 1px solid transparent; background: none; cursor: pointer; }
+.ws-prose .ws-cb-copy:hover { color: #fff; background: rgba(255, 255, 255, .07); border-color: #2f333b; }
+.ws-prose .ws-cb-copy:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 1px; }
+.ws-prose .ws-cb pre { margin: 0; border: 0; border-radius: 0; background: none; color: inherit; white-space: pre; tab-size: 4; }
+/* a human's own words as markdown (thread/Prose.tsx HumanText): the bubble's size and colour, its line breaks kept by
+   the parser (breaks: true), so the bubble's pre-wrap must not double them */
+.ws-prose.ws-prose-human { font-size: inherit; line-height: inherit; color: inherit; white-space: normal; }
+.ws-prose.ws-prose-human .ws-cb { max-width: 100%; }
+/* the block is dark in both themes, so its colours are its own (a VS Code-dark-like set), not the theme tokens */
+.ws-cb .hljs-keyword, .ws-cb .hljs-built_in, .ws-cb .hljs-selector-tag, .ws-cb .hljs-literal, .ws-cb .hljs-type { color: #c792ea; }
+.ws-cb .hljs-string, .ws-cb .hljs-regexp, .ws-cb .hljs-template-tag, .ws-cb .hljs-addition { color: #c3e88d; }
+.ws-cb .hljs-number, .ws-cb .hljs-symbol, .ws-cb .hljs-bullet { color: #f78c6c; }
+.ws-cb .hljs-comment, .ws-cb .hljs-quote, .ws-cb .hljs-meta { color: #697098; font-style: italic; }
+.ws-cb .hljs-title, .ws-cb .hljs-title.function_, .ws-cb .hljs-section, .ws-cb .hljs-name, .ws-cb .hljs-attr { color: #82aaff; }
+.ws-cb .hljs-variable, .ws-cb .hljs-params, .ws-cb .hljs-property { color: #e6e8ec; }
 .ws-prose a { color: var(--t-accent2); text-decoration: underline; text-underline-offset: 2px; }
 /* an answer's provenance line (thread/provenance.ts): a footer, not prose — small, muted, under a short hairline */
 .ws-source { display: flex; gap: 7px; align-items: flex-start; margin-top: 14px; padding-top: 9px; max-width: 680px; position: relative;

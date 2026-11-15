@@ -5,6 +5,12 @@ import { startDictation, stopDictation, useDictation } from '../dictate'
 import { mentions, upload, type McpTool, type Skill, type Uploaded } from '../model'
 import { I } from '../icons'
 import { touchFirst } from '../shell/phone'
+import { expandPasteTokens, pasteToken } from './code'
+
+const PASTE_LINES = 12, PASTE_CHARS = 1500          // a paste this long folds into a token (code.ts pasteToken)
+const PASTES = new Map<number, string>()             // this tab's pastes, by token number
+let pasteSeq = 0
+const expandPastes = (text: string) => expandPasteTokens(text, PASTES)
 
 /* The composer (plan-11884 C3; restyled for the workspace after canvas's Composer + Home). Everything is a key:
      Enter sends, Shift+Enter breaks a line, ↑ in an empty box brings back your last message,
@@ -74,6 +80,18 @@ export default forwardRef<ComposerHandle, {
   const fileIn = useRef<HTMLInputElement>(null)
   const dict = useDictation()
 
+  /* A LONG PASTE (owner 11-15, the way Claude Code does it): it sits in the box as one token, "[Pasted text #2 +40
+     lines]", so the box stays readable, and goes out whole on send: code fenced (code.ts fencePaste), anything else as
+     pasted. Delete the token and the paste goes with it. The text lives in PASTES (this tab), keyed by its number. */
+  function onPasteText(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const t = e.clipboardData.getData('text/plain')
+    const n = t.split('\n').length
+    if (n < PASTE_LINES && t.length < PASTE_CHARS) return       // short: it types in like anything else
+    e.preventDefault()
+    const id = ++pasteSeq
+    PASTES.set(id, t)
+    insert(`${pasteToken(id, n)}\n`)
+  }
   const insert = (s: string) => {
     const el = box.current
     if (!el) { setText((t) => t + s); return }
@@ -165,7 +183,7 @@ export default forwardRef<ComposerHandle, {
     setBusy(true); setErr('')
     try {
       const sentFrom = owner
-      await onSend(text.trim(), files, to)
+      await onSend(expandPastes(text).trim(), files, to)
       keepDraft(sentFrom, ''); FILES.delete(sentFrom)     // sent: that conversation's draft is spent, even if we moved on
       if (ownerRef.current === sentFrom) { setText(''); setFiles([]) }
     } catch (e) { setErr(String((e as Error).message ?? e)) } finally { setBusy(false) }
@@ -230,7 +248,7 @@ export default forwardRef<ComposerHandle, {
           onChange={(e) => { setText(e.target.value); setMenuOff(false); setPicker(false); setErr('') }}
           onKeyDown={onKey}
           onBlur={() => setPicker(false)}
-          onPaste={(e) => { const fs = Array.from(e.clipboardData.files); if (fs.length) { e.preventDefault(); addFiles(fs) } }}
+          onPaste={(e) => { const fs = Array.from(e.clipboardData.files); if (fs.length) { e.preventDefault(); addFiles(fs) } else onPasteText(e) }}
           placeholder={hint}
           className={`block w-full resize-none bg-transparent px-4 outline-none text-ink placeholder:text-ink-mute ${hero ? 'pt-4 pb-1 text-[17px] leading-[1.55]' : 'pt-3.5 pb-1 text-[15px] leading-relaxed'}`} />
         {(live || dict.phase === 'connecting') && (
