@@ -2,8 +2,8 @@
 """astryx · usage hook — every wake tells the agent what it is carrying and what the org
 has left. UserPromptSubmit: stdout is injected alongside the prompt.
 
-ONE LINE OF NUMBERS, NO ADVICE (owner ruling 2026-08-21): context load + the org's plan
-gauges, and nothing else. The agent is intelligent; given "5h 99%" it will deprioritize by
+FACTS, NO ADVICE (owner ruling 2026-08-21): context load + how tired the org is (the plan
+gauges read as a forecast: astryx.econ.energy; the raw gauges when no feeling is known), and nothing else. The agent is intelligent; given "5h 99%" it will deprioritize by
 itself — an appended instruction would be the org second-guessing its own minds. This is
 proprioception, not supervision.
 
@@ -56,6 +56,7 @@ try:
     plan = ""
     high = 0
     econ_line = ""
+    energy_line = ""
     try:
         import psycopg
         sys.path.insert(0, REPO)
@@ -80,6 +81,19 @@ try:
                 plan = (f" · plan 5h {g[0]:.0f}%"
                         + (f" (resets {reset}Z)" if reset else "")
                         + (f" · 7d {g[1]:.0f}%" if g[1] is not None else ""))
+            # ── [energy]: how tired the org is, as one fact (astryx.econ.energy; owner 11-15: "humans don't know what
+            # 60% is, they get tired"). It replaces the two raw gauges when the feeling is known; arithmetic on one kept
+            # row and the gauge read above, never an aggregate. Its own fail-open try.
+            try:
+                from astryx.econ import energy as _energy
+                f = _energy.feel(conn, relearn_after_h=None)
+                if f.get("known"):
+                    last = conn.execute(f"SELECT {_energy.BILL} FROM turns WHERE agent=%s ORDER BY id DESC LIMIT 1",
+                                        (agent,)).fetchone() if agent else None
+                    energy_line = _energy.line(f, _energy.mine(f, agent, last[0] if last else None))
+                    plan = ""
+            except Exception:
+                conn.rollback()
             # ── [econ] line: the v2 MIRROR (goal 4227 S2) — this agent's OWN tools' use by
             # other agents, one precomputed econ row read (never an aggregate in the per-prompt
             # prompt budget), version-gated, no rank. Its OWN fail-open try — a meter must
@@ -118,6 +132,8 @@ try:
               f"{assumed}{limit // 1000}k){plan}")
     elif plan:
         print(f"[usage]{plan}")
+    if energy_line:
+        print(energy_line)
     if econ_line:
         print(econ_line)
 except Exception:

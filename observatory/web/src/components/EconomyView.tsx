@@ -1263,16 +1263,14 @@ function PlaygroundTab({ d }: { d: EconDissipative }) {
 
 /* ── the tabbed Economy panel — the org as a measured dissipative system ───────────── */
 
+/* The dissipative tabs (Thermo, Market, Productivity, Integrity, Playground) are no longer offered (owner 11-15: "the
+   econ system … needs a better design"): they scored value as goals closed per token, the econ table they read holds
+   no row, and the org's economy is now its energy and its mind. Their code goes with src/astryx/econ's old half. */
 const TABS = [
-  { id: 'mind', label: 'Mind' },
-  { id: 'usage', label: 'Usage' },
-  { id: 'thermo', label: 'Thermo' },
-  { id: 'market', label: 'Market' },
-  { id: 'productivity', label: 'Productivity' },
-  { id: 'integrity', label: 'Integrity' },
-  { id: 'playground', label: 'Playground' },
+  { id: 'mind', label: 'Mind and energy' },
+  { id: 'usage', label: 'Spending' },
 ] as const
-type TabId = (typeof TABS)[number]['id']
+type TabId = (typeof TABS)[number]['id'] | 'thermo' | 'market' | 'productivity' | 'integrity' | 'playground'
 
 export default function EconomyView() {
   const [econ, setEcon] = useState<Economy | null>(null)

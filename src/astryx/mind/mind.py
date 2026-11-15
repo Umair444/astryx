@@ -10,7 +10,7 @@ autopoiesis." Design: homes/seed/mind/DESIGN.md. The loop, each step a function 
                          that keeps waking it for nothing; the same ask again
                surprise  something that did not go as it expected          (noted by the agent, in the moment)
                wonder    a question it asked itself                         (noted by the agent, in the moment)
-  WANT       itches build PRESSURE. An agent that is fed (the org has energy, nobody is waiting on it, it is idle)
+  WANT       itches build PRESSURE. An agent that is free (nobody is waiting on it, it is idle)
              and whose pressure is high is woken by ITS OWN strongest itch, the instances laid side by side, across
              agents. The wake is not a task: it may follow another curiosity, or nothing.
   THINK      Poincaré's cycle: prepare (the packet), incubate (free), name it in ONE thought, verify. The check is
@@ -19,12 +19,14 @@ autopoiesis." Design: homes/seed/mind/DESIGN.md. The loop, each step a function 
              it came from and the insights it builds on. The org hears of it (org-news); a retired one leaves an
              epitaph so it isn't thought again (SkillSmith).
   RECOGNISE  recall(words) surfaces what the org already understands at the moment of need (the tool nudge reads it).
-  LIVE       homeostasis: play only when fed; fast when energy is low; an itch that yields nothing backs off, each
+  LIVE       homeostasis: the org's TIREDNESS (astryx.econ.energy: what it will need before its limits reset over
+             what is left) bends every itch's pull and never gates it: rested, all of them pull; tired, curiosity
+             fades and what would give energy back keeps pulling. An itch that yields nothing backs off, each
              fruitless think doubling the wait (Herrmann & Schmidhuber: the chance of progress falls with stagnation),
              and is dropped after MAX_THINKS.
 
 ENERGY IS A BOUND, NEVER THE GOAL: the owner tried token minimisation and it made no ideas (thrift rewards doing less;
-thinking costs energy up front). The org must not starve, and when it is fed its surplus is FOR thinking.
+thinking costs energy up front). The org must not starve, and what it would leave unused at a reset is FOR thinking.
 VALUE IS INTERNAL: nothing here asks whether a human accepted anything. The org's own measures are its HEAT (how much
 of its doing is hand-repetition it has already felt) and what it has understood (insights alive, used by others, built
 upon). Triggers are senses: a watcher that wakes an agent for nothing is itself tedium, so the agent feels it.
@@ -54,6 +56,7 @@ import re
 import sys
 
 from astryx import config, orgs, paths
+from astryx.econ import energy as E
 
 DAYS = 7                      # the window an agent's feelings are read from
 TOOL_N = 12                   # a tool called by hand this often in the window is tedium
@@ -64,7 +67,6 @@ PRESSURE = 6.0                # an agent wakes itself above this
 IDLE_MIN = 20                 # …after this many idle minutes
 REST_H = 6                    # an agent thinks at most once in this many hours; an itch's wait doubles per think
 MAX_THINKS = 4                # an itch that yielded nothing this many times is dropped
-ENERGY_7D, ENERGY_5H = 70, 60  # the org is FED below these (percent of the token caps); above, it fasts
 KINDS = ("tedium", "surprise", "wonder")
 WHAT = ("tool", "concept", "method", "law")
 # tools that are the medium of work, not work an agent repeats by hand
@@ -288,12 +290,29 @@ def feel(c) -> dict:
 
 
 def energy(c) -> dict:
-    """The org's energy: the newest reading of the token caps (percent used). Fed = below both lines."""
-    r = c.execute("""SELECT usage_seven_day_pct AS d7, usage_five_hour_pct AS h5 FROM turns
-                     WHERE usage_seven_day_pct IS NOT NULL ORDER BY id DESC LIMIT 1""").fetchone() or {}
-    d7, h5 = r.get("d7"), r.get("h5")
-    return {"seven_day_pct": d7, "five_hour_pct": h5,
-            "fed": d7 is not None and h5 is not None and d7 < ENERGY_7D and h5 < ENERGY_5H}
+    """How tired the org is (astryx.econ.energy): what it will need before its limits reset over what is left. A
+    feeling every reader bends with, never a line to be under (owner 11-15: "nothing should be a switch")."""
+    return E.feel(c)
+
+
+def burn(c) -> dict:
+    """Each agent's usual cost of one tool step and of one turn in the window (tokens): what a repetition burns."""
+    rows = c.execute(f"""SELECT t.agent, sum({E.BILL})::float AS tok, count(*) AS turns,
+            (SELECT count(*) FROM steps s WHERE s.agent = t.agent AND s.kind = 'tool'
+                AND s.ts > now() - make_interval(days => {DAYS})) AS steps
+        FROM turns t WHERE t.started_at > now() - make_interval(days => {DAYS}) GROUP BY 1""").fetchall()
+    return {r["agent"]: {"step": (r["tok"] or 0) / max(r["steps"], 1), "turn": (r["tok"] or 0) / max(r["turns"], 1)} for r in rows}
+
+
+def payback(itch: dict, b: dict, think: float) -> float:
+    """What thinking about this itch could give back, in thinks: the tokens its repetitions burned in the window over
+    one think's cost. A wake for nothing or a repeated ask is a whole turn each time, a repeated call a step. A noted
+    surprise or wonder gives none back: it is pure curiosity, the first thing a tired org puts down."""
+    if itch.get("source") == "noted" or not think:
+        return 0.0
+    per = b.get(itch["agent"]) or {}
+    unit = per.get("turn" if itch["key"].split(":")[0] in ("sense", "ask") else "step", 0.0)
+    return (itch.get("n") or 0) * unit / think
 
 
 def drives(c) -> list[dict]:
@@ -358,7 +377,7 @@ def recall(c, words: str, limit: int = 3) -> list[dict]:
         FROM {_t('insight')} WHERE state = 'alive' ORDER BY hit DESC, id DESC LIMIT %s""", (ws, limit)).fetchall()
 
 
-def packet(c, agent: str, itch: dict) -> str:
+def packet(c, agent: str, itch: dict, e: dict | None = None, back: float = 0.0) -> str:
     """The wake: the agent's own itch, its instances side by side, what the org already understands near it, and the
     freedom to do something else. Never a task."""
     ev = itch["evidence"] if isinstance(itch["evidence"], list) else json.loads(itch["evidence"] or "[]")
@@ -368,8 +387,11 @@ def packet(c, agent: str, itch: dict) -> str:
     known = recall(c, itch["what"] + " " + " ".join(e.get("line", "") for e in ev[:3]))
     known = [k for k in known if k["hit"] >= 2]
     me = f"{sys.executable} {os.path.realpath(__file__)}"
-    out = [f"[mind] Nobody is waiting on you and the org has energy. This time is yours; it is not a task.",
-           "", f"Your strongest itch ({itch['kind']}, #{itch['id']}): {itch['what']}.{also}", "Side by side:", *lines]
+    how = f" The org is {e['say']}." if e and e.get("known") else ""
+    # what the repetition cost, as a fact: a tired org is drawn to what gives energy back
+    cost = (f" These repetitions took about {back:.0f}× what one think costs this week." if back >= 2 else "")
+    out = [f"[mind] Nobody is waiting on you.{how} This time is yours; it is not a task.",
+           "", f"Your strongest itch ({itch['kind']}, #{itch['id']}): {itch['what']}.{also}{cost}", "Side by side:", *lines]
     gone = c.execute(f"""SELECT agent, why FROM {_t('itch')} WHERE key = %s AND agent <> %s AND state = 'dropped' AND thinks > 0
                          AND why IS NOT NULL ORDER BY last_think DESC NULLS LAST LIMIT 2""", (itch["key"], agent)).fetchall()
     if gone:
@@ -392,35 +414,38 @@ def packet(c, agent: str, itch: dict) -> str:
 
 
 def want(c, say=None, dry: bool = False) -> dict:
-    """Let ONE agent that wants to think wake itself: fed org, idle agent, nobody waiting, pressure over the line, not
+    """Let ONE agent that wants to think wake itself: idle agent, nobody waiting, the pull its itches keep at the org's tiredness over the line, not
     thought within REST_H, and an itch whose back-off has passed. `say(to, body)` delivers the wake (the pulse's)."""
     e = energy(c)
     y = yields(c)
-    if not e["fed"]:
-        return {"woke": None, "why": f"fasting: energy at {e['seven_day_pct']}% of the week, {e['five_hour_pct']}% of 5 h"}
+    if not e.get("known"):                 # no reading is unknown, never rested: nobody starts work of its own blind
+        return {"woke": None, "why": e.get("say", "energy unknown")}
+    b = burn(c)
+    # TIREDNESS BENDS THE PULL, it never gates it: an itch keeps ease(tired, payback) of its strength. Rested, every
+    # itch pulls in full. Tired, curiosity fades and what would give energy back keeps pulling: the org turns to its waste.
+    pull = lambda i: i["strength"] / 2 ** i["thinks"] * E.ease(e["tired"], payback(i, b, e["think"]))
     for d in drives(c):
         if not is_agent(d["agent"]) or d["idle_min"] is None:      # not an agent of this org, or no sign of life: never woken
             continue
-        if d["busy"] or d["waiting"] or d["idle_min"] < IDLE_MIN or d["pressure"] < PRESSURE:
+        if d["busy"] or d["waiting"] or d["idle_min"] < IDLE_MIN:
             continue
         if d["thought_h_ago"] is not None and d["thought_h_ago"] < REST_H:
             continue
         ready = c.execute(f"""SELECT *, {SENSE} AS sense FROM {_t('itch')} WHERE agent = %s AND state = 'open'
             AND (last_think IS NULL OR last_think < now() - make_interval(hours => ({REST_H} * power(2, thinks))::int))""",
             (d["agent"],)).fetchall()
-        if not ready:
+        if not ready or sum(pull(i) for i in ready) < PRESSURE:
             continue
         # an itch another agent already let go counts half: its reason travels with the wake
         gone = {r["key"] for r in c.execute(f"SELECT DISTINCT key FROM {_t('itch')} WHERE state = 'dropped' AND thinks > 0")}
-        itch = max(ready, key=lambda i: i["strength"] / 2 ** i["thinks"] * y.get(i["sense"], {}).get("yield", 0.5)
-                   * (0.5 if i["key"] in gone else 1))
-        body = packet(c, d["agent"], itch)
+        itch = max(ready, key=lambda i: pull(i) * y.get(i["sense"], {}).get("yield", 0.5) * (0.5 if i["key"] in gone else 1))
+        body = packet(c, d["agent"], itch, e, payback(itch, b, e["think"]))
         if not dry:
             c.execute(f"UPDATE {_t('itch')} SET thinks = thinks + 1, last_think = now() WHERE id = %s", (itch["id"],))
             if say:
                 say(d["agent"], body)
         return {"woke": d["agent"], "itch": itch["id"], "what": itch["what"], "body": body}
-    return {"woke": None, "why": "nobody both wants to think and is free to"}
+    return {"woke": None, "why": f"nobody both wants to think and is free to ({e['word']})"}
 
 
 def _wake(c, to: str, body: str) -> None:
@@ -524,7 +549,7 @@ def state(c) -> dict:
             (SELECT count(*) FROM {_t('insight')} j WHERE i.id = ANY(j.builds_on)) AS built_upon
         FROM {_t('insight')} i ORDER BY i.id DESC LIMIT 200""").fetchall()
     itches = c.execute(f"""SELECT id, agent, kind, what, n, also, round(strength::numeric, 1)::float AS strength, state, thinks,
-            last_think, why, insight_id, source, evidence FROM {_t('itch')}
+            last_think, why, insight_id, source, evidence, key FROM {_t('itch')}
         ORDER BY (state = 'open') DESC, strength / power(2, thinks) DESC LIMIT 120""").fetchall()
     # ENERGY IS A BOUND, NEVER THE GOAL (owner 11-15: minimising tokens was tried and made no ideas: thrift rewards
     # doing less, and thinking costs energy up front). What is shown is the INVESTMENT: the share of the window's energy
@@ -535,12 +560,19 @@ def state(c) -> dict:
         WHERE t.started_at > now() - make_interval(days => {DAYS})""").fetchone()
     trials = c.execute(f"""SELECT id, agent, {SENSE} AS sense, what, state, thinks, last_think, why, insight_id FROM {_t('itch')}
         WHERE thinks > 0 ORDER BY last_think DESC LIMIT 40""").fetchall()
-    return {"energy": energy(c), "drives": drives(c), "itches": itches, "insights": ins, "yields": yields(c), "trials": trials,
+    e, b = energy(c), burn(c)
+    for i in itches:                       # what each open itch would give back, and the pull it keeps at this tiredness
+        i["payback"] = round(payback(i, b, e.get("think") or E.THINK), 1)
+        i["ease"] = round(E.ease(e["tired"], i["payback"]), 2) if e.get("known") else None
+    dr = drives(c)
+    for d in dr:                           # the pull an agent's open itches keep at this tiredness (what want() weighs)
+        d["pull"] = round(sum(i["strength"] / 2 ** i["thinks"] * (i["ease"] if i["ease"] is not None else 0)
+                              for i in itches if i["agent"] == d["agent"] and i["state"] == "open"), 1)
+    return {"energy": e, "drives": dr, "itches": itches, "insights": ins, "yields": yields(c), "trials": trials,
             "thinking": {"tokens": int(th["think"]), "total": int(th["total"]), "wakes": th["wakes"],
                          "share": round(float(th["think"]) / float(th["total"]), 4) if th["total"] else 0.0},
             "heat": {"hand_calls": hand, "felt_as_tedium": int(felt), "share": round(felt / hand, 3) if hand else 0.0, "days": DAYS},
-            "rules": {"pressure": PRESSURE, "idle_min": IDLE_MIN, "rest_h": REST_H, "max_thinks": MAX_THINKS,
-                      "fed_below": {"seven_day_pct": ENERGY_7D, "five_hour_pct": ENERGY_5H}}}
+            "rules": {"pressure": PRESSURE, "idle_min": IDLE_MIN, "rest_h": REST_H, "max_thinks": MAX_THINKS}}
 
 
 def main(argv=None) -> int:

@@ -1133,7 +1133,8 @@ run "chat: tables and figures written out" "$PY" tests/test_chat_tables.py
 run "chat: code in an answer, a human's markdown, long pastes" "$PY" tests/test_chat_code.py
 run "chat: rich copy (formatted for a mail client, clean words for a plain editor)" "$PY" tests/test_chat_clip.py
 # the mind (owner 11-15): it wakes only an agent that is free to think, and keeps numbers out of what it quotes
-run "mind: who may be woken (liveness, target, fasting, waiting, rest, one per tick); numbers masked by shape" "$PY" tests/test_mind.py
+run "mind: who may be woken (liveness, target, tiredness bends and never gates, waiting, rest, one per tick); numbers masked by shape" "$PY" tests/test_mind.py
+run "energy: tiredness is need over what is left, a forecast with no threshold; learned from the org's own history" "$PY" tests/test_energy.py
 run "chat: the live line follows any human's ask" "$PY" tests/test_chat_pending.py
 run "chat: the client never spells the viewer as the literal 'owner'" "$PY" tests/test_chat_viewer_lint.py
 run "chat: a chat's live progress carries only the work it asked for" "$PY" tests/test_progress_scope.py

@@ -8,7 +8,7 @@ agents are a fixed set here (mind.is_agent is seated): a, b are agents; nobody e
   W1 LIVENESS IS THE STEPS': an agent with a fresh step and an old turn end is at work, never woken; with no fresh step it is
   W2 THE TARGET IS AN AGENT: pressure under `owner`, an unknown name or a personal-tier agent never wakes; a note as one is refused
   W3 A NUMBER BY ITS SHAPE: digits typed with dashes, spaces or brackets are masked; times, counts and versions are not
-  W4 FASTING: no energy reading, or a reading over either line, wakes nobody
+  W4 TIREDNESS BENDS, NEVER GATES: no reading wakes nobody; a tired org puts curiosity down and still thinks about what gives energy back
   W5 SOMEONE WAITING: an unanswered human message to the agent (within a day) wakes nobody; once answered, it may wake
   W6 REST AND BACK-OFF: the same agent isn't woken twice within REST_H; an itch's wait doubles with each think
   W7 ONE WAKE PER TICK, across agents
@@ -40,6 +40,9 @@ def arm(name, ok, detail=""):
 
 
 M.is_agent = lambda n: n in ("a", "b")
+# the org's feeling is seated (tests/test_energy.py pins how it is read): rested unless an arm says otherwise
+FEEL = {"known": True, "tired": 0.0, "word": "rested", "say": "rested", "think": 100_000.0}
+M.energy = lambda c: dict(FEEL)
 os.environ.pop("ASTRYX_AGENT", None)
 
 print("W3 a number by its shape")
@@ -77,7 +80,7 @@ def main():
                 RETURNING id""", (agent, key, strength, thinks, think_h_ago, think_h_ago)).fetchone()["id"]
 
         said = []
-        want = lambda: M.want(c, lambda to, body: said.append(to))
+        want = lambda dry=False: M.want(c, lambda to, body: said.append(to), dry)
 
         print("W1 liveness is the steps'")
         reset(); turn("a", 60); step("a", 1); itch("a")
@@ -102,13 +105,24 @@ def main():
         except SystemExit:
             arm("W2 a note as a non-agent is refused", True)
 
-        print("W4 fasting")
-        reset(); c.execute("INSERT INTO turns (agent, started_at, ended_at) VALUES ('a', now() - interval '65 minutes', now() - interval '60 minutes')"); itch("a")
+        print("W4 tiredness bends, never gates")
+        reset(); turn("a", 60); itch("a")
+        FEEL.update(known=False, say="energy unknown")
         arm("W4 no energy reading: nobody wakes", want()["woke"] is None)
-        reset(); turn("a", 60, d7=M.ENERGY_7D + 1); itch("a")
-        arm("W4 the week's line crossed: nobody wakes", want()["woke"] is None)
-        reset(); turn("a", 60, h5=M.ENERGY_5H + 1); itch("a")
-        arm("W4 the 5-hour line crossed: nobody wakes", want()["woke"] is None)
+        FEEL.update(known=True, tired=1.2, word="tired")
+        arm("W4 a tired org: an itch that gives nothing back (strength 20) does not wake its agent", want()["woke"] is None)
+        c.execute(f"UPDATE {T('itch')} SET strength = 400")
+        arm("W4 …and a burning one still does: no line stops it", want(dry=True)["woke"] == "a")
+        # the same strength-20 itch, now with 40 repetitions that each cost a real step: it gives energy back, so it keeps its pull
+        c.execute(f"UPDATE {T('itch')} SET strength = 20, n = 40")
+        c.execute("UPDATE turns SET tokens_in = 0, tokens_out = 2000000 WHERE agent = 'a'")
+        for _ in range(4):
+            step("a", 600)
+        arm("W4 tired, and the itch's repetitions burned many thinks' worth: it wakes (scarcity turns the org to its waste)",
+            want(dry=True)["woke"] == "a", (M.burn(c), M.payback({"agent": "a", "key": "tool:x", "n": 40, "source": "felt"}, M.burn(c), FEEL["think"])))
+        FEEL.update(tired=0.0, word="rested")
+        c.execute(f"UPDATE {T('itch')} SET n = 1")
+        arm("W4 rested: the plain strength-20 itch wakes", want(dry=True)["woke"] == "a")
 
         print("W5 someone waiting")
         reset(); turn("a", 60); itch("a")

@@ -17,21 +17,22 @@ interface Evidence { agent?: string; at?: string; calls?: number; line?: string 
 interface Itch {
   id: number; agent: string; kind: 'tedium' | 'surprise' | 'wonder'; what: string; n: number; also: string[]
   strength: number; state: 'open' | 'resolved' | 'dropped'; thinks: number; last_think: string | null; why: string | null
-  insight_id: number | null; source: string; evidence: Evidence[]
+  insight_id: number | null; source: string; evidence: Evidence[]; payback?: number; ease?: number | null
 }
 interface Insight {
   id: number; name: string; thought: string; kind: string; lives: string; author: string; born: string
   from_itch: number[]; builds_on: number[]; verified: string; state: 'alive' | 'retired'; epitaph: string | null
   uses: number; used_by_others: number; built_upon: number
 }
-interface Drive { agent: string; pressure: number; itches: number; busy: boolean; idle_min: number | null; waiting: number; thought_h_ago: number | null }
+interface Win { used: number; left: number; need: number; spare: number; resets_at: string; tired: number; dry_at: string | null }
+interface Drive { agent: string; pull?: number; pressure: number; itches: number; busy: boolean; idle_min: number | null; waiting: number; thought_h_ago: number | null }
 interface Mind {
-  energy: { seven_day_pct: string | number | null; five_hour_pct: string | number | null; fed: boolean }
+  energy: { known?: boolean; tired?: number; word?: string; say?: string; binding?: 'h5' | 'd7'; windows?: Partial<Record<'h5' | 'd7', Win>>; hourly?: number[] }
   drives: Drive[]; itches: Itch[]; insights: Insight[]
   yields: Record<string, { trials: number; kept: number; let_go: number; open: number; yield: number }>
   heat: { hand_calls: number; felt_as_tedium: number; share: number; days: number }
   thinking: { tokens: number; total: number; wakes: number; share: number }
-  rules: { pressure: number; idle_min: number; rest_h: number; max_thinks: number; fed_below: { seven_day_pct: number; five_hour_pct: number } }
+  rules: { pressure: number; idle_min: number; rest_h: number; max_thinks: number }
 }
 
 /* the mind's senses, in words: each wake is a trial of the sense that raised it (mind.py yields) */
@@ -49,13 +50,92 @@ const KIND: Record<Itch['kind'], { label: string; tone: string }> = {
 /* why an agent is, or isn't, free to think right now: the rule that holds it, in words */
 function mood(d: Drive, m: Mind): { word: string; tone: 'working' | 'awake' | 'asleep' } {
   if (d.thought_h_ago !== null && d.thought_h_ago < 1) return { word: 'thinking now', tone: 'working' }
-  if (!m.energy.fed) return { word: 'fasting: the org is low on energy', tone: 'asleep' }
+  if (!m.energy.known) return { word: 'waiting: the org can\'t read its energy', tone: 'asleep' }
   if (d.busy) return { word: 'at work', tone: 'working' }
   if (d.waiting) return { word: 'someone is waiting on it', tone: 'awake' }
-  if (d.pressure < m.rules.pressure) return { word: 'content', tone: 'asleep' }
+  if ((d.pull ?? d.pressure) < m.rules.pressure) return { word: d.pressure >= m.rules.pressure ? 'too tired for this much curiosity' : 'content', tone: 'asleep' }
   if (d.thought_h_ago !== null && d.thought_h_ago < m.rules.rest_h) return { word: `resting (thought ${d.thought_h_ago} h ago)`, tone: 'awake' }
   if (d.idle_min !== null && d.idle_min < m.rules.idle_min) return { word: 'just finished work', tone: 'awake' }
   return { word: 'wants to think', tone: 'awake' }
+}
+
+/* ENERGY, AS A FEELING (owner 11-15: "humans don't know what 60% is, they get tired"). Tired = what the org will need
+   before a limit resets over what is left in it (astryx.econ.energy). Each limit is one bar: used, what the usual hours
+   ahead will need, and what would go unused at the reset. The day strip is the org's usual burn by hour: the quiet
+   hours are where its own thinking costs least. Nothing switches on any of it. */
+const clock = (iso: string) => {
+  const d = new Date(iso)
+  const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return d.toDateString() === new Date().toDateString() ? t : `${d.toLocaleDateString([], { weekday: 'short' })} ${t}`
+}
+function Energy({ e, thinking }: { e: Mind['energy']; thinking?: Mind['thinking'] }) {
+  if (!e.known) return (
+    <Panel className="p-4">
+      <div className="text-[11px] uppercase tracking-wider text-ink-mute">Energy</div>
+      <div className="mt-1 text-[22px] font-semibold text-ink">Unknown</div>
+      <div className="text-[12.5px] text-ink-dim mt-1">{e.say ?? 'No reading of the limits yet.'} Nobody starts work of its own until there is one.</div>
+    </Panel>
+  )
+  const rows = ([['h5', 'The 5 hours'], ['d7', 'The week']] as const).flatMap(([k, label]) => (e.windows?.[k] ? [{ k, label, w: e.windows[k] as Win }] : []))
+  const hourly = e.hourly ?? []
+  const top = Math.max(1, ...hourly)
+  const off = Math.round(-new Date().getTimezoneOffset() / 60)        // the strip is drawn in the viewer's own hours
+  const local = Array.from({ length: 24 }, (_, h) => hourly[(((h - off) % 24) + 24) % 24] ?? 0)
+  const nowH = new Date().getHours()
+  return (
+    <Panel className="p-4">
+      <div className="flex flex-wrap gap-x-8 gap-y-4">
+        <div className="min-w-[220px] flex-1">
+          <div className="text-[11px] uppercase tracking-wider text-ink-mute">Energy</div>
+          <div className="mt-1 text-[22px] font-semibold text-ink capitalize">{e.word}</div>
+          <div className="text-[12.5px] text-ink-dim mt-1 leading-relaxed">
+            How tired the org is: what it will need before a limit resets, over what is left. Tiredness bends what it does and never stops it.
+            {thinking && <>{' '}{(thinking.share * 100).toFixed(1)}% of this week's energy went to thinking it started itself ({thinking.wakes} wake{thinking.wakes === 1 ? '' : 's'}).</>}
+          </div>
+        </div>
+        <div className="min-w-[260px] flex-[2] flex flex-col gap-3">
+          {rows.map(({ k, label, w }) => {
+            const need = Math.max(0, Math.min(w.left, w.need)), spare = Math.max(0, w.left - w.need)
+            return (
+              <div key={k}>
+                <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
+                  <span className="text-ink">{label}{e.binding === k && rows.length > 1 ? <span className="text-ink-mute"> · the tighter one</span> : null}</span>
+                  <span className="text-ink-dim text-right">
+                    {w.dry_at ? `runs out around ${clock(w.dry_at)}, before its reset at ${clock(w.resets_at)}`
+                      : `about ${Math.round(spare)}% would go unused at the reset, ${clock(w.resets_at)}`}
+                  </span>
+                </div>
+                <div className="mt-1.5 flex h-2.5 w-full overflow-hidden rounded-full bg-deck-3" role="img"
+                  aria-label={`${label}: ${Math.round(w.used)}% used, about ${Math.round(w.need)}% needed before the reset, ${Math.round(spare)}% spare`}>
+                  <div style={{ width: `${w.used}%`, background: 'var(--t-mute)' }} title={`${Math.round(w.used)}% used`} />
+                  <div style={{ width: `${need}%`, background: 'var(--t-warn)' }} title={`about ${Math.round(w.need)}% usually needed before the reset`} />
+                  <div style={{ width: `${spare}%`, background: 'var(--t-good)', opacity: 0.55 }} title={`${Math.round(spare)}% would go unused`} />
+                </div>
+              </div>
+            )
+          })}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-ink-mute">
+            <span><i className="inline-block h-2 w-2 rounded-full mr-1.5 align-middle" style={{ background: 'var(--t-mute)' }} />used</span>
+            <span><i className="inline-block h-2 w-2 rounded-full mr-1.5 align-middle" style={{ background: 'var(--t-warn)' }} />the usual hours ahead will need</span>
+            <span><i className="inline-block h-2 w-2 rounded-full mr-1.5 align-middle" style={{ background: 'var(--t-good)', opacity: 0.55 }} />would go unused</span>
+          </div>
+        </div>
+        {hourly.length === 24 && (
+          <div className="min-w-[240px] flex-1">
+            <div className="text-[12.5px] text-ink">The org's usual day</div>
+            <div className="mt-1.5 flex items-end gap-[2px] h-12" role="img" aria-label="The org's usual energy use by hour of the day">
+              {local.map((v, h) => (
+                <div key={h} className="flex-1 rounded-sm" title={`${String(h).padStart(2, '0')}:00, about ${(v / 1e6).toFixed(1)}M tokens`}
+                  style={{ height: `${Math.max(4, (v / top) * 100)}%`, background: h === nowH ? 'var(--t-accent)' : 'var(--t-mute)', opacity: h === nowH ? 1 : 0.45 }} />
+              ))}
+            </div>
+            <div className="mt-1 flex justify-between text-[11px] text-ink-mute"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>
+            <div className="text-[11.5px] text-ink-mute mt-1">Its quiet hours are when thinking of its own costs least.</div>
+          </div>
+        )}
+      </div>
+    </Panel>
+  )
 }
 
 export default function MindView() {
@@ -82,7 +162,6 @@ export default function MindView() {
   }
   const think = () => act((r) => (r.woke ? `${displayName(String(r.woke))} woke to think: ${String(r.what)}.` : `Nobody woke: ${String(r.why)}.`), '/mind/tick')
 
-  const pct = (v: string | number | null) => (v === null ? '?' : `${Math.round(Number(v))}%`)
   const alive = m?.insights.filter((i) => i.state === 'alive') ?? []
   const openItches = m?.itches.filter((i) => i.state === 'open') ?? []
   const settled = m?.itches.filter((i) => i.state !== 'open') ?? []
@@ -111,7 +190,7 @@ export default function MindView() {
             <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
               <p className="text-[13.5px] text-ink-dim max-w-[760px] leading-relaxed flex-1 min-w-[280px]">
                 Nobody assigns any of this. An itch is something an agent lived through in its own work. Itches build
-                pressure, and an agent that is fed and free wakes itself to think about its strongest one. What it
+                pressure, and an agent that is free wakes itself to think about its strongest one. A tired org puts curiosity down first and keeps thinking about what gives energy back. What it
                 understands, it keeps as one named idea the whole org can use.
               </p>
               {who.owner && (
@@ -124,14 +203,9 @@ export default function MindView() {
             {said && <Panel className="p-3 text-[13px] text-ink flex items-center gap-3"><span className="flex-1" role="status">{said}</span>
               <button onClick={() => setSaid(null)} className="text-ink-mute hover:text-ink text-[12px]">Dismiss</button></Panel>}
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Panel className="p-4">
-                <div className="text-[11px] uppercase tracking-wider text-ink-mute">Energy</div>
-                <div className="mt-1 text-[22px] font-semibold text-ink">{m.energy.fed ? 'Fed' : 'Fasting'}</div>
-                <div className="text-[12.5px] text-ink-dim mt-1">{pct(m.energy.seven_day_pct)} of the week's tokens used, {pct(m.energy.five_hour_pct)} of the 5 hours'.
-                  It thinks freely below {m.rules.fed_below.seven_day_pct}% and {m.rules.fed_below.five_hour_pct}%.
-                  {m.thinking && <>{' '}{(m.thinking.share * 100).toFixed(1)}% of this week's energy went to thinking it started itself ({m.thinking.wakes} wake{m.thinking.wakes === 1 ? '' : 's'}).</>} Energy is a bound, never the goal.</div>
-              </Panel>
+            <Energy e={m.energy} thinking={m.thinking} />
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Panel className="p-4">
                 <div className="text-[11px] uppercase tracking-wider text-ink-mute">Heat</div>
                 <div className="mt-1 text-[22px] font-semibold text-ink">{Math.round(m.heat.share * 100)}%</div>
@@ -245,7 +319,7 @@ export default function MindView() {
                       <span className="shrink-0 text-[12px] text-ink-mute">
                         {i.state === 'resolved' ? `understood: ${insightName(i.insight_id) ?? 'an idea'}`
                           : i.state === 'dropped' ? 'let go'
-                          : i.thinks ? `thought about ${i.thinks}×` : 'not thought about yet'}
+                          : `${(i.payback ?? 0) >= 1 ? `gives back ${Math.round(i.payback ?? 0)}× · ` : ''}${i.thinks ? `thought about ${i.thinks}×` : 'not thought about yet'}`}
                       </span>
                     </button>
                     {open === i.id && (

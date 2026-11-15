@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Oracle: the org's tiredness (src/astryx/econ/energy.py) is a forecast with no threshold in it.
+
+    venv/bin/python tests/test_energy.py
+
+Pure arms on the arithmetic, then a fixture database (this tree's schema.sql; fixture rows only) for what is learned.
+  E1 THE FEELING IS NEED OVER WHAT IS LEFT: the same gauge reads rested before a quiet night and tired before a busy day
+  E2 A RESET CLOSE BY MAKES A NEARLY FULL WEEK'S REMAINDER SPARE; the same gauge a week from its reset is spoken for
+  E3 RUNNING OUT is named with its hour; a window that isn't running is a whole new one
+  E4 NO SWITCH: ease() is smooth and strictly falling in tiredness, strictly rising in payback, 1 when rested
+  E5 UNKNOWN IS NOT RESTED: no gauge or no learned rate gives no feeling
+  E6 LEARNED FROM THE ORG'S OWN HISTORY: the hourly profile leaves self-started thinking out; the rate is gauge points per token
+  E7 the per-prompt line states the feeling and an agent's own heavier-than-usual turn, as facts
+Exit 0 · 1 · 77 (no database).
+"""
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / "src"))
+from astryx.security.sqlguard.estate import gate  # noqa: E402
+gate("test_energy", REPO, deps=("psycopg",), env=False)
+from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
+from astryx.econ import energy as E  # noqa: E402
+
+fails = []
+
+
+def arm(name, ok, detail=""):
+    print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"\n        {str(detail)[:300]}"))
+    if not ok:
+        fails.append(name)
+
+
+NOW = datetime(2026, 1, 5, 18, 0, tzinfo=timezone.utc)          # 18:00 UTC
+HOURLY = [100_000.0] * 24
+for h in range(4, 14):
+    HOURLY[h] = 2_000_000.0                                      # the org's day: 04:00-14:00 UTC; the rest is night
+RATE = 3e-6                                                      # a million tokens moves the gauge 3 points
+iso = lambda d: d.isoformat()
+
+print("E1 need over what is left")
+night = E.window(60, iso(NOW + timedelta(hours=5)), 5, RATE, HOURLY, NOW)
+day = E.window(60, iso(NOW.replace(hour=5) + timedelta(hours=5)), 5, RATE, HOURLY, NOW.replace(hour=5))
+arm("E1 60% used before five quiet hours: rested, most of what is left is spare", night["tired"] < 0.1 and night["spare"] > 35, night)
+arm("E1 the same 60% before five busy hours: it needs more than is left", day["tired"] > 0.7, day)
+
+print("E2 a reset close by")
+wk = 5e-7
+soon = E.window(26, iso(NOW + timedelta(hours=14)), 168, wk, HOURLY, NOW)
+far = E.window(26, iso(NOW + timedelta(days=6)), 168, wk, HOURLY, NOW)
+arm("E2 26% used and the week resets in 14 hours: nearly all of the rest goes unused", soon["tired"] < 0.2 and soon["spare"] > 60, soon)
+arm("E2 26% used with six days to go: the same remainder is mostly spoken for", far["tired"] > 3 * soon["tired"], (soon, far))
+
+print("E3 running out; a window not running")
+dry = E.window(95, iso(NOW.replace(hour=4) + timedelta(hours=5)), 5, RATE, HOURLY, NOW.replace(hour=4))
+arm("E3 it runs out before the reset: tired past 1, and the hour is named, before the reset",
+    dry["tired"] > 1 and dry["dry_at"] and E._when(dry["dry_at"]) < E._when(dry["resets_at"]), dry)
+gone = E.window(95, iso(NOW - timedelta(hours=1)), 5, RATE, HOURLY, NOW)
+arm("E3 a reset already past: a whole new window, nothing used", gone["left"] == 100 and gone["tired"] < 0.1, gone)
+
+print("E4 no switch")
+ts = [i / 50 for i in range(0, 151)]
+es = [E.ease(t) for t in ts]
+arm("E4 rested keeps all of its pull", E.ease(0) == 1.0)
+arm("E4 strictly falling, and never by a jump (no step over 7% between neighbours 0.02 apart)",
+    all(a > b and a - b < 0.07 for a, b in zip(es, es[1:])), max(a - b for a, b in zip(es, es[1:])))
+arm("E4 what gives energy back keeps its pull: rising in payback at every tiredness",
+    all(E.ease(t, 0) < E.ease(t, 1) < E.ease(t, 10) for t in ts[1:]))
+
+print("E5 unknown is not rested")
+arm("E5 no gauge reading: no feeling", E.window(None, None, 5, RATE, HOURLY, NOW) is None)
+arm("E5 no learned rate: no feeling", E.window(50, None, 5, None, HOURLY, NOW) is None)
+
+print("E7 the line")
+f = {"known": True, "say": "rested · the week: 74% left"}
+p = {"usual": {"a": 100_000.0}, "rate": {"d7": 5e-7}}
+arm("E7 a turn at 4x the usual is said, with its share of the week", "4× your usual" in E.line(f, E.mine(p, "a", 400_000)) and "0.2% of the week" in E.mine(p, "a", 400_000),
+    E.line(f, E.mine(p, "a", 400_000)))
+arm("E7 a usual turn says nothing of itself; an unknown feeling prints nothing", E.mine(p, "a", 90_000) == "" and E.line({"known": False}) == "")
+
+
+def main():
+    import psycopg
+    with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c:
+        print("E6 learned from the org's own history")
+        E._t = lambda: 'public."t_energy_pace"'
+        mid = c.execute("INSERT INTO messages (from_agent, from_org, to_agent, intent, thread, body) VALUES ('pulse','local','a','drive','mind','x') RETURNING id").fetchone()[0]
+
+        def turn(h_ago, tok, pct, msg=None):
+            c.execute("""INSERT INTO turns (agent, started_at, ended_at, tokens_in, tokens_out, input_msg_id, usage_snapshot)
+                         VALUES ('a', now() - make_interval(hours => %s), now() - make_interval(hours => %s), 0, %s, %s,
+                                 jsonb_build_object('state', 'fresh', 'fetched_at', (now() - make_interval(hours => %s))::text, 'data', jsonb_build_object('seven_day_utilization', %s::numeric, 'five_hour_utilization', %s::numeric,
+                                   'seven_day_resets_at', (now() + interval '2 days')::text, 'five_hour_resets_at', (now() + interval '2 hours')::text)))""",
+                      (h_ago, h_ago, tok, msg, h_ago, pct, pct * 2))
+        turn(30, 1_000_000, 10); turn(29, 1_000_000, 11); turn(28, 2_000_000, 13); turn(27, 5_000_000, 13, mid)
+        p = E.learn(c)
+        arm("E6 the week's rate: 3 points over the 9M tokens of the span", abs(p["rate"]["d7"] - 3 / 9e6) < 1e-9, p["rate"])
+        arm("E6 the 5-hour rate is learned by itself (6 points)", abs(p["rate"]["h5"] - 6 / 9e6) < 1e-9, p["rate"])
+        arm("E6 the profile leaves the self-started think out (4M counted, not 9M)", abs(sum(p["hourly"]) * min(14, 30 / 24) - 4e6) < 1e3, sum(p["hourly"]))
+        arm("E6 a think's usual cost is the measured one", p["think"] == 5_000_000, p["think"])
+        got = E.pace(c)
+        arm("E6 kept in one row and read back", got and got["rate"] == p["rate"])
+        arm("E5 a reading a day old says nothing of now: unknown, not rested", E.feel(c, relearn_after_h=None)["known"] is False)
+        turn(0, 100_000, 14)
+        fl = E.feel(c, relearn_after_h=None)
+        arm("E6 feel: known, the tighter window binds, a word and a sentence",
+            fl.get("known") and fl["binding"] in ("h5", "d7") and fl["word"] in fl["say"] and fl["tired"] == max(w["tired"] for w in fl["windows"].values()), fl.get("say"))
+
+
+try:
+    main()
+except Exception as e:  # noqa: BLE001
+    import traceback
+    traceback.print_exc()
+    fails.append(f"crashed: {type(e).__name__}")
+print(f"\n{'ALL PASS' if not fails else f'FAILED ({len(fails)})'}: tiredness is a forecast, and nothing switches on it")
+sys.exit(1 if fails else 0)

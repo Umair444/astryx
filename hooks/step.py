@@ -874,6 +874,19 @@ def main():
             else:
                 cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool_done',%s,%s)",
                             (agent, f"{tool} done", meta))
+            # EFFORT, FELT (owner 11-15: "agents should know they are consuming too much through econ to stop. no switch
+            # or threshold"): at each doubling of its usual turn the agent is told what this turn has taken and how the
+            # org feels; it decides. The step is committed first, so nothing here can cost it. Fail-open.
+            conn.commit()
+            if not sub and not strip and h.get("transcript_path"):
+                try:
+                    from astryx.econ import energy as _energy
+                    said = _energy.during(conn, agent, h["transcript_path"])
+                    if said:
+                        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                                                 "additionalContext": said}}), flush=True)
+                except Exception:  # noqa: BLE001
+                    pass
 
         elif ev == "Stop":
             launch_close(agent)                        # the turn ended: no launch of it is still in flight
