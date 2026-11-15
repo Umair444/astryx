@@ -6,7 +6,8 @@ compresses information, generates ideas, stops and thinks; not a workhorse doing
 autopoiesis." Design: homes/seed/mind/DESIGN.md. The loop, each step a function here:
 
   FEEL       an ITCH is something an agent's own log shows it lived through, computed, never assigned:
-               tedium    a tool it keeps calling by hand; a watcher that keeps waking it for nothing; the same ask again
+               tedium    the very same call made by hand again (its shape); a tool it keeps calling by hand; a watcher
+                         that keeps waking it for nothing; the same ask again
                surprise  something that did not go as it expected          (noted by the agent, in the moment)
                wonder    a question it asked itself                         (noted by the agent, in the moment)
   WANT       itches build PRESSURE. An agent that is fed (the org has energy, nobody is waiting on it, it is idle)
@@ -56,6 +57,7 @@ from astryx import config, orgs, paths
 
 DAYS = 7                      # the window an agent's feelings are read from
 TOOL_N = 12                   # a tool called by hand this often in the window is tedium
+SHAPE_N = 4                   # the very same call (its shape) made this often is tedium
 SENSE_N, SENSE_EMPTY = 4, 0.7  # a watcher: this many wakes, this share of them leading to no message
 ASK_N = 3                     # the same ask this many times
 PRESSURE = 6.0                # an agent wakes itself above this
@@ -215,6 +217,40 @@ def feel(c) -> dict:
                     [{"agent": e["agent"], "at": e["at"], "calls": e["calls"], "line": _line(e["line"])} for e in ev],
                     n, others, round(n / DAYS * (1 + 0.5 * len(others)), 2))
             found["tool"] += 1
+    # 1b. THE VERY SAME THING done by hand again: the call's SHAPE (hooks/step.py shape_of: its text with every number
+    # and quoted string blanked, hashed). Trials 1 and 2 taught that a tool's NAME repeating is not tedium ("each call is
+    # a different investigation"); the same shape repeating is. The same shape across agents is the strongest signal
+    # there is: one idea would serve them all.
+    found["shape"] = 0
+    shapes: dict = {}
+    for r in c.execute(f"""SELECT split_part(content, ':', 1) AS tool, meta->>'shape' AS shape, agent, count(*) AS n FROM steps
+        WHERE kind = 'tool' AND ts > now() - make_interval(days => {DAYS}) AND meta ? 'shape'
+          AND content !~ '^(mcp__astryx__|mcp__tools__|Read|Edit|Write|ToolSearch|Glob|Grep|TodoWrite|Agent|Task|ScheduleWakeup)'
+        GROUP BY 1, 2, 3""").fetchall():
+        if r["agent"] in ok:
+            shapes.setdefault((r["tool"], r["shape"]), {})[r["agent"]] = r["n"]
+    for (tool, shape), who in shapes.items():
+        for agent, n in who.items():
+            if n < SHAPE_N:
+                continue
+            others = {a: v for a, v in who.items() if a != agent and v >= 2}
+            got = c.execute("""
+                SELECT t.agent, to_char(t.started_at, 'MM-DD HH24:MI') AS at, x.calls,
+                       coalesce(m.from_agent || ': ' || left(m.body, 300), left(t.input_prompt, 300)) AS line
+                FROM (SELECT s.agent, count(*) AS calls,
+                             (SELECT t2.id FROM turns t2 WHERE t2.agent = s.agent AND t2.started_at <= s.ts
+                              ORDER BY t2.started_at DESC LIMIT 1) AS tid
+                      FROM steps s WHERE s.kind = 'tool' AND s.ts > now() - make_interval(days => %s)
+                        AND s.meta->>'shape' = %s AND (s.agent = %s OR s.agent = ANY(%s)) GROUP BY 1, 3) x
+                JOIN turns t ON t.id = x.tid LEFT JOIN messages m ON m.id = t.input_msg_id
+                ORDER BY x.calls DESC LIMIT 40""", (DAYS, shape, agent, list(others))).fetchall()
+            ev = [e for e in got if e["agent"] == agent][:4] + [e for e in got if e["agent"] != agent][:3]
+            short = tool.replace("mcp__", "").replace("__", ".")
+            _upsert(c, agent, "tedium", f"shape:{tool}:{shape}",
+                    f"you did the very same thing by hand {n} times in {DAYS} days ({short}; only the values differed)",
+                    [{"agent": e["agent"], "at": e["at"], "calls": e["calls"], "line": _line(e["line"])} for e in ev],
+                    n, others, float(n * (1 + len(others))))
+            found["shape"] += 1
     # 2. a SENSE that keeps waking it for nothing: a trigger whose wakes mostly end with no message sent
     for r in c.execute(f"""
         SELECT m.to_agent AS agent, substring(m.body from '^\\[trigger ([^\\]]+)\\]') AS trig, count(*) AS n,
@@ -270,7 +306,14 @@ def drives(c) -> list[dict]:
              lt AS (SELECT agent, max(last_think) AS last_think FROM {_t('itch')} GROUP BY 1),
              -- LIVENESS IS THE STEPS' (medic 12260): a turn's row is written only when it ENDS, so an agent mid-turn has no
              -- open row. Its newest step says it is working; idle counts from its newest step or turn end
-             t AS (SELECT agent, max(at) AS last_act, bool_or(at > now() - interval '10 minutes' AND live) AS busy FROM (
+             -- A TURN IS OPEN when the newest step is newer than the newest turn end (Stop writes the row, so no end has
+             -- followed the work yet): an agent inside one 25-minute tool call writes no step and is still at work
+             -- (medic 12274). Capped at 6 hours so a crashed session isn't at work forever; a step in the last 10 minutes
+             -- counts too.
+             t AS (SELECT agent, max(at) AS last_act,
+                          (max(at) FILTER (WHERE live) > coalesce(max(at) FILTER (WHERE NOT live), '-infinity')
+                             AND max(at) FILTER (WHERE live) > now() - interval '6 hours')
+                          OR coalesce(max(at) FILTER (WHERE live) > now() - interval '10 minutes', false) AS busy FROM (
                      SELECT agent, ts AS at, true AS live FROM steps WHERE ts > now() - interval '3 days'
                      UNION ALL SELECT agent, coalesce(ended_at, started_at), false FROM turns WHERE started_at > now() - interval '3 days') x
                    GROUP BY 1),

@@ -14,6 +14,7 @@ agents are a fixed set here (mind.is_agent is seated): a, b are agents; nobody e
   W7 ONE WAKE PER TICK, across agents
   W8 an itch thought about MAX_THINKS times is let go by the mind itself
   W9 an agent can't let another agent's itch go; the caller is bound to its shell's ASTRYX_AGENT
+  W11 THE SAME SHAPE: a call's fingerprint repeated by an agent is one itch, naming the other agents who made it
   W10 a thought that isn't ONE sentence is refused; a kept idea reaches org-news with its numbers masked
 Exit 0 · 1 · 77 (no database).
 """
@@ -81,8 +82,14 @@ def main():
         print("W1 liveness is the steps'")
         reset(); turn("a", 60); step("a", 1); itch("a")
         arm("W1 a fresh step and an old turn end: at work, NOT woken", want()["woke"] is None, M.drives(c))
-        reset(); turn("a", 60); step("a", 60); itch("a")
-        arm("W1 control: no step for an hour: woken", want()["woke"] == "a", M.drives(c))
+        reset(); step("a", 70); turn("a", 60); itch("a")
+        arm("W1 control: its last step before its last turn end, an hour ago: woken", want()["woke"] == "a", M.drives(c))
+
+        reset(); turn("a", 40); step("a", 25); itch("a")
+        arm("W1b inside one long tool call (newest step 25 min ago, last turn end 40 min ago): the turn is OPEN, not woken",
+            want()["woke"] is None, M.drives(c))
+        reset(); step("a", 40); turn("a", 25); itch("a")
+        arm("W1b control: a turn end AFTER that step: it may wake", want()["woke"] == "a", M.drives(c))
 
         print("W2 the target is an agent")
         reset(); turn("a", 60, 10, 10)
@@ -152,6 +159,18 @@ def main():
             "probe" in news and sum(ch.isdigit() for ch in news.split("Recall")[0]) < 7
             and c.execute(f"SELECT state FROM {T('itch')} WHERE id = %s", (i,)).fetchone()["state"] == "resolved", news)
 
+
+        print("W11 the same shape")
+        M._org_agents = lambda _c: {"a", "b"}
+        reset(); turn("a", 60); turn("b", 60)
+        for who, n in (("a", 5), ("b", 2)):
+            for _ in range(n):
+                c.execute("INSERT INTO steps (agent, kind, content, meta, ts) VALUES (%s, 'tool', 'Bash: run', '{\"shape\": \"abc123def456\"}', now() - interval '2 hours')", (who,))
+        c.execute("INSERT INTO steps (agent, kind, content, meta, ts) VALUES ('a', 'tool', 'Bash: other', '{\"shape\": \"ffffffffffff\"}', now() - interval '2 hours')")
+        M.feel(c)
+        rows = c.execute(f"SELECT agent, n, also, key FROM {T('itch')} WHERE key LIKE 'shape:%'").fetchall()
+        arm("W11 the same call made 5 times is one itch for its agent, naming who else made it; a one-off shape is none",
+            [(r["agent"], r["n"], r["also"]) for r in rows] == [("a", 5, ["b"])], rows)
 
 try:
     main()

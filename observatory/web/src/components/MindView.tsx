@@ -36,7 +36,7 @@ interface Mind {
 
 /* the mind's senses, in words: each wake is a trial of the sense that raised it (mind.py yields) */
 const SENSES: Record<string, string> = {
-  tool: 'a tool called by hand again and again', sense: 'a watcher that keeps waking it for nothing', ask: 'the same ask again',
+  shape: 'the very same thing done by hand again', tool: 'a tool called by hand again and again', sense: 'a watcher that keeps waking it for nothing', ask: 'the same ask again',
   surprise: 'a surprise it noted', wonder: 'a question it asked itself',
 }
 
