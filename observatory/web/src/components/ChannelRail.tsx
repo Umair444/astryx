@@ -16,6 +16,7 @@ import ChannelConnect, { useChannels, type ChannelState } from './ChannelConnect
    validated, its diff in the toast, undo). Owner-only, as that write is. It replaces the floor's bottom dock and the
    Wire tab's Wiring. */
 
+const CONNECTABLE = ['whatsapp', 'telegram', 'discord']   // the channels this screen can connect (ChannelConnect's flows)
 const SHOWS: { v: Show; label: string; hint: string }[] = [
   { v: 'steps', label: 'Steps', hint: 'live steps while it works, then the reply' },
   { v: 'replies', label: 'Replies', hint: 'the reply only' },
@@ -51,9 +52,9 @@ export default function ChannelRail() {
           const plain = byChat ? [] : (table?.routes ?? [])
           const on = chats.filter((c) => c.enabled).length
           const title = BRAND[s.channel]?.title ?? s.channel
-          // a warning (and the connect steps) only where the state is KNOWN to need a step: a bridge whose health the
-          // server can't read ("unknown": no declared port) is not accused of being down
-          const needs = !s.fixed && s.state !== 'connected' && s.state !== 'unknown'
+          // a warning (and the connect steps) only where the state is KNOWN to need a step: another bridge whose health
+          // the server can't read ("unknown": no declared port) is not accused of being down; WhatsApp's unknown still warns
+          const needs = !s.fixed && s.state !== 'connected' && !(s.state === 'unknown' && !CONNECTABLE.includes(s.channel))
           if (shut) return (
             <button key={s.channel} onClick={() => { setShut(false); setOpen(s.channel) }} title={title} className="relative self-center my-0.5">
               <ChannelMark channel={s.channel} size={26} ring="transparent" />
