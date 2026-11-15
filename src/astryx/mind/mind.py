@@ -179,7 +179,7 @@ def feel(c) -> dict:
             short = tool.replace("mcp__", "").replace("__", ".")
             _upsert(c, agent, "tedium", f"tool:{tool}",
                     f"you called {short} by hand {n} times in {DAYS} days",
-                    [{"agent": e["agent"], "at": e["at"], "calls": e["calls"], "line": _line(e["prompt"])} for e in ev],
+                    [{"agent": e["agent"], "at": e["at"], "calls": e["calls"], "line": _line(e["line"])} for e in ev],
                     n, others, round(n / DAYS * (1 + 0.5 * len(others)), 2))
             found["tool"] += 1
     # 2. a SENSE that keeps waking it for nothing: a trigger whose wakes mostly end with no message sent
