@@ -10,7 +10,9 @@ import { isHuman, type Msg, type Step } from '../../types'
        this turn's.
    `steps`: the lane from where this turn's work starts (b), or since the ask (a). `by` names the asker when it isn't
    the viewer, so the line reads "for Pat". 11-15: (a) once compared from to the literal 'owner'. */
-export interface Pending { agent: string; since: string; steps: Step[]; by?: string; leads?: boolean }
+/* `busy`: asked here, but its newest step belongs to a turn another conversation opened: it hasn't reached this message
+   yet (owner 11-15: the line said "reading your message" for 20 minutes while seed worked on something else) */
+export interface Pending { agent: string; since: string; steps: Step[]; by?: string; leads?: boolean; busy?: boolean }
 
 export function pendingOf(agents: string[], rows: Msg[], live: Record<string, Step[]> | undefined, me: string): Pending[] {
   const out: Pending[] = []
@@ -46,8 +48,10 @@ export function pendingOf(agents: string[], rows: Msg[], live: Record<string, St
     }
     if (!asked) continue
     const t0 = Date.parse(ask!.ts)
+    const last = lane[lane.length - 1]
     out.push({ agent: a, since: ask!.ts, by: ask!.from === me ? undefined : ask!.from!,
-               steps: lane.filter((s) => Date.parse(s.ts) >= t0) })
+               steps: lane.filter((s) => Date.parse(s.ts) >= t0 && !elsewhere(s)),
+               busy: !!last && elsewhere(last) && Date.parse(last.ts) >= t0 - 600_000 })
   }
   // A TEAM's lead first (LiveActivity draws a team as ONE line, the lead's): the newest human ask here that named one
   const lead = t?.lead

@@ -61,4 +61,14 @@ const solo = [...(team as never[]), row(22, 'db', 'owner', '2026-11-15T10:05:00Z
 arm("an older team never ends a later solo ask", pendingOf(['db'], solo, {}, 'owner').map((p) => p.agent).includes('seed'), pendingOf(['db'], solo, {}, 'owner').map((p) => p.agent))
 arm("the lead, when pending and first, is marked as leading", both[0]?.leads === true && !both[1]?.leads, both)
 
+// BUSY (owner 11-15: "reading your message" for 20 minutes while seed worked on another conversation): asked here, its
+// newest step from a turn another thread opened: busy, and none of that other work is shown as this ask's
+const ask = [row(30, 'owner', 'seed', '2026-11-15T11:00:00Z')] as never[]
+const away = { seed: [st(1, '2026-11-15T10:50:00Z', [999]), st(2, '2026-11-15T11:05:00Z', [999])] }
+const b = pendingOf(['seed'], ask, away, 'owner')
+arm("asked, but working on another conversation's turn: busy, with none of that work as this ask's steps", b.length === 1 && b[0].busy === true && b[0].steps.length === 0, b)
+const mid = { seed: [st(1, '2026-11-15T11:01:00Z', [])] }
+arm("…a turn that absorbed the message (stamped []) is not busy elsewhere", pendingOf(['seed'], ask, mid, 'owner')[0]?.busy === false, pendingOf(['seed'], ask, mid, 'owner'))
+arm("…no lane at all: not busy, just not started", !pendingOf(['seed'], ask, {}, 'owner')[0]?.busy)
+
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')

@@ -46,7 +46,8 @@ export function plainLine(line: string): string {
   return verb[0].toUpperCase() + verb.slice(1) + (m[2] ? ` · ${m[2]}` : '')
 }
 
-export function actionOf(s: Step | undefined): { verb: string; detail: string } {
+export function actionOf(s: Step | undefined, busy = false): { verb: string; detail: string } {
+  if (!s && busy) return { verb: 'finishing other work', detail: 'your message is next' }
   if (!s) return { verb: 'reading your message', detail: '' }
   const line = stepLine(s)
   if (s.kind === 'tool') {
@@ -86,7 +87,7 @@ function Team({ pending, now, onStop }: { pending: Pending[]; now: number; onSto
   const lead = pending[0]
   const steps = lead.steps.filter(visible)
   const last = steps.at(-1)
-  const { verb, detail: own } = actionOf(last)
+  const { verb, detail: own } = actionOf(last, lead.busy)
   const detail = last?.sub ? `↳ ${helperName(last)} · ${own}` : own
   const since = pending.map((p) => p.since).sort()[0]
   const others = pending.slice(1).map((p) => displayName(p.agent))
@@ -131,7 +132,7 @@ function Line({ p, now, onStop }: { p: Pending; now: number; onStop?: StopFn }) 
   const [stop, setStop] = useState<StopState | null>(null)
   const steps = p.steps.filter(visible)
   const last = steps.at(-1)
-  const { verb, detail: own } = actionOf(last)
+  const { verb, detail: own } = actionOf(last, p.busy)
   // HELPERS (owner 11-15: "agents use forks and sub-agents … it should appear in chat"): a step a sub-agent took names
   // it; the line counts the helpers active in the last 90 s, the way Claude Code lists its running agents
   const detail = last?.sub ? `↳ ${helperName(last)} · ${own}` : own
