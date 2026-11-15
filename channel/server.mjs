@@ -93,6 +93,8 @@ const mcp = new Server(
       `MEDIA: an inbound image arrives as a file PATH — read it directly with your file tools (no ` +
       `caption is added; you see images natively); inbound audio/voice arrives TRANSCRIBED inline. ` +
       `To send back an image/audio/file, embed [[file:/absolute/path]] in the send body. ` +
+      `CODE (SQL, Python, a command) always goes in a fenced block with its language (\`\`\`sql … \`\`\`): the chat draws ` +
+      `it as code with a Copy button; unfenced, its * and indentation are read as markdown. ` +
       `WHO ASKED: a human's from= is who asked (owner, cv-<name>.<n> a signed-in member with role="member", ` +
       `cv-<name> a canvas guest, wa-<n> a WhatsApp sender); reply to THAT from= on that thread. Owner-only acts ` +
       `(spend, the law, the personal tier, GaussDB approvals, permission verdicts) still need the owner himself. ` +

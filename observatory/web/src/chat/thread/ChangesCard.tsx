@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { displayName } from '../../api'
+import { personName } from '../../api'
 import type { Changes } from '../artifacts/versions/changes'
 
 /* The owner's "send my changes" message (artifacts/versions/changes.ts) as the chat shows it: a card, never raw diff
@@ -16,7 +16,7 @@ export default function ChangesCard({ ch }: { ch: Changes }) {
           <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M7 4v10M2.5 9h9M14 19h8" /></svg>
         </span>
         <span className="text-ink-dim truncate">Changes to <b className="font-semibold text-ink">{ch.name}</b></span>
-        <span className="text-ink-mute tabular-nums shrink-0" title={`from v${ch.fromN} (${displayName(ch.fromWho)}) to v${ch.toN} (${ch.toWho === 'owner' ? 'you' : displayName(ch.toWho)})`}>v{ch.fromN} → v{ch.toN}</span>
+        <span className="text-ink-mute tabular-nums shrink-0" title={`from v${ch.fromN} (${personName(ch.fromWho, 'you')}) to v${ch.toN} (${personName(ch.toWho, 'you')})`}>v{ch.fromN} → v{ch.toN}</span>
         {(ch.adds > 0 || ch.dels > 0) && <span className="ml-auto shrink-0 tabular-nums flex gap-1.5">
           <span className="ws-diff-add-ink">+{ch.adds}</span><span className="ws-diff-del-ink">−{ch.dels}</span>
         </span>}

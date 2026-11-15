@@ -34,7 +34,8 @@ def main() -> int:
          "placeHuman(last?.kind === 'mine' ? last : null, msg, me)" in turns and "switches, me)" in turns),
         ("another human's bubble is on the left under their name, with no Edit",
          "humanName(by)" in turns and "items-start" in turns and "{!by && <button onClick={() => onEdit(m)}" in turns),
-        ("ChatApp hands Turns the viewer's handle", "<Turns key={current} me={who.handle || 'owner'}" in app),
+        ("ChatApp hands Turns the viewer's handle", "const me = who.handle || 'owner'" in app
+         and "<Turns key={current} me={me}" in app),
     ]
     bad = 0
     for name, ok in wired:

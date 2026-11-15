@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { motion } from 'motion/react'
 import AgentFace from './AgentFace'
-import { agentColor, displayName, fmtAgo, fmtTime } from '../api'
+import { agentColor, displayName, fmtAgo, fmtTime, isMine } from '../api'
 import { useStore } from '../store'
-import type { Msg } from '../types'
+import { humanName, isHuman, type Msg } from '../types'
 import TurnPeek from './TurnPeek'
 
 /* markdown-lite: **bold**, `code`, and bare URLs — enough for agent chatter */
@@ -34,9 +34,10 @@ export function IntentChip({ intent }: { intent: string }) {
   )
 }
 
-/** Who a party is, as text: an agent's display name, `you` for the owner, `name@org` for a peer. */
+/** Who a party is, as text: `you` for the viewer, a human's name, an agent's display name, `name@org` for a peer. */
 export function partyLabel(name: string, org: string | null, home: string | undefined) {
-  if (name === 'owner') return 'you'
+  if (isMine(name)) return 'you'
+  if (isHuman(name)) return humanName(name)
   return org && org !== 'local' && org !== home ? `${displayName(name)}@${org}` : displayName(name)
 }
 

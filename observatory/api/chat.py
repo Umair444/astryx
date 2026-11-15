@@ -52,17 +52,20 @@ MEDIA: Path | None = None
 REPO: Path | None = None
 _roster = lambda: set()                            # noqa: E731 — the live agent names (main.agent_meta)
 _me = lambda request: "owner"                      # noqa: E731 — main.wire_handle: the viewer's wire handle (cog-who)
+_sees = lambda request: (lambda agent: False)      # noqa: E731 — main.sees; unbound = no agent's insides (closed)
 
 
-def bind(get_pool, estate: Path, media: Path, repo: Path, roster=None, me=None) -> None:
-    """The host app hands over its pool getter, its estate, its roster and the viewer's wire handle (read at call
-    time)."""
-    global _get_pool, ESTATE, MEDIA, REPO, _roster, _me
+def bind(get_pool, estate: Path, media: Path, repo: Path, roster=None, me=None, sees=None) -> None:
+    """The host app hands over its pool getter, its estate, its roster, the viewer's wire handle and its insides
+    predicate (read at call time)."""
+    global _get_pool, ESTATE, MEDIA, REPO, _roster, _me, _sees
     _get_pool, ESTATE, MEDIA, REPO = get_pool, Path(estate), Path(media), Path(repo)
     if roster is not None:
         _roster = roster
     if me is not None:
         _me = me
+    if sees is not None:
+        _sees = sees
 
 
 SCRATCH_BASE = Path(f"/tmp/claude-{os.getuid()}")   # Claude Code's per-uid temp root (bridges/embed_root.py's)
@@ -395,13 +398,15 @@ async def work(request: Request, thread: str = ""):
     steps = await pool.fetch(
         "SELECT id, ts, agent, kind, left(content, 300) AS content, turn_id FROM steps "
         "WHERE turn_id = ANY($1::bigint[]) AND kind <> ALL($2::text[]) ORDER BY id LIMIT 6000", tids, list(QUIET)) if tids else []
-    by_turn: dict[int, list] = {}
-    for st in steps:
-        by_turn.setdefault(st["turn_id"], []).append(_step(st))
+    see = _sees(request)                           # a member reads every agent's work the owner does, short of the
+    by_turn: dict[int, list] = {}                  # personal tier (main.sees, 11-15): a refused agent's turn keeps
+    for st in steps:                               # its shape (when, how long), never its steps
+        if see(st["agent"]):
+            by_turn.setdefault(st["turn_id"], []).append(_step(st))
     live_names = _roster()
     parties = [r["a"] for r in await pool.fetch(
         "SELECT DISTINCT x AS a FROM messages, LATERAL (VALUES (from_agent), (to_agent)) v(x) WHERE thread = $1", thread)
-        if r["a"] in live_names]
+        if r["a"] in live_names and see(r["a"])]
     first = await pool.fetchval("SELECT min(ts) FROM messages WHERE thread = $1", thread)
     live, unlinked = {}, {}
     for a in parties:

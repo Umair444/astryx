@@ -65,15 +65,18 @@ SWITCHES_MAX = 50                                   # a thread keeps its newest 
 
 
 _me = lambda request: "owner"                      # noqa: E731 — main.wire_handle: the viewer's wire handle (cog-who)
+_sees = lambda request: (lambda agent: False)      # noqa: E731 — main.sees; unbound = no agent's insides
 
 
-def bind(get_pool, estate: Path, roster=None, charter=None, owner=None, me=None) -> None:
-    """The host app hands over its pool getter, its estate, its roster, its charter resolver, its owner check and the
-    viewer's wire handle (read at call time)."""
-    global _get_pool, ESTATE, _roster, _charter, _owner, _me
+def bind(get_pool, estate: Path, roster=None, charter=None, owner=None, me=None, sees=None) -> None:
+    """The host app hands over its pool getter, its estate, its roster, its charter resolver, its owner check, the
+    viewer's wire handle and its insides predicate (read at call time)."""
+    global _get_pool, ESTATE, _roster, _charter, _owner, _me, _sees
     _get_pool, ESTATE = get_pool, Path(estate)
     if me is not None:
         _me = me
+    if sees is not None:
+        _sees = sees
     if roster is not None:
         _roster = roster
     if charter is not None:
@@ -200,6 +203,11 @@ def project_of(thread: str, projects: list[dict]) -> str | None:
 def human(name: str | None) -> bool:
     """A human party on the web surfaces: the owner, or a named web human (cv-<x>: a canvas invitee, a member)."""
     return bool(name) and (name == "owner" or name.startswith("cv-"))
+
+
+def human_sql(col: str) -> str:
+    """human() as SQL on a column: the ONE spelling for a query that asks "did a human write/receive this"."""
+    return f"({col} = 'owner' OR {col} LIKE 'cv-%')"
 
 
 def build_rows(aggs: list[dict], meta: dict, projects: list[dict], roster: set[str],
@@ -489,13 +497,15 @@ async def ws_agents(request: Request):
 
 
 # ------------------------------------------------------------------------------------------------------ handoffs
+# a human's message opening a turn is no handoff (human_sql: the owner's or a member's); handoffs_of() also keeps only
+# a sender on the roster, so this is the one spelling rather than the only guard
 HANDOFFS_SQL = """
 SELECT DISTINCT ON (t.id) t.id AS turn_id, t.agent, m.id AS at,
        i.id, i.ts, i.from_agent, i.to_agent, i.thread, i.intent, left(i.body, $2) AS body
   FROM messages m
   JOIN turns t ON t.id = m.turn_id
   JOIN messages i ON i.id = t.input_msg_id
- WHERE m.thread = $1 AND i.from_agent <> 'owner' AND i.thread IS DISTINCT FROM $1
+ WHERE m.thread = $1 AND NOT """ + human_sql("i.from_agent") + """ AND i.thread IS DISTINCT FROM $1
  ORDER BY t.id, m.id
  LIMIT 200"""
 HANDOFF_BODY_MAX = 4000
@@ -1118,8 +1128,10 @@ async def ws_briefing(request: Request, since: str = "", scope: str = "mine"):
         edge = await pool.fetchval(BRIEF_EDGE_SQL, start, timeout=BRIEF_TIMEOUT) or 0
         rows = [dict(r) for r in await pool.fetch(BRIEF_MSGS_SQL, edge, start, BRIEF_ROWS, me, everyone,
                                                   timeout=BRIEF_TIMEOUT)]
-        turns = {r["agent"]: r["turns"] for r in await pool.fetch(BRIEF_TURNS_SQL, names, start, timeout=BRIEF_TIMEOUT)}
-        did = {r["agent"]: dict(r) for r in await pool.fetch(BRIEF_DID_SQL, names, start, timeout=BRIEF_TIMEOUT)}
+        see = _sees(request)                        # an agent's turn count and own words are its insides (main.sees)
+        seen = [a for a in names if see(a)]
+        turns = {r["agent"]: r["turns"] for r in await pool.fetch(BRIEF_TURNS_SQL, seen, start, timeout=BRIEF_TIMEOUT)}
+        did = {r["agent"]: dict(r) for r in await pool.fetch(BRIEF_DID_SQL, seen, start, timeout=BRIEF_TIMEOUT)}
     except asyncio.TimeoutError:
         return JSONResponse({"error": "the briefing took too long"}, status_code=504)
     try:

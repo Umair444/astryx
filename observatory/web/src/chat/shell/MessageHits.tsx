@@ -1,4 +1,4 @@
-import { displayName, fmtAgo } from '../../api'
+import { displayName, fmtAgo, personName } from '../../api'
 import AgentFace from '../../components/AgentFace'
 import type { WsThread } from '../data'
 import type { MessageHit } from '../search'
@@ -41,7 +41,7 @@ export default function MessageHits({ hits, busy, threads, onJump }: {
           <span className="mt-[1px]"><AgentFace name={h.from} size={20} /></span>
           <span className="min-w-0 flex-1">
             <span className="flex items-baseline gap-1.5 text-[11.5px] text-ink-mute leading-[1.4]">
-              <span className="truncate text-ink-dim">{h.from === 'owner' ? 'You' : displayName(h.from)} · {title(h.thread)}</span>
+              <span className="truncate text-ink-dim">{personName(h.from)} · {title(h.thread)}</span>
               <span className="ml-auto shrink-0 tabular-nums">{fmtAgo(h.ts)}</span>
             </span>
             <span className="ws-hit-snip text-[12.5px] leading-[1.45] text-ink mt-[1px] break-words"><Snippet text={h.snippet} marks={h.marks} /></span>

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Msg } from '../../../types'
+import { isHuman, type Msg } from '../../../types'
 import { embeds } from '../../model'
 import { nameOf, openArtifact, threadArtifacts, type Artifact, type MsgRef, type Version } from '../api'
 import type { OpenRequest } from '../FileChip'
@@ -23,7 +23,7 @@ export function versionFor(versions: Version[], m: MsgRef): Version | null {
   const exact = versions.find((v) => v.msg === m.id)
   if (exact) return exact
   const t = Date.parse(m.ts)
-  const agents = versions.filter((v) => v.author !== 'owner')
+  const agents = versions.filter((v) => !isHuman(v.author))
   const before = agents.find((v) => v.msg_ts && Date.parse(v.msg_ts) <= t)
   if (before) return before
   const after = (vs: Version[]) => [...vs].reverse().find((v) => !v.msg && Date.parse(v.ts) >= t)
@@ -78,7 +78,7 @@ export function chipVer(m: Msg, path: string, label: string | undefined, by: Map
   let v = art ? versionFor(art.versions, ref(m)) : null
   // a version an EARLIER mention carried is not this message's (its own bytes are not stored yet): no number
   if (v?.msg && v.msg !== m.id && earlier.some((x) => x.msg.id === v!.msg)) v = null
-  const updated = earlier.length > 0 || (!!v && v.n > 1 && v.author !== 'owner')
+  const updated = earlier.length > 0 || (!!v && v.n > 1 && !isHuman(v.author))
   if (!updated && !(v && v.n > 1)) return null
   const seen = new Set([path])
   const history = earlier.filter((x) => !seen.has(x.path) && seen.add(x.path)).map((x) => ({ path: x.path, label: x.label, from: x.msg.from, msg: ref(x.msg), carrier: ref(x.msg) }))

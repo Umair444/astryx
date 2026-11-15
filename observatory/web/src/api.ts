@@ -1,4 +1,4 @@
-import type { WhoAmI } from './types'
+import { humanName, isHuman, type WhoAmI } from './types'
 
 /* A 403 to a request that CARRIED a key: the key may have been rotated under a running page. Announced, never acted
    on here: whoever listens (the chat workspace's gate, chat/Gate.tsx) re-asks /whoami before it believes it. */
@@ -127,6 +127,20 @@ export function displayName(name: string): string {
     .replace(/[-_]+/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase())
 }
+
+/* ANY party as the viewer reads it (11-15, one rule for every label): 'You' for the viewer's own handle (`me`, the
+   store's who.handle), a human's name for another human (types.humanName: 'Owner', a member's label), else the agent's
+   display name. `you` lets a mid-sentence label say 'you'. Never compare a name to the literal 'owner' to mean "me"
+   (isMine) or "a human" (types.isHuman): a member is a viewer too. */
+export function personName(name: string, you = 'You', me = viewer()): string {
+  if (name === me) return you
+  return isHuman(name) ? humanName(name) : displayName(name)
+}
+/* the viewer's wire handle, set once by the store when whoami answers (the workspace renders only after it has) */
+let viewerHandle = 'owner'
+export const setViewer = (h: string | null | undefined) => { viewerHandle = h || 'owner' }
+export const viewer = () => viewerHandle
+export const isMine = (name: string | null | undefined) => !!name && name === viewerHandle
 
 /* the mark in an agent's avatar chip: a trailing number distinguishes ranked
    members (abstractor-1 -> '1'), otherwise the first letter */

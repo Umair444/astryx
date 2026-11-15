@@ -66,6 +66,15 @@
 .ws-prose code { font-family: var(--font-mono); font-size: .8em; background: var(--t-panel2); border: 1px solid var(--t-line); border-radius: 5px; padding: .06em .32em; }
 .ws-prose pre { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.55; background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 12px; padding: .9em 1.1em; overflow-x: auto; }
 .ws-prose pre code { background: none; border: 0; padding: 0; }
+/* a fenced block (thread/code.ts): the language and Copy on a bar, the code under it; lines and indentation kept,
+   long lines scroll sideways inside the block, never the page */
+.ws-prose .ws-code { margin: .7em 0; border: 1px solid var(--t-line); border-radius: 12px; background: var(--t-panel); overflow: hidden; }
+.ws-prose .ws-code-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 4px 12px; border-bottom: 1px solid var(--t-line); background: var(--t-panel2); }
+.ws-prose .ws-code-lang { font-family: var(--font-mono); font-size: 11px; letter-spacing: .02em; color: var(--t-mute); text-transform: lowercase; }
+.ws-prose .ws-code-copy { font: 500 11.5px/1 "Inter Variable", Inter, system-ui, sans-serif; color: var(--t-dim); padding: 5px 9px; border-radius: 7px; border: 1px solid transparent; background: none; cursor: pointer; }
+.ws-prose .ws-code-copy:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 6%, transparent); border-color: var(--t-line); }
+.ws-prose .ws-code-copy:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 1px; }
+.ws-prose .ws-code pre { margin: 0; border: 0; border-radius: 0; background: none; white-space: pre; tab-size: 4; }
 .ws-prose a { color: var(--t-accent2); text-decoration: underline; text-underline-offset: 2px; }
 /* an answer's provenance line (thread/provenance.ts): a footer, not prose — small, muted, under a short hairline */
 .ws-source { display: flex; gap: 7px; align-items: flex-start; margin-top: 14px; padding-top: 9px; max-width: 680px; position: relative;

@@ -22,6 +22,7 @@ be lifted by a charter line. (Metadata is already universally public, so the viz
 needs no override anyway.)
 
 Library:  is_content_public(name) -> bool ; content_public_agents(roster) -> set
+          is_content_org(name) -> bool    ; content_org_agents(roster) -> set   (the inside tier, below)
 """
 from astryx.core.charter import resolve, Collision, AGENTS
 
@@ -59,3 +60,26 @@ def content_public_agents(roster, agents_dir=AGENTS) -> set:
     """The subset of `roster` (agent names) whose content is public. Use this to
     build a POSITIVE `agent IN (...)` filter — never its complement."""
     return {a for a in roster if is_content_public(a, agents_dir)}
+
+
+# THE INSIDE TIER (owner 11-13 "no privacy within an org"; 11-15 member live view): what a signed-in member or admin
+# of THIS org may read of an agent's content, the owner reading everything. The same polarity as the public floor: a
+# POSITIVE allowlist of the grants that do org work and read no owner-personal data; anything else (gmail, contacts,
+# browser, a grant nobody has classified yet) keeps the agent's content the owner's alone. Checked 11-15 against the
+# live fleet: chat-sql (the estate, behind its own PII gate), ocr (images sent in work groups), org (seed's org
+# powers), plus the two public ones. growbot is a shipped example nobody here runs, so it is NOT on the list.
+ORG_WORK_GRANTS = ORG_ACTUATION_GRANTS | frozenset({"chat-sql", "ocr", "org"})
+
+
+def is_content_org(name: str, agents_dir=AGENTS) -> bool:
+    """True iff an insider of the org (a member or admin) may read the agent's CONTENT. Fail-closed: an unknown agent
+    or any grant outside ORG_WORK_GRANTS ⇒ False (the owner's alone)."""
+    grants = _grants(name, agents_dir)
+    if grants is None:
+        return False
+    return grants.issubset(ORG_WORK_GRANTS)
+
+
+def content_org_agents(roster, agents_dir=AGENTS) -> set:
+    """The subset of `roster` an insider may read, for a POSITIVE `agent IN (...)` filter."""
+    return {a for a in roster if is_content_org(a, agents_dir)}

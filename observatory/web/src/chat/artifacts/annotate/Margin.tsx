@@ -1,8 +1,8 @@
 import { useSwipeClose } from '../../shell/phone'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { agentColor, displayName } from '../../../api'
+import { agentColor, displayName, isMine, personName } from '../../../api'
 import AgentFace from '../../../components/AgentFace'
-import type { Msg } from '../../../types'
+import { isHuman, type Msg } from '../../../types'
 import Prose from '../../thread/Prose'
 import { stripEmbeds } from '../../model'
 import { ago } from '../versions/VersionMenu'
@@ -151,7 +151,7 @@ export function Sheet({ items, place, order, active, answers, h, draft, onClose 
   )
 }
 
-const who = (n: string) => (n === 'owner' ? 'You' : displayName(n))
+const who = (n: string) => personName(n)
 
 function Card({ a, place, active, answer, h, positioned }: { a: Ann; place: Place; active: boolean; answer?: Answer; h: Handlers; positioned?: boolean }) {
   const [reply, setReply] = useState('')
@@ -178,7 +178,7 @@ function Card({ a, place, active, answer, h, positioned }: { a: Ann; place: Plac
       {(a.kind !== 'highlight' || active) && <header className={`${a.kind === 'suggest' ? '' : 'mt-2'} flex items-center gap-2 min-w-0`}>
         <AgentFace name={agent ?? a.author} size={18} />
         <span className="text-[12.5px] text-ink font-medium truncate">
-          {agent ? <>{a.author === 'owner' ? 'Asked' : `${who(a.author)} asked`} {displayName(agent)}</>
+          {agent ? <>{isMine(a.author) ? 'Asked' : `${who(a.author)} asked`} {displayName(agent)}</>
             : a.kind === 'suggest' ? `${who(a.author)} suggested` : who(a.author)}
         </span>
         <span className="text-[11px] text-ink-mute shrink-0">{ago(a.ts)}</span>
@@ -239,7 +239,7 @@ function ReplyView({ r }: { r: Reply & { live?: boolean } }) {
         <span className="text-[11px] text-ink-mute">{ago(r.ts)}</span>
       </div>
       <div className={`mt-1 ax-reply ${long && !more ? 'max-h-[9.5em] overflow-hidden [mask-image:linear-gradient(#000_65%,transparent)]' : ''}`}>
-        {r.author === 'owner' ? <p className="whitespace-pre-wrap">{r.body}</p> : <Prose text={r.body} />}
+        {isHuman(r.author) ? <p className="whitespace-pre-wrap">{r.body}</p> : <Prose text={r.body} />}
       </div>
       {long && <button className="mt-0.5 text-[11.5px] text-ink-mute hover:text-ink" onClick={() => setMore((x) => !x)}>{more ? 'Show less' : 'Show all'}</button>}
     </div>

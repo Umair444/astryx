@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
-import { apiSend, displayName, fmtAgo } from '../../api'
+import { apiSend, displayName, fmtAgo, isMine, personName } from '../../api'
 import AgentFace from '../../components/AgentFace'
 import { I } from '../icons'
 import type { Status, WsThread } from '../data'
@@ -144,7 +144,7 @@ function ConvRow({ t, onGo, onRemove }: { t: WsThread; onGo: () => void; onRemov
             <span className="truncate text-[14px] text-ink">{t.title}</span>
             <span className="ml-auto shrink-0 text-[11.5px] text-ink-mute tabular-nums">{fmtAgo(t.last_ts)}</span>
           </span>
-          {t.preview && <span className="block truncate text-[12.5px] text-ink-mute mt-0.5">{t.last_from && t.last_from !== 'owner' ? `${displayName(t.last_from)}: ` : ''}{t.preview}</span>}
+          {t.preview && <span className="block truncate text-[12.5px] text-ink-mute mt-0.5">{t.last_from && !isMine(t.last_from) ? `${personName(t.last_from)}: ` : ''}{t.preview}</span>}
         </span>
       </button>
       <button onClick={onRemove} title="Take out of this project (the conversation stays)" aria-label={`take ${t.title} out of the project`}

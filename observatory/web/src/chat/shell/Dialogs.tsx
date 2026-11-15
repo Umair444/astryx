@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { displayName, fmtAgo } from '../../api'
+import { displayName, fmtAgo, personName } from '../../api'
 import AgentFace from '../../components/AgentFace'
 import type { Command } from '../thread/Composer'
 import type { Status, WsThread } from '../data'
@@ -102,7 +102,7 @@ export function Palette({ threads, names, status, projects, commands, onClose, g
       ...(onCanvas ? canvases : []).map((c) => ({ id: 'cv:' + c.id, label: c.title, group: 'Canvases' as Group, face: c.agent,
         hint: `canvas · v${c.version} · ${displayName(c.agent)} · ${fmtAgo(c.updated_at)}`, act: () => onCanvas?.(c.id) })),
       ...files.map((f) => ({ id: 'f:' + f.path, label: f.name, group: 'Files' as Group, kind: f.kind,
-        hint: `${KIND_WORD[f.kind]} · ${f.from === 'owner' ? 'you' : displayName(f.from)} · ${fmtAgo(f.ts)}`,
+        hint: `${KIND_WORD[f.kind]} · ${personName(f.from, 'you')} · ${fmtAgo(f.ts)}`,
         act: () => onOpenFile?.({ path: f.path, label: f.label, from: f.from }) })),
       ...projects.map((p) => ({ id: 'p:' + p.id, label: p.name, hint: 'project', group: 'Projects' as Group, act: () => openProject(p.id) })),
       ...commands.map((c) => ({ id: 'c:' + c.key, label: c.label, hint: c.hint, group: 'Actions' as Group, act: () => { onClose(); c.run('') } })),
@@ -117,7 +117,7 @@ export function Palette({ threads, names, status, projects, commands, onClose, g
     }
     const said: Item[] = (found.hits ?? []).map((h) => ({
       id: 'm:' + h.msg_id, label: h.snippet, group: 'Messages', face: h.from, score: 0, hits: [], said: h,
-      hint: `${h.from === 'owner' ? 'You' : displayName(h.from)} · ${threads.find((t) => t.thread === h.thread)?.title ?? 'a conversation'} · ${fmtAgo(h.ts)}`,
+      hint: `${personName(h.from)} · ${threads.find((t) => t.thread === h.thread)?.title ?? 'a conversation'} · ${fmtAgo(h.ts)}`,
       act: () => onJump?.(h) }))
     return ORDER.flatMap((g) => {
       if (g === 'Messages') return said.slice(0, (s ? CAP : CAP_EMPTY)[g])

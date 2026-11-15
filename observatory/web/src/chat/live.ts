@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, ApiError, apiSend, displayName } from '../api'
+import { api, ApiError, apiSend, displayName, viewer } from '../api'
 import { isHuman, type AgentRow, type Msg } from '../types'
 
 /* "The team is present" (iteration 6, DESIGN.md wow 1, 2, 6): the data behind the moments the workspace shows work
@@ -50,7 +50,7 @@ export function clustersOf(roster: AgentRow[], order: string[]): Cluster[] {
 
 export interface Edge { from: string; to: string; n: number; last: number }
 export const EDGE_WINDOW = 60 * 60_000                 // an hour of the wire; the last two minutes FLOW
-/* every agent→agent (and agent↔owner) row in the window, folded per unordered-pair direction; newest last */
+/* every agent→agent (and agent↔viewer) row in the window, folded per unordered-pair direction; newest last */
 export function edgesOf(messages: Msg[], known: Set<string>, now: number, window = EDGE_WINDOW): Edge[] {
   const out = new Map<string, Edge>()
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -58,7 +58,7 @@ export function edgesOf(messages: Msg[], known: Set<string>, now: number, window
     const t = Date.parse(m.ts)
     if (now - t > window) break
     if (!m.to || m.from === m.to) continue
-    const ok = (n: string) => known.has(n) || n === 'owner'
+    const ok = (n: string) => known.has(n) || n === viewer()        // the viewer is the map's one human node
     if (!ok(m.from) || !ok(m.to)) continue
     const k = `${m.from}>${m.to}`
     const e = out.get(k)

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { displayName } from '../../api'
+import { displayName, isMine, personName } from '../../api'
+import { isHuman } from '../../types'
 import AgentFace from '../../components/AgentFace'
 import { download, upload, type Uploaded } from '../model'
 import { I } from '../icons'
@@ -244,7 +245,7 @@ function Body({ art, at, view, setView, wide, onSaved, onAttach, saveRef, from, 
     } finally { setBusy(false) }
   }
   // an agent's version under review in the diff: keep it, or revert to the version before (a new version by owner)
-  const review = view.diff && head && view.diff.to === head.rev && head.author !== 'owner' && !e0(view)
+  const review = view.diff && head && view.diff.to === head.rev && !isHuman(head.author) && !e0(view)
     ? art.versions.find((x) => x.rev === view.diff!.from) ?? null : null
   async function revert(to: NonNullable<typeof review>) {
     if (busy || !head) return
@@ -287,9 +288,9 @@ function Body({ art, at, view, setView, wide, onSaved, onAttach, saveRef, from, 
   const annotatable = art.store && ANNOTATABLE.includes(art.kind)
   // SEND MY CHANGES: the head is the owner's, and an agent (or an earlier version) came before it; offered until a
   // changes message for this head is on the thread (the rows are the record) or the owner waves it off
-  const base = head?.author === 'owner' ? art.versions.find((x) => x.author !== 'owner') ?? art.versions[1] ?? null : null
-  const sent = !!head && !!annotate?.rows.some((m) => { const c = m.from === 'owner' ? parseChanges(m.body) : null; return !!c && c.name === art.name && c.toN === head.n })
-  const sendTo = annotate ? [...new Set([...(base && base.author !== 'owner' ? [base.author] : []), ...annotate.agents])].filter((a) => annotate.roster.includes(a)) : []
+  const base = head && isHuman(head.author) ? art.versions.find((x) => !isHuman(x.author)) ?? art.versions[1] ?? null : null
+  const sent = !!head && !!annotate?.rows.some((m) => { const c = isHuman(m.from) ? parseChanges(m.body) : null; return !!c && c.name === art.name && c.toN === head.n })
+  const sendTo = annotate ? [...new Set([...(base && !isHuman(base.author) ? [base.author] : []), ...annotate.agents])].filter((a) => annotate.roster.includes(a)) : []
   const [sending, setSending] = useState(false)
   const [waved, setWaved] = useState('')
   const offer = art.store && !!base && !!head && !sent && waved !== head.rev && sendTo.length > 0 && !e && !view.diff
@@ -300,7 +301,7 @@ function Body({ art, at, view, setView, wide, onSaved, onAttach, saveRef, from, 
       <div className="shrink-0 min-h-11 flex items-center gap-1.5 flex-wrap px-3 py-1.5 border-b border-line/70 text-[12.5px]">
         {!e && <span className="ws-pfrom inline-flex items-center gap-1.5 text-ink-mute min-w-0 mr-1" title={`${KIND_WORD[art.kind]} from ${who(madeBy)}`}>
           <AgentFace name={madeBy} size={18} />
-          <span className="truncate max-w-[200px] max-sm:hidden">{madeBy === 'owner' ? 'Uploaded by you' : `From ${displayName(madeBy)}`}{art.size ? ` · ${bytes(art.size)}` : ''}</span>
+          <span className="truncate max-w-[200px] max-sm:hidden">{isMine(madeBy) ? 'Uploaded by you' : isHuman(madeBy) ? `Uploaded by ${personName(madeBy)}` : `From ${displayName(madeBy)}`}{art.size ? ` · ${bytes(art.size)}` : ''}</span>
         </span>}
         <div className="ml-auto flex items-center gap-1">
           {e ? <>
@@ -363,18 +364,18 @@ function Body({ art, at, view, setView, wide, onSaved, onAttach, saveRef, from, 
       )}
       {offer && base && head && !sending && (
         <div className="shrink-0 flex items-center gap-2.5 flex-wrap px-4 py-2 text-[12.5px] ws-sendbar">
-          <span className="text-ink-dim">You changed this since {base.author === 'owner' ? `v${base.n}` : `${who(base.author)}'s v${base.n}`}.</span>
+          <span className="text-ink-dim">You changed this since {isHuman(base.author) ? `v${base.n}` : `${who(base.author)}'s v${base.n}`}.</span>
           <span className="ml-auto flex gap-1.5">
             <button className="ws-btn !h-7 !text-[12px]" onClick={() => setWaved(head.rev)} title="Not now">Not now</button>
             <button className="ws-btn ws-btn-primary !h-7 !text-[12px]" onClick={() => setSending(true)}>
-              {sendTo.length === 1 || base.author !== 'owner' ? `Send changes to ${who(base.author !== 'owner' ? base.author : sendTo[0])}` : 'Send changes…'}
+              {sendTo.length === 1 || !isHuman(base.author) ? `Send changes to ${who(!isHuman(base.author) ? base.author : sendTo[0])}` : 'Send changes…'}
             </button>
           </span>
         </div>
       )}
       {sending && base && head && annotate && (
         <Suspense fallback={<div className="shrink-0 px-4 py-3 text-[12px] text-ink-mute border-b border-line/60">Preparing…</div>}>
-          <SendChanges art={art} base={base} head={head} agents={sendTo} initial={base.author !== 'owner' && sendTo.includes(base.author) ? base.author : sendTo[0]}
+          <SendChanges art={art} base={base} head={head} agents={sendTo} initial={!isHuman(base.author) && sendTo.includes(base.author) ? base.author : sendTo[0]}
             send={(a, b) => annotate.ask(a, b)} onClose={() => setSending(false)}
             onSent={(a) => { setSending(false); note(`Sent your changes to ${who(a)}: v${head.n} and the diff.`) }} />
         </Suspense>

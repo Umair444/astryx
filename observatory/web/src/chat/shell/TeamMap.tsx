@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { agentColor, displayName, fmtAgo } from '../../api'
+import { agentColor, displayName, fmtAgo, personName, viewer } from '../../api'
 import { useStore } from '../../store'
 import AgentFace from '../../components/AgentFace'
 import { useNow, type Status } from '../data'
@@ -28,12 +28,13 @@ export default function TeamMap({ names, status, lines, here, onAgent }: {
   const { agents: roster, messages } = useStore()
   const now = useNow(2000)
   const [hover, setHover] = useState<string | null>(null)
+  const ME = viewer()                              // "you": the viewer's own node, the owner's or a member's (11-15)
 
   // the layout: seed at the centre, "you" at the top, the rest around the ring cluster by cluster
   const { nodes, arcs } = useMemo(() => {
     const hub = names.includes('seed') ? 'seed' : null
     const clusters = clustersOf(roster.filter((a) => a.agent !== hub && names.includes(a.agent)), names)
-    const ring = ['owner', ...clusters.flatMap((c) => c.agents)]
+    const ring = [ME, ...clusters.flatMap((c) => c.agents)]
     const at = (i: number) => {
       const t = -Math.PI / 2 + (i / ring.length) * Math.PI * 2
       return { x: CX + R * Math.cos(t), y: CY + R * 0.86 * Math.sin(t), t }
@@ -69,8 +70,8 @@ export default function TeamMap({ names, status, lines, here, onAgent }: {
     const qx = mx + (CX - mx) * k - (dy / len) * side, qy = my + (CY - my) * k + (dx / len) * side
     return `M ${a.x} ${a.y} Q ${qx} ${qy} ${b.x} ${b.y}`
   }
-  const tip = hover ? (hover === 'owner' ? 'You' : `${displayName(hover)} · ${STATUS_WORD[status[hover] ?? 'down']}`) : null
-  const tipLine = hover && hover !== 'owner' ? lines[hover] : ''
+  const tip = hover ? (hover === ME ? 'You' : `${displayName(hover)} · ${STATUS_WORD[status[hover] ?? 'down']}`) : null
+  const tipLine = hover && hover !== ME ? lines[hover] : ''
   const moved = edges.reduce((n, e) => n + e.n, 0)
   const k = Math.min(1, (innerWidth - 24) / W)     // a phone: the same map, scaled to fit
 
@@ -96,7 +97,7 @@ export default function TeamMap({ names, status, lines, here, onAgent }: {
             if (!a || !b) return null
             const age = now - e.last
             const fresh = Math.max(0.18, 1 - age / EDGE_WINDOW)
-            const color = e.from === 'owner' ? 'var(--t-accent)' : agentColor(e.from)
+            const color = e.from === ME ? 'var(--t-accent)' : agentColor(e.from)
             const dim = focus && !(focus.has(e.from) && focus.has(e.to))
             const d = path(a, b)
             return (
@@ -108,7 +109,7 @@ export default function TeamMap({ names, status, lines, here, onAgent }: {
           })}
         </svg>
         {[...nodes.values()].map((n) => {
-          const me = n.id === 'owner'
+          const me = n.id === ME
           const dim = (focus ? !focus.has(n.id) : !me && here.length > 0 && !here.includes(n.id) && status[n.id] !== 'working')
           const size = n.id === 'seed' ? FACE + 8 : FACE
           return (
@@ -128,7 +129,7 @@ export default function TeamMap({ names, status, lines, here, onAgent }: {
       <div className="px-4 pb-3 pt-2 h-[70px] text-[12px] leading-snug border-t border-line/70">
         {tip ? (
           <div className="flex items-start gap-2">
-            {hover !== 'owner' && <span className="pt-[1px]"><AgentFace name={hover!} size={16} /></span>}
+            {hover !== ME && <span className="pt-[1px]"><AgentFace name={hover!} size={16} /></span>}
             <div className="min-w-0 flex-1">
               <div className="text-ink font-medium">{tip}</div>
               {tipLine && <div className="text-ink-dim truncate">{tipLine}</div>}
@@ -146,7 +147,7 @@ export default function TeamMap({ names, status, lines, here, onAgent }: {
 function edgeSummary(edges: ReturnType<typeof edgesOf>, who: string, now: number): string {
   const out = edges.filter((e) => e.from === who), into = edges.filter((e) => e.to === who)
   if (!out.length && !into.length) return 'No messages this hour.'
-  const name = (n: string) => (n === 'owner' ? 'you' : displayName(n))
+  const name = (n: string) => personName(n, 'you')
   const last = Math.max(...[...out, ...into].map((e) => e.last))
   const parts = []
   if (out.length) parts.push(`wrote to ${out.map((e) => name(e.to)).join(', ')}`)

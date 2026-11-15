@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { api, apiPost, eventsUrl, fetchWhoami, noteServerTime, parseTs } from './api'
+import { api, apiPost, eventsUrl, fetchWhoami, noteServerTime, parseTs, setViewer } from './api'
 import { talks, type AgentRow, type DagEvent, type Goal, type Msg, type Overview, type Peer, type Presence, type WhoAmI, type WireEvent } from './types'
 
 /* one wire pulse — the network view animates the from→to edge for a moment.
@@ -92,7 +92,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // whoami FIRST — every data effect below waits on it so an anonymous
   // visitor never fires an owner-only fetch (zero 403 console spam)
   const recheckWho = useCallback(async () => {
-    const w = await fetchWhoami().catch(() => ({ owner: false, vega: false }))
+    const w: WhoAmI = await fetchWhoami().catch(() => ({ owner: false, vega: false }))
+    setViewer(w.handle) // before the render it triggers: every label reads "You" off it (api.personName)
     setWho(w) // fresh identity every check — data + SSE effects re-fire on key change
     setWhoChecked(true)
     return w

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { agentColor, displayName, elapsedSince, fmtTime } from '../../api'
-import type { Step } from '../../types'
+import { humanName, type Step } from '../../types'
+import type { Pending } from './pending'
 import { clock, useNow } from '../data'
 import { stepLine, visible } from '../model'
 import { Presence } from '../shell/AgentRail'
@@ -16,7 +17,9 @@ import { Presence } from '../shell/AgentRail'
    adds the measured server-browser offset (api.ts). A bare `Date.now() - Date.parse(since)` froze at 00:00 for the
    first ~3 minutes of every turn while the org host's clock ran ahead (11-11: +183 s), clock() clamping the negative. */
 
-export interface Pending { agent: string; since: string; steps: Step[] }
+/* `by` (thread/pending.ts): who asked, when it isn't the viewer: the line says "for Faran". STOP is the owner's act
+   (the server refuses anyone else), so onStop comes only to the owner's view. */
+export type { Pending } from './pending'
 
 /* a tool step as a plain-language verb; the step's own words stay as the detail */
 const VERBS: [RegExp, string][] = [
@@ -94,7 +97,7 @@ function Line({ p, now, onStop }: { p: Pending; now: number; onStop?: StopFn }) 
         <span className={`pointer-events-none ${halted ? 'opacity-60 transition-opacity' : ''}`}><Presence agent={p.agent} status={halted ? 'awake' : 'working'} size={24} ring={!halted} /></span>
         <span className="min-w-0 flex-1 flex items-baseline gap-2 text-[13.5px] pointer-events-none">
           <span className="min-w-0 truncate sm:shrink-0 text-ink"><span className="font-medium">{name}</span> <span className="text-ink-dim">{
-            stop === 'stopping' ? 'is stopping…' : stop === 'stopped' ? 'stopped its turn' : `is ${verb}`}</span></span>
+            stop === 'stopping' ? 'is stopping…' : stop === 'stopped' ? 'stopped its turn' : `is ${verb}${p.by ? ` for ${humanName(p.by)}` : ''}`}</span></span>
           {detail && !halted && <span className="ws-shimmer font-mono text-[12px] truncate max-sm:hidden">{detail}</span>}
         </span>
         {stop === 'confirm' ? (
