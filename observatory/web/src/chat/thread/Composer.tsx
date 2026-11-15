@@ -1,11 +1,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { displayName } from '../../api'
+import { apiSend, displayName } from '../../api'
 import AgentFace from '../../components/AgentFace'
 import { startDictation, stopDictation, useDictation } from '../dictate'
 import { mentions, upload, type McpTool, type Skill, type Uploaded } from '../model'
 import { I } from '../icons'
 import { touchFirst } from '../shell/phone'
 import { expandPasteTokens, pasteToken } from './code'
+import { boxes, calcAt, CLOSE, latexToQalc, OPEN, openCalc, sendText, setResult, splitCalc } from './calc'
 
 const PASTE_LINES = 12, PASTE_CHARS = 1500          // a paste this long folds into a token (code.ts pasteToken)
 /* this tab's pastes, by token number, kept in sessionStorage beside the drafts (a reload keeps a draft, so it must keep
@@ -13,6 +14,12 @@ const PASTE_LINES = 12, PASTE_CHARS = 1500          // a paste this long folds i
 const PASTE_KEY = 'ws.pastes', SEQ_KEY = 'ws.pastes.seq', PASTE_STORE_MAX = 2_000_000
 const PASTES = new Map<number, string>()
 let pasteSeq = 0
+
+/* one calculator box's expression, evaluated by the server's Qalculate (calc.ts; observatory/api/calc.py) */
+async function calculate(expr: string): Promise<string> {
+  const r = await apiSend<{ result: string }>('POST', '/chat/calc', { expr: latexToQalc(expr) })
+  return r.result
+}
 try {
   const saved = JSON.parse(sessionStorage.getItem(PASTE_KEY) || '{}') as { seq?: number; items?: [number, string][] }
   for (const [k, v] of saved.items ?? []) PASTES.set(Number(k), String(v))
@@ -199,7 +206,16 @@ export default forwardRef<ComposerHandle, {
     setBusy(true); setErr('')
     try {
       const sentFrom = owner
-      const out = expandPasteTokens(text, PASTES)
+      let calcText = text
+      for (const b of [...boxes(text)].reverse()) {          // a box nobody pressed Enter in is evaluated now
+        const { expr, result } = splitCalc(b.inner)
+        if (result === null && expr) {
+          try { calcText = setResult(calcText, b, await calculate(expr)).text }
+          catch { throw new Error(`Couldn't calculate “${expr}”. Fix the box or delete it.`) }
+        }
+      }
+      if (calcText !== text) setText(calcText)
+      const out = expandPasteTokens(sendText(calcText).text, PASTES)
       if (out.missing.length) throw new Error(`Pasted text #${out.missing.join(', #')} was lost when the page reloaded. Delete the token and paste it again.`)
       if (out.broken) throw new Error('A [Pasted text …] token was edited. Delete it whole, or paste the text again.')
       await onSend(out.text.trim(), files, to)
@@ -218,12 +234,28 @@ export default forwardRef<ComposerHandle, {
   }
   const dictate = () => (dict.phase === 'live' || dict.phase === 'connecting' ? stopDictation() : startDictation((t) => insert(t)))
 
+  const mirror = useRef<HTMLDivElement>(null)
+  async function solve(b: { start: number; end: number; inner: string }) {
+    const { expr } = splitCalc(b.inner)
+    if (!expr) return
+    setErr('')
+    try {
+      const out = setResult(text, b, await calculate(expr))
+      setText(out.text)
+      requestAnimationFrame(() => { box.current?.focus(); box.current?.setSelectionRange(out.caret, out.caret) })
+    } catch (e) { setErr(`Couldn't calculate “${expr}”: ${String((e as Error).message ?? e).replace(/^\/chat\/calc: /, '')}`) }
+  }
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (items.length) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => (s + 1) % items.length); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => (s - 1 + items.length) % items.length); return }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); items[sel]?.apply(); return }
       if (e.key === 'Escape') { e.preventDefault(); if (picker) setPicker(false); else setMenuOff(true); return }
+    }
+    // ENTER INSIDE A CALCULATOR BOX evaluates it (calc.ts), on a phone too: the box is the one place Enter means "solve"
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      const b = calcAt(text, e.currentTarget.selectionStart ?? 0)
+      if (b) { e.preventDefault(); void solve(b); return }
     }
     // a phone's Enter is a new line (iteration 16): its keyboard has no Shift+Enter, and a message goes out only by the
     // send button, as in WhatsApp. A hardware keyboard (a desktop, a tablet with keys) sends on Enter.
@@ -265,13 +297,21 @@ export default forwardRef<ComposerHandle, {
             {uploading > 0 && <span className="inline-flex items-center gap-1.5 text-[12px] text-ink-mute px-1"><span className="w-3 h-3 rounded-full border-2 border-ink-mute border-t-transparent animate-spin" aria-hidden />Uploading</span>}
           </div>
         )}
+        <div className="relative">
+        {text.includes(OPEN) && <CalcMirror ref={mirror} text={text} hero={hero} />}
         <textarea ref={box} value={text} rows={1} aria-label="message" data-composer
-          onChange={(e) => { setText(e.target.value); setMenuOff(false); setPicker(false); setErr('') }}
+          onChange={(e) => {
+            const opened = openCalc(e.target.value, e.target.selectionStart ?? e.target.value.length)   // "= " opens a box
+            setText(opened ? opened.text : e.target.value); setMenuOff(false); setPicker(false); setErr('')
+            if (opened) { const el = e.target; requestAnimationFrame(() => el.setSelectionRange(opened.caret, opened.caret)) }
+          }}
+          onScroll={(e) => { if (mirror.current) mirror.current.scrollTop = (e.target as HTMLTextAreaElement).scrollTop }}
           onKeyDown={onKey}
           onBlur={() => setPicker(false)}
           onPaste={(e) => { const fs = Array.from(e.clipboardData.files); if (fs.length) { e.preventDefault(); addFiles(fs) } else onPasteText(e) }}
           placeholder={hint}
-          className={`block w-full resize-none bg-transparent px-4 outline-none text-ink placeholder:text-ink-mute ${hero ? 'pt-4 pb-1 text-[17px] leading-[1.55]' : 'pt-3.5 pb-1 text-[15px] leading-relaxed'}`} />
+          className={`relative block w-full resize-none bg-transparent px-4 outline-none placeholder:text-ink-mute ${text.includes(OPEN) ? 'text-transparent caret-[var(--t-fg)]' : 'text-ink'} ${hero ? 'pt-4 pb-1 text-[17px] leading-[1.55]' : 'pt-3.5 pb-1 text-[15px] leading-relaxed'}`} />
+        </div>
         {(live || dict.phase === 'connecting') && (
           <div className="px-4 pb-1 text-[12.5px] text-cyan flex items-center gap-2" role="status">
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan" style={{ transform: `scale(${1 + dict.level * 1.6})` }} aria-hidden />
@@ -325,6 +365,25 @@ export default forwardRef<ComposerHandle, {
           </button>
         </div>
       </div>
+    </div>
+  )
+})
+
+/* THE BOXES, drawn: the composer's text again, behind the (then transparent) textarea, in its exact type and padding,
+   each ⟦…⟧ a dark box. The textarea stays the one thing you type in, so a box edits like any text. */
+const CalcMirror = forwardRef<HTMLDivElement, { text: string; hero: boolean }>(function CalcMirror({ text, hero }, ref) {
+  const parts: React.ReactNode[] = []
+  let i = 0
+  for (const b of boxes(text)) {
+    if (b.start > i) parts.push(text.slice(i, b.start))
+    const k = b.inner.lastIndexOf(' = ')        // the RAW characters, so the box sits exactly under the typed text
+    parts.push(<span key={b.start} className="ws-calc"><span className="ws-calc-mark">{OPEN}</span>{k < 0 ? b.inner : <>{b.inner.slice(0, k)}<span className="ws-calc-eq">{b.inner.slice(k)}</span></>}<span className="ws-calc-mark">{CLOSE}</span></span>)
+    i = b.end + 1
+  }
+  parts.push(text.slice(i) + '\u200b')
+  return (
+    <div ref={ref} aria-hidden className={`absolute inset-x-0 top-0 bottom-0 overflow-hidden pointer-events-none whitespace-pre-wrap break-words px-4 text-ink ${hero ? 'pt-4 pb-1 text-[17px] leading-[1.55]' : 'pt-3.5 pb-1 text-[15px] leading-relaxed'}`}>
+      {parts}
     </div>
   )
 })
