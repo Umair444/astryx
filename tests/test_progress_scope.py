@@ -124,8 +124,12 @@ with tempfile.TemporaryDirectory() as td:
     arm("H7 a foreground helper (its launch still in flight) takes the launching turn", H.scope({**parent, "agent_id": "agentC"}, "db")[0] == [777])
     H.launch_open("db", "toolu_2", [500])
     arm("H7 launches in flight from two turns disagree: nothing", H.scope({**parent, "agent_id": "agentC"}, "db")[0] == [])
-    H.launch_close("db", "toolu_1"); H.launch_close("db", "toolu_2")
-    arm("H7 a closed launch scopes nothing", H.scope({**parent, "agent_id": "agentD"}, "db")[0] == [])
+    arm("H7 a launch keeps the scope it opened with", H.launch_scope("db", "toolu_1") == [777] and H.launch_scope("db", "nope") is None)
+    H.launch_close("db", "toolu_1")
+    arm("H7 closing one launch leaves the other", H.launch_scope("db", "toolu_2") == [500])
+    H.launch_close("db")                                    # the turn ended (Stop)
+    arm("H7 a turn's end closes every launch; a closed launch scopes nothing",
+        H.launch_scope("db", "toolu_2") is None and H.scope({**parent, "agent_id": "agentD"}, "db")[0] == [])
     from psycopg.types.json import Jsonb as _J
     arm("H6 step_meta carries the helper beside the scope", H.step_meta(None, [500], {"id": "agentA"}).obj == {"turn_msgs": [500], "sub": {"id": "agentA"}})
     # medic 12186: three parallel launches in one message, each PostToolUse its own process: none may lose its binding

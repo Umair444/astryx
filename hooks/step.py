@@ -210,9 +210,25 @@ def launch_open(agent, tool_use_id, msgs):
         pass
 
 
-def launch_close(agent, tool_use_id):
+def launch_scope(agent, tool_use_id):
+    """The scope captured when this launch opened (None when there is no such launch)."""
     try:
-        os.unlink(os.path.join(_subs_dir(agent, "launch"), _key(tool_use_id)))
+        with open(os.path.join(_subs_dir(agent, "launch"), _key(tool_use_id))) as f:
+            return json.load(f).get("msgs") or []
+    except Exception:
+        return None
+
+
+def launch_close(agent, tool_use_id=None):
+    """Close one launch, or (no id: the turn ended) every launch still open: a launch whose PostToolUse never came (an
+    interrupted Agent call) can't be inherited later (medic 12189)."""
+    try:
+        d = _subs_dir(agent, "launch")
+        for n in ([_key(tool_use_id)] if tool_use_id else os.listdir(d)):
+            try:
+                os.unlink(os.path.join(d, n))
+            except FileNotFoundError:
+                pass
     except Exception:
         pass
 
@@ -844,7 +860,8 @@ def main():
             if tool in ("Agent", "Task"):
                 if isinstance(r, dict) and r.get("agentId"):   # a helper launched: bind it, then close the launch
                     ti2 = h.get("tool_input") or {}
-                    bind_sub(agent, r["agentId"], msgs, ti2.get("description"), ti2.get("subagent_type"))
+                    at = launch_scope(agent, h.get("tool_use_id"))   # the scope AT launch, not recomputed now (12189)
+                    bind_sub(agent, r["agentId"], msgs if at is None else at, ti2.get("description"), ti2.get("subagent_type"))
                 launch_close(agent, h.get("tool_use_id"))
             err = r.get("error") or ("" if r.get("success", True) else "failed") \
                 if isinstance(r, dict) else ""
@@ -859,6 +876,7 @@ def main():
                             (agent, f"{tool} done", meta))
 
         elif ev == "Stop":
+            launch_close(agent)                        # the turn ended: no launch of it is still in flight
             res = handle_stop(cur, agent, h, strip)
             # short response step for the wall/status line (full text lives in turns)
             if res:
