@@ -1,5 +1,7 @@
 import { createContext, useContext, useState } from 'react'
 import type { Msg } from '../../types'
+import { clipHtml, clipPlain, copyRich, selectionClip } from './clip'
+import { splitProvenance } from './provenance'
 
 /* A turn's actions (iteration 7), on hover (or focus; always shown where there is no hover): Copy, Quote-reply (the
    selected text inside this turn, else the whole turn, quoted into the composer) and Open as document (the turn's words
@@ -33,8 +35,12 @@ export default function TurnActions({ m, text, inline = false }: { m: Msg; text:
   return (
     <div className={`ws-turn-acts ${inline ? 'is-inline' : ''}`} role="toolbar" aria-label="message actions">
       <button onMouseDown={keep} onClick={async (e) => {
-        const sel = picked(turnOf(e))
-        try { await navigator.clipboard.writeText(sel || text); flash(sel ? 'Copied the selection' : 'Copied') } catch { flash('Copy failed') }
+        // RICH (clip.ts): a mail client or a document gets the formatting, a plain editor the words; the source footer
+        // ("Source: …") stays out of a whole-message copy
+        const sel = selectionClip(turnOf(e))
+        const body = splitProvenance(text).body
+        const ok = sel ? await copyRich(sel.plain, sel.html) : await copyRich(clipPlain(body), clipHtml(body))
+        flash(!ok ? 'Copy failed' : sel ? 'Copied the selection' : 'Copied')
       }} title="Copy" aria-label="copy">{Copy}</button>
       <button onMouseDown={keep} onClick={(e) => { ctx.quote(picked(turnOf(e)) || text, m); getSelection()?.removeAllRanges() }}
         title="Quote in your reply (the selection, or the whole message)" aria-label="quote in your reply">{Quote}</button>

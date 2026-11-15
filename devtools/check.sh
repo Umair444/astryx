@@ -1131,6 +1131,7 @@ run "chat: inline files" "$PY" tests/test_chat_inline.py
 run "chat: a signed answer's provenance footer" "$PY" tests/test_chat_provenance.py
 run "chat: tables and figures written out" "$PY" tests/test_chat_tables.py
 run "chat: code in an answer, a human's markdown, long pastes" "$PY" tests/test_chat_code.py
+run "chat: rich copy (formatted for a mail client, clean words for a plain editor)" "$PY" tests/test_chat_clip.py
 run "chat: the live line follows any human's ask" "$PY" tests/test_chat_pending.py
 run "chat: the client never spells the viewer as the literal 'owner'" "$PY" tests/test_chat_viewer_lint.py
 run "chat: a chat's live progress carries only the work it asked for" "$PY" tests/test_progress_scope.py
