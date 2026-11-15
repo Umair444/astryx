@@ -190,7 +190,7 @@ mkdir -p "$HOME_D/.claude"
   fi
 } > "$HOME_D/CLAUDE.md"
 
-# grants: a charter line "Grants: gmail, ..." maps to extra MCP servers in this
+# grants: a charter line "Grants: mail, ..." maps to extra MCP servers in this
 # agent's world. With --strict-mcp-config the .mcp.json IS the capability list.
 EXTRA=""
 for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' '); do
@@ -206,8 +206,9 @@ for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' 
   \"chat-sql\": { \"command\": \"/bin/bash\", \"args\": [\"$ROOT/mcp/chat-sql/run.sh\"] }";;
     ocr) EXTRA="$EXTRA,
   \"ocr\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/ocr/server.py\"] }";;
-    gmail) EXTRA="$EXTRA,
-  \"gmail\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/gmail/server.py\"] }";;
+    # mail: any SMTP/IMAP mailbox (src/astryx/mail.py); `gmail` is its old name, read as the same grant
+    mail|gmail) EXTRA="$EXTRA,
+  \"mail\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/mail/server.py\"] }";;
     compose) EXTRA="$EXTRA,
   \"compose\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/compose/server.py\"] }";;
     imagegen) EXTRA="$EXTRA,

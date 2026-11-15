@@ -1,56 +1,33 @@
 #!/usr/bin/env python3
-"""astryx · gmail MCP server — the owner's mailbox as a scoped capability.
+"""astryx · mail MCP server — the org's mailbox as a scoped capability, on any mail server.
 
-IMAP + SMTP over a Gmail app password (GMAIL_ADDRESS / GMAIL_APP_PASSWORD in
-the org's .env). Granted per charter with `Grants: gmail`; mail is personal
-tier, so holders quote content meta-only in anything org-visible unless the
-owner's law says otherwise, and sending is a real outward act: sign as the
-agent, never as the owner, unless the charter explicitly says otherwise.
-
-mail_search takes Gmail's own search syntax (from:, subject:, newer_than:2d,
-has:attachment, label:) via IMAP X-GM-RAW, so agents search exactly like the
-owner does in the Gmail search bar.
+SMTP to send, IMAP to read, both configured by the MAIL_* keys in the org's .env (src/astryx/mail.py says which:
+an office relay with no login, Gmail with an app password, any host between). Granted per charter with
+`Grants: mail` (`gmail` is read as the same grant). Mail is personal tier, so holders quote content meta-only in
+anything org-visible unless the owner's law says otherwise, and sending is a real outward act: sign as the agent,
+never as the owner, unless the charter explicitly says otherwise.
 """
 from __future__ import annotations
 
 import email
 import email.header
-import imaplib
-import smtplib
-from email.message import EmailMessage
-from email.utils import parsedate_to_datetime
 import sys
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))   # astryx.paths: the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
-from astryx import config, paths  # noqa: E402
+from astryx import config, mail, paths  # noqa: E402
 
 
-def creds() -> tuple[str, str]:
-    """GMAIL_ADDRESS / GMAIL_APP_PASSWORD from the org's .env, read at use, not import."""
-    env = config.read_env(paths.estate(__file__) / ".env")      # the ONE .env reader, per line (plan-10224 ENVREAD)
-    return env["GMAIL_ADDRESS"], env["GMAIL_APP_PASSWORD"]
+def env() -> dict:
+    """The org's .env, read at use, not import (the ONE .env reader, plan-10224 ENVREAD)."""
+    return config.read_env(paths.estate(__file__) / ".env")
 
 
-mcp = FastMCP("astryx-gmail")
-
-
-def imap() -> imaplib.IMAP4_SSL:
-    m = imaplib.IMAP4_SSL("imap.gmail.com")
-    m.login(*creds())
-    return m
-
-
-def gm_search(m, query: str) -> list[bytes]:
-    """X-GM-RAW with the query sent as an IMAP literal, so quotes, backslashes and
-    non-ASCII reach Gmail untouched. Inlined as "{query}" it broke on any query
-    containing a quote (subject:"two words" -> BAD Could not parse command)."""
-    m.literal = query.encode("utf-8")
-    _, data = m.search("UTF-8", "X-GM-RAW")
-    return data[0].split()
+mcp = FastMCP("astryx-mail")
 
 
 def dec(v) -> str:
@@ -93,13 +70,13 @@ def fetch_headers(m, ids: list[bytes]) -> list[dict]:
 
 @mcp.tool()
 def mail_search(query: str, limit: int = 10) -> list[dict]:
-    """Search the mailbox with Gmail's own syntax (from:, subject:, newer_than:2d,
-    is:unread, has:attachment, label:x). Returns newest first: id, from, subject,
-    date, unread. Use mail_read(id) for a body."""
-    m = imap()
+    """Search the inbox. On Gmail, Gmail's own syntax (from:, subject:, newer_than:2d, is:unread, has:attachment);
+    on any other server, IMAP criteria (FROM "x" SINCE 1-Nov-2026 UNSEEN) or a plain word to find in the text.
+    Returns newest first: id, from, subject, date, unread. Use mail_read(id) for a body."""
+    m = mail.imap(env())
     try:
         m.select("INBOX", readonly=True)
-        ids = gm_search(m, query)[-min(limit, 50):]
+        ids = mail.search(m, query)[-min(limit, 50):]
         return list(reversed(fetch_headers(m, ids)))
     finally:
         m.logout()
@@ -108,7 +85,7 @@ def mail_search(query: str, limit: int = 10) -> list[dict]:
 @mcp.tool()
 def mail_recent(limit: int = 10) -> list[dict]:
     """The newest inbox messages: id, from, subject, date, unread."""
-    m = imap()
+    m = mail.imap(env())
     try:
         m.select("INBOX", readonly=True)
         _, data = m.search(None, "ALL")
@@ -121,7 +98,7 @@ def mail_recent(limit: int = 10) -> list[dict]:
 @mcp.tool()
 def mail_read(id: str) -> dict:
     """One full message by id (from mail_search/mail_recent): headers + plain body."""
-    m = imap()
+    m = mail.imap(env())
     try:
         m.select("INBOX", readonly=True)
         _, data = m.fetch(id.encode(), "(BODY.PEEK[])")
@@ -135,22 +112,12 @@ def mail_read(id: str) -> dict:
 
 
 @mcp.tool()
-def mail_send(to: str, subject: str, body: str, cc: str = "") -> dict:
-    """Send a plain-text email from the owner's address. OUTWARD ACT: unless your
-    charter says otherwise, sign the body as yourself (the agent), never as the
-    owner. Args: to (comma-separated ok), subject, body, optional cc."""
-    addr, pw = creds()
-    msg = EmailMessage()
-    msg["From"] = addr
-    msg["To"] = to
-    if cc:
-        msg["Cc"] = cc
-    msg["Subject"] = subject
-    msg.set_content(body)
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
-        s.login(addr, pw)
-        s.send_message(msg)
-    return {"sent": True, "to": to, "subject": subject}
+def mail_send(to: str, subject: str, body: str, cc: str = "", bcc: str = "") -> dict:
+    """Send a plain-text email from the org's address. OUTWARD ACT: unless your charter says otherwise, sign the body
+    as yourself (the agent), never as the owner. Args: to (comma-separated ok), subject, body, optional cc and bcc."""
+    e = env()
+    mail.send(e, to, subject, body, cc=cc, bcc=bcc)
+    return {"sent": True, "from": e["MAIL_FROM"], "to": to, "subject": subject}
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ server, rendered in the observatory, with every run recorded (`dag_runs`).
 ```json
 { "name": "brief",
   "nodes": [
-    {"id": "mail",  "tool": "gmail.search",   "args": {"q": "newer_than:1d"}},
+    {"id": "mail",  "tool": "mail.mail_search", "args": {"query": "newer_than:1d"}},
     {"id": "chats", "tool": "channels.recent", "args": {}},
     {"id": "sum",   "tool": "llm.summarize",  "args": {"docs": "$node.mail", "extra": "$node.chats"}}
   ]}

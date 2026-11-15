@@ -40,7 +40,7 @@ One-line directives the nucleus reads from any charter:
 
 ```
 Type: resident|stationed      Model: opus|sonnet|haiku      Rank: 2
-Heartbeat: 0 9 * * *          Grants: gmail, browser        Permissions: relay
+Heartbeat: 0 9 * * *          Grants: mail, browser         Permissions: relay
 Tools: WebSearch              (stationed only: opt-in tool allowlist)
 ```
 

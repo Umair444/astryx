@@ -18,11 +18,11 @@
       ]
     },
     {
-      "server": "gmail",
+      "server": "mail",
       "tools": [
         {
           "name": "mail_search",
-          "description": "Search the mailbox with Gmail's own syntax (from:, subject:, newer_than:2d,"
+          "description": "Search the inbox. On Gmail, Gmail's own syntax (from:, subject:, newer_than:2d, is:unread, has:attachment);"
         },
         {
           "name": "mail_recent",
@@ -34,7 +34,7 @@
         },
         {
           "name": "mail_send",
-          "description": "Send a plain-text email from the owner's address. OUTWARD ACT: unless your"
+          "description": "Send a plain-text email from the org's address. OUTWARD ACT: unless your charter says otherwise, sign the body"
         }
       ]
     },
