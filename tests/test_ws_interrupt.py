@@ -133,7 +133,7 @@ arm("payload carries from/to/thread/intent/body/iso ts",
     got and got[0]["msg"] == {"id": 1001, "ts": T.isoformat(), "from": "seed", "to": "db", "thread": "plan-1",
                               "intent": "chat", "body": "payload"} and got[0]["agent"] == "db" and got[0]["at"] == 20, got)
 arm("handoff SQL never reads the opener's own thread (in-thread rows render themselves)",
-    "IS DISTINCT FROM $1" in W.HANDOFFS_SQL and "<> 'owner'" in W.HANDOFFS_SQL)
+    "IS DISTINCT FROM $1" in W.HANDOFFS_SQL and "NOT " + W.human_sql("i.from_agent") in W.HANDOFFS_SQL)   # every human, not 'owner' alone
 
 print(f"\n{'ALL PASS' if not fails else f'{fails} FAIL'}")
 sys.exit(1 if fails else 0)
