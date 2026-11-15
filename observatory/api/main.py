@@ -453,6 +453,9 @@ from observatory.api import chat as _chat  # noqa: E402
 _chat.bind(lambda: pool, ESTATE, ESTATE / "media", REPO, roster=lambda: set(agent_meta()),
            me=lambda r: wire_handle(r), sees=lambda r: sees(r))   # media/: every channel's inbound files
 app.include_router(_chat.router)
+from observatory.api import calc as _calc  # noqa: E402 — the chat's calculator (Qalculate, sandboxed)
+_calc.bind(me=lambda r: wire_handle(r))
+app.include_router(_calc.router)
 
 # feat/chat-workspace: the workspace's unified conversation list (chat:, obs:, cv:) and its pins/titles; owner-only by
 # omission from PUBLIC, like /api/chat
@@ -514,7 +517,7 @@ _WIRE_WRITE = re.compile(r"^/api/(messages|ws/agents/[^/]+/interrupt|federation/
 # per agent, so the personal tier stays the owner's.
 MEMBER = {("POST", "/api/messages"), ("POST", "/api/thread/read"), ("POST", "/api/chat/upload"),
           ("PUT", "/api/ws/threads/meta"), ("PUT", "/api/chat/projects"),
-          ("POST", "/api/chat/dictate/session"), ("POST", "/api/chat/dictate/usage")}
+          ("POST", "/api/chat/dictate/session"), ("POST", "/api/chat/dictate/usage"), ("POST", "/api/chat/calc")}
 MEMBER_GET = ("/api/ws/threads", "/api/ws/thread-titles", "/api/ws/search", "/api/ws/handoffs", "/api/ws/agents",
               "/api/ws/briefing", "/api/ws/media", "/api/ws/artifacts", "/api/chat/", "/api/presence",
               "/api/steps", "/api/pulse")

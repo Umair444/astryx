@@ -397,3 +397,9 @@
 
 /* the lead of a team (owner 11-13): a quiet accent ring on its chip, in the composer and on the message */
 .ws-lead { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t-accent) 45%, transparent); color: var(--t-fg); }
+
+/* the composer's calculator box (thread/calc.ts, Composer.tsx CalcMirror): drawn BEHIND the transparent textarea, so it
+   may not change a single glyph's width: colour, background and a shadow for its edge, never padding or a border */
+.ws-calc { background: #0e1014; color: #e6e8ec; border-radius: 6px; box-shadow: 0 0 0 3px #0e1014; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.ws-calc-mark { color: #5d6472; }
+.ws-calc-eq { color: #c3e88d; }
