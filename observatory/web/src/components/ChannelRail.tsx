@@ -3,7 +3,7 @@ import { api, displayName } from '../api'
 import type { ContactMatch } from '../types'
 import { BRAND } from '../ui/brands'
 import { ChannelMark } from '../ui/glyphs'
-import { arm, DRAG_MIME, dismissToast, patchChat, refOf, unrouteChat, useRoutes, type ChatRef, type Show } from '../ui/routes'
+import { arm, DRAG_MIME, dismissToast, homeChat, patchChat, refOf, unrouteChat, useRoutes, type ChatRef, type Show } from '../ui/routes'
 import AgentFace from './AgentFace'
 import ChannelConnect, { useChannels, type ChannelState } from './ChannelConnect'
 
@@ -105,6 +105,8 @@ function ChatRow({ c }: { c: ChatRef }) {
   const [err, setErr] = useState<string | null>(null)
   const act = async (f: () => Promise<void>) => { setBusy(true); setErr(null); try { await f() } catch (e) { setErr((e as Error).message) } setBusy(false) }
   const routed = !!c.agent
+  const [more, setMore] = useState(false)
+  const [note, setNote] = useState(c.note ?? '')
   return (
     <li draggable onDragStart={(e) => { e.dataTransfer.setData(DRAG_MIME, JSON.stringify(c)); e.dataTransfer.effectAllowed = 'move' }}
       className={`group rounded-xl px-2 py-1.5 border border-transparent hover:border-line hover:bg-deck-3/50 ${c.enabled ? '' : 'opacity-60'}`}>
@@ -138,6 +140,31 @@ function ChatRow({ c }: { c: ChatRef }) {
                 onClick={() => act(() => patchChat(c, { show: o.v, live_steps: undefined }, `${c.label} now shows ${o.hint}`))}>{o.label}</button>
             ))}
           </span>
+          <button onClick={() => setMore((m) => !m)} aria-expanded={more} style={{ fontSize: 11.5 }} className="ml-auto text-ink-mute hover:text-ink underline-offset-2 hover:underline">
+            {more ? 'Less' : 'Details'}
+          </button>
+        </div>
+      )}
+      {routed && more && (
+        // what stays rare: the agent's home chat, who may write, the note. Trusted senders are not edited here: they
+        // carry the owner's powers and go away with the identity work (one person, one account)
+        <div className="mt-1.5 ml-8 flex flex-col gap-1.5 text-[11.5px] text-ink-dim">
+          <label className="flex items-center gap-2">
+            <button role="switch" aria-checked={!!c.home} disabled={busy || !!c.home} onClick={() => act(() => homeChat(c))}
+              className="ws-switch shrink-0" data-on={c.home || undefined} aria-label={`${c.label} is the home chat`}><span /></button>
+            <span>Home chat: {displayName(c.agent!)}'s own messages to you arrive here</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <button role="switch" aria-checked={!!c.open} disabled={busy}
+              onClick={() => act(() => patchChat(c, { open: !c.open }, `${c.label}: ${c.open ? 'only its trusted senders reach the agent' : 'anyone in the chat reaches the agent'}`))}
+              className="ws-switch shrink-0" data-on={c.open || undefined} aria-label={`anyone in ${c.label} may write`}><span /></button>
+            <span>Anyone in the chat can write to the agent</span>
+          </label>
+          <form onSubmit={(e) => { e.preventDefault(); if (note !== (c.note ?? '')) void act(() => patchChat(c, { note }, `${c.label}: note saved`)) }} className="flex gap-1.5">
+            <input value={note} onChange={(e) => setNote(e.currentTarget.value)} placeholder="Note: what this chat is" aria-label={`note for ${c.label}`}
+              className="flex-1 min-w-0 rounded-lg bg-deck-3/70 border border-line px-2 py-1 text-[12px] text-ink placeholder:text-ink-mute outline-none focus:border-cyan/60" />
+            <button disabled={busy || note === (c.note ?? '')} className="rounded-lg px-2 text-[11.5px] text-ink bg-deck-3 border border-line disabled:opacity-40">Save</button>
+          </form>
         </div>
       )}
       {err && <div className="text-[11.5px] text-bad mt-1 pl-8" role="alert">{err}</div>}

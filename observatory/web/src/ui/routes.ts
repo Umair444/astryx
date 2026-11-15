@@ -21,6 +21,9 @@ export interface ChatRef {
   agent: string | null      // null: a chat found by search, not routed yet
   enabled: boolean
   show: Show                // what the chat sees of the work: live steps then the reply, or the reply only
+  home?: boolean            // the agent's doorbell: where its own un-threaded messages arrive
+  open?: boolean            // anyone in the chat may write (off: its trusted senders only)
+  note?: string
 }
 export type Show = 'steps' | 'replies'
 /* a route's `show`, else its older live_steps flag (bridges read it the same way: release.shows_steps) */
@@ -56,7 +59,8 @@ export function labelOf(r: WireRoute, channel: string): string {
 
 export function refOf(r: WireRoute, channel: string): ChatRef {
   return { channel, chat: String(r.chat), label: labelOf(r, channel), kind: kindOf(channel, String(r.chat)),
-           agent: r.agent, enabled: r.enabled !== false, show: showOf(r) }
+           agent: r.agent, enabled: r.enabled !== false, show: showOf(r), home: r.home === true, open: r.open !== false,
+           note: r.note ?? '' }
 }
 
 export function loadRoutes(force = false) {
@@ -188,6 +192,19 @@ export async function patchChat(c: ChatRef, patch: Partial<WireRoute>, words: st
     return apply(patch)(rows)
   })
   toast(words, () => put(c.channel, apply(before)).then(() => toast(`Undone: ${c.label} is as it was`)))
+}
+
+/* Make this chat its agent's HOME (doorbell) on its channel: exactly one home per agent, so the others lose the flag in
+   the same write (the validator refuses two, or none when an agent has several chats). */
+export async function homeChat(c: ChatRef) {
+  const d = await put(c.channel, (rows) => rows.map((r) => {
+    if (r.agent !== c.agent) return r
+    const next: WireRoute = { ...r }
+    if (String(r.chat) === c.chat) next.home = true
+    else delete next.home
+    return next
+  }))
+  toast(diffWords(d, labeller(c.channel)) === 'Nothing changed' ? `${c.label} is ${displayName(c.agent ?? '')}'s home chat` : diffWords(d, labeller(c.channel)))
 }
 
 export const DRAG_MIME = 'application/x-astryx-chat'
