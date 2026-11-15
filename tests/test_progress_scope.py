@@ -10,7 +10,8 @@ participant pull that stream).
      H3 a redelivered batch keeps every id; no channel tag is an opening with no ids ([]); a missing file is []
      H4 step_meta keeps the ledger's keys and adds turn_msgs; no ids leaves the ledger's meta as it was
      H5 a message queued into a running turn (a queued_command attachment) makes the scope unknown, warm or cold
-     H6 a helper (sub-agent) is bound to the turn that launched it; an unbound one takes the parent's open turn
+     H6 a helper (sub-agent) is bound to the turn that launched it
+     H7 an unbound helper takes a launch in flight (agreeing), else nothing; H8 parallel binds lose nothing
   B  bridges/common.step_line(thread=...) on a fixture database
      B1 a step whose turn this thread opened is a line for it; for another thread it is nothing
      B2 a step with no stamp is nothing for a scoped job (never everything); unscoped callers are unchanged
@@ -117,9 +118,29 @@ with tempfile.TemporaryDirectory() as td:
     arm("H6 a launched helper keeps the turn that launched it, after the parent moved on (the measured hook shape: the "
         "helper's events carry the PARENT's transcript_path)", msgs == [500] and sub == {"id": "agentA", "type": "general-purpose", "desc": "check partitions"}, (msgs, sub))
     msgs2, sub2 = H.scope({**parent, "agent_id": "agentB", "agent_type": "Explore"}, "db")
-    arm("H6 an unbound helper (a foreground one) takes the parent's open turn", msgs2 == [777] and sub2 == {"id": "agentB", "type": "Explore"}, (msgs2, sub2))
+    arm("H7 an UNBOUND helper with no launch in flight gets nothing, never the parent's current turn (medic 12186: "
+        "that turn may be another thread's)", msgs2 == [] and sub2 == {"id": "agentB", "type": "Explore"}, (msgs2, sub2))
+    H.launch_open("db", "toolu_1", [777])
+    arm("H7 a foreground helper (its launch still in flight) takes the launching turn", H.scope({**parent, "agent_id": "agentC"}, "db")[0] == [777])
+    H.launch_open("db", "toolu_2", [500])
+    arm("H7 launches in flight from two turns disagree: nothing", H.scope({**parent, "agent_id": "agentC"}, "db")[0] == [])
+    H.launch_close("db", "toolu_1"); H.launch_close("db", "toolu_2")
+    arm("H7 a closed launch scopes nothing", H.scope({**parent, "agent_id": "agentD"}, "db")[0] == [])
     from psycopg.types.json import Jsonb as _J
     arm("H6 step_meta carries the helper beside the scope", H.step_meta(None, [500], {"id": "agentA"}).obj == {"turn_msgs": [500], "sub": {"id": "agentA"}})
+    # medic 12186: three parallel launches in one message, each PostToolUse its own process: none may lose its binding
+    import subprocess
+    code = ("import importlib.util,sys; s=importlib.util.spec_from_file_location('h',sys.argv[1]); m=importlib.util.module_from_spec(s); "
+            "s.loader.exec_module(m); m.TURN_CACHE=sys.argv[2]; import time; time.sleep(float(sys.argv[4])); "
+            "m.bind_sub('db', sys.argv[3], [42], 'd', 't')")
+    lost = 0
+    for trial in range(10):
+        ids = [f"par{trial}x{k}" for k in range(3)]
+        ps = [subprocess.Popen([sys.executable, "-c", code, str(REPO / "hooks" / "step.py"), H.TURN_CACHE, a, "0.3"]) for a in ids]
+        for p_ in ps:
+            p_.wait()
+        lost += sum(1 for a in ids if H.scope({**parent, "agent_id": a}, "db")[0] != [42])
+    arm("H8 three parallel bind_sub processes, 10 trials: no binding lost", lost == 0, f"{lost} of 30 lost")
 
 
 async def bridge(url):

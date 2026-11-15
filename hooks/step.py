@@ -164,50 +164,107 @@ def turn_msgs(path, agent) -> list:
 # same day: a sub-agent's tool events carry agent_id/agent_type and the PARENT's transcript_path, and the parent's
 # PostToolUse(Agent) response carries the same id as `agentId`. Reading the transcript for a sub-agent's step would give
 # the parent's CURRENT turn, wrong for a background helper that outlives the turn that launched it, so each helper is
-# BOUND, at its launch, to the turn that launched it (SUBS beside the turn cache). An unbound helper is a foreground one
-# (or one whose first call raced its launch): it runs inside the parent's open turn, which is then the right scope.
-SUBS_MAX = 200
+# BOUND, at its launch, to the turn that launched it (one file per helper beside the turn cache); an unbound helper
+# takes the launch still in flight (a foreground helper runs inside its Agent call), and nothing otherwise.
+SUB_TTL = 24 * 3600                     # a binding (or a launch left open) older than this is forgotten
 
 
-def _subs_file(agent):
-    return TURN_CACHE.format(agent=re.sub(r"[^a-z0-9_-]", "", agent) + ".subs")
+def _subs_dir(agent, kind):
+    """<cache>/<agent>.<kind>/: ONE FILE PER HELPER (kind "subs", by agent_id) or per launch in flight (kind "launch",
+    by the Agent call's tool_use_id). One writer per file: parallel launches in one message each write their own
+    (medic 12186: a shared dict lost 13 of 60 bindings to concurrent read-modify-write)."""
+    d = os.path.join(os.path.dirname(TURN_CACHE.format(agent="x")), re.sub(r"[^a-z0-9_-]", "", agent) + "." + kind)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return d
 
 
-def _subs(agent) -> dict:
+def _key(s):
+    return re.sub(r"[^A-Za-z0-9_-]", "", str(s))[:64] or "x"
+
+
+def _put(path, obj):
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "w") as f:
+        json.dump(obj, f)
+    os.replace(tmp, path)
+
+
+def _prune(d):
     try:
-        with open(_subs_file(agent)) as f:
-            d = json.load(f)
-        return d if isinstance(d, dict) else {}
-    except Exception:
-        return {}
-
-
-def bind_sub(agent, aid, msgs, desc, kind):
-    """The parent launched helper `aid` from the turn `msgs` opened: remember it (newest SUBS_MAX)."""
-    try:
-        d = _subs(agent)
-        d[str(aid)] = {"msgs": msgs, "desc": (desc or "")[:80], "type": (kind or "")[:40], "t": int(datetime.now().timestamp())}
-        if len(d) > SUBS_MAX:
-            d = dict(sorted(d.items(), key=lambda kv: kv[1].get("t", 0))[-SUBS_MAX:])
-        os.makedirs(os.path.dirname(_subs_file(agent)), mode=0o700, exist_ok=True)
-        tmp = _subs_file(agent) + ".tmp"
-        with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600), "w") as f:
-            json.dump(d, f)
-        os.replace(tmp, _subs_file(agent))
+        now = datetime.now().timestamp()
+        for n in os.listdir(d):
+            p = os.path.join(d, n)
+            if now - os.lstat(p).st_mtime > SUB_TTL:
+                os.unlink(p)
     except Exception:
         pass
 
 
+def launch_open(agent, tool_use_id, msgs):
+    """PreToolUse(Agent): a helper is being launched from the turn `msgs` opened (until its PostToolUse)."""
+    try:
+        d = _subs_dir(agent, "launch")
+        _put(os.path.join(d, _key(tool_use_id)), {"msgs": msgs})
+        _prune(d)
+    except Exception:
+        pass
+
+
+def launch_close(agent, tool_use_id):
+    try:
+        os.unlink(os.path.join(_subs_dir(agent, "launch"), _key(tool_use_id)))
+    except Exception:
+        pass
+
+
+def bind_sub(agent, aid, msgs, desc, kind):
+    """The parent launched helper `aid` from the turn `msgs` opened: remember it, in a file of its own."""
+    try:
+        d = _subs_dir(agent, "subs")
+        _put(os.path.join(d, _key(aid)), {"msgs": msgs, "desc": (desc or "")[:80], "type": (kind or "")[:40]})
+        _prune(d)
+    except Exception:
+        pass
+
+
+def _bound(agent, aid):
+    try:
+        with open(os.path.join(_subs_dir(agent, "subs"), _key(aid))) as f:
+            b = json.load(f)
+        return b if isinstance(b, dict) else None
+    except Exception:
+        return None
+
+
+def _launching(agent):
+    """The scope of the launches in flight, when they agree (one turn); else [] (unknown is nothing)."""
+    try:
+        d = _subs_dir(agent, "launch")
+        now, seen = datetime.now().timestamp(), []
+        for n in os.listdir(d):
+            p = os.path.join(d, n)
+            if n.endswith(".tmp") or now - os.lstat(p).st_mtime > SUB_TTL:
+                continue
+            with open(p) as f:
+                seen.append(json.load(f).get("msgs") or [])
+        return seen[0] if seen and all(x == seen[0] for x in seen) else []
+    except Exception:
+        return []
+
+
 def scope(h, agent):
-    """(turn_msgs, sub) for one hook event: the parent's own turn, or a helper's bound turn and who the helper is."""
+    """(turn_msgs, sub) for one hook event: the parent's own turn, or a helper's. A helper is scoped by the turn that
+    LAUNCHED it: its binding, else (a foreground helper, or a first call that raced its launch's PostToolUse) the launch
+    still in flight. Never by the parent's CURRENT turn, which may be another thread's by now (medic 12186): with
+    neither, the scope is [] and a scoped reader shows nothing."""
     aid = h.get("agent_id")
     if not aid:
         return turn_msgs(h.get("transcript_path"), agent), None
-    b = _subs(agent).get(str(aid))
+    b = _bound(agent, aid)
     sub = {"id": str(aid)[:12], "type": (h.get("agent_type") or (b or {}).get("type") or "")[:40]}
     if b and b.get("desc"):
         sub["desc"] = b["desc"]
-    return (b.get("msgs", []) if b else turn_msgs(h.get("transcript_path"), agent)), sub
+    return (b.get("msgs", []) if b else _launching(agent)), sub
 
 
 def step_meta(base, msgs, sub=None):
@@ -771,6 +828,8 @@ def main():
                 detail = f"DENIED, {'child spawn' if strip and denied.startswith('a ' + MARK) else 'secret holder'}: " \
                          f"{brief(detail, 200)}"
             msgs, sub = scope(h, agent)
+            if tool in ("Agent", "Task"):                      # a helper is being launched from this scope
+                launch_open(agent, h.get("tool_use_id"), msgs)
             cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool',%s,%s)",
                         (agent, f"{tool}: {brief(detail)}", step_meta(ledger_meta(tool, ti), msgs, sub)))
             if guard_err:
@@ -782,9 +841,11 @@ def main():
             r = h.get("tool_response")
             msgs, sub = scope(h, agent)
             meta = step_meta(ledger_meta(tool, h.get("tool_input") or {}, r if r is not None else ""), msgs, sub)
-            if tool in ("Agent", "Task") and isinstance(r, dict) and r.get("agentId"):   # a helper launched: bind it
-                ti2 = h.get("tool_input") or {}
-                bind_sub(agent, r["agentId"], msgs, ti2.get("description"), ti2.get("subagent_type"))
+            if tool in ("Agent", "Task"):
+                if isinstance(r, dict) and r.get("agentId"):   # a helper launched: bind it, then close the launch
+                    ti2 = h.get("tool_input") or {}
+                    bind_sub(agent, r["agentId"], msgs, ti2.get("description"), ti2.get("subagent_type"))
+                launch_close(agent, h.get("tool_use_id"))
             err = r.get("error") or ("" if r.get("success", True) else "failed") \
                 if isinstance(r, dict) else ""
             if err:
