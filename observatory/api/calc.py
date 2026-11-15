@@ -4,7 +4,8 @@ only the answer goes to the agent").
     POST /api/chat/calc   {expr}  ->  {result}  |  {error}
 
 One evaluation by Qalculate's CLI (qalc, the Ubuntu package), in qsand.sh's sandbox: a user + mount + network
-namespace, the filesystem read-only, a fresh tmpfs /tmp, no network, 5 s. Before it: an expression of at most
+namespace, CHROOTED into an empty tmpfs holding only qalc, its libraries and data (read-only) and the rates: no host
+file to read, no program to run, no network, 5 s. Before it: an expression of at most
 EXPR_MAX characters, never a control character, never one of Qalculate's system functions (FORBIDDEN: export and save
 write files, load reads one, command runs one), always passed after a space so it can't be read as a qalc option.
 Exchange rates: qalc -e refreshes them into this user's Qalculate data dir (the one fetch, fixed arguments, outside
@@ -35,7 +36,9 @@ EXPR_MAX = 300
 OUT_MAX = 200
 TIMEOUT = 5
 RATE = 30                                          # evaluations a minute, per viewer
-FORBIDDEN = re.compile(r"\b(export|save|load|command)\s*\(", re.I)
+# the system functions BY NAME, called with or without parentheses (qalc reads `load "x"` as a call: medic 12192). The
+# chroot jail (qsand.sh) is the layer that holds; this one keeps the attempt from running at all
+FORBIDDEN = re.compile(r"\b(export|save|load|command)\b", re.I)
 _me = lambda request: "owner"                      # noqa: E731 — main.wire_handle
 _seen: dict[str, list[float]] = {}
 _refreshing = False

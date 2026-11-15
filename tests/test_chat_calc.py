@@ -4,8 +4,8 @@
   C1 it answers: arithmetic, a unit conversion, a currency conversion (a plain minus sign for agents)
   C2 the gate: an empty, a too-long, a multi-line expression and the system functions (export/save/load/command) are
      refused before qalc runs; a leading '-' is an expression, never a qalc option
-  C3 THE SANDBOX holds when the gate is bypassed: export() run straight through evaluate() writes nothing, and
-     nothing inside reaches the network
+  C3 THE SANDBOX holds when the gate is bypassed: export() writes nothing, load()/command() (with or without
+     parentheses, medic 12192) read no host file and run no program, and nothing inside reaches the network
   C4 a runaway expression is cut at the timeout, never a hung worker
   C5 a member reaches it (main.MEMBER); the public face does not
 Exit 0 pass · 1 fail · 77 qalc or user namespaces unavailable."""
@@ -56,6 +56,27 @@ r = subprocess.run(["unshare", "-rnm", "--propagation", "private", "sh", "-c",
                     "python3 -c \"import socket; socket.create_connection(('1.1.1.1', 443), 2)\" 2>/dev/null && echo NET || echo none"],
                    capture_output=True, text=True, timeout=20)
 arm("C3 nothing inside reaches the network", r.stdout.strip() == "none", r.stdout)
+cdir = Path(tempfile.mkdtemp(prefix="calccanary", dir=str(REPO)))     # outside /tmp: the jail's /tmp is its own
+canary = cdir / "canary.txt"
+canary.write_text("424242\n")
+try:
+    # THE PRECONDITION, measured (a test that can't fail proves nothing): qalc OUTSIDE the sandbox does read it
+    plain = subprocess.run(["qalc", "-t", f' load "{canary}"'], capture_output=True, text=True, timeout=10, cwd="/").stdout
+    arm("C3 precondition: unsandboxed qalc reads the canary with `load \"…\"` (else the arm below is vacuous)",
+        "424242" in plain, plain[:120])
+    attacks = [f'load "{canary}"', f'load("{canary}")', 'command "id"', 'command("id")', 'command "sh" "-c" "echo 777"',
+               'load "/etc/hostname"', f'load "{REPO / ".env"}"']
+    outs = []
+    for e in attacks:
+        try:
+            outs.append(C.evaluate(e))
+        except Exception:
+            outs.append("")
+    arm("C3 medic 12192's forms (no parentheses) straight through evaluate(): no host file read, no program run",
+        not any("424242" in o or "uid=" in o or o.strip() == "777" for o in outs), outs)
+    arm("C2 ...and the gate refuses them by bare name", all(C.judge(e) for e in attacks if "load" in e or "command" in e))
+finally:
+    shutil.rmtree(cdir, ignore_errors=True)
 print("C the clock")
 t0 = time.time()
 try:
