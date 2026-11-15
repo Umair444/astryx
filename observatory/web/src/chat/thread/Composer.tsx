@@ -206,9 +206,13 @@ export default forwardRef<ComposerHandle, {
   useEffect(() => {
     const ul = menu.current, li = ul?.querySelector<HTMLElement>('[aria-selected="true"]')
     if (!ul || !li) return
-    const top = li.offsetTop, bottom = top + li.offsetHeight, pad = 4
+    // the sticky heading above and the key hints below sit OVER the list (owner 11-15: "when I move down the
+    // explainers hide it"): the row is kept clear of both, not of the list's bare edges
+    const stuck = (sel: string) => ul.querySelector<HTMLElement>(sel)?.offsetHeight ?? 0
+    const head = stuck('.ws-menu-group') || stuck('li.sticky.-top-1'), foot = stuck('.ws-menu-foot') || stuck('li.sticky.-bottom-1')
+    const top = li.offsetTop, bottom = top + li.offsetHeight, pad = 4 + head, padB = 4 + foot
     if (top - pad < ul.scrollTop) ul.scrollTop = Math.max(0, top - pad)
-    else if (bottom + pad > ul.scrollTop + ul.clientHeight) ul.scrollTop = bottom + pad - ul.clientHeight
+    else if (bottom + padB > ul.scrollTop + ul.clientHeight) ul.scrollTop = bottom + padB - ul.clientHeight
   }, [sel, items])
 
   const named = mentions(text, roster)

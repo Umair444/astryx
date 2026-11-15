@@ -1,4 +1,5 @@
 import { Fragment, useState } from 'react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { api, displayName } from '../api'
 import type { ContactMatch } from '../types'
 import { BRAND } from '../ui/brands'
@@ -26,11 +27,18 @@ export default function ChannelRail() {
   const { data, armed } = useRoutes(true)
   const ch = useChannels(true)
   const [shut, setShut] = useState(false)
+  const reduce = useReducedMotion()
   const [open, setOpen] = useState<string | null>('whatsapp')
   const rows: ChannelState[] = ch.rows ?? []
   return (
-    <aside aria-label="Channels" data-dock onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}
-      className={`ws-rail absolute z-40 cursor-default flex flex-col border border-line shadow-xl
+    // it arrives and folds the way the rest of astryx's panels do (owner 11-15: "make the sidebar open with some
+    // transition"): it slides in from its edge once, its width eases between folded and open, a channel's chats unfold
+    // in place. Still under reduced motion
+    <motion.aside aria-label="Channels" data-dock onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}
+      initial={reduce ? false : { opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }}
+      transition={reduce ? { duration: 0 } : { type: 'spring', damping: 26, stiffness: 260 }}
+      className={`absolute z-40 cursor-default flex flex-col overflow-hidden border border-line shadow-xl
+        transition-[width,max-height] duration-300 ease-[cubic-bezier(.2,.8,.2,1)] motion-reduce:transition-none
         max-sm:left-2 max-sm:right-2 max-sm:bottom-2 max-sm:rounded-2xl ${shut ? 'max-sm:max-h-12' : 'max-sm:max-h-[62dvh]'}
         sm:right-3 sm:top-3 sm:bottom-3 sm:rounded-2xl ${shut ? 'sm:w-14' : 'sm:w-[320px]'}`}
       style={{ background: 'color-mix(in srgb, var(--t-panel) 94%, transparent)', backdropFilter: 'blur(16px)' }}>
@@ -84,8 +92,11 @@ export default function ChannelRail() {
                 </span>
                 {!s.fixed && <span className={`text-ink-mute transition-transform ${isOpen ? 'rotate-90' : ''}`} aria-hidden>›</span>}
               </button>
+              <AnimatePresence initial={false}>
               {isOpen && !s.fixed && (
-                <div className="px-2 pb-2">
+                <motion.div key="chats" className="px-2 pb-2 overflow-hidden"
+                  initial={reduce ? false : { height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={reduce ? undefined : { height: 0, opacity: 0 }}
+                  transition={{ duration: reduce ? 0 : 0.22, ease: [0.2, 0.8, 0.2, 1] }}>
                   {needs && <ChannelConnect s={s} loaded onChanged={ch.reload} />}
                   {!byChat && (
                     <ul className="flex flex-col gap-1">
@@ -115,8 +126,9 @@ export default function ChannelRail() {
                       <ContactFind channel={s.channel} known={new Set(chats.map((c) => c.chat))} />
                     </>
                   )}
-                </div>
+                </motion.div>
               )}
+              </AnimatePresence>
               {isOpen && s.fixed && <p className="px-3 pb-2.5 text-[12px] text-ink-mute">{s.shows}</p>}
             </section>
             </Fragment>
@@ -129,7 +141,7 @@ export default function ChannelRail() {
           <button onClick={() => arm(null)} className="text-ink-mute hover:text-ink underline underline-offset-2">Cancel</button>
         </div>
       )}
-    </aside>
+    </motion.aside>
   )
 }
 
