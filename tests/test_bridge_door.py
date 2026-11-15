@@ -147,6 +147,12 @@ check("door_org: a disabled route is not declared", refused(R.door_org, "whatsap
                                                             [{**WA_ORG, "enabled": False}]))
 check("route_tier: a tiered route with live_steps is refused (its second egress, a4 #53717)",
       isinstance(refused(R.route_tier, {**WA_TIER, "live_steps": True}), R.GrantError))
+check("show (owner 11-15): steps is live steps, replies is none, an old live_steps flag still reads, an odd show is no",
+      R.shows_steps({**WA_ORG, "show": "steps"}) and not R.shows_steps({**WA_ORG, "show": "replies"})
+      and R.shows_steps({**WA_ORG, "live_steps": True}) and not R.shows_steps(WA_ORG)
+      and not R.shows_steps({**WA_ORG, "show": "replies", "live_steps": True}) and not R.shows_steps({**WA_ORG, "show": "all"}))
+check("route_tier: a tiered route that shows steps is refused like live_steps",
+      isinstance(refused(R.route_tier, {**WA_TIER, "show": "steps"}), R.GrantError))
 check("live_steps_ok: an org route yes; a tiered or malformed one no; none declared no",
       R.live_steps_ok({**WA_ORG, "live_steps": True}) and not R.live_steps_ok({**WA_TIER, "live_steps": True})
       and not R.live_steps_ok({**WA_ORG, "live_steps": True, "tiers": "x"}) and not R.live_steps_ok(WA_ORG))

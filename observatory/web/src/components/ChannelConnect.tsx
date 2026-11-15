@@ -14,6 +14,8 @@ export interface ChannelState {
   account: string | null
   activate: string | null
   invite?: string | null
+  fixed?: boolean           // a built-in (web chat, canvas, terminal): not routed per chat
+  shows?: string            // what a built-in shows, in words
 }
 
 const STEPS: Record<string, string[]> = {

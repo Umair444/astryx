@@ -23,9 +23,9 @@ MUTANTS = {
         ("    if not releasable(lbl, audience(channel, route, members)):\n        raise Refused(f\"the stamped route's",
          "    if False:\n        raise Refused(f\"the stamped route's"),
     "D6 a tiered route may declare live_steps":
-        ("    if route.get(\"live_steps\"):\n        # live_steps streams", "    if False:\n        # live_steps streams"),
+        ("    if shows_steps(route):\n        # live_steps streams", "    if False:\n        # live_steps streams"),
     "D7 live_steps_ok ignores the tier":
-        ("route.get(\"live_steps\")) and route_tier(route) is None", "route.get(\"live_steps\"))"),
+        ("shows_steps(route)) and route_tier(route) is None", "shows_steps(route))"),
     "D8 door_stamped skips open_stamped's checks (the body read straight from the store)":
         ("    body = open_stamped(key, store, int(row[\"id\"]), rkey, lbl, str(rel.get(\"pointer\")), str(rel.get(\"body_mac\")),\n"
          "                        str(rel.get(\"stamp\") or \"\"))",

@@ -67,6 +67,8 @@ def validate(rows, agents=None) -> list[str]:
             out.append(f"{repr(label) if label else 'a chat'} is routed twice ({seen[chat]} and {agent}); a chat reaches one agent")
         else:
             seen[chat] = agent
+        if "show" in r and r["show"] not in ("steps", "replies"):
+            out.append(f"{agent}'s route shows {r['show']!r}: a route shows steps (then the reply) or replies (the reply only)")
         if r.get("enabled"):
             enabled.setdefault(agent, []).append(r)
     for agent, mine in enabled.items():

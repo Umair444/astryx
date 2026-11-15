@@ -4063,6 +4063,19 @@ def _bridge(channel: str) -> dict:
                 out["health"] = json.loads(h.read() or b"{}")
     except Exception:  # noqa: BLE001 — unknown health is "not connected", never an error page
         pass
+    if out["health"] is None:
+        # NO SYSTEMD (a container run by resume.sh, owner 11-15: the rail said "one step left" for a WhatsApp that was
+        # delivering): the bridge's own port, THIS org's (the registry in a cog, the unit table's on one org), answers
+        try:
+            stem = f"astryx-{channel}"
+            port = orgs.port(stem) or (orgs._units().get(stem) or {}).get("port")
+            if port:
+                import urllib.request
+                with urllib.request.urlopen(f"http://127.0.0.1:{int(port)}/health", timeout=2) as h:
+                    out["health"] = json.loads(h.read() or b"{}")
+                    out["active"] = True
+        except Exception:  # noqa: BLE001 — still unknown: "not connected"
+            pass
     return out
 
 
@@ -4120,6 +4133,15 @@ async def channels_status(request: Request):
                        activate=_activate_cmd(ch, b) if state in ("activation-needed", "written") else None,
                        invite=_discord_invite(acct["id"]) if (ch == "discord" and acct) else None)
         out.append(row)
+    # every other bridge with a routes file (the frontends bridge, a new one): its routes and its own health, no token
+    # flow here; then the BUILT-INS (the channel rail, owner 11-15: "I treat chat as a channel"): they are not routed per
+    # chat, so `fixed` says the rail shows what they do instead of a control
+    for ch in [c for c in _wire_channels() if c not in ("whatsapp", "telegram", "discord")]:
+        b = await asyncio.to_thread(_bridge, ch)
+        out.append({"channel": ch, "routes": True, "state": "connected" if b["health"] else "unknown", "account": None})
+    out += [{"channel": "web", "fixed": True, "state": "connected", "shows": "everything, always"},
+            {"channel": "canvas", "fixed": True, "state": "connected", "shows": "everything, always"},
+            {"channel": "terminal", "fixed": True, "state": "connected", "shows": "mirroring arrives with phase 4"}]
     return out
 
 

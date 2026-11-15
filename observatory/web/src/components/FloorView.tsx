@@ -9,7 +9,7 @@ import AgentFace from './AgentFace'
 import { HandBadge } from '../ui/hands'
 import { FRESH_PRESENCE, moodOf, nowLine } from '../ui/life'
 import InfluenceLayer, { KIND_HUE, KIND_LABEL, influenceLine, type Geometry, type Influence } from './InfluenceLayer'
-import ChannelDock from './ChannelDock'
+import ChannelRail from './ChannelRail'
 import RouteToast from './RouteToast'
 import { GlyphStack } from '../ui/glyphs'
 import { useAttention } from '../ui/attend'
@@ -705,7 +705,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
           <div className="absolute inset-0 grid place-items-center text-ink-mute text-sm">the floor is empty — no agents yet</div>
         )}
        </div>
-       {who.owner && <ChannelDock />}
+       {who.owner && <ChannelRail />}
        <RouteToast />
        <div className="absolute left-3 bottom-3 flex flex-col rounded-xl border border-line bg-deck-2/90 backdrop-blur overflow-hidden z-30 cursor-default"
          onPointerDown={(e) => { e.stopPropagation(); drag.current.moved = 0 }}>

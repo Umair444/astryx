@@ -20,7 +20,11 @@ export interface ChatRef {
   kind: ChatKind
   agent: string | null      // null: a chat found by search, not routed yet
   enabled: boolean
+  show: Show                // what the chat sees of the work: live steps then the reply, or the reply only
 }
+export type Show = 'steps' | 'replies'
+/* a route's `show`, else its older live_steps flag (bridges read it the same way: release.shows_steps) */
+export const showOf = (r: WireRoute): Show => (r.show === 'steps' || r.show === 'replies' ? r.show : r.live_steps ? 'steps' : 'replies')
 export interface Toast { id: number; text: string; undo?: () => Promise<void> }
 
 interface State {
@@ -52,7 +56,7 @@ export function labelOf(r: WireRoute, channel: string): string {
 
 export function refOf(r: WireRoute, channel: string): ChatRef {
   return { channel, chat: String(r.chat), label: labelOf(r, channel), kind: kindOf(channel, String(r.chat)),
-           agent: r.agent, enabled: r.enabled !== false }
+           agent: r.agent, enabled: r.enabled !== false, show: showOf(r) }
 }
 
 export function loadRoutes(force = false) {
@@ -147,7 +151,7 @@ export async function routeChat(c: ChatRef, to: string) {
     const i = rows.findIndex((r) => String(r.chat) === c.chat)
     if (i >= 0) return rows.map((r, k) => (k === i ? { ...r, agent: to, enabled: true } : r))
     const key = state.data?.find((x) => x.channel === c.channel)?.trusted_key ?? 'trusted_ids'
-    return [...rows, { chat: c.chat, agent: to, enabled: true, open: true, live_steps: true, [key]: [],
+    return [...rows, { chat: c.chat, agent: to, enabled: true, open: true, show: 'steps', [key]: [],
                        note: `${c.label} -> ${to} (routed from the floor)` } as WireRoute]
   })
   const undo = prevAgent && prevAgent !== to
@@ -166,6 +170,24 @@ export async function unrouteChat(c: ChatRef) {
   const back = removed as WireRoute | null
   toast(diffWords(d, (chat) => (chat === c.chat ? c.label : labeller(c.channel)(chat))),
     back ? () => put(c.channel, (rows) => [...rows, back]).then((d2) => toast(diffWords(d2, labeller(c.channel)))) : undefined)
+}
+
+/* Change one chat's OWN settings (enabled, show, a note…) through the same one write; `undefined` removes a key (show
+   replaces live_steps, so a write of show drops the old flag). Undo puts the old values back. */
+export async function patchChat(c: ChatRef, patch: Partial<WireRoute>, words: string) {
+  let before: Partial<WireRoute> = {}
+  const apply = (p: Partial<WireRoute>) => (rows: WireRoute[]) => rows.map((r) => {
+    if (String(r.chat) !== c.chat) return r
+    const next: WireRoute = { ...r, ...p }
+    for (const k of Object.keys(p)) if (p[k] === undefined) delete next[k]
+    return next
+  })
+  await put(c.channel, (rows) => {
+    const r = rows.find((x) => String(x.chat) === c.chat)
+    before = Object.fromEntries(Object.keys(patch).map((k) => [k, r?.[k]]))
+    return apply(patch)(rows)
+  })
+  toast(words, () => put(c.channel, apply(before)).then(() => toast(`Undone: ${c.label} is as it was`)))
 }
 
 export const DRAG_MIME = 'application/x-astryx-chat'

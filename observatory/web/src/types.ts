@@ -508,7 +508,8 @@ export interface WireRoute {
   agent: string
   enabled?: boolean
   open?: boolean
-  live_steps?: boolean
+  live_steps?: boolean    // the older form of show (true = steps)
+  show?: 'steps' | 'replies'
   note?: string
   webhook?: string
   trusted_jids?: string[]

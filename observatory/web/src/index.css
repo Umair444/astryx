@@ -419,3 +419,14 @@ a.auth-chip { padding: 0 12px; }
   .auth-orb-hero { animation: none; }
   .auth-card, .auth-field, .auth-reveal, .auth-primary { transition: none; }
 }
+
+/* the channel rail's controls (components/ChannelRail.tsx): an on/off switch and a two-way choice */
+.ws-switch { position: relative; width: 30px; height: 18px; border-radius: 999px; background: var(--t-line); transition: background .15s; }
+.ws-switch > span { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 999px; background: var(--t-panel); box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s; }
+.ws-switch[data-on] { background: var(--t-good, #22c55e); }
+.ws-switch[data-on] > span { transform: translateX(12px); }
+.ws-switch:disabled { opacity: .5; }
+.ws-seg { display: inline-flex; border: 1px solid var(--t-line); border-radius: 8px; padding: 1px; gap: 1px; }
+.ws-seg > button { font-size: 11.5px; padding: 1px 8px; border-radius: 6px; color: var(--t-mute, inherit); }
+.ws-seg > button[aria-checked="true"] { background: color-mix(in srgb, var(--t-accent) 18%, transparent); color: var(--t-fg); font-weight: 500; }
+.ws-seg > button:not([aria-checked="true"]):hover { color: var(--t-fg); }

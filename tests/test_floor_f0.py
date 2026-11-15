@@ -61,6 +61,10 @@ def resolver_arms(tmp: Path):
     homed = [two[0], {**two[1], "home": True}]
     arm("E2: with one home it validates, and the home is the doorbell",
         R.validate(homed) == [] and R.resolve(homed).doorbell("seed")["chat"] == "b", R.validate(homed))
+    shown = lambda v: [{"chat": "a", "agent": "seed", "enabled": True, "show": v}]
+    arm("SHOW (owner 11-15): a route shows steps or replies; anything else is a problem in words",
+        R.validate(shown("steps")) == [] and R.validate(shown("replies")) == []
+        and any("shows" in p for p in R.validate(shown("everything"))), R.validate(shown("everything")))
     arm("E2: an agent's only route is its doorbell; a disabled route reaches no one",
         R.resolve([two[0], {"chat": "c", "agent": "ledger", "enabled": False}]).doorbell("seed")["chat"] == "a"
         and R.resolve([{"chat": "c", "agent": "ledger", "enabled": False}]).chat("c") is None)

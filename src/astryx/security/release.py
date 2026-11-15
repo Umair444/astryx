@@ -361,18 +361,28 @@ def route_tier(route) -> str | None:
     t = route[TIER_KEY]
     if t not in TIERS:
         raise GrantError(f"the route declares tier {t!r}, which is not one of {','.join(sorted(TIERS))}")
-    if route.get("live_steps"):
+    if shows_steps(route):
         # live_steps streams STEP text straight to the chat and never passes deliver()'s door: a tiered route can't
         # have that second egress (a4 #53717), so the declaration itself is refused
         raise GrantError(f"a {t} route can't carry live_steps: step text would reach the chat around the door")
     return t
 
 
+SHOWS = ("steps", "replies")      # a route's `show` (owner 11-15: per chat, steps then the reply, or the reply only)
+
+
+def shows_steps(route) -> bool:
+    """Does this route want live STEP text? Its `show` decides (steps | replies); a route written before `show` keeps
+    its `live_steps` flag (true = steps, false or absent = replies). Anything else in `show` is no."""
+    show = route.get("show")
+    return show == "steps" if show is not None else bool(route.get("live_steps"))
+
+
 def live_steps_ok(route) -> bool:
     """A live_steps job may start only on an ORG route: one declaring live_steps and no tier. A malformed or tiered
     declaration is never a yes (S1c, a4 #53717)."""
     try:
-        return bool(isinstance(route, dict) and route.get("live_steps")) and route_tier(route) is None
+        return bool(isinstance(route, dict) and shows_steps(route)) and route_tier(route) is None
     except GrantError:
         return False
 

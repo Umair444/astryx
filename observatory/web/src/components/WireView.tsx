@@ -10,7 +10,6 @@ import { isHuman, type Msg } from '../types'
 import Message, { IntentChip, partyLabel } from './Message'
 import Composer from './Composer'
 import OrgNewsView from './OrgNewsView'
-import RoutesView from './RoutesView'
 import AgentFace from './AgentFace'
 import { Empty, FaceStack, LiveDot, Panel, Skeleton, Tabs, ViewHeader, useNow } from '../ui/kit'
 
@@ -168,15 +167,14 @@ function FeedSkeleton() {
 const VIEWS = [
   { id: 'feed', label: 'Feed' },
   { id: 'press', label: 'Press' },
-  { id: 'wiring', label: 'Wiring' },
 ] as const
 
 export default function WireView({ route, onOpenAgent }: { route: Route & { tab: 'wire' }; onOpenAgent: (n: string) => void }) {
   const { messages, loadMax, loadOlder, who, agents } = useStore()
   const isMobile = useMediaQuery('(max-width: 48em)')
   const now = useNow(10_000)
-  // Feed / Press (org-news) / Wiring (routes) — ?press=1 deep-links to the Press
-  const [view, setView] = useState<'feed' | 'press' | 'wiring'>(() =>
+  // Feed / Press (org-news); ?press=1 deep-links to the Press. The routes' Wiring moved to the Floor's channel rail
+  const [view, setView] = useState<'feed' | 'press'>(() =>
     new URLSearchParams(location.search).has('press') ? 'press' : 'feed',
   )
   const [query, setQuery] = useState('')
@@ -255,7 +253,7 @@ export default function WireView({ route, onOpenAgent }: { route: Route & { tab:
     return out
   }, [messages, names, now])
 
-  const tabs = who.owner ? VIEWS : VIEWS.filter((v) => v.id !== 'wiring')
+  const tabs = VIEWS
 
   const feed = (
     <div className="h-full flex flex-col min-w-0 relative">
@@ -294,11 +292,6 @@ export default function WireView({ route, onOpenAgent }: { route: Route & { tab:
       {view === 'press' && (
         <div className="flex-1 min-h-0">
           <OrgNewsView />
-        </div>
-      )}
-      {view === 'wiring' && (
-        <div className="flex-1 min-h-0">
-          <RoutesView />
         </div>
       )}
       {view === 'feed' && (
