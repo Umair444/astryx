@@ -102,6 +102,19 @@ def norm_email(e: str) -> str:
     return e.strip().lower()
 
 
+def one_address(e) -> bool:
+    """ONE bare address (local@domain), the only shape an account's email takes. A list, a display name or a quoted
+    or bracketed form is refused: "a@x,b@y" would mail one sign-up code to both (medic 12207)."""
+    import email.utils
+    if not isinstance(e, str):
+        return False
+    e = e.strip()
+    if not 3 <= len(e) <= 254 or e.count("@") != 1 or any(c.isspace() or c in ',;<>"()\\[]:' for c in e):
+        return False
+    local, _, domain = e.partition("@")
+    return bool(local and domain) and email.utils.getaddresses([e]) == [("", e)]
+
+
 def digest(token: str) -> bytes:
     return hashlib.sha256(token.encode()).digest()
 

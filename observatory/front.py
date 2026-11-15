@@ -216,13 +216,26 @@ def _nope(status: int = 401, body: bytes = FAILED) -> Response:
 
 
 CODE_SENT = {"code": "sent", "minutes": cogauth.CODE_MINUTES}
+# codes MAILED, capped per client and per invite link in an hour's window (medic 12207: one live invite and a new email
+# each time was an unmetered mail cannon; the 60 s resend is per address). A refused send is a 429 and mails nothing
+CODE_SENDS = {"c:": 5, "l:": 3}
+_sends: dict[str, deque] = defaultdict(deque)
 
 
-async def _prove_email(a: _Auth, email: str, code, ck: str) -> Response | None:
+def _send_capped(keys: tuple[str, ...]) -> bool:
+    now = time.monotonic()
+    for k in keys:
+        q = _sends[k]
+        while q and now - q[0] > SIGNUP_WINDOW:
+            q.popleft()
+    return any(len(_sends[k]) >= CODE_SENDS[k[:2]] for k in keys)
+
+
+async def _prove_email(a: _Auth, email: str, code, ck: str, link: str = "") -> Response | None:
     """A NEW account's email, proven (owner 11-15: "so people don't sign themselves up with wrong emails"). None: go on
     (the cog has no mailbox, or the code is right). Else the reply: 202 when a code was just mailed (or one mailed
-    under a minute ago still stands), 400 {field: code} for a wrong or spent one (it counts as a failed sign-in), 503
-    when the mail didn't go."""
+    under a minute ago still stands), 400 {field: code} for a wrong or spent one (it counts as a failed sign-in), 429
+    past the mail caps (CODE_SENDS: per client, and per invite `link`), 503 when the mail didn't go."""
     if a.mail is None:
         return None
     if isinstance(code, str) and code.strip():
@@ -232,12 +245,18 @@ async def _prove_email(a: _Auth, email: str, code, ck: str) -> Response | None:
         _fails[ck].append(now)
         _fails["a:" + email].append(now)
         return _json({"error": "that code is wrong or has expired", "field": "code"}, 400)
+    keys = (ck, "l:" + link) if link else (ck,)
+    if _send_capped(keys):
+        return _nope(429, b'{"error":"too many codes sent from here; try again later"}')
     fresh = await a.db(cogauth.code_issue, email)
     if fresh:
+        for k in keys:
+            _sends[k].append(time.monotonic())
         try:
-            await asyncio.to_thread(mail.send, a.mail, email, f"{fresh} is your astryx code",
-                                    f"Your astryx code is {fresh}. It expires in {cogauth.CODE_MINUTES} minutes.\n\n"
-                                    "If you didn't ask for it, ignore this mail: nothing happens without the code.\n")
+            await asyncio.to_thread(lambda: mail.send(
+                a.mail, email, f"{fresh} is your astryx code",
+                f"Your astryx code is {fresh}. It expires in {cogauth.CODE_MINUTES} minutes.\n\n"
+                "If you didn't ask for it, ignore this mail: nothing happens without the code.\n", one=True))
         except Exception as e:  # noqa: BLE001 — the reason goes to the journal, never to the caller
             await a.db(cogauth.code_drop, email)
             print(f"front: an email code could not be sent: {type(e).__name__}: {e}", file=sys.stderr)
@@ -726,14 +745,13 @@ async def accept(request: Request):
         return _nope(503, b'{"error":"sign-in is busy, try again in a moment"}')
     acct = None
     if kind == "invite":
-        if not (isinstance(email, str) and 3 <= len(email) <= 254 and "@" in email and not any(c.isspace() for c in
-                                                                                                 email.strip())):
+        if not cogauth.one_address(email):
             return _nope(400, b'{"error":"enter your email"}')
         email = cogauth.norm_email(email)
         if _limited(ck, "a:" + email):     # login's per-account limit holds here too: a link is no side door
             return _nope(429, b'{"error":"too many tries"}')
         acct = await a.db(cogauth._account, email)
-        if not acct and (held := await _prove_email(a, email, j.get("code"), ck)):
+        if not acct and (held := await _prove_email(a, email, j.get("code"), ck, dig.hex())):
             return held
     _inflight += 1
     try:
@@ -810,11 +828,6 @@ def _signup_limited(a: _Auth, key: str) -> bool:
     return len(_signups.get(key, ())) >= a.signup_per_client
 
 
-def _email_ok(email) -> bool:
-    return isinstance(email, str) and 3 <= len(email.strip()) <= 254 and "@" in email and not any(
-        c.isspace() for c in email.strip())
-
-
 def _org_name(v) -> str | None:
     if not isinstance(v, str):
         return None
@@ -865,7 +878,7 @@ async def signup(request: Request):
         return _nope(403, b'{"error":"sign up on this cog\'s own page"}')
     j = await _body(request) or {}
     email, pw, key, name = j.get("email"), j.get("password"), j.get("org_key"), _org_name(j.get("org_name"))
-    if not _email_ok(email):
+    if not cogauth.one_address(email):
         return _json({"error": "enter your email", "field": "email"}, 400)
     if not (isinstance(pw, str) and 12 <= len(pw) <= 1024):
         return _json({"error": "a password has at least 12 characters", "field": "password"}, 400)

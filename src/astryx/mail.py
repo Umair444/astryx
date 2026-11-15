@@ -52,8 +52,9 @@ def _login(env: dict) -> tuple[str, str] | None:
     return ((env.get("MAIL_USER") or env["MAIL_FROM"]), pw) if pw else None
 
 
-def send(env: dict, to: str, subject: str, body: str, cc: str = "", bcc: str = "") -> EmailMessage:
-    """Send a plain-text mail from MAIL_FROM. to/cc/bcc take comma-separated addresses; bcc never reaches a header."""
+def send(env: dict, to: str, subject: str, body: str, cc: str = "", bcc: str = "", one: bool = False) -> EmailMessage:
+    """Send a plain-text mail from MAIL_FROM. to/cc/bcc take comma-separated addresses; bcc never reaches a header.
+    one=True: `to` is exactly one address and the mail goes to it alone (a code, a link: never a list)."""
     host, port = _server(env, "MAIL_SMTP", 25)
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = env["MAIL_FROM"], to, subject
@@ -64,6 +65,8 @@ def send(env: dict, to: str, subject: str, body: str, cc: str = "", bcc: str = "
     rcpt = [a.strip() for a in ",".join((to, cc, bcc)).split(",") if a.strip()]
     if not rcpt:
         raise ValueError("no recipient")
+    if one and (rcpt != [to.strip()] or any(c in to for c in ',;<>"\r\n')):
+        raise ValueError("one=True sends to exactly one bare address")
     sec = security(env, port, 465, 587)
     with (smtplib.SMTP_SSL if sec == "ssl" else smtplib.SMTP)(host, port, timeout=TIMEOUT) as s:
         if sec == "starttls":
@@ -91,6 +94,8 @@ def search(m: imaplib.IMAP4, query: str) -> list[bytes]:
     """Message ids matching `query`. A server that speaks Gmail's extension takes Gmail's own syntax (from:,
     subject:"two words", newer_than:2d) via X-GM-RAW, sent as a literal so quotes and non-ASCII arrive untouched;
     any other server takes IMAP search criteria (FROM "x" SINCE 1-Nov-2026 UNSEEN), or a bare word as TEXT."""
+    if "\r" in query or "\n" in query:
+        raise ValueError("a search query is one line")
     caps = getattr(m, "capabilities", ())
     if "X-GM-EXT-1" in caps:
         m.literal = query.encode("utf-8")

@@ -247,6 +247,18 @@ def smtp_arms(mail):
             check(name, False, "sent")
         except err:
             check(name, True)
+    for to in ("a@example.invalid,b@example.invalid", "a@example.invalid;b@example.invalid", "A <a@example.invalid>"):
+        Rec.log.clear()
+        try:
+            mail.send(relay, to, "s", "b", one=True)
+            check(f"S9 one=True refuses {to!r}", False, Rec.log)
+        except ValueError:
+            check(f"S9 one=True refuses {to!r}, before any connection", Rec.log == [], Rec.log)
+    try:
+        mail.search(None, "UNSEEN\r\nA1 LOGOUT")
+        check("S10 a search query with a line break is refused", False, "passed")
+    except ValueError:
+        check("S10 a search query with a line break is refused", True)
     check("S7 a send-only mailbox doesn't claim to read", mail.configured(relay) and not mail.configured(relay, read=True))
     try:
         mail.imap({**relay, "MAIL_IMAP": "127.0.0.1:1", "MAIL_SECURITY": "plain"})   # nothing listens on port 1

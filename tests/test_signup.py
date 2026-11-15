@@ -34,7 +34,7 @@ assertion is on a status, a name or a row count, never a printed secret.
      the account and its pending request, and the code is used up; five wrong guesses and the right code no longer
      opens it; an EXISTING account proves its password and gets no mail; mail that can't be sent → 503 and no code
      left standing; ON (no mailbox) asks for no code (U2 made accounts with one submit), and a `code` sent to it
-     still counts against the per-client cap
+     still counts against the per-client cap; an email that is not one bare address is 400 and mails nothing
   G  THE SPAWN BUDGET GATE (runtime_env.py --gate, and spawn.sh's real path with stubbed psql/tmux/pgrep/node):
      a non-primary org with no budget → rc 4 / spawn rc 1 and NOTHING written (no psql, no homes/<agent>); a budget
      but only the host's ambient login → refused; a budget and its own login → passes (spawn reaches its first psql);
@@ -466,6 +466,13 @@ def run(t, da, ds, dc, procs):
     st, _, _ = signup(MAIL, e2, PW["x"], k10, ip="198.51.100.110", code=real)
     check("five wrong guesses, then the right code: refused (400 or the account's 429), and no account",
           len(real) == 6 and st in (400, 429) and not has(e2), f"{st} {real!r}")
+    nm = len(sink.mails)
+    bad = [signup(MAIL, e, PW["x"], f"fx-comma-{pid}", ip="198.51.100.94")[0]
+           for e in ("x@fx-a.invalid,y@fx-b.invalid", "x@fx-a.invalid;y@fx-b.invalid", "X <x@fx-a.invalid>",
+                     '"x,y"@fx-a.invalid')]
+    check("an email that is not ONE bare address (a list, a display name, a quoted local part): 400, and NO mail "
+          "(medic 12207: a comma mailed one code to two addresses)", bad == [400] * 4 and len(sink.mails) == nm,
+          f"{bad} {len(sink.mails) - nm} mails")
     check("...the store counted the five tries", q(ds["url"], "SELECT tries FROM email_codes WHERE email = %s", e2)
           == [(5,)], q(ds["url"], "SELECT tries FROM email_codes WHERE email = %s", e2))
     before_mails = len(sink.mails)

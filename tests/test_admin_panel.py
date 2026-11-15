@@ -31,7 +31,9 @@ observatory/api/members.py is exercised on both. Dummy passwords and keys only; 
   M11 THE EMAIL CODE AT ACCEPT (owner 11-15), on MAILF (the same cog and store, its .env naming a loopback SMTP sink):
       a NEW email accepting an invite → 202 {code: sent}, one mail to it, no account, and the link still open; a wrong
       code → 400 {field: code}, the link still open; the right one → 200, signed in with the invited role; an
-      EXISTING account accepting proves its password and gets no mail. The front with no mailbox (M4) asks for none
+      EXISTING account accepting proves its password and gets no mail; an email that is not one bare address is 400
+      and mails nothing; one invite link mails at most 3 codes an hour (then 429). The front with no mailbox (M4)
+      asks for none
 Exit 0 · 1 · 77 (no database, uvicorn or httpx).
 """
 import atexit
@@ -581,6 +583,15 @@ def run(t, da, dbb, procs):
     st, _, b = accept_m(email=users["adm"], pw=PW["adm"], token=tok_x)
     check("an EXISTING account accepting proves its password: 200 with no code and no mail",
           bool(tok_x) and st == 200 and len(sink.mails) == n, f"{st} {b}")
+    st, _, inv = call(F, "/auth/admin/invite", "POST", {"org": oa, "role": "member"}, headers=as_("owner"))
+    tok_c = inv.get("link", "").partition("#/accept?t=")[2] if st == 200 else ""
+    n = len(sink.mails)
+    st_c, _, _ = accept_m(email="x@fx-a.invalid,y@fx-b.invalid", token=tok_c)
+    check("an email that is not ONE bare address: 400, no mail, the link still open (medic 12207)",
+          bool(tok_c) and st_c == 400 and len(sink.mails) == n and call(F, f"/auth/link?t={tok_c}")[0] == 200, f"{st_c}")
+    sts = [accept_m(email=f"cannon{i}@fx-admin.invalid", token=tok_c)[0] for i in range(4)]
+    check("ONE invite link, a new email each time: three codes mailed, then 429 and no fourth mail (medic 12207)",
+          bool(tok_c) and sts == [202, 202, 202, 429] and len(sink.mails) == n + 3, f"{sts} {len(sink.mails) - n}")
     sink.sock.close()
 
 if __name__ == "__main__":
