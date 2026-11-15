@@ -9,6 +9,7 @@ participant pull that stream).
      H2 the next call reads only what was appended: a new opening replaces the ids; a half-written line waits
      H3 a redelivered batch keeps every id; no channel tag is an opening with no ids ([]); a missing file is []
      H4 step_meta keeps the ledger's keys and adds turn_msgs; no ids leaves the ledger's meta as it was
+     H5 a message queued into a running turn (a queued_command attachment) makes the scope unknown, warm or cold
   B  bridges/common.step_line(thread=...) on a fixture database
      B1 a step whose turn this thread opened is a line for it; for another thread it is nothing
      B2 a step with no stamp is nothing for a scoped job (never everything); unscoped callers are unchanged
@@ -54,7 +55,7 @@ def chan(*ids):
 
 print("H the hook's turn scope")
 with tempfile.TemporaryDirectory() as td:
-    H.TURN_CACHE = str(Path(td) / "turn-{agent}.json")
+    H.TURN_CACHE = str(Path(td) / "cache" / "turn-{agent}.json")
     H.TURN_SCAN = 64                                       # tiny chunks: the cold scan must cross chunk edges
     t = Path(td) / "session.jsonl"
     t.write_text(line("user", chan(7)) + line("assistant", "x") + tool_result()
@@ -77,6 +78,14 @@ with tempfile.TemporaryDirectory() as td:
     with t.open("a") as f:
         f.write(line("user", "This session is being continued from a previous conversation that ran out of context."))
     arm("H1 a compaction summary inside a turn opens nothing (the ids stay)", H.turn_msgs(str(t), "db") == [150])
+    with t.open("a") as f:
+        f.write(line("user", chan(300)) + tool_result()
+                + json.dumps({"type": "attachment", "attachment": {"type": "queued_command", "prompt": chan(301)}}) + "\n")
+    arm("H5 a message queued INTO a running turn makes its scope unknown ([]): a WA-opened turn that absorbs a web ask "
+        "streams nothing more to the group (medic 12163)", H.turn_msgs(str(t), "db") == [], H.turn_msgs(str(t), "db"))
+    cold = Path(td) / "cold.jsonl"
+    cold.write_text(t.read_text())
+    arm("H5 ...and a cold start lands on the same answer", H.turn_msgs(str(cold), "lending") == [])
     with t.open("a") as f:
         f.write(line("user", chan(200, 201, 202)))
     arm("H3 a redelivered batch keeps every id", H.turn_msgs(str(t), "db") == [200, 201, 202])

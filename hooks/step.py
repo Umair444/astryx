@@ -77,18 +77,25 @@ def ledger_meta(tool, tool_input, response=None):
 # Pre/PostToolUse step now carries meta.turn_msgs: the msg_ids in the turn's opening prompt (a redelivered batch holds
 # several). Read from the session's own transcript, which the hook is handed anyway; a cache per transcript keeps the
 # offset already read, so a call reads only what the session wrote since. Never raises: an unknown is [] (no scope,
-# so a scoped reader shows nothing rather than everything).
-TURN_CACHE = "/tmp/astryx-turn-{agent}.json"
+# so a scoped reader shows nothing rather than everything). A batch whose messages came from two threads stamps the
+# turn for both, so its work shows in both chats: one turn served both, there is no finer truth to show.
+TURN_DIR = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", f"astryx-turn-{os.getuid()}")   # 0700, ours
+TURN_CACHE = os.path.join(TURN_DIR, "{agent}.json")
 TURN_SCAN = 1 << 20                      # a cold start scans back from the end this many bytes at a time
 COMPACT_LEAD = "This session is being continued from a previous conversation"
 
 
 def _opening_msgs(line: str):
-    """The msg_ids a transcript line opens a turn with, or None when the line opens no turn."""
+    """The msg_ids a transcript line opens a turn with, or None when the line changes no scope. A message that lands
+    INSIDE a running turn is no user line: Claude Code writes it as an `attachment` of type queued_command (medic
+    12163: 22 in one 11 MB transcript), and the agent works on it in the same turn, so from there on no step can be
+    told apart: the scope becomes [] (unknown is nothing; a union would let one chat's job show another's work)."""
     try:
         e = json.loads(line)
     except Exception:
         return None
+    if e.get("type") == "attachment" and (e.get("attachment") or {}).get("type") == "queued_command":
+        return []
     if e.get("type") != "user":
         return None
     c = (e.get("message") or {}).get("content")
@@ -108,6 +115,11 @@ def turn_msgs(path, agent) -> list:
             return []
         size = os.path.getsize(path)
         cache_f = TURN_CACHE.format(agent=re.sub(r"[^a-z0-9_-]", "", agent))
+        d = os.path.dirname(cache_f)
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        st = os.lstat(d)                          # a dir someone else made, or a link, is not ours: no cache, no scope
+        if st.st_uid != os.getuid() or not os.path.isdir(d) or os.path.islink(d):
+            return []
         try:
             with open(cache_f) as f:
                 c = json.load(f)
@@ -140,7 +152,7 @@ def turn_msgs(path, agent) -> list:
                         msgs = m
                 off += end
         tmp = cache_f + ".tmp"
-        with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600), "w") as f:
             json.dump({"path": path, "off": off, "msgs": msgs}, f)
         os.replace(tmp, cache_f)
         return msgs
