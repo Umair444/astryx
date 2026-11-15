@@ -99,7 +99,7 @@ export default function MindView() {
                 <div className="mt-1 text-[22px] font-semibold text-ink">{m.energy.fed ? 'Fed' : 'Fasting'}</div>
                 <div className="text-[12.5px] text-ink-dim mt-1">{pct(m.energy.seven_day_pct)} of the week's tokens used, {pct(m.energy.five_hour_pct)} of the 5 hours'.
                   It thinks freely below {m.rules.fed_below.seven_day_pct}% and {m.rules.fed_below.five_hour_pct}%.
-                  {' '}{(m.thinking.share * 100).toFixed(1)}% of this week's energy went to thinking it started itself ({m.thinking.wakes} wake{m.thinking.wakes === 1 ? '' : 's'}). Energy is a bound, never the goal.</div>
+                  {m.thinking && <>{' '}{(m.thinking.share * 100).toFixed(1)}% of this week's energy went to thinking it started itself ({m.thinking.wakes} wake{m.thinking.wakes === 1 ? '' : 's'}).</>} Energy is a bound, never the goal.</div>
               </Panel>
               <Panel className="p-4">
                 <div className="text-[11px] uppercase tracking-wider text-ink-mute">Heat</div>
@@ -140,7 +140,7 @@ export default function MindView() {
               <h2 className="text-[13px] font-semibold text-ink mb-1">How well its senses work</h2>
               <p className="text-[12.5px] text-ink-mute mb-2 max-w-[760px]">Every wake is a trial. A sense whose wakes end in kept ideas is trusted more; one whose itches are let go fades. The mind tunes itself this way, hour after hour.</p>
               <Panel className="p-2">
-                {Object.entries(m.yields).sort((a, b) => b[1].trials - a[1].trials).map(([k, v]) => (
+                {Object.entries(m.yields ?? {}).sort((a, b) => b[1].trials - a[1].trials).map(([k, v]) => (
                   <div key={k} className="flex items-center gap-3 px-2.5 py-1.5 text-[13px]">
                     <span className="flex-1 min-w-0 text-ink truncate">{SENSES[k] ?? k}</span>
                     <span className="w-24 text-right text-ink-dim tabular-nums">{v.open} open</span>
