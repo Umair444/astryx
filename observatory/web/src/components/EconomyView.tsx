@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import MindView from './MindView'
 import type { ReactNode } from 'react'
 import { ScrollArea, Tooltip } from '@mantine/core'
 import { api, agentColor, displayName, fmtTime, fmtTokens } from '../api'
@@ -1263,6 +1264,7 @@ function PlaygroundTab({ d }: { d: EconDissipative }) {
 /* ── the tabbed Economy panel — the org as a measured dissipative system ───────────── */
 
 const TABS = [
+  { id: 'mind', label: 'Mind' },
   { id: 'usage', label: 'Usage' },
   { id: 'thermo', label: 'Thermo' },
   { id: 'market', label: 'Market' },
@@ -1274,7 +1276,7 @@ type TabId = (typeof TABS)[number]['id']
 
 export default function EconomyView() {
   const [econ, setEcon] = useState<Economy | null>(null)
-  const [tab, setTab] = useState<TabId>('usage')
+  const [tab, setTab] = useState<TabId>('mind')
 
   useEffect(() => {
     const load = () => api<Economy>('/economy').then(setEcon).catch(() => {})
@@ -1291,7 +1293,7 @@ export default function EconomyView() {
     <ScrollArea className="h-full">
       <div className="px-5 sm:px-8 py-7 max-w-[1240px] mx-auto">
         <ViewHeader
-          kicker="effort, value, spend"
+          kicker="what the org wants, understands and spends"
           title="Economy"
           live={econ ? <>
             <span className="flex items-center gap-1.5"><LiveDot state={econ.summary.turns_24h ? 'working' : 'awake'} />{econ.summary.turns_24h.toLocaleString()} turns today</span>
@@ -1304,14 +1306,15 @@ export default function EconomyView() {
         <div className="mb-5 -mx-5 px-5 sm:mx-0 sm:px-0 overflow-x-auto [scrollbar-width:none]"><div className="w-max"><Tabs id="econ" items={TABS} value={tab} onChange={setTab} /></div></div>
 
         <div className="space-y-3">
+          {tab === 'mind' && <MindView />}
           {tab === 'usage' && <UsageTab econ={econ} />}
-          {tab !== 'usage' && !econ && (
+          {tab !== 'usage' && tab !== 'mind' && !econ && (
             <div className="space-y-3">
               <div className="grid gap-3 grid-cols-2 md:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="block w-full h-[104px] rounded-2xl" />)}</div>
               <Skeleton className="block w-full h-64 rounded-2xl" />
             </div>
           )}
-          {tab !== 'usage' && econ && !diss && (
+          {tab !== 'usage' && tab !== 'mind' && econ && !diss && (
             <Panel className="p-2"><Empty title="The dissipative layer has no readings yet" hint="src/astryx/econ/econ.py writes one row per day — the first lands after tonight's rollup." /></Panel>
           )}
           {tab === 'thermo' && diss && <ThermoTab d={diss} />}

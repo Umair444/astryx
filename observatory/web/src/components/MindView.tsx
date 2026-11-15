@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
-import { ScrollArea } from '@mantine/core'
-import { api, displayName, fmtAgo } from '../api'
+import { api, apiSend, displayName, fmtAgo } from '../api'
+import { useStore } from '../store'
 import AgentFace from './AgentFace'
-import { Empty, LiveDot, Panel, Skeleton, ViewHeader } from '../ui/kit'
+import { Empty, LiveDot, Panel, Skeleton } from '../ui/kit'
 
 /* THE ORG'S MIND (src/astryx/mind/mind.py, owner 11-15: "humans don't start work because someone tells them; they do it
    because they want to"). What the org FEELS (itches read from each agent's own log, and the surprises and wonders an
    agent noted itself), what it WANTS (each agent's pressure, and whether it is free to think), and what it has
    UNDERSTOOD (insights: one name, one thought, where it lives, what it was built on). Nobody assigns any of it, and
-   nothing here is edited from the screen: the page only shows the org thinking. GET /api/mind, re-read every 20 s. */
+   the Economy tab's first section shows the org thinking. GET /api/mind, re-read every 20 s.
+   THE OWNER'S ACTS (owner-only, each one POST; observatory/api/mind.py): let the org think now (a tick: whoever wants
+   to and is free wakes), let an itch go or retire an idea (with the reason, which the org keeps), and share a question
+   with an agent (it becomes that agent's wonder, thought about only if it wants to). None of them assigns work. */
 
 interface Evidence { agent?: string; at?: string; calls?: number; line?: string }
 interface Itch {
@@ -59,13 +62,25 @@ export default function MindView() {
   const [m, setM] = useState<Mind | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [open, setOpen] = useState<number | null>(null)
+  const { who } = useStore()
+  const [said, setSaid] = useState<string | null>(null)        // what the last act did, in words
+  const [busy, setBusy] = useState(false)
+  const [ask, setAsk] = useState<{ kind: 'drop' | 'retire'; id: number } | null>(null)   // the one reason being typed
+  const [why, setWhy] = useState('')
+  const [q, setQ] = useState({ agent: '', what: '' })
+  const load = () => api<Mind>('/mind').then((x) => { setM(x); setErr(null) }).catch((e) => setErr(String((e as Error).message || e)))
   useEffect(() => {
-    let live = true
-    const load = () => api<Mind>('/mind').then((x) => { if (live) { setM(x); setErr(null) } }).catch((e) => { if (live) setErr(String((e as Error).message || e)) })
     load()
     const t = setInterval(load, 20_000)
-    return () => { live = false; clearInterval(t) }
+    return () => clearInterval(t)
   }, [])
+  async function act(words: (r: Record<string, unknown>) => string, path: string, body?: unknown) {
+    setBusy(true)
+    try { setSaid(words(await apiSend<Record<string, unknown>>('POST', path, body ?? {}))); setAsk(null); setWhy(''); await load() }
+    catch (e) { setSaid(`Not done: ${String((e as Error).message || e)}`) }
+    setBusy(false)
+  }
+  const think = () => act((r) => (r.woke ? `${displayName(String(r.woke))} woke to think: ${String(r.what)}.` : `Nobody woke: ${String(r.why)}.`), '/mind/tick')
 
   const pct = (v: string | number | null) => (v === null ? '?' : `${Math.round(Number(v))}%`)
   const alive = m?.insights.filter((i) => i.state === 'alive') ?? []
@@ -74,24 +89,40 @@ export default function MindView() {
   const top = Math.max(1, ...(m?.drives.map((d) => d.pressure) ?? [1]))
   const insightName = (id: number | null) => m?.insights.find((i) => i.id === id)?.name
 
+  const reason = (kind: 'drop' | 'retire', id: number, label: string, done: string) => (
+    ask?.kind === kind && ask.id === id ? (
+      <form className="flex items-center gap-1.5 mt-2" onSubmit={(e) => { e.preventDefault(); if (why.trim()) void act(() => done, kind === 'drop' ? `/mind/itch/${id}/drop` : `/mind/insight/${id}/retire`, { why }) }}>
+        <input autoFocus value={why} onChange={(e) => setWhy(e.currentTarget.value)} placeholder="Why? The org keeps the reason" aria-label="the reason"
+          className="flex-1 min-w-0 rounded-lg bg-deck-3/70 border border-line px-2.5 py-1.5 text-[12.5px] text-ink placeholder:text-ink-mute outline-none focus:border-cyan/60" />
+        <button disabled={busy || !why.trim()} className="rounded-lg px-2.5 py-1.5 text-[12.5px] text-ink bg-deck-3 border border-line disabled:opacity-40">{label}</button>
+        <button type="button" onClick={() => { setAsk(null); setWhy('') }} className="text-[12px] text-ink-mute hover:text-ink px-1">Cancel</button>
+      </form>
+    ) : who.owner ? (
+      <button onClick={() => { setAsk({ kind, id }); setWhy('') }} className="mt-2 text-[12px] text-ink-mute hover:text-ink underline underline-offset-2">{label}</button>
+    ) : null
+  )
+
   return (
-    <ScrollArea className="h-full">
-      <div className="px-5 sm:px-8 py-7 max-w-[1300px] mx-auto">
-        <ViewHeader kicker="what the org feels, wants and understands" title="Mind"
-          live={m ? <>
-            <span className="flex items-center gap-1.5"><LiveDot state={m.energy.fed ? 'awake' : 'asleep'} />{m.energy.fed ? 'fed' : 'fasting'}</span>
-            <span className="text-ink-mute">·</span><span>{openItches.length} itches</span>
-            <span className="text-ink-mute">·</span><span>{alive.length} ideas kept</span>
-          </> : undefined} />
+      <div>
         {err && <Panel className="p-4 mb-4 text-[13px] text-bad">The mind isn't answering: {err}</Panel>}
         {!m && !err && <Skeleton className="block h-40 w-full" />}
         {m && (
           <div className="flex flex-col gap-6">
-            <p className="text-[13.5px] text-ink-dim max-w-[760px] leading-relaxed -mt-2">
-              Nobody assigns any of this. An itch is something an agent lived through in its own work. Itches build
-              pressure, and an agent that is fed and free wakes itself to think about its strongest one. What it
-              understands, it keeps as one named idea the whole org can use.
-            </p>
+            <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+              <p className="text-[13.5px] text-ink-dim max-w-[760px] leading-relaxed flex-1 min-w-[280px]">
+                Nobody assigns any of this. An itch is something an agent lived through in its own work. Itches build
+                pressure, and an agent that is fed and free wakes itself to think about its strongest one. What it
+                understands, it keeps as one named idea the whole org can use.
+              </p>
+              {who.owner && (
+                <button onClick={think} disabled={busy} title="Feel now, and let whoever wants to think and is free wake. It happens by itself every hour."
+                  className="rounded-xl px-3.5 py-2 text-[13px] font-medium text-ink bg-deck-3 border border-line hover:border-line-2 disabled:opacity-50">
+                  {busy ? 'Asking…' : 'Let it think now'}
+                </button>
+              )}
+            </div>
+            {said && <Panel className="p-3 text-[13px] text-ink flex items-center gap-3"><span className="flex-1" role="status">{said}</span>
+              <button onClick={() => setSaid(null)} className="text-ink-mute hover:text-ink text-[12px]">Dismiss</button></Panel>}
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <Panel className="p-4">
@@ -173,11 +204,29 @@ export default function MindView() {
                         </div>
                         {i.verified && <div className="text-[12px] text-ink-dim mt-1.5">Checked: {i.verified}</div>}
                         {i.epitaph && <div className="text-[12px] text-ink-dim mt-1.5">Retired: {i.epitaph}</div>}
+                        {i.state === 'alive' && reason('retire', i.id, 'Retire this idea', `${i.name} is retired; its reason is kept.`)}
                       </Panel>
                     ))}
                   </div>
                 )}
             </section>
+
+            {who.owner && (
+              <section>
+                <h2 className="text-[13px] font-semibold text-ink mb-1">Share a question</h2>
+                <p className="text-[12.5px] text-ink-mute mb-2 max-w-[760px]">Something you wonder about. It becomes that agent's own wonder, not a task: it thinks about it when it is free and wants to.</p>
+                <form className="flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); if (q.agent && q.what.trim().length >= 8) void act(() => { setQ({ agent: q.agent, what: '' }); return `${displayName(q.agent)} now wonders about it too.` }, '/mind/wonder', q) }}>
+                  <select value={q.agent} onChange={(e) => setQ({ ...q, agent: e.currentTarget.value })} aria-label="which agent"
+                    className="rounded-lg bg-deck-3/70 border border-line px-2.5 py-2 text-[13px] text-ink outline-none">
+                    <option value="">Which agent…</option>
+                    {m.drives.map((d) => <option key={d.agent} value={d.agent}>{displayName(d.agent)}</option>)}
+                  </select>
+                  <input value={q.what} onChange={(e) => setQ({ ...q, what: e.currentTarget.value })} placeholder="I wonder why…" aria-label="your question"
+                    className="flex-1 min-w-[240px] rounded-lg bg-deck-3/70 border border-line px-3 py-2 text-[13px] text-ink placeholder:text-ink-mute outline-none focus:border-cyan/60" />
+                  <button disabled={busy || !q.agent || q.what.trim().length < 8} className="rounded-lg px-3.5 py-2 text-[13px] text-ink bg-deck-3 border border-line disabled:opacity-40">Share</button>
+                </form>
+              </section>
+            )}
 
             <section>
               <h2 className="text-[13px] font-semibold text-ink mb-2">What it feels</h2>
@@ -202,6 +251,7 @@ export default function MindView() {
                     {open === i.id && (
                       <div className="px-11 pb-3 text-[12.5px] text-ink-dim">
                         {i.why && <div className="mb-1.5">Why it was let go: {i.why}</div>}
+                        {i.state === 'open' && <div className="mb-2">{reason('drop', i.id, 'Let it go', `That itch of ${displayName(i.agent)}'s is let go; the reason is kept.`)}</div>}
                         {i.evidence.length > 0 && <div className="text-ink-mute mb-1">Side by side:</div>}
                         <ul className="flex flex-col gap-1">
                           {i.evidence.map((e, k) => (
@@ -220,6 +270,5 @@ export default function MindView() {
           </div>
         )}
       </div>
-    </ScrollArea>
   )
 }

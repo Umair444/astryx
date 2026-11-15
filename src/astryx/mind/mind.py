@@ -107,7 +107,14 @@ def ensure(c) -> None:
         insight_id bigint NOT NULL, agent text NOT NULL, ts timestamptz NOT NULL DEFAULT now(), note text NOT NULL DEFAULT '')""")
 
 
-_DIGITS = re.compile(r"\d{7,}")
+# A NUMBER BY ITS SHAPE (medic 12260): people type numbers with separators ("0300-123-4567", "1234 5678 9012 3456"), so
+# an unbroken-run rule misses them. Any run of digits joined by spaces or - . ( ) / + that holds 7 or more digits is N.
+_NUMBERISH = re.compile(r"\+?\d[\d\s().\/+-]{5,}\d")
+
+
+def mask(s: str) -> str:
+    return _NUMBERISH.sub(lambda m: "N" if sum(ch.isdigit() for ch in m.group()) >= 7 else m.group(), s or "")
+
 
 
 _TAG = re.compile(r"<[^>]{1,300}>")
@@ -116,7 +123,7 @@ _TAG = re.compile(r"<[^>]{1,300}>")
 def _line(s) -> str:
     """One evidence line: the words alone (a message's wrapper tags gone), flat, short, and never a long digit run
     (a customer number can't ride in)."""
-    return _DIGITS.sub("N", " ".join(_TAG.sub(" ", str(s or "")).split()))[:170]
+    return mask(" ".join(_TAG.sub(" ", str(s or "")).split()))[:170]
 
 
 def _org_agents(c) -> set:
@@ -127,6 +134,30 @@ def _org_agents(c) -> set:
         return tier.content_org_agents(names)
     except Exception:  # noqa: BLE001 — no tier module on this tree: every agent
         return names
+
+
+def is_agent(name: str) -> bool:
+    """An agent of this org whose work is org work: it has a charter and holds no personal-tier grant. The only names
+    the mind feels for, wakes, or takes a note, a keep, a drop or a use from (medic 12260: `--as owner` built pressure
+    and would have been sent a wake)."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,60}", name or ""):
+        return False
+    try:
+        from astryx.core import tier
+        return bool(tier.is_content_org(name))
+    except ImportError:       # a tree without tier: a charter by that name
+        return any((_estate() / "agents").rglob(f"{name}.md"))
+
+
+def _me(agent: str) -> str:
+    """The caller, bound: an agent of this org, and the one this shell belongs to when the shell says (ASTRYX_AGENT)."""
+    shell = os.environ.get("ASTRYX_AGENT", "")
+    if shell and agent and agent != shell:
+        raise SystemExit(f"mind: this is {shell}'s shell; you can't act as {agent}")
+    agent = agent or shell
+    if not is_agent(agent):
+        raise SystemExit("mind: say who you are (--as <your agent name>); only an agent of this org feels, keeps or lets go")
+    return agent
 
 
 def _upsert(c, agent, kind, key, what, evidence, n, also, strength) -> None:
@@ -237,16 +268,19 @@ def drives(c) -> list[dict]:
         WITH p AS (SELECT agent, sum(strength / power(2, thinks)) AS pressure, count(*) AS itches,
                           max(last_think) AS last_think FROM {_t('itch')} WHERE state = 'open' GROUP BY 1),
              lt AS (SELECT agent, max(last_think) AS last_think FROM {_t('itch')} GROUP BY 1),
-             t AS (SELECT agent, max(coalesce(ended_at, started_at)) AS last_end,
-                          bool_or(ended_at IS NULL AND started_at > now() - interval '45 minutes') AS busy
-                   FROM turns WHERE started_at > now() - interval '3 days' GROUP BY 1),
+             -- LIVENESS IS THE STEPS' (medic 12260): a turn's row is written only when it ENDS, so an agent mid-turn has no
+             -- open row. Its newest step says it is working; idle counts from its newest step or turn end
+             t AS (SELECT agent, max(at) AS last_act, bool_or(at > now() - interval '10 minutes' AND live) AS busy FROM (
+                     SELECT agent, ts AS at, true AS live FROM steps WHERE ts > now() - interval '3 days'
+                     UNION ALL SELECT agent, coalesce(ended_at, started_at), false FROM turns WHERE started_at > now() - interval '3 days') x
+                   GROUP BY 1),
              w AS (SELECT m.to_agent AS agent, count(*) AS waiting FROM messages m
-                   WHERE m.ts > now() - interval '6 hours' AND {HUMAN.replace('%%', '%')}
+                   WHERE m.ts > now() - interval '24 hours' AND {HUMAN.replace('%%', '%')}
                      AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.from_agent = m.to_agent AND r.thread = m.thread AND r.id > m.id)
                    GROUP BY 1)
         SELECT p.agent, round(p.pressure::numeric, 1)::float AS pressure, p.itches, coalesce(t.busy, false) AS busy,
-               round(extract(epoch FROM now() - t.last_end) / 60)::int AS idle_min, coalesce(w.waiting, 0) AS waiting,
-               round(extract(epoch FROM now() - lt.last_think) / 3600)::int AS thought_h_ago
+               floor(extract(epoch FROM now() - t.last_act) / 60)::int AS idle_min, coalesce(w.waiting, 0) AS waiting,
+               floor(extract(epoch FROM now() - lt.last_think) / 3600)::int AS thought_h_ago
         FROM p LEFT JOIN t USING (agent) LEFT JOIN w USING (agent) LEFT JOIN lt USING (agent)
         ORDER BY p.pressure DESC""").fetchall()
 
@@ -322,7 +356,9 @@ def want(c, say=None, dry: bool = False) -> dict:
     if not e["fed"]:
         return {"woke": None, "why": f"fasting: energy at {e['seven_day_pct']}% of the week, {e['five_hour_pct']}% of 5 h"}
     for d in drives(c):
-        if d["busy"] or d["waiting"] or (d["idle_min"] is not None and d["idle_min"] < IDLE_MIN) or d["pressure"] < PRESSURE:
+        if not is_agent(d["agent"]) or d["idle_min"] is None:      # not an agent of this org, or no sign of life: never woken
+            continue
+        if d["busy"] or d["waiting"] or d["idle_min"] < IDLE_MIN or d["pressure"] < PRESSURE:
             continue
         if d["thought_h_ago"] is not None and d["thought_h_ago"] < REST_H:
             continue
@@ -362,7 +398,8 @@ def _news(c, agent: str, body: str) -> None:
 
 def keep(c, agent, name, thought, kind, lives, itches=(), on=(), check="") -> dict:
     ensure(c)
-    name, thought = " ".join(name.split())[:80], " ".join(thought.split())
+    name, thought = mask(" ".join(name.split()))[:80], mask(" ".join(thought.split()))
+    lives, check = mask(lives or ""), mask(check or "")
     if not name or not thought:
         raise SystemExit("mind: an insight needs a name and its one thought")
     if len(thought) > 300 or thought.count(". ") > 1:
@@ -383,20 +420,39 @@ def keep(c, agent, name, thought, kind, lives, itches=(), on=(), check="") -> di
     return {"kept": r["id"], "name": name}
 
 
-def drop(c, agent, itch_id: int, why: str) -> dict:
+def drop(c, agent, itch_id: int, why: str, any_agent: bool = False) -> dict:
+    """Let an itch go, with the reason kept. An agent lets go its own; the owner (any_agent, from the observatory) any."""
     ensure(c)
-    n = c.execute(f"UPDATE {_t('itch')} SET state = 'dropped', why = %s WHERE id = %s AND agent = %s AND state = 'open'",
-                  (" ".join((why or "").split())[:300] or "let go", itch_id, agent)).rowcount
+    why = " ".join((why or "").split())[:300] or "let go"
+    n = c.execute(f"UPDATE {_t('itch')} SET state = 'dropped', why = %s WHERE id = %s AND (agent = %s OR %s) AND state = 'open'",
+                  (why if not any_agent else f"{agent}: {why}", itch_id, agent, any_agent)).rowcount
     return {"dropped": bool(n)}
 
 
-def note(c, agent, kind, what) -> dict:
+def retire(c, who, insight_id: int, epitaph: str, any_author: bool = False) -> dict:
+    """Retire an idea, leaving its epitaph so it isn't thought again. Its author may; the owner (any_author) may."""
     ensure(c)
+    epitaph = " ".join((epitaph or "").split())[:300]
+    if not epitaph:
+        raise SystemExit("mind: say why it is retired (the epitaph keeps the org from thinking it again)")
+    n = c.execute(f"UPDATE {_t('insight')} SET state = 'retired', epitaph = %s WHERE id = %s AND state = 'alive' AND (author = %s OR %s)",
+                  (f"{who}: {epitaph}", insight_id, who, any_author)).rowcount
+    return {"retired": bool(n)}
+
+
+def note(c, agent, kind, what, by: str = "") -> dict:
+    """An agent notes its own surprise or wonder. `by` (the owner, from the observatory) shares a question with an
+    agent: it becomes that agent's wonder, said to be the owner's, and is thought about only if the agent wants to."""
+    ensure(c)
+    if not is_agent(agent):
+        raise SystemExit(f"mind: {agent!r} is not an agent of this org")
     if kind not in ("surprise", "wonder"):
         raise SystemExit("mind: you note a surprise or a wonder; tedium is read from your log")
     what = _line(what)
     if len(what) < 8:
         raise SystemExit("mind: say what it was")
+    if by:
+        what = f"{by} wonders: {what}"[:170]
     key = re.sub(r"[^a-z0-9]+", " ", what.lower())[:60]
     r = c.execute(f"""INSERT INTO {_t('itch')} (agent, kind, key, what, source, strength) VALUES (%s, %s, %s, %s, 'noted', 3)
         ON CONFLICT (agent, kind, key) DO UPDATE SET n = {_t('itch')}.n + 1, strength = {_t('itch')}.strength + 2, last_seen = now()
@@ -447,7 +503,7 @@ def state(c) -> dict:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="mind", description="the org's own drive")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    who = lambda p: p.add_argument("--as", dest="agent", default=os.environ.get("ASTRYX_AGENT", ""))
+    who = lambda p: p.add_argument("--as", dest="agent", default="")
     p = sub.add_parser("tick"); p.add_argument("--dry", action="store_true")
     p = sub.add_parser("me"); who(p)
     p = sub.add_parser("note"); who(p); p.add_argument("--kind", required=True); p.add_argument("what", nargs="+")
@@ -460,8 +516,8 @@ def main(argv=None) -> int:
     p = sub.add_parser("use"); who(p); p.add_argument("ref"); p.add_argument("--why", default="")
     sub.add_parser("state")
     a = ap.parse_args(argv)
-    if a.cmd in ("me", "note", "keep", "drop", "use") and not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,60}", a.agent or ""):
-        raise SystemExit("mind: say who you are: --as <your agent name>")
+    if a.cmd in ("me", "note", "keep", "drop", "use"):
+        a.agent = _me(a.agent)
     ids = lambda s: [int(x) for x in re.findall(r"\d+", s or "")]
     with connect() as c:
         if a.cmd == "tick":
