@@ -35,8 +35,8 @@ MUTANTS = {
     # The fence narrowed. A broken toolreg then raises out of the hook and the step row is lost:
     # telemetry costing the row it rides on.
     "M3 the ledger fence no longer catches a toolreg failure":
-        ("    except Exception:\n        return None\n\n\ndef wall_label",
-         "    except KeyError:\n        return None\n\n\ndef wall_label"),
+        ("        return Jsonb(m)\n    except Exception:\n        return None\n",
+         "        return Jsonb(m)\n    except KeyError:\n        return None\n"),
 
     # No savepoint. On a DB that predates the classifications table, the failed UPDATE aborts
     # the whole transaction, so the turn row is lost with it.

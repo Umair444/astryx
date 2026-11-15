@@ -14,7 +14,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "tests"))
-from node_ts import run_ts  # noqa: E402
+from node_ts import run_ts, ts_unavailable  # noqa: E402
 
 WEB = REPO / "observatory/web/src"
 
@@ -23,7 +23,9 @@ def main() -> int:
     if not shutil.which("node"):
         print("  FAIL  node is installed")
         return 1
-    rc, out, err = run_ts(REPO / "tests/chat_sides_test.ts")
+    if (why := ts_unavailable()):       # a clean clone (no npm ci): the node suite verifies nothing, not red
+        print(f"  SKIP  the node suite: {why}")
+    rc, out, err = (0, '', '') if why else run_ts(REPO / "tests/chat_sides_test.ts")
     print(out.rstrip())
     if rc:
         print(err.strip()[-800:])
@@ -41,7 +43,7 @@ def main() -> int:
     for name, ok in wired:
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
         bad += not ok
-    return 1 if (rc or bad) else 0
+    return 1 if (rc or bad) else 77 if why else 0
 
 
 def test_chat_sides():                 # a pytest run collects this too

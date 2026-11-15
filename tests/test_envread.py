@@ -165,6 +165,9 @@ DEF_TXT = re.compile(r"^(\s*)(?:async\s+)?def\s+\w+")
 MOD_ENV_NAME = re.compile(r"""^([A-Za-z_]\w*)\s*(?::[^=]*)?=[^=].*["'](?:[^"'\n]*/)?\.env["']""")
 # DECLARED, never a silent skip: (file, def) -> why that site is not a config reader. A stale entry is RED.
 EXEMPT = {
+    ("observatory/api/federation.py", "run_introduce"):
+        "hands the home's .env PATH to the introduction child (src/astryx/federation/introduce_run.py --env), which "
+        "reads it through introduce.load_env, i.e. config.read_env (E14); this process never opens it",
     ("src/astryx/config.py", "*"):
         "the ONE reader and writer: read_env, duplicate_keys (a strict read, key NAMES only), _write_env (set_env/"
         "unset_env read strictly: a writer that skipped a bad line would drop it on the rewrite)",

@@ -14,7 +14,7 @@ MUTANTS = {
     "W1 the checks run on asyncio's default pool (unbounded by the sign-in's own two)":
         ("        got = await cogauth.sign_in(a.db, email, pw, check=_check)", "        got = await cogauth.sign_in(a.db, email, pw)"),
     "W2 no in-flight cap: every sign-in waits for a check, none is refused busy":
-        ("    if _inflight >= INFLIGHT:", "    if False:"),
+        ("    if _inflight >= INFLIGHT:            # the host is busy", "    if False:            # the host is busy"),
     "W3 an attempt counts only once it has FAILED (a concurrent burst passes the limit before any is counted)":
         ("    now = time.monotonic()\n    _fails[ck].append(now)\n    _fails[ak].append(now)\n    _inflight += 1\n",
          "    now = time.monotonic()\n    _inflight += 1\n"),

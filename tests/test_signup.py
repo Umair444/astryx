@@ -28,7 +28,7 @@ assertion is on a status, a name or a row count, never a printed secret.
      again → 409; an unknown id → 404. Through REC: the recorder got exactly (key, owner uid), provision 'done'
   U8 REJECT: → rejected with the note, the account's /auth/me shows it, and the key is free for a new sign-up
   U9 THE EMAIL CODE (owner 11-15: "an email otp so people don't sign themselves up with wrong emails"), on MAIL (the
-     flag and a mailbox: MAIL_SMTP on a loopback SMTP sink) and DOWN (a mailbox nothing listens on): a new email → 202
+     flag and a mailbox: MAIL_SMTP on a loopback SMTP sink) and DOWN (a mailbox that hangs up): a new email → 202
      {code: sent}, NO account or request, one mail to it holding six digits, and the store keeps no code (a digest);
      again at once → 202 and no second mail; a wrong code → 400 {field: code}, nothing written; the right one → 200,
      the account and its pending request, and the code is used up; five wrong guesses and the right code no longer
@@ -65,7 +65,7 @@ from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate('test_signup', REPO, deps=('psycopg', 'asyncpg', 'fastapi', 'httpx', 'uvicorn', 'cryptography'), env=False)
 from astryx.security.sqlguard import propagate  # noqa: E402
 from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
-from tests._smtp_sink import SmtpSink, dead_port  # noqa: E402
+from tests._smtp_sink import Refusing, SmtpSink  # noqa: E402
 
 PY = sys.executable
 fails = []
@@ -82,9 +82,9 @@ import json, os, sys, types
 m = types.ModuleType('astryx.cog_provision')
 class ProvisionUnavailable(NotImplementedError):
     pass
-def provision_org(key, owner_uid, budget_tokens):
+def provision_org(key, owner_uid, allowance_tokens):
     with open(os.environ['FX_PROVISION_LOG'], 'a') as f:
-        f.write(json.dumps([key, owner_uid, budget_tokens]) + '\n')
+        f.write(json.dumps([key, owner_uid, allowance_tokens]) + '\n')
     return {'state': 'done', 'org': key}
 m.ProvisionUnavailable, m.provision_org = ProvisionUnavailable, provision_org
 sys.path.insert(0, sys.argv[1]); del sys.argv[1]
@@ -175,7 +175,8 @@ def run(t, da, ds, dc, procs):
     oa = f"fxsu-a-{pid}"
     cid = f"fxsucog-{pid:08d}"
     names = ("a", "off", "on", "rec", "cap", "mail", "down")
-    sink, dead = SmtpSink(), dead_port()
+    sink, refusing = SmtpSink(), Refusing()
+    dead = refusing.port
     socks = {k: listener() for k in names}
     port = {k: s.getsockname()[1] for k, s in socks.items()}
     ha = t / oa
@@ -314,7 +315,7 @@ def run(t, da, ds, dc, procs):
     k1 = f"fx-req1-{pid}"
     st1, hs1, b1 = signup(ON, "New@FX-Signup.invalid", PW["new"], k1, name="  New   Org ")
     new = session_of(hs1)
-    rows = q(ds["url"], "SELECT u.email, r.key, r.name, r.state, r.budget_tokens FROM org_requests r JOIN users u "
+    rows = q(ds["url"], "SELECT u.email, r.key, r.name, r.state, r.allowance_tokens FROM org_requests r JOIN users u "
                         "ON u.id = r.uid WHERE r.key = %s", k1)
     check("a new email + org: 200, one session cookie, and the request is pending in the body",
           st1 == 200 and bool(new) and jl(b1).get("request", {}).get("state") == "pending", f"{st1} {b1[:120]}")
@@ -370,7 +371,7 @@ def run(t, da, ds, dc, procs):
     for label, h, want in (("signed out", {}, 401), ("the pending account", {"cookie": new, **SO}, 403),
                            ("an org OWNER without the cog grant", {"cookie": own, **SO}, 403)):
         got = [call(ON, "/auth/cog/requests", headers=h)[0],
-               call(ON, f"/auth/cog/requests/{rid1}/approve", "POST", {"budget_tokens": 1000}, headers={**O, **h})[0],
+               call(ON, f"/auth/cog/requests/{rid1}/approve", "POST", {"allowance_tokens": 1000}, headers={**O, **h})[0],
                call(ON, f"/auth/cog/requests/{rid1}/reject", "POST", {"note": "x"}, headers={**O, **h})[0]]
         check(f"{label}: list, approve, reject are each {want}", got == [want] * 3 and bool(own), got)
     check("...and the request is still pending", q(ds["url"], "SELECT state FROM org_requests WHERE id = %s", rid1)
@@ -386,13 +387,13 @@ def run(t, da, ds, dc, procs):
     check("the queue lists the pending requests with their emails",
           st_l == 200 and k1 in listed and k3 in listed and any(x.get("email") == "new@fx-signup.invalid"
                                                                  for x in jl(bl).get("requests", [])), f"{st_l} {listed}")
-    badb = [call(ON, f"/auth/cog/requests/{rid1}/approve", "POST", {"budget_tokens": b}, headers={**O, **B})[0]
+    badb = [call(ON, f"/auth/cog/requests/{rid1}/approve", "POST", {"allowance_tokens": b}, headers={**O, **B})[0]
             for b in (0, -5, "1000", 1.5, True, None)]
     check("a budget that is not a positive integer: 400 each", badb == [400] * 6, badb)
-    st_a, _, ba = call(ON, f"/auth/cog/requests/{rid1}/approve", "POST", {"budget_tokens": 500000}, headers={**O, **B})
+    st_a, _, ba = call(ON, f"/auth/cog/requests/{rid1}/approve", "POST", {"allowance_tokens": 500000}, headers={**O, **B})
     new_uid = q(ds["url"], "SELECT id FROM users WHERE email = 'new@fx-signup.invalid'")[0][0]
     boss_uid = q(ds["url"], "SELECT id FROM users WHERE email = %s", users["boss"])[0][0]
-    row = q(ds["url"], "SELECT state, budget_tokens, decided_by, decided_at IS NOT NULL, provision, provision_note "
+    row = q(ds["url"], "SELECT state, allowance_tokens, decided_by, decided_at IS NOT NULL, provision, provision_note "
                        "FROM org_requests WHERE id = %s", rid1)[0]
     call_txt = f"provision_org({k1}, {new_uid}@{cid}, 500000)"
     check("approve: 200, state approved, budget and decided_by on the row",
@@ -401,10 +402,10 @@ def run(t, da, ds, dc, procs):
     check("...provision_org was called with (key, owner uid, budget) and, a stub until feat/cog-rls2, is 'deferred'",
           row[4] == "deferred" and row[5].startswith(call_txt) and "feat/cog-rls2" in row[5]
           and jl(ba).get("provision") == "deferred", f"{row[4:]}")
-    st_aa, _, _ = call(ON, f"/auth/cog/requests/{rid1}/approve", "POST", {"budget_tokens": 9}, headers={**O, **B})
-    st_nx, _, _ = call(ON, "/auth/cog/requests/987654321/approve", "POST", {"budget_tokens": 9}, headers={**O, **B})
+    st_aa, _, _ = call(ON, f"/auth/cog/requests/{rid1}/approve", "POST", {"allowance_tokens": 9}, headers={**O, **B})
+    st_nx, _, _ = call(ON, "/auth/cog/requests/987654321/approve", "POST", {"allowance_tokens": 9}, headers={**O, **B})
     check("approving it again: 409 (budget unchanged); an unknown id: 404",
-          st_aa == 409 and st_nx == 404 and q(ds["url"], "SELECT budget_tokens FROM org_requests WHERE id = %s", rid1)
+          st_aa == 409 and st_nx == 404 and q(ds["url"], "SELECT allowance_tokens FROM org_requests WHERE id = %s", rid1)
           == [(500000,)], f"{st_aa} {st_nx}")
     st_mn, _, mn = call(ON, "/auth/me", headers={"cookie": new})
     check("the account's /auth/me now shows its request approved (still no org until it is provisioned)",
@@ -424,7 +425,7 @@ def run(t, da, ds, dc, procs):
     rid5 = q(ds["url"], "SELECT id FROM org_requests WHERE key = %s AND state = 'pending'", k3)[0][0]
     uid5 = q(ds["url"], "SELECT id FROM users WHERE email = 'five@fx-signup.invalid'")[0][0]
     boss_r = login(REC, users["boss"], PW["boss"], ip="198.51.100.201")
-    st_ra, _, bra = call(REC, f"/auth/cog/requests/{rid5}/approve", "POST", {"budget_tokens": 1234},
+    st_ra, _, bra = call(REC, f"/auth/cog/requests/{rid5}/approve", "POST", {"allowance_tokens": 1234},
                          headers={**O, "cookie": boss_r, **SO})
     calls = [json.loads(x) for x in plog.read_text().splitlines()] if plog.exists() else []
     check("through the recorder: provision_org got exactly (key, '<uid>@<cog id>', budget), once, and the row says 'done'",

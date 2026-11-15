@@ -238,10 +238,10 @@ export const SIGNUP_WORDS: Record<Exclude<SignUp, 'ok' | 'code-sent'> | 'empty' 
 /* THE COG ADMIN's queue (cog_grants; never an org role): every org request, approve with a token budget, or reject */
 export interface CogRequest {
   id: number; key: string; name: string; state: 'pending' | 'approved' | 'rejected'; email: string; created: string
-  budget_tokens: number | null; decided_by: string | null; decided_at: string | null; note: string | null
+  allowance_tokens: number | null; decided_by: string | null; decided_at: string | null; note: string | null
   provision: 'deferred' | 'done' | 'failed' | null; provision_note: string | null
 }
 export const cogRequests = () => authCall<{ signup: boolean; requests: CogRequest[] }>('/auth/cog/requests')
 export const cogApprove = (id: number, budget: number) =>
-  authCall<{ state: string; provision: string | null }>(`/auth/cog/requests/${id}/approve`, { budget_tokens: budget })
+  authCall<{ state: string; provision: string | null }>(`/auth/cog/requests/${id}/approve`, { allowance_tokens: budget })
 export const cogReject = (id: number, note: string) => authCall<{ state: string }>(`/auth/cog/requests/${id}/reject`, { note })

@@ -509,7 +509,7 @@ function CogSection() {
           {decided.map((r) => (
             <li key={r.id} className="text-[12.5px] text-ink-mute">
               <span className="text-ink-dim">{r.name}</span> <span className="font-mono">/o/{r.key}</span> ·{' '}
-              {r.state === 'approved' ? <>{PROVISION[r.provision ?? ''] ?? 'approved'} · budget {r.budget_tokens?.toLocaleString()}</>
+              {r.state === 'approved' ? <>{PROVISION[r.provision ?? ''] ?? 'approved'} · budget {r.allowance_tokens?.toLocaleString()}</>
                 : <>rejected{r.note ? `: ${r.note}` : ''}</>}
               {r.decided_by && <> · by {r.decided_by}</>}
             </li>

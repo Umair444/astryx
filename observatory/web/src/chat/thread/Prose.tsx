@@ -57,7 +57,8 @@ function useHighlight(el: HTMLElement | null, html: string) {
     import('../artifacts/viewers/hl').then(({ highlightLang }) => {
       if (!live) return
       for (const c of el.querySelectorAll<HTMLElement>('.ws-cb pre > code:not([data-lit])')) {
-        c.innerHTML = DOMPurify.sanitize(highlightLang(c.textContent ?? '', c.dataset.lang ?? ''), { ALLOWED_TAGS: ['span'], ALLOWED_ATTR: ['class'] })
+        c.replaceChildren(DOMPurify.sanitize(highlightLang(c.textContent ?? '', c.dataset.lang ?? ''),   // a fragment, never an HTML sink
+          { ALLOWED_TAGS: ['span'], ALLOWED_ATTR: ['class'], RETURN_DOM_FRAGMENT: true }))
         c.dataset.lit = '1'
       }
     }).catch(() => { /* no colour: the code still reads */ })

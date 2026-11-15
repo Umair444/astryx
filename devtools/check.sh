@@ -1113,10 +1113,33 @@ run "chat: the server half stays owner-only, and the side panel reads nothing ou
 # Mutants: tests/mutants_owner_surface.py, tests/mutants_owner_surface_chat.py (a1's W-H, aliased, via module,
 # UNKNOWN); serve_untrusted's own: tests/mutants_serve_untrusted.py.
 run "owner surface: no new writer of the wire, no second server of untrusted bytes, over the derived domain" "$PY" tests/test_owner_surface.py
-run "who asked (cog-who): a member posts as cv-<label>.<uid>, the owner as owner; the reply reaches her thread; the agent sees role" "$PY" tests/test_who_asked.py
-run "cog gaps: a member's search, titles, briefing follow her view; her own thread tools + projects; owner-only stays" "$PY" tests/test_cog_gaps.py
+run "who asked (cog-who): a member posts as cv-<label>.<uid>, the owner as owner; the reply reaches their thread; the agent sees role" "$PY" tests/test_who_asked.py
+run "cog gaps: a member's search, titles, briefing follow their view; their own thread tools + projects; owner-only stays" "$PY" tests/test_cog_gaps.py
 run "cog gaps: canvas knows the cog's sign-in (owner as owner, a member as cv-<label>.<uid>; else anonymous)" "$PY" tests/test_canvas_signin.py
 run "cog gaps: the viewer's own words sit right, every other human's left under their name" "$PY" tests/test_chat_sides.py
+# the chat workspace's oracles (11-10 → 11-15): each was run at its merge; here they run every time
+run "chat workspace: the unified conversation list, pure derivation" "$PY" tests/test_ws_threads.py
+run "chat workspace: full-text search" "$PY" tests/test_ws_search.py
+run "chat workspace: the while-you-were-away briefing" "$PY" tests/test_ws_briefing.py
+run "chat workspace: the artifact store" "$PY" tests/test_ws_artifacts.py
+run "chat workspace: canvas's read-only window" "$PY" tests/test_ws_canvas.py
+run "chat workspace: Stop interrupts, handoffs show" "$PY" tests/test_ws_interrupt.py
+run "chat workspace: a reply shows without a reload (live heal)" "$PY" tests/test_ws_live_heal.py
+run "chat workspace: who a message goes to by default" "$PY" tests/test_ws_recipients.py
+run "chat workspace: switching a chat's agents" "$PY" tests/test_ws_switch.py
+run "chat: inline files" "$PY" tests/test_chat_inline.py
+run "chat: a signed answer's provenance footer" "$PY" tests/test_chat_provenance.py
+run "chat: tables and figures written out" "$PY" tests/test_chat_tables.py
+run "chat: code in an answer, a human's markdown, long pastes" "$PY" tests/test_chat_code.py
+run "chat: the live line follows any human's ask" "$PY" tests/test_chat_pending.py
+run "chat: the client never spells the viewer as the literal 'owner'" "$PY" tests/test_chat_viewer_lint.py
+run "chat: a chat's live progress carries only the work it asked for" "$PY" tests/test_progress_scope.py
+run "chat: the calculator's server (qalc in a jail)" "$PY" tests/test_chat_calc.py
+run "chat: the calculator's boxes" "$PY" tests/test_chat_calc_ui.py
+run "member insides: an insider reads the agents' work short of the personal tier" "$PY" tests/test_member_insides.py
+run "send: a cancelled send never reaches a channel" "$PY" tests/test_send_cancel.py
+run "role DSN: a URL stays a URL" "$PY" tests/test_role_dsn.py
+run "sign-up: a pending org a cog admin decides; a new email proves itself by a code" "$PY" tests/test_signup.py
 run "fan-out (cog): a message naming several agents reaches each, stamped {team, lead}; the lead replies, helpers work over the wire" "$PY" tests/test_fanout.py
 # devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
 # nothing. Mutants: tests/mutants_sqlsite.py.

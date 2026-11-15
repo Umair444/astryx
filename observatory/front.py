@@ -802,9 +802,9 @@ async def accept(request: Request):
 #                                            same body with the mailed code; a wrong one is 400 {field: code})
 #                                            {request: {id, key, name, state: pending}} | 400 | 401 | 403 | 404 | 409
 #                                            (the key is taken, or the account already has a request waiting) | 429
-#   GET  /auth/cog/requests?state=           the cog admin's queue: [{id, key, name, state, email, created, budget_tokens,
+#   GET  /auth/cog/requests?state=           the cog admin's queue: [{id, key, name, state, email, created, allowance_tokens,
 #                                            decided_by, decided_at, note, provision, provision_note}]
-#   POST /auth/cog/requests/{id}/approve     {budget_tokens} → approved, then src/astryx/cog_provision.py
+#   POST /auth/cog/requests/{id}/approve     {allowance_tokens} → approved, then src/astryx/cog_provision.py
 #                                            provision_org(key, owner uid, budget): an orgs row + one
 #                                            login role + its .env; what became of it is in the row
 #   POST /auth/cog/requests/{id}/reject      {note?} → rejected (the key is free again)
@@ -967,7 +967,7 @@ REQUEST_STATES = ("pending", "approved", "rejected")
 
 async def _request_list(conn, state):
     cur = await conn.execute(
-        "SELECT r.id, r.key, r.name, r.state, u.email, r.created, r.budget_tokens, d.email, r.decided_at, r.note, "
+        "SELECT r.id, r.key, r.name, r.state, u.email, r.created, r.allowance_tokens, d.email, r.decided_at, r.note, "
         "r.provision, r.provision_note FROM org_requests r JOIN users u ON u.id = r.uid "
         "LEFT JOIN users d ON d.id = r.decided_by WHERE (%s::text IS NULL OR r.state = %s::text) "
         "ORDER BY (r.state = 'pending') DESC, r.created DESC LIMIT 200", (state, state))
@@ -986,7 +986,7 @@ async def cog_requests(request: Request, state: str = ""):
         rows = await a.db(_request_list, state or None)
     except Exception:  # noqa: BLE001
         return _nope(503, b'{"error":"the account store is unavailable"}')
-    keys = ("id", "key", "name", "state", "email", "created", "budget_tokens", "decided_by", "decided_at", "note",
+    keys = ("id", "key", "name", "state", "email", "created", "allowance_tokens", "decided_by", "decided_at", "note",
             "provision", "provision_note")
     return _json({"signup": a.signup, "requests": [
         {k: (_iso(v) if k in ("created", "decided_at") else v) for k, v in zip(keys, r)} for r in rows]})
@@ -995,7 +995,7 @@ async def cog_requests(request: Request, state: str = ""):
 async def _decide(conn, rid: int, state: str, by: int, budget, note):
     """The one conditional UPDATE that decides a pending request: (key, uid), or None when it is not pending."""
     cur = await conn.execute(
-        "UPDATE org_requests SET state = %s, budget_tokens = %s, note = %s, decided_by = %s, decided_at = now() "
+        "UPDATE org_requests SET state = %s, allowance_tokens = %s, note = %s, decided_by = %s, decided_at = now() "
         "WHERE id = %s AND state = 'pending' RETURNING key, uid", (state, budget, note, by, rid))
     return await cur.fetchone()
 
@@ -1019,9 +1019,9 @@ async def cog_approve(rid: int, request: Request):
         return got
     a, _, by = got
     j = await _body(request) or {}
-    b = j.get("budget_tokens")
+    b = j.get("allowance_tokens")
     if type(b) is not int or not 0 < b <= MAX_BUDGET:
-        return _nope(400, b'{"error":"budget_tokens is a positive whole number of tokens"}')
+        return _nope(400, b'{"error":"allowance_tokens is a positive whole number of tokens"}')
     try:
         row = await a.db(_peek_request, rid)
         if row is not None and row[0] in _cog():       # an org of that name exists now: approving would collide
@@ -1047,7 +1047,7 @@ async def cog_approve(rid: int, request: Request):
         await a.db(_provisioned, rid, prov, note)
     except Exception:  # noqa: BLE001
         pass
-    return _json({"ok": True, "id": rid, "key": key, "state": "approved", "budget_tokens": b, "provision": prov,
+    return _json({"ok": True, "id": rid, "key": key, "state": "approved", "allowance_tokens": b, "provision": prov,
                   "provision_note": note})
 
 

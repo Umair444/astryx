@@ -133,7 +133,7 @@ def approved_budget(org: str, reg_env=None) -> int | None:
     try:
         import psycopg
         with psycopg.connect(config.dsn(c["home"] / ".env", env_first=False), connect_timeout=5) as conn:
-            row = conn.execute("SELECT budget_tokens FROM org_requests WHERE key = %s AND state = 'approved' "
+            row = conn.execute("SELECT allowance_tokens FROM org_requests WHERE key = %s AND state = 'approved' "
                                "ORDER BY decided_at DESC LIMIT 1", (org,)).fetchone()
     except Exception as e:  # noqa: BLE001 — named by type only (a DSN can ride in a message)
         print(f"runtime_env: the cog store gave no approved budget for {org} ({type(e).__name__})", file=sys.stderr)

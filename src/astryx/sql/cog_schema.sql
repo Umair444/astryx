@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS org_requests (
   key             text NOT NULL CHECK (key ~ '^[a-z0-9][a-z0-9-]{0,62}$'),
   name            text NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
   state           text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'approved', 'rejected')),
-  budget_tokens   bigint CHECK (budget_tokens IS NULL OR budget_tokens > 0),
+  allowance_tokens bigint CHECK (allowance_tokens IS NULL OR allowance_tokens > 0),
   created         timestamptz NOT NULL DEFAULT now(),
   decided_by      bigint REFERENCES users (id) ON DELETE SET NULL,
   decided_at      timestamptz,
@@ -70,8 +70,16 @@ CREATE TABLE IF NOT EXISTS org_requests (
   provision       text CHECK (provision IN ('deferred', 'done', 'failed')),
   provision_note  text,
   CONSTRAINT org_requests_decided CHECK ((state = 'pending') = (decided_at IS NULL)),
-  CONSTRAINT org_requests_budget CHECK (state <> 'approved' OR budget_tokens IS NOT NULL)
+  CONSTRAINT org_requests_budget CHECK (state <> 'approved' OR allowance_tokens IS NOT NULL)
 );
+-- the column was budget_tokens until 11-15: an org's token ALLOWANCE, renamed so it can't read as a goal's budget (the
+-- economy's own column, schema.sql goals). Idempotent: a store made before then is renamed once
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'org_requests'
+             AND column_name = 'budget_tokens') THEN
+    ALTER TABLE org_requests RENAME COLUMN budget_tokens TO allowance_tokens;
+  END IF;
+END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS org_requests_key_live ON org_requests (key) WHERE state IN ('pending', 'approved');
 CREATE UNIQUE INDEX IF NOT EXISTS org_requests_one_pending ON org_requests (uid) WHERE state = 'pending';
 CREATE INDEX IF NOT EXISTS org_requests_created ON org_requests (created);

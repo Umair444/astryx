@@ -72,7 +72,7 @@ MUTANTS = {
     "M7 redelivery marker dropped":
         ("""  const content = again
     ? `[redelivered wake · sent ${new Date(row.ts).toISOString()} · the session it was ` +
-      `first delivered to ended before taking any turn, so nothing read it]\\n${text}`
-    : text""",
-         "  const content = text"),
+      `first delivered to ended before taking any turn, so nothing read it]\\n${said}`
+    : said""",
+         "  const content = said"),
 }

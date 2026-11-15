@@ -313,7 +313,8 @@ def run(t, da, ds, procs):
     for k, o in (("ear", O), ("sp", P), ("sq", Q)):
         s = socks[k]
         procs.append(subprocess.Popen([PY, "-m", "uvicorn", "stub:app", "--fd", str(s.fileno())],
-                                      pass_fds=(s.fileno(),), cwd=t, env={**base, "PYTHONPATH": str(t), "FX_ORG": o},
+                                      pass_fds=(s.fileno(),), cwd=t,
+                                      env=propagate.env_for_child({**base, "PYTHONPATH": str(t), "FX_ORG": o}),
                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
     for k, rf in (("f1", reg["one"]), ("f2", reg["door"]), ("f3", reg["nodoor"])):
         s = socks[k]

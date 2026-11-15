@@ -73,7 +73,7 @@ arm("an author's /kit/ ref is rewritten to the real kit", "https://h/canvas/kit/
 arm("the route renders through bridges.canvas_shell.render", "from bridges.canvas_shell import render" in src)
 
 # SHAPE
-row = {"id": 7, "title": "Pulse", "agent": "painter", "user_name": "owner", "tier": "org", "version": 4, "brief": None,
+row = {"id": 7, "title": "Pulse", "agent": "painter", "user_name": "owner", "tier": "org", "ver": 4, "brief": None,
        "updated_at": datetime(2026, 11, 11, tzinfo=timezone.utc)}
 s = M.shape(row)
 arm("a canvas names its thread cv:canvas-<id>", s["thread"] == "cv:canvas-7", s)

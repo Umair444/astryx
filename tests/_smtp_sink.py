@@ -48,10 +48,22 @@ class SmtpSink:
                 c.sendall(b"250 ok\r\n")
 
 
-def dead_port() -> int:
-    """A loopback port nothing listens on (bound, then closed): a connect to it is refused."""
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+
+class Refusing:
+    """A loopback port that is HELD and hangs up on every connection: mail sent to it fails at the greeting. Held, not
+    bound-then-released (a released port's number can be anyone's by the time it is dialled)."""
+
+    def __init__(self):
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(16)
+        self.port = self.sock.getsockname()[1]
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self):
+        while True:
+            try:
+                c, _ = self.sock.accept()
+            except OSError:
+                return
+            c.close()

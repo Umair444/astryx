@@ -14,7 +14,7 @@ ENV = "ORG_HOME_ORGS_SRC"
 
 MUTANTS = {
     "Y1 two orgs may share a home or a database":
-        ("        if h in homes or db in dbs:\n", "        if False:\n"),
+        ('        if h in homes or (db in dbs and not (role and out[dbs[db]]["role"])):\n', "        if False:\n"),
     "Y2 libpq's postgres or a fixture's database may be an org's":
         ("        if db in NEVER_ORG_DB or db.startswith(FIXTURE_DB):\n", "        if False:\n"),
     "Y3 any org name passes":

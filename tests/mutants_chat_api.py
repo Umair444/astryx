@@ -26,13 +26,14 @@ MUTANTS = {
     "F5 the NUL guard is dropped":
         ('if not raw or "\\x00" in raw:', "if not raw:"),
     "K1 (D1) a ?key= authenticates the file route again":
-        ('    if "key" in request.query_params:\n        return Response(status_code=403)\n', ""),
+        ('G3: served by serve_untrusted."""\n    if "key" in request.query_params:\n        return Response(status_code=403)\n',
+         'G3: served by serve_untrusted."""\n'),
     "U1 (D3) the bytes don't decide: anything is accepted as text":
         ("kind = sniff(data[:4096])", 'kind = sniff(data[:4096]) or "text/plain; charset=utf-8"'),
     "U2 no size cap":
         ("if len(data) > MAX_UPLOAD:", "if False:"),
     "U3 (D3) the stored name is the client's, not server-minted":
-        ('dest = MEDIA / "upload" / f"{uuid.uuid4().hex}{EXT[kind]}"', 'dest = MEDIA / "upload" / safe_name(name)'),
+        ('dest = MEDIA / "upload" / f"{uuid.uuid4().hex}{ext}"', 'dest = MEDIA / "upload" / safe_name(name)'),
     "U4 the display name is not sanitized":
         ('stem = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(name or "file").name).strip(".-") or "file"', 'stem = name or "file"'),
     "P1 If-Match is optional":
@@ -42,7 +43,7 @@ MUTANTS = {
     "P3 projects are not validated":
         ("why = _valid(body)", 'why = ""'),
     "P4 (D6') a read doesn't check the roster":
-        ('"missing": [a for a in p.get("agents", []) if a not in live]', '"missing": []'),
+        ('"missing": [a for a in p["agents"] if a not in live]', '"missing": []'),
     "W1 (D4, a3) a turn is filed by input_msg_id only":
         ("ids AS (SELECT DISTINCT turn_id AS id FROM messages WHERE thread = $1 AND turn_id IS NOT NULL\n"
          "                        UNION SELECT id FROM turns WHERE input_msg_id IN (SELECT id FROM th))",

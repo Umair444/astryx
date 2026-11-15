@@ -14,7 +14,8 @@ MUTANTS = {
     "S1 the check asks only that SOME stamp exists (seed #38258's skip, one level up)":
         ('[ -n "$have" ] && [ "$have" = "$want" ]; }', '[ -n "$have" ]; }'),
     "S2 a failed apply still stamps (a partial schema reads green)":
-        ('rm -f "$tmp"; [ "$rc" -eq 0 ] || return 1', 'rm -f "$tmp"'),
+        ('  [ "$rc" -eq 0 ] || { echo -e "\\033[31m[astryx]\\033[0m schema apply refused',
+         '  true || { echo -e "\\033[31m[astryx]\\033[0m schema apply refused'),
     "S3 the apply doesn't stop on error (a broken statement is skipped, the rest applied, rc 0)":
         ('psql_q -X -q -v ON_ERROR_STOP=1 < "$tmp"', 'psql_q -X -q < "$tmp"'),
     "S4 the schema node leaves the reconciler":

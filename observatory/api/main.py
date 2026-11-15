@@ -3666,11 +3666,6 @@ class MemoryProposal(BaseModel):
     nodes: list[str] = []
 
 
-class MemoryProposal(BaseModel):
-    text: str
-    nodes: list[str] = []
-
-
 @app.post("/api/memory/propose")
 async def memory_propose(p: MemoryProposal, request: Request):
     """Route a proposal to the memory agent OVER THE WIRE. Never writes memory/."""

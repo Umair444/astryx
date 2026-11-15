@@ -16,6 +16,6 @@ ENV = "ORG_HOME_SPAWN_SRC"
 
 MUTANTS = {
     "CS1 spawn.sh's law read restored to the checkout":
-        ('cat "$ORGH/local.md"; }',
-         'cat "$ROOT/local.md"; }'),   # org-home: mutant pattern
+        ('cat "$ORGH/local.md"\n',
+         'cat "$ROOT/local.md"\n'),   # org-home: mutant pattern
 }

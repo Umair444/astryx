@@ -12,7 +12,7 @@ export const GROUPS: Group[] = ['yellow', 'green', 'blue', 'pink', 'comment', 'a
 
 type HL = { new (...r: Range[]): unknown }
 const api = typeof CSS !== 'undefined' && 'highlights' in CSS && typeof (globalThis as { Highlight?: HL }).Highlight === 'function'
-const registry = () => (CSS as unknown as { highlights: Map<string, unknown> }).highlights
+const highlights = () => (CSS as unknown as { highlights: Map<string, unknown> }).highlights   // the CSS Custom Highlight registry
 const Highlight = () => (globalThis as unknown as { Highlight: HL }).Highlight
 
 export const hasHighlightApi = api
@@ -32,7 +32,7 @@ export function createPainter(host: Element) {
         parent.normalize()
       } else el.remove()
     }
-    if (api) for (const g of GROUPS) if (g !== 'focus') registry().delete(`ax-${g}`)
+    if (api) for (const g of GROUPS) if (g !== 'focus') highlights().delete(`ax-${g}`)
   }
 
   function paint(groups: Partial<Record<Group, Range[]>>, widgets: Widget[]): void {
@@ -54,7 +54,7 @@ export function createPainter(host: Element) {
       for (const g of GROUPS) {
         if (g === 'focus') continue
         const rs = groups[g] ?? []
-        if (rs.length) registry().set(`ax-${g}`, new (Highlight())(...rs))
+        if (rs.length) highlights().set(`ax-${g}`, new (Highlight())(...rs))
       }
       return
     }
@@ -90,7 +90,7 @@ export function createPainter(host: Element) {
     for (const t of timers) clearTimeout(t)
     timers = []
     const set = (on: boolean) => {
-      if (api) { if (on && r) registry().set('ax-focus', new (Highlight())(r)); else registry().delete('ax-focus') }
+      if (api) { if (on && r) highlights().set('ax-focus', new (Highlight())(r)); else highlights().delete('ax-focus') }
       else host.querySelectorAll('mark.ax-mark-active').forEach((m) => m.classList.toggle('ax-flash', on))
     }
     if (!r) { set(false); return }
@@ -102,7 +102,7 @@ export function createPainter(host: Element) {
   function dispose(): void {
     for (const t of timers) clearTimeout(t)
     clear()
-    if (api) registry().delete('ax-focus')
+    if (api) highlights().delete('ax-focus')
   }
 
   return { paint, clear, flash, dispose }

@@ -33,7 +33,7 @@ _get_pool = None
 CANVAS_PRE = ""                                     # /o/<org> in a cog (main.CANVAS_PRE); "" on one org
 VERSIONS_MAX = 50
 
-LIST_SQL = ("SELECT id, title, agent, user_name, tier, version, brief, updated_at FROM canvases "
+LIST_SQL = ("SELECT id, title, agent, user_name, tier, version AS ver, brief, updated_at FROM canvases "
             "WHERE NOT archived ORDER BY updated_at DESC LIMIT 200")
 
 
@@ -53,7 +53,7 @@ def thread_of(cid: int) -> str:
 
 def shape(r) -> dict:
     return {"id": r["id"], "title": r["title"], "agent": r["agent"], "user": r["user_name"], "tier": r["tier"],
-            "version": r["version"], "brief": r["brief"], "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+            "version": r["ver"], "brief": r["brief"], "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
             "thread": thread_of(r["id"])}
 
 
@@ -84,7 +84,7 @@ async def ws_canvases(request: Request):
 async def _one(request: Request, cid: int):
     try:
         return await _pool(request).fetchrow(
-            "SELECT id, title, agent, user_name, tier, version, brief, updated_at FROM canvases WHERE id=$1 AND NOT archived", cid)
+            "SELECT id, title, agent, user_name, tier, version AS ver, brief, updated_at FROM canvases WHERE id=$1 AND NOT archived", cid)
     except Exception as e:                          # noqa: BLE001
         if missing(e):
             return None
@@ -97,9 +97,9 @@ async def ws_canvas(cid: int, request: Request):
     if not c:
         return JSONResponse({"error": "no such canvas"}, status_code=404)
     vers = await _pool(request).fetch(
-        "SELECT version, author, note, ts FROM canvas_versions WHERE canvas_id=$1 ORDER BY version DESC LIMIT $2",
+        "SELECT version AS ver, author, note, ts FROM canvas_versions WHERE canvas_id=$1 ORDER BY version DESC LIMIT $2",
         cid, VERSIONS_MAX)
-    return {**shape(c), "versions": [{"version": r["version"], "author": r["author"], "note": r["note"],
+    return {**shape(c), "versions": [{"version": r["ver"], "author": r["author"], "note": r["note"],
                                       "ts": r["ts"].isoformat() if r["ts"] else None} for r in vers]}
 
 
@@ -109,7 +109,7 @@ async def ws_canvas_render(cid: int, request: Request, v: int = 0, theme: str = 
     c = await _one(request, cid)
     if not c:
         return JSONResponse({"error": "no such canvas"}, status_code=404)
-    ver = v or c["version"]
+    ver = v or c["ver"]
     row = await _pool(request).fetchrow("SELECT html FROM canvas_versions WHERE canvas_id=$1 AND version=$2", cid, ver)
     if not row:
         return {"version": 0, "html": None}
