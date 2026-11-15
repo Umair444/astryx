@@ -51,10 +51,13 @@ export default function ChannelRail() {
           const plain = byChat ? [] : (table?.routes ?? [])
           const on = chats.filter((c) => c.enabled).length
           const title = BRAND[s.channel]?.title ?? s.channel
+          // a warning (and the connect steps) only where the state is KNOWN to need a step: a bridge whose health the
+          // server can't read ("unknown": no declared port) is not accused of being down
+          const needs = !s.fixed && s.state !== 'connected' && s.state !== 'unknown'
           if (shut) return (
             <button key={s.channel} onClick={() => { setShut(false); setOpen(s.channel) }} title={title} className="relative self-center my-0.5">
               <ChannelMark channel={s.channel} size={26} ring="transparent" />
-              {s.state !== 'connected' && !s.fixed && <span className="absolute -right-0.5 -top-0.5 w-2 h-2 rounded-full bg-warn" aria-hidden />}
+              {needs && <span className="absolute -right-0.5 -top-0.5 w-2 h-2 rounded-full bg-warn" aria-hidden />}
             </button>
           )
           const isOpen = open === s.channel
@@ -64,7 +67,7 @@ export default function ChannelRail() {
                 className="w-full flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-deck-3/50 text-left">
                 <span className="relative">
                   <ChannelMark channel={s.channel} size={26} ring="transparent" />
-                  {s.state !== 'connected' && !s.fixed && <span className="absolute -right-0.5 -top-0.5 w-2 h-2 rounded-full bg-warn ring-2 ring-[var(--t-panel)]" title="Needs a step to connect" />}
+                  {needs && <span className="absolute -right-0.5 -top-0.5 w-2 h-2 rounded-full bg-warn ring-2 ring-[var(--t-panel)]" title="Needs a step to connect" />}
                 </span>
                 <span className="flex-1 min-w-0">
                   <span className="block text-[13.5px] font-medium text-ink truncate">{title}</span>
@@ -77,7 +80,7 @@ export default function ChannelRail() {
               </button>
               {isOpen && !s.fixed && (
                 <div className="px-2 pb-2">
-                  {s.state !== 'connected' && <ChannelConnect s={s} loaded onChanged={ch.reload} />}
+                  {needs && <ChannelConnect s={s} loaded onChanged={ch.reload} />}
                   {!byChat && (
                     <ul className="flex flex-col gap-1">
                       {plain.map((r, i) => (
