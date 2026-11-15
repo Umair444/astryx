@@ -211,8 +211,8 @@ try:
           who["r12"])
     check("R8 an explicit @mention ALWAYS wins: @insurance where readycash spoke last → insurance",
           who["r8"] == "insurance", who["r8"])
-    check("R8 ...and the mention token is stripped from the delivered text",
-          "@insurance" not in got["r8"][1], "mention token still in the text")
+    check("R8 ...and the mention token is KEPT in the delivered text (the agent sees it was addressed by name)",
+          "@insurance" in got["r8"][1], "mention token stripped from the text")
     # As the bridge does: the addressed message lands on the wire with to_agent=insurance.
     row("wa:grp", "owner", "whatsapp", "insurance", "local")
 
