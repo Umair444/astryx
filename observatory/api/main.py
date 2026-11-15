@@ -4136,12 +4136,12 @@ async def channels_status(request: Request):
     # every other bridge with a routes file (the frontends bridge, a new one): its routes and its own health, no token
     # flow here; then the BUILT-INS (the channel rail, owner 11-15: "I treat chat as a channel"): they are not routed per
     # chat, so `fixed` says the rail shows what they do instead of a control
-    for ch in [c for c in _wire_channels() if c not in ("whatsapp", "telegram", "discord")]:
-        b = await asyncio.to_thread(_bridge, ch)
+    extra = [c for c in _wire_channels() if c not in ("whatsapp", "telegram", "discord")]
+    for ch, b in zip(extra, await asyncio.gather(*(asyncio.to_thread(_bridge, c) for c in extra))):   # together: a down bridge costs seconds
         out.append({"channel": ch, "routes": True, "state": "connected" if b["health"] else "unknown", "account": None})
     out += [{"channel": "web", "fixed": True, "state": "connected", "shows": "everything, always"},
             {"channel": "canvas", "fixed": True, "state": "connected", "shows": "everything, always"},
-            {"channel": "terminal", "fixed": True, "state": "connected", "shows": "mirroring arrives with phase 4"}]
+            {"channel": "terminal", "fixed": True, "state": "connected", "shows": "not mirrored into chat yet"}]
     return out
 
 

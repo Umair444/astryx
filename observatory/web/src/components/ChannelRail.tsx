@@ -40,11 +40,15 @@ export default function ChannelRail() {
           {shut ? '‹' : '›'}
         </button>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-1.5" style={{ overscrollBehavior: 'contain' }}>
+      <div className="flex-1 min-h-0 overflow-y-auto p-2 pb-16 flex flex-col gap-1.5" style={{ overscrollBehavior: 'contain' }}>
         {ch.rows === null && !shut && <div className="text-[12px] text-ink-mute px-2 py-3">Reading the channels…</div>}
         {rows.map((s) => {
           const table = data?.find((c) => c.channel === s.channel)
-          const chats = (table?.routes ?? []).map((r) => refOf(r, s.channel))
+          // a table that isn't keyed by chat (the frontends bridge: one row per frontend) is shown, not edited: the one
+          // write validates chat routes. Routes-as-rows gives every channel one schema (DESIGN.md, phase 2)
+          const byChat = (table?.routes ?? []).every((r) => r.chat !== undefined && r.chat !== null)
+          const chats = byChat ? (table?.routes ?? []).map((r) => refOf(r, s.channel)) : []
+          const plain = byChat ? [] : (table?.routes ?? [])
           const on = chats.filter((c) => c.enabled).length
           const title = BRAND[s.channel]?.title ?? s.channel
           if (shut) return (
@@ -65,7 +69,8 @@ export default function ChannelRail() {
                 <span className="flex-1 min-w-0">
                   <span className="block text-[13.5px] font-medium text-ink truncate">{title}</span>
                   <span className="block text-[11.5px] text-ink-mute truncate">
-                    {s.fixed ? s.shows : table ? `${on} chat${on === 1 ? '' : 's'} on${chats.length > on ? `, ${chats.length - on} paused` : ''}` : 'not connected yet'}
+                    {s.fixed ? s.shows : !table ? 'not connected yet' : !byChat ? `${plain.length} connected`
+                      : `${on} chat${on === 1 ? '' : 's'} on${chats.length > on ? `, ${chats.length - on} paused` : ''}`}
                   </span>
                 </span>
                 {!s.fixed && <span className={`text-ink-mute transition-transform ${isOpen ? 'rotate-90' : ''}`} aria-hidden>›</span>}
@@ -73,7 +78,26 @@ export default function ChannelRail() {
               {isOpen && !s.fixed && (
                 <div className="px-2 pb-2">
                   {s.state !== 'connected' && <ChannelConnect s={s} loaded onChanged={ch.reload} />}
-                  {table && (
+                  {!byChat && (
+                    <ul className="flex flex-col gap-1">
+                      {plain.map((r, i) => (
+                        <li key={i} className={`flex items-center gap-2 rounded-xl px-2 py-1.5 ${r.enabled === false ? 'opacity-60' : ''}`}>
+                          <span className="flex-1 min-w-0">
+                            <span className="block text-[13px] text-ink truncate">{String(r.frontend ?? r.note ?? `route ${i + 1}`)}</span>
+                            <span className="block text-[11px] text-ink-mute truncate">to {displayName(String(r.agent ?? ''))} · set in its routes file</span>
+                          </span>
+                          {r.agent && <AgentFace name={String(r.agent)} size={22} />}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {byChat && !!table?.problems.length && (
+                    // the one validator's verdict on the table as it stands (a hand edit, an old file): never shown as healthy
+                    <ul className="mb-2 rounded-xl border border-warn/40 bg-warn/10 px-2.5 py-2 text-[12px] text-ink flex flex-col gap-1" role="alert" aria-label={`${title} routing problems`}>
+                      {table.problems.map((p, i) => <li key={i}>{p}</li>)}
+                    </ul>
+                  )}
+                  {table && byChat && (
                     <>
                       <ul className="flex flex-col gap-1">
                         {chats.map((c) => <ChatRow key={c.chat} c={c} />)}
@@ -136,7 +160,8 @@ function ChatRow({ c }: { c: ChatRef }) {
           <span className="text-[11px] text-ink-mute">Shows</span>
           <span className="ws-seg">
             {SHOWS.map((o) => (
-              <button key={o.v} role="radio" aria-checked={c.show === o.v} disabled={busy || c.show === o.v} title={o.hint}
+              <button key={o.v} role="radio" aria-checked={c.show === o.v} disabled={busy || c.show === o.v || (o.v === 'steps' && !!c.tier)}
+                title={o.v === 'steps' && c.tier ? `A ${c.tier} chat shows replies only: steps would bypass its door` : o.hint}
                 onClick={() => act(() => patchChat(c, { show: o.v, live_steps: undefined }, `${c.label} now shows ${o.hint}`))}>{o.label}</button>
             ))}
           </span>

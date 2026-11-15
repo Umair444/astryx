@@ -65,6 +65,14 @@ def resolver_arms(tmp: Path):
     arm("SHOW (owner 11-15): a route shows steps or replies; anything else is a problem in words",
         R.validate(shown("steps")) == [] and R.validate(shown("replies")) == []
         and any("shows" in p for p in R.validate(shown("everything"))), R.validate(shown("everything")))
+    tiered = lambda **k: [{"chat": "a", "agent": "member", "enabled": True, "tier": "career", **k}]
+    arm("SHOW: a TIERED route that shows steps is a named problem, by show or by the older live_steps flag (medic 12249)",
+        any("tiered (career)" in p for p in R.validate(tiered(show="steps")))
+        and any("tiered (career)" in p for p in R.validate(tiered(live_steps=True)))
+        and R.validate(tiered(show="replies")) == [] and R.validate(tiered()) == [], [R.validate(tiered(show="steps")), R.validate(tiered(live_steps=True))])
+    rail = (REPO / "observatory/web/src/components/ChannelRail.tsx").read_text()
+    arm("RAIL: the table's problems are drawn at the channel's head, and Steps is off on a tiered chat",
+        "table.problems.map" in rail and "o.v === 'steps' && !!c.tier" in rail)
     arm("E2: an agent's only route is its doorbell; a disabled route reaches no one",
         R.resolve([two[0], {"chat": "c", "agent": "ledger", "enabled": False}]).doorbell("seed")["chat"] == "a"
         and R.resolve([{"chat": "c", "agent": "ledger", "enabled": False}]).chat("c") is None)

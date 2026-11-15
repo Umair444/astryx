@@ -24,10 +24,14 @@ export interface ChatRef {
   home?: boolean            // the agent's doorbell: where its own un-threaded messages arrive
   open?: boolean            // anyone in the chat may write (off: its trusted senders only)
   note?: string
+  tier?: string | null      // a tiered chat: replies only
 }
 export type Show = 'steps' | 'replies'
 /* a route's `show`, else its older live_steps flag (bridges read it the same way: release.shows_steps) */
-export const showOf = (r: WireRoute): Show => (r.show === 'steps' || r.show === 'replies' ? r.show : r.live_steps ? 'steps' : 'replies')
+export const showOf = (r: WireRoute): Show =>
+  tierOf(r) ? 'replies' : r.show !== undefined && r.show !== null ? (r.show === 'steps' ? 'steps' : 'replies') : r.live_steps ? 'steps' : 'replies'
+/* a TIERED route (a member's private chat): it shows replies only, steps would bypass its door (routing.validate) */
+export const tierOf = (r: WireRoute): string | null => { const k = Object.keys(r).find((x) => x.toLowerCase().includes('tier')); return k ? String(r[k]) : null }
 export interface Toast { id: number; text: string; undo?: () => Promise<void> }
 
 interface State {
@@ -60,7 +64,7 @@ export function labelOf(r: WireRoute, channel: string): string {
 export function refOf(r: WireRoute, channel: string): ChatRef {
   return { channel, chat: String(r.chat), label: labelOf(r, channel), kind: kindOf(channel, String(r.chat)),
            agent: r.agent, enabled: r.enabled !== false, show: showOf(r), home: r.home === true, open: r.open !== false,
-           note: r.note ?? '' }
+           note: r.note ?? '', tier: tierOf(r) }
 }
 
 export function loadRoutes(force = false) {
@@ -191,7 +195,11 @@ export async function patchChat(c: ChatRef, patch: Partial<WireRoute>, words: st
     before = Object.fromEntries(Object.keys(patch).map((k) => [k, r?.[k]]))
     return apply(patch)(rows)
   })
-  toast(words, () => put(c.channel, apply(before)).then(() => toast(`Undone: ${c.label} is as it was`)))
+  toast(words, async () => {
+    let found = false
+    await put(c.channel, (rows) => { found = rows.some((r) => String(r.chat) === c.chat); return apply(before)(rows) })
+    toast(found ? `Undone: ${c.label} is as it was` : `${c.label} is no longer routed: nothing to undo`)
+  })
 }
 
 /* Make this chat its agent's HOME (doorbell) on its channel: exactly one home per agent, so the others lose the flag in

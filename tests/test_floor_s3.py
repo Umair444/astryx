@@ -175,7 +175,7 @@ def main(tmp: Path, url: str):
     fixed = {x["channel"]: x for x in cl.get("/api/channels", headers=O).json() if x.get("fixed")}
     arm("RAIL: web chat, canvas and the terminal are channels: fixed, each saying what it shows",
         set(fixed) == {"web", "canvas", "terminal"} and all(x.get("shows") for x in fixed.values())
-        and "phase 4" in fixed["terminal"]["shows"], fixed)
+        and "not mirrored" in fixed["terminal"]["shows"], fixed)
     # NO SYSTEMD (a container): systemctl answers nothing, and the bridge's OWN port (this org's) still says it's healthy
     import http.server, subprocess as sp, threading
     class H(http.server.BaseHTTPRequestHandler):

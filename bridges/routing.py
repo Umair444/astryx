@@ -69,6 +69,13 @@ def validate(rows, agents=None) -> list[str]:
             seen[chat] = agent
         if "show" in r and r["show"] not in ("steps", "replies"):
             out.append(f"{agent}'s route shows {r['show']!r}: a route shows steps (then the reply) or replies (the reply only)")
+        # a TIERED route (its `tier` key, any spelling: the release door reads an odd one as malformed) can never show
+        # steps, by `show` or by the older live_steps flag: step text would reach the chat around the door, so the
+        # bridges refuse the whole route (release.route_tier). Said here, so the one write refuses it first (medic 12249)
+        tiers = [k for k in r if "tier" in str(k).lower()]
+        wants = r.get("show") == "steps" if r.get("show") is not None else bool(r.get("live_steps"))
+        if tiers and wants:
+            out.append(f"{agent}'s route is tiered ({r[tiers[0]]}): it shows replies only, steps would bypass the door")
         if r.get("enabled"):
             enabled.setdefault(agent, []).append(r)
     for agent, mine in enabled.items():
