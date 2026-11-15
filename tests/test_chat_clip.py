@@ -26,7 +26,14 @@ def main() -> int:
     print(out.rstrip())
     if rc:
         print(err.strip()[-800:])
-    return 1 if rc or "ALL PASS" not in out else 0
+    # the sanitizer can't run under node: its SETTING is pinned here (medic 12241 a): the copy sanitizes with the page's
+    # own PURIFY, and PURIFY forbids the style attribute, so a paste is never more permissive than what was seen
+    clip = (REPO / "observatory/web/src/chat/thread/clip.ts").read_text()
+    prose = (REPO / "observatory/web/src/chat/thread/Prose.tsx").read_text()
+    shared = ("DOMPurify.sanitize(clipMarkup(markdown), PURIFY)" in clip and "FORBID_ATTR: ['style']" in clip
+              and "import { PURIFY } from './clip'" in prose and "const PURIFY" not in prose)
+    print(f"  {'PASS' if shared else 'FAIL'}  the copy sanitizes with the page's own PURIFY (style forbidden), Prose imports it")
+    return 1 if rc or "ALL PASS" not in out or not shared else 0
 
 
 def test_chat_clip():               # a pytest run collects this too

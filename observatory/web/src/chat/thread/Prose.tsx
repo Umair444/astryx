@@ -6,6 +6,7 @@ import TableActions from './TableActions'
 import { splitProvenance } from './provenance'
 import { codeBlock, fenceBareSql } from './code'
 import { humanHtml } from './md'
+import { PURIFY } from './clip'
 
 /* An agent's answer as a page: full GFM (tables, lists, code, quotes), the way canvas renders it (canvas/web/src/ui.tsx
    Markdown). components/Md is a deliberately small renderer with no tables, and agents answer BI questions in tables.
@@ -16,7 +17,7 @@ import { humanHtml } from './md'
 const md = new Marked({ gfm: true, breaks: true }, { renderer: { code: ({ text, lang }) => codeBlock(text, lang) } })
 
 /* `msg` (an agent's turn): its tables get Chart / CSV / Excel on hover (TableActions, iteration 9) */
-const PURIFY = { FORBID_TAGS: ['style', 'form', 'input', 'iframe', 'img'], FORBID_ATTR: ['style'] }
+// PURIFY: the one sanitizer setting for agent text, shared with the copy (clip.ts), so a paste is never more permissive
 
 /* A HUMAN's words as markdown (owner 11-15: "the standard of modern chat interfaces is md"): the same parser and
    sanitizer as an answer, with every kind of code detected (code.ts fenceBareCode: a pasted query or function draws as
