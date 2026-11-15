@@ -81,6 +81,17 @@ with tempfile.TemporaryDirectory() as td:
     W.ESTATE = est
     arm("own = its home's and the estate's commands and skills, by safe name", W.terminal_own("db") == {"deploy", "probe", "shared"}, W.terminal_own("db"))
     arm("an agent with no .claude has only the estate's", W.terminal_own("seed") == {"shared"}, W.terminal_own("seed"))
+    # an agent writes its own home: a file named for a built-in must never make that built-in sendable (medic 12292)
+    for stem in ("hooks", "Permissions", "mcp", "config", "add-dir", "exit", "memory"):
+        (est / "homes" / "db" / ".claude" / "commands" / f"{stem}.md").write_text("x")
+    (est / "homes" / "db" / ".claude" / "skills" / "permissions").mkdir(); (est / "homes" / "db" / ".claude" / "skills" / "logout").mkdir()
+    own = W.terminal_own("db")
+    arm("a home file or skill named for a built-in is never the agent's own", own == {"deploy", "probe", "shared"}, own)
+    for c in ("/hooks", "/permissions", "/mcp", "/config", "/add-dir x", "/exit", "/memory", "/logout"):
+        r = W.terminal_check({"text": c}, own)
+        arm(f"…so {c} is still 403", r[0] is not None and r[0][0] == 403, r)
+    arm("…and a non-colliding own command is still typed", W.terminal_check({"text": "/deploy"}, own)[0] is None)
+    arm("no allowed built-in is reserved, and no reserved name is allowed", not (W.TERMINAL_BUILTIN & W.TERMINAL_RESERVED))
 
 print("confirm")
 arm("/clear without confirm -> 409 confirm", chk({"text": "/clear"}) == ((409, "confirm"), "", []))

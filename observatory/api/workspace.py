@@ -604,6 +604,18 @@ async def ws_interrupt(name: str, request: Request):
 TERMINAL_TEXT = re.compile(r"/([A-Za-z][\w:.-]{0,60})(?: ([^\x00-\x1f\x7f]{1,400}))?")
 TERMINAL_BUILTIN = {"context", "cost", "status", "usage", "help", "compact", "model", "clear"}
 TERMINAL_CONFIRM = {"clear"}
+# Claude Code's OWN command names that are not allowed above. An agent writes its own home, and a file there named
+# hooks.md would make "/hooks" pass as "its own command" while Claude Code runs the BUILT-IN of that name: so a name in
+# this set is never the agent's own (medic 12292). `own` is an allowlist of NON-built-in names only.
+TERMINAL_RESERVED = {
+    "hooks", "permissions", "mcp", "config", "add-dir", "exit", "quit", "login", "logout", "terminal-setup",
+    "install-github-app", "memory", "doctor", "ide", "agents", "bug", "feedback", "vim", "resume", "init", "review",
+    "pr-comments", "upgrade", "migrate-installer", "release-notes", "export", "privacy-settings", "output-style",
+    "statusline", "settings", "allowed-tools", "approved-tools", "bashes", "tasks", "rewind", "sandbox", "plugin",
+    "plugins", "security-review", "todos", "fast", "effort", "loop", "schedule", "remote-control", "teleport",
+    "background", "rename", "fork", "branch", "skills", "theme", "keybindings", "extra-usage", "stats", "insights",
+    "mobile", "chrome", "desktop", "stickers", "passes", "voice", "color", "copy", "btw", "plan", "ultraplan",
+    "ultrareview", "code-review", "workflows", "artifacts", "reload-plugins", "install-slack-app", "setup-token"}
 TERMINAL_KEYS = {"Enter", "Escape", "Up", "Down", "Left", "Right", "Tab", "BTab", "Space", "BSpace"}
 TERMINAL_CHARS = set("123456789yn")                 # a picker's own answers, typed literally
 TERMINAL_KEYS_MAX = 12
@@ -624,7 +636,7 @@ def terminal_own(name: str) -> set[str]:
             out |= {p.name for p in (root / "skills").iterdir() if p.is_dir()}
         except OSError:
             pass
-    return {n.lower() for n in out if re.fullmatch(r"[A-Za-z][\w:.-]{0,60}", n)}
+    return {n.lower() for n in out if re.fullmatch(r"[A-Za-z][\w:.-]{0,60}", n)} - TERMINAL_RESERVED
 
 
 def _plain(text: str) -> bool:
