@@ -1,4 +1,4 @@
-import type { Msg } from '../../../types'
+import { isHuman, type Msg } from '../../../types'
 import type { Ann } from './types'
 
 /* ASK-THE-MARGIN (DESIGN.md wow #5). Asking an agent about a highlight sends ONE ordinary wire message on the current
@@ -42,13 +42,13 @@ export function answers(items: Ann[], rows: Msg[]): Record<string, { asked: Msg 
   const asks = items.filter((a) => askAgent(a))
   if (!asks.length) return out
   const sent = new Map<string, Msg>()
-  for (const m of rows) if (m.from === 'owner') for (const x of m.body.matchAll(ANN_MARK)) if (!sent.has(x[1])) sent.set(x[1], m)
+  for (const m of rows) if (isHuman(m.from)) for (const x of m.body.matchAll(ANN_MARK)) if (!sent.has(x[1])) sent.set(x[1], m)
   for (const a of asks) {
     const agent = askAgent(a)!
     const asked = sent.get(a.id) ?? null
     if (!asked) { out[a.id] = { asked: null, answer: null }; continue }
     // the next ask to the same agent bounds this one's answer window
-    const nextAsk = rows.find((m) => m.id > asked.id && m.from === 'owner' && m.to === agent && /\[\[ann:/.test(m.body))
+    const nextAsk = rows.find((m) => m.id > asked.id && isHuman(m.from) && m.to === agent && /\[\[ann:/.test(m.body))
     const answer = rows.find((m) => m.id > asked.id && m.from === agent && (!nextAsk || m.id < nextAsk.id)) ?? null
     out[a.id] = { asked, answer }
   }

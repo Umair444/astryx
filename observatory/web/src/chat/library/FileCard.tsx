@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { displayName } from '../../api'
+import { isMine, personName } from '../../api'
 import AgentFace from '../../components/AgentFace'
 import { I } from '../icons'
 import { contentOf, extOf, type Opened } from '../artifacts/api'
@@ -144,10 +144,10 @@ function Menu({ actions, label }: { actions: Action[]; label: string }) {
 }
 
 function Byline({ it, where }: { it: Item; where: boolean }) {
-  const mine = it.author === 'owner'
+  const mine = isMine(it.author)
   return (
     <span className="flex items-center gap-1.5 min-w-0 text-[11.5px] text-ink-mute leading-tight">
-      {mine ? <span className="text-ink-dim shrink-0">You</span> : <><AgentFace name={it.author} size={14} /><span className="text-ink-dim shrink-0">{displayName(it.author)}</span></>}
+      {mine ? <span className="text-ink-dim shrink-0">You</span> : <><AgentFace name={it.author} size={14} /><span className="text-ink-dim shrink-0">{personName(it.author)}</span></>}
       <span className="shrink-0">· {since(it.ts)}</span>
       {where && it.title && <span className="truncate">· {it.title}</span>}
     </span>

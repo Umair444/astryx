@@ -62,6 +62,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from astryx.security.serve import CSP, SVG_CSP, SVG_TYPE, is_svg, sniff
 from observatory.api import chat as _chat
+from observatory.api import workspace as _ws     # human_sql: the one "a human wrote this" (no import cycle: workspace imports us lazily)
 from observatory.api.hostfile import atomic_write, etag
 
 router = APIRouter()
@@ -627,8 +628,9 @@ class Restore(BaseModel):
     message: str | None = Field(None, max_length=200)
 
 
+# a human's conversation (the owner's or a member's, 11-15: workspace.human_sql), or any chat:
 HEADLINE_SQL = ("SELECT body FROM messages WHERE id = $1 AND thread = $2 "
-                "AND (from_agent = 'owner' OR to_agent = 'owner' OR thread LIKE 'chat:%')")
+                f"AND ({_ws.human_sql('from_agent')} OR {_ws.human_sql('to_agent')} OR thread LIKE 'chat:%')")
 
 
 async def msg_headline(request: Request, msg_id: int | None, thread: str) -> str | None:
@@ -691,7 +693,7 @@ async def thread_titles(request: Request, threads: set[str]) -> dict[str, str]:
     try:
         pool = _get_pool() if _get_pool else request.app.state.pool
         rows = await pool.fetch(
-            "SELECT thread, (array_agg(left(" + _ws._BODY + ", 400) ORDER BY id) FILTER (WHERE from_agent = 'owner'))[1] "
+            "SELECT thread, (array_agg(left(" + _ws._BODY + ", 400) ORDER BY id) FILTER (WHERE " + _ws.human_sql("from_agent") + "))[1] "
             "AS first_owner, array_agg(DISTINCT from_agent) || array_agg(DISTINCT to_agent) AS parties "
             "FROM messages WHERE thread = ANY($1::text[]) GROUP BY thread", convo)
     except Exception:                               # noqa: BLE001 — no database: ids stand in for titles
@@ -782,7 +784,8 @@ def library_media(rows: list[dict], index: dict) -> list[dict]:
 
 MEDIA_ALL_SQL = ("SELECT id, ts, from_agent, thread, body FROM messages "
                  "WHERE (thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%') AND body LIKE '%[[file:%' "
-                 "AND (from_agent = 'owner' OR to_agent = 'owner' OR thread LIKE 'chat:%') ORDER BY id DESC LIMIT 2000")
+                 f"AND ({_ws.human_sql('from_agent')} OR {_ws.human_sql('to_agent')} OR thread LIKE 'chat:%') "
+                 "ORDER BY id DESC LIMIT 2000")
 
 
 @router.get("/api/ws/media")

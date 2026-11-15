@@ -1,5 +1,5 @@
-import { displayName } from '../../api'
-import type { Msg } from '../../types'
+import { displayName, personName } from '../../api'
+import { isHuman, type Msg } from '../../types'
 import { download, embeds, stripEmbeds } from '../model'
 import { nameOf } from '../artifacts/api'
 import { parseChanges } from '../artifacts/versions/changes'
@@ -21,22 +21,23 @@ export function conversationMarkdown(rows: Msg[], title: string, thread: string,
   for (let i = 0; i < sorted.length; i++) {
     const m = sorted[i]
     let to = m.to ? [m.to] : []
-    if (m.from === 'owner') {                                   // one fan-out, one entry
-      while (sorted[i + 1] && sorted[i + 1].from === 'owner' && sameSend(sorted[i + 1], m)) { i++; if (sorted[i].to) to.push(sorted[i].to!) }
+    const human = isHuman(m.from)                               // the owner's or a member's words (11-15)
+    if (human) {                                                // one fan-out, one entry
+      while (sorted[i + 1] && sorted[i + 1].from === m.from && sameSend(sorted[i + 1], m)) { i++; if (sorted[i].to) to.push(sorted[i].to!) }
     }
-    const who = m.from === 'owner' ? 'You' : displayName(m.from)
-    const handoff = m.from !== 'owner' && !!m.to && m.to !== 'owner' && agents.has(m.from) && agents.has(m.to)
+    const who = personName(m.from)
+    const handoff = !human && !!m.to && !isHuman(m.to) && agents.has(m.from) && agents.has(m.to)
     const head = handoff
       ? `**${who} → ${displayName(m.to!)}** · handoff · ${when(m.ts)}`
-      : `**${who}** · ${when(m.ts)}${m.from === 'owner' && to.length ? ` · to ${to.map(displayName).join(', ')}` : ''}`
-    const ch = m.from === 'owner' ? parseChanges(m.body) : null
+      : `**${who}** · ${when(m.ts)}${human && to.length ? ` · to ${to.map(displayName).join(', ')}` : ''}`
+    const ch = human ? parseChanges(m.body) : null
     const text = ch
       ? `*Sent changes to ${ch.name}: v${ch.fromN} (${ch.fromWho}) → v${ch.toN} (${ch.toWho}).*${ch.note.trim() ? `\n\n${ch.note.trim()}` : ''}`
       : stripEmbeds(m.body).replace(CANVAS, '').trim()
     const files = embeds(m.body).map((e) => `- [${nameOf(e.path, e.label).replace(/[[\]]/g, '')}](<${e.path}>)`)
     out.push('---', '', head, '')
     if (text) out.push(text, '')
-    if (files.length) out.push(m.from === 'owner' ? 'Attached:' : 'Files:', ...files, '')
+    if (files.length) out.push(human ? 'Attached:' : 'Files:', ...files, '')
   }
   if (!sorted.length) out.push('*No messages yet.*', '')
   return out.join('\n')

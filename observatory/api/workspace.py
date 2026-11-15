@@ -65,15 +65,18 @@ SWITCHES_MAX = 50                                   # a thread keeps its newest 
 
 
 _me = lambda request: "owner"                      # noqa: E731 — main.wire_handle: the viewer's wire handle (cog-who)
+_sees = lambda request: (lambda agent: False)      # noqa: E731 — main.sees; unbound = no agent's insides
 
 
-def bind(get_pool, estate: Path, roster=None, charter=None, owner=None, me=None) -> None:
-    """The host app hands over its pool getter, its estate, its roster, its charter resolver, its owner check and the
-    viewer's wire handle (read at call time)."""
-    global _get_pool, ESTATE, _roster, _charter, _owner, _me
+def bind(get_pool, estate: Path, roster=None, charter=None, owner=None, me=None, sees=None) -> None:
+    """The host app hands over its pool getter, its estate, its roster, its charter resolver, its owner check, the
+    viewer's wire handle and its insides predicate (read at call time)."""
+    global _get_pool, ESTATE, _roster, _charter, _owner, _me, _sees
     _get_pool, ESTATE = get_pool, Path(estate)
     if me is not None:
         _me = me
+    if sees is not None:
+        _sees = sees
     if roster is not None:
         _roster = roster
     if charter is not None:
@@ -200,6 +203,11 @@ def project_of(thread: str, projects: list[dict]) -> str | None:
 def human(name: str | None) -> bool:
     """A human party on the web surfaces: the owner, or a named web human (cv-<x>: a canvas invitee, a member)."""
     return bool(name) and (name == "owner" or name.startswith("cv-"))
+
+
+def human_sql(col: str) -> str:
+    """human() as SQL on a column: the ONE spelling for a query that asks "did a human write/receive this"."""
+    return f"({col} = 'owner' OR {col} LIKE 'cv-%')"
 
 
 def build_rows(aggs: list[dict], meta: dict, projects: list[dict], roster: set[str],
@@ -1119,7 +1127,9 @@ async def ws_briefing(request: Request, since: str = "", scope: str = "mine"):
         rows = [dict(r) for r in await pool.fetch(BRIEF_MSGS_SQL, edge, start, BRIEF_ROWS, me, everyone,
                                                   timeout=BRIEF_TIMEOUT)]
         turns = {r["agent"]: r["turns"] for r in await pool.fetch(BRIEF_TURNS_SQL, names, start, timeout=BRIEF_TIMEOUT)}
-        did = {r["agent"]: dict(r) for r in await pool.fetch(BRIEF_DID_SQL, names, start, timeout=BRIEF_TIMEOUT)}
+        see = _sees(request)                        # an agent's own words are its insides (main.sees)
+        did = {r["agent"]: dict(r) for r in await pool.fetch(BRIEF_DID_SQL, [a for a in names if see(a)], start,
+                                                             timeout=BRIEF_TIMEOUT)}
     except asyncio.TimeoutError:
         return JSONResponse({"error": "the briefing took too long"}, status_code=504)
     try:

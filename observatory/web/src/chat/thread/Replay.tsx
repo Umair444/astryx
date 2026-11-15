@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { agentColor, displayName, fmtTime } from '../../api'
+import { agentColor, displayName, fmtTime, personName } from '../../api'
 import type { Step } from '../../types'
 import { visible } from '../model'
 import { actionOf } from './LiveActivity'
@@ -65,7 +65,7 @@ export default function Replay({ steps, agent, end }: { steps: Step[]; agent: st
       const next = i + 1 < vis.length ? Date.parse(vis[i + 1].ts) : tEnd
       const { verb, detail } = s.kind === 'tool' || s.kind === 'error' ? actionOf(s) : { verb: '', detail: (s.content ?? '').replace(/\s+/g, ' ').trim() }
       const kind = kindOfStep(s)
-      const to = kind === 'message' && /^[a-z][\w-]{0,40}$/.test(detail) ? `to ${detail === 'owner' ? 'you' : displayName(detail)}` : detail
+      const to = kind === 'message' && /^[a-z][\w.-]{0,60}$/.test(detail) ? `to ${personName(detail, 'you')}` : detail
       return { s, kind, verb, detail: to, at: t - t0, took: Math.max(0, next - t) }
     })
   }, [steps, end])

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
-import { displayName } from '../../api'
+import { isMine, personName } from '../../api'
 import { I } from '../icons'
 import { surfaceOf, SURFACE_LABEL } from '../data'
 import type { Project } from '../model'
@@ -63,7 +63,7 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
 
   const all = items ?? []
   // the facets, from what is actually here (a filter never offers an empty choice)
-  const agents = useMemo(() => [...new Set([...all.map((i) => i.author), ...(canvases ?? []).map((c) => c.agent)])].sort((a, b) => (a === 'owner' ? -1 : b === 'owner' ? 1 : a.localeCompare(b))), [all, canvases])
+  const agents = useMemo(() => [...new Set([...all.map((i) => i.author), ...(canvases ?? []).map((c) => c.agent)])].sort((a, b) => (isMine(a) ? -1 : isMine(b) ? 1 : a.localeCompare(b))), [all, canvases])
   const threads = useMemo(() => {
     const by = new Map<string, string>()
     for (const i of all) if (!by.has(i.thread)) by.set(i.thread, i.title || i.thread)
@@ -152,7 +152,7 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
         <span className="w-px h-5 bg-line mx-1.5 shrink-0" aria-hidden />
         <select className="ws-select shrink-0" data-on={!!agent} value={agent} onChange={(e) => setAgent(e.target.value)} aria-label="made by">
           <option value="">Anyone</option>
-          {agents.map((a) => <option key={a} value={a}>{a === 'owner' ? 'You' : displayName(a)}</option>)}
+          {agents.map((a) => <option key={a} value={a}>{personName(a)}</option>)}
         </select>
         {projects.length > 0 && (
           <select className="ws-select shrink-0" data-on={!!project} value={project} onChange={(e) => setProject(e.target.value)} aria-label="project">

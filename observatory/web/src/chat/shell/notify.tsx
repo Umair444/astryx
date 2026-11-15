@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { displayName } from '../../api'
+import { displayName, isMine } from '../../api'
 import type { Msg } from '../../types'
 import type { WsThread } from '../data'
 
@@ -77,7 +77,7 @@ export function useReplyNotifications(messages: Msg[], threads: WsThread[], rost
       const t = m.thread ?? ''
       if (!agents.has(m.from) || told.has(t)) continue
       const row = byThread.get(t)
-      if (!row && !(m.to === 'owner' && /^(chat|obs|cv):/.test(t))) continue      // only the owner's own conversations
+      if (!row && !(isMine(m.to) && /^(chat|obs|cv):/.test(t))) continue      // only the viewer's own conversations
       told.add(t)
       try {
         const n = new Notification(`${displayName(m.from)} replied`, {

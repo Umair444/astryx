@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { displayName, fmtAgo } from '../../api'
+import { displayName, fmtAgo, isMine, personName } from '../../api'
 import AgentFace from '../../components/AgentFace'
 import { I } from '../icons'
 import { contentOf, type MediaItem, type Opened } from './api'
@@ -82,10 +82,10 @@ export default function MediaDrawer({ items, loading, onOpen, onClose, openKey, 
 }
 
 function Source({ m }: { m: MediaItem }) {
-  const mine = m.from === 'owner'
+  const mine = isMine(m.from)
   return (
     <span className="mt-0.5 flex items-center gap-1.5 text-[11.5px] text-ink-mute">
-      {mine ? <span className="ws-badge">Uploaded</span> : <><AgentFace name={m.from} size={14} /><span className="text-ink-dim">{displayName(m.from)}</span></>}
+      {mine ? <span className="ws-badge">Uploaded</span> : <><AgentFace name={m.from} size={14} /><span className="text-ink-dim">{personName(m.from)}</span></>}
       <span>· {KIND_WORD[m.kind]} · {fmtAgo(m.ts)}</span>
     </span>
   )
@@ -105,7 +105,7 @@ function Thumb({ m, on, onClick }: { m: MediaItem; on: boolean; onClick: () => v
       <span className="block aspect-[4/3] rounded-[10px] overflow-hidden ws-checker relative">
         {blob ? <BlobImg blob={blob} alt={m.name} className="w-full h-full object-cover" draggable={false} />
           : <span className="absolute inset-0 grid place-items-center text-ink-mute"><KindIcon kind="image" className="w-6 h-6" /></span>}
-        <span className="absolute left-1.5 top-1.5">{m.from === 'owner' ? <span className="ws-badge ws-badge-solid">You</span> : <AgentFace name={m.from} size={18} />}</span>
+        <span className="absolute left-1.5 top-1.5">{isMine(m.from) ? <span className="ws-badge ws-badge-solid">You</span> : <AgentFace name={m.from} size={18} />}</span>
       </span>
       <span className="block mt-1 px-0.5 truncate text-[12px] text-ink-dim group-hover:text-ink">{m.name}</span>
     </button>

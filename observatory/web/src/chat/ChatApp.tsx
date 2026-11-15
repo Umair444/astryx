@@ -8,7 +8,7 @@ import './presence.css'
 import './phone.css'
 import { api, apiPost, displayName } from '../api'
 import { fillsTurn, mergeMsgs, useStore } from '../store'
-import { seesEveryone, talks, type Msg, type Step, type WireEvent } from '../types'
+import { humanName, isHuman, seesEveryone, talks, type Msg, type Step, type WireEvent } from '../types'
 import { canvasBase } from '../cog'
 import { nowLine } from '../ui/life'
 import { startDictation } from './dictate'
@@ -27,7 +27,8 @@ import ConnStatus from './shell/ConnStatus'
 import { Keys, Palette } from './shell/Dialogs'
 import Composer, { type Command, type ComposerHandle } from './thread/Composer'
 import Turns from './thread/Turns'
-import { plainLine, type Pending } from './thread/LiveActivity'
+import { plainLine } from './thread/LiveActivity'
+import { pendingOf, type Pending } from './thread/pending'
 import TeamHome from './empty/TeamHome'
 import { useVisit } from './empty/visit'
 import type { BriefingActions } from './empty/Briefing'
@@ -87,6 +88,7 @@ function useWidth() {
 
 export default function ChatApp({ thread, go: nav }: { thread: string | null; go: (t: string | null) => void }) {
   const { agents: roster, messages, presence, send, who, conn } = useStore()
+  const me = who.handle || 'owner'          // the viewer's wire name: whose words are "mine" (cog-gaps)
   const reduce = useReducedMotion()
   const now = useNow(5000)
   // the rail's order: seed first, then by name. STABLE on purpose (iteration 10): /api/agents lists by latest step, so
@@ -246,7 +248,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   // the replies this thread shows are read once he can see them (the same explicit act as ChatSheet / the Wire's pane,
   // /api/thread/read): only up to the newest agent row rendered, only while the tab is visible; the server never marks a
   // row a bridge delivers. Without it every reply he read here stayed 'pending' (reach gate, 11-12)
-  const newestReply = view === 'thread' ? rows.filter((m) => m.from !== 'owner').at(-1)?.id ?? 0 : 0
+  const newestReply = view === 'thread' ? rows.filter((m) => !isHuman(m.from)).at(-1)?.id ?? 0 : 0
   useEffect(() => {
     if (!current || !newestReply) return
     const mark = () => { if (!document.hidden) apiPost('/thread/read', { thread: current, upto: newestReply }).catch(() => {}) }
@@ -284,7 +286,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     const desk = deskAgent(current, names)
     // the server names a conversation by the owner's first line (workspace.derive_title); until its list catches up
     // (a fresh chat, the moment after the first send), name it the same way here instead of "New chat"
-    const first = stripEmbeds(rows.find((m) => m.from === 'owner')?.body ?? '').split('\n').find((l) => l.trim())?.replace(/\s+/g, ' ').trim() ?? ''
+    const first = stripEmbeds(rows.find((m) => isHuman(m.from))?.body ?? '').split('\n').find((l) => l.trim())?.replace(/\s+/g, ' ').trim() ?? ''
     const said = first.length > 80 ? `${first.slice(0, 79)}…` : first
     return {
       thread: current, title: said || (desk ? `Desk with ${displayName(desk)}` : 'New chat'), custom_title: false, agents: desk ? [desk] : participants(rows, names),
@@ -378,17 +380,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     return out
   }, [current, steps, work, lanes.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // asked and not yet answered: an agent whose newest row here is older than the owner's newest row to it; its
-  // live steps since the ask feed the activity line
-  const pending: Pending[] = useMemo(() => {
-    const out: Pending[] = []
-    for (const a of inChat) {
-      const ask = [...rows].reverse().find((m) => m.from === 'owner' && m.to === a)
-      const saidAt = Math.max(0, ...rows.filter((m) => m.from === a).map((m) => m.id))
-      if (ask && ask.id > saidAt) out.push({ agent: a, since: ask.ts, steps: (work?.live[a] ?? []).filter((s) => Date.parse(s.ts) >= Date.parse(ask.ts)) })
-    }
-    return out
-  }, [inChat, rows, work])
+  // asked and not yet answered, by any human (thread/pending.ts): the live activity line
+  const pending: Pending[] = useMemo(() => pendingOf(inChat, rows, work?.live, me), [inChat, rows, work, me])
 
   // a conversation is LIVE while one of its agents works on it
   const live = useMemo(() => {
@@ -414,7 +407,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     if (current) {             // an open conversation: optimistic, never blocking the composer
       const body = [text, ...files.map((f) => `[[file:${f.path}]] (${f.name})`)].filter(Boolean).join('\n')
       const pj = projectOf(current, proj.projects)
-      const ctx = pj && !rows.some((m) => m.from === 'owner') ? projectContext(pj) : Promise.resolve('')
+      const ctx = pj && !rows.some((m) => isHuman(m.from)) ? projectContext(pj) : Promise.resolve('')
       const o: Outgoing = { key: `o${Date.now()}${Math.random()}`, thread: current, text, files, to: [...to], team: [...to], failed: null, body: async (a) => (await ctx) + bodyFor(body, to, a) }
       setOutbox((xs) => [...xs, o])
       void deliver(o)
@@ -424,7 +417,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     const body = [text, ...files.map((f) => `[[file:${f.path}]] (${f.name})`)].filter(Boolean).join('\n')
     // a project chat's FIRST message carries the project's instructions and files (projects/context.ts)
     const pj = !current && activeProject ? activeProject : projectOf(t, proj.projects)
-    const ctx = pj && (!current || !rows.some((m) => m.from === 'owner')) ? await projectContext(pj) : ''
+    const ctx = pj && (!current || !rows.some((m) => isHuman(m.from))) ? await projectContext(pj) : ''
     for (const a of teamOrder(to)) await send(a, ctx + bodyFor(body, to, a), t, to)   // R4: one row per recipient, one thread; a team stamped
     if (!current && activeProject) await proj.mutate(moveThread(t, activeProject.id))
     if (!current) go(t)
@@ -616,7 +609,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         return true
       },
       search: (q) => { setPaletteQ(q); setPalette(true) },
-      lines: () => L().current ? L().rows.slice(-4).map((m) => `${m.from === 'owner' ? 'owner' : displayName(m.from)}: ${firstLine(m.body)}`) : [],
+      lines: () => L().current ? L().rows.slice(-4).map((m) => `${isHuman(m.from) ? humanName(m.from) : displayName(m.from)}: ${firstLine(m.body)}`) : [],
     })
     const i = takeChatIntent()               // a call on an observatory page asked for this (open a conversation, search)
     if (i?.kind === 'open') go(i.thread)
@@ -627,7 +620,6 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
 
   // signed out, offline and a rotated key are the gate's (chat/Gate.tsx): this renders only for the owner or a member
   if (!talks(who)) return null
-  const me = who.handle ?? 'owner'
 
   const roles = Object.fromEntries(team.map((a) => [a.agent, a.role]))
   const title = currentRow?.title ?? (activeProject ? activeProject.name : 'New chat')
@@ -704,7 +696,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   }
   // a turn's actions: quote into the composer (to whoever said it, when several share the thread); open as a document
   const turnActsNow: TurnActionsValue = {
-    quote: (text, m) => composer.current?.insert(quoteText(text, m.from !== 'owner' && inChat.length > 1 ? m.from : null)),
+    quote: (text, m) => composer.current?.insert(quoteText(text, m.from !== me && inChat.length > 1 ? m.from : null)),
     openDoc: async (m, text) => {
       const a = await createArtifact({ thread: current, name: docName(text), text, author: m.from, msg: { id: m.id, ts: m.ts } })
       openFile({ path: byId(a.id), label: a.name, from: m.from })
@@ -796,7 +788,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
               <button className="underline underline-offset-2 hover:text-ink" onClick={() => setHistTry((n) => n + 1)}>Retry now</button>
             </div>
           )}
-          {current && <Turns key={current} me={who.handle || 'owner'} older={older} onOlder={loadOlderRows} focus={jump?.thread === current ? jump : null} rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} switches={switches} onStop={interruptAgent}
+          {current && <Turns key={current} me={me} older={older} onOlder={loadOlderRows} focus={jump?.thread === current ? jump : null} rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} switches={switches} onStop={who.owner ? interruptAgent : undefined}
             onOpenFile={openFile} onOpenAsk={openAsk} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
             empty={histErr ? null : <FreshThread agents={inChat} status={status} roles={roles} lines={lines} />} />}
           {current && <Outbox items={outbox.filter((o) => o.thread === current)} onRetry={(o) => void deliver(o)}

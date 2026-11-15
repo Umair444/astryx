@@ -301,6 +301,19 @@ def insider(request: Request) -> bool:
     return owner_call(request) or getattr(request.state, "role", None) in MEMBER_ROLES
 
 
+def sees(request: Request):
+    """THE one answer to "may this viewer read this agent's insides" (its steps, presence, activity, charter): a
+    predicate on an agent name. The owner reads every agent; an insider (member, admin) reads the org-work tier, the
+    owner's own rule "no privacy within an org" (11-13), short of the personal tier; anyone else reads the public floor.
+    Both tiers are tier.py's positive, fail-closed allowlists. Every insides read in this file and in chat.py asks
+    THIS, so the REST doors and the live feed can never disagree again (11-15: the feed streamed a member every step
+    while /api/presence and /api/steps refused him, and his chat showed db silent through 11 minutes of work)."""
+    from astryx.core.tier import is_content_org, is_content_public
+    if is_owner(request):
+        return lambda agent: True
+    return is_content_org if insider(request) else is_content_public
+
+
 def wire_handle(request: Request) -> str | None:
     """The from_agent a human's message here is written as: 'owner' for the owner, cv-<label>.<uid> for a member."""
     if owner_call(request):
@@ -438,14 +451,14 @@ app.include_router(_pilot_voice.router)
 # plan-11884: /chat's server half (uploads, the side panel's file read, projects, dictation); owner-only by omission
 from observatory.api import chat as _chat  # noqa: E402
 _chat.bind(lambda: pool, ESTATE, ESTATE / "media", REPO, roster=lambda: set(agent_meta()),
-           me=lambda r: wire_handle(r))   # media/: every channel's inbound files
+           me=lambda r: wire_handle(r), sees=lambda r: sees(r))   # media/: every channel's inbound files
 app.include_router(_chat.router)
 
 # feat/chat-workspace: the workspace's unified conversation list (chat:, obs:, cv:) and its pins/titles; owner-only by
 # omission from PUBLIC, like /api/chat
 from observatory.api import workspace as _ws  # noqa: E402
 _ws.bind(lambda: pool, ESTATE, roster=lambda: set(agent_meta()), charter=lambda n: _charter_path(n), owner=lambda r: owner_call(r),
-         me=lambda r: wire_handle(r))
+         me=lambda r: wire_handle(r), sees=lambda r: sees(r))
 app.include_router(_ws.router)
 
 # feat/chat-workspace: the artifact store (a git repo under data/workspace: versions, restore, annotations) and a
@@ -496,16 +509,21 @@ _WIRE_WRITE = re.compile(r"^/api/(messages|ws/agents/[^/]+/interrupt|federation/
 # reading it (no privacy within an org, owner 11-13), and the tools of HER OWN chats (cog-gaps): rename/pin/switch a
 # thread she is a party of (workspace.ws_meta checks the party), her projects (chat.projects_put: another's project
 # is read-only to her) and dictation. Owner-only ACTS are not here: interrupt, goals, the db workbench, federation,
-# people, services, admin. (METHOD, path) pairs, or a GET prefix.
+# people, services, admin. (METHOD, path) pairs, or a GET prefix. The agents' INSIDES (steps, presence, the activity
+# pulse, an agent's profile and charter) are reads a member makes as the owner does (11-15): each handler asks sees()
+# per agent, so the personal tier stays the owner's.
 MEMBER = {("POST", "/api/messages"), ("POST", "/api/thread/read"), ("POST", "/api/chat/upload"),
           ("PUT", "/api/ws/threads/meta"), ("PUT", "/api/chat/projects"),
           ("POST", "/api/chat/dictate/session"), ("POST", "/api/chat/dictate/usage")}
 MEMBER_GET = ("/api/ws/threads", "/api/ws/thread-titles", "/api/ws/search", "/api/ws/handoffs", "/api/ws/agents",
-              "/api/ws/briefing", "/api/ws/media", "/api/ws/artifacts", "/api/chat/", "/api/presence")
+              "/api/ws/briefing", "/api/ws/media", "/api/ws/artifacts", "/api/chat/", "/api/presence",
+              "/api/steps", "/api/pulse")
+_MEMBER_AGENT_GET = re.compile(r"^/api/agents/[^/]+/(profile|charter)$")
 
 
 def member_may(m: str, p: str) -> bool:
-    return (m, p) in MEMBER or (m == "GET" and p.startswith(MEMBER_GET) and p not in MEMBER_FILE)
+    return (m, p) in MEMBER or (m == "GET" and (p.startswith(MEMBER_GET) or bool(_MEMBER_AGENT_GET.match(p)))
+                                 and p not in MEMBER_FILE)
 
 
 # the routes that hand out a FILE's bytes (or its rendering): a member reaches them only for an attached file
@@ -700,28 +718,24 @@ async def agents(request: Request):
         out.append({"agent": a, "last_seen": None, "steps": 0, "tokens_in": 0,
                     "tokens_out": 0, "last_kind": None, "last_content": None,
                     "alive": a in alive, **enrich(a)})
+    see = sees(request)
     if not is_owner(request):
-        # CONTENT + RATE floor (plan-18, owner decision): a grant-derived-private
-        # agent stays a NODE — name, group, rank, model, alive: existence + liveness,
-        # which the viz needs — but every RATE/TIMING signal is zeroed for anon. The
-        # step/token COUNT and last-activity time are a career-activity RATE across the
-        # tier line (the plan-16 side-channel), and last_content is the body itself.
-        # Anon-only: the owner view (is_owner) keeps full metrics. Same fail-closed
-        # polarity as the content floor — driven by the one tier authority.
-        from astryx.core.tier import is_content_public
+        # CONTENT + RATE floor (plan-18, owner decision): an agent the viewer may not read stays a NODE (name, group,
+        # rank, model, alive: existence and liveness, which the viz needs), but every RATE/TIMING signal is zeroed.
+        # The step/token COUNT and last-activity time are a career-activity RATE across the tier line (the plan-16
+        # side-channel), and last_content is the body itself. WHICH agents: sees() (the public floor for anon, the
+        # inside tier for a member, 11-15), so a member's chat sees db working and refetches its work as it steps.
         for row in out:
-            # last_content is a 120-char slice of the agent's most recent STEP BODY, so
-            # it is the same content /api/steps was just gated for — a second door to the
-            # thing we closed. Nulled for EVERY agent while that gate stands, not only for
-            # tier-private ones; gating one path and leaving its excerpt on another is the
-            # two-writer leak we already paid for once today.
-            row["last_content"] = None
-            if not is_content_public(row["agent"]):
+            if not see(row["agent"]):
+                row["last_content"] = None
                 row["last_kind"] = None
                 row["last_seen"] = None
                 row["steps"] = 0
                 row["tokens_in"] = 0
                 row["tokens_out"] = 0
+            elif not insider(request):
+                # anon, content-public agent: last_content stays nulled, as before (the /api/steps gate's excerpt)
+                row["last_content"] = None
     return out
 
 
@@ -778,14 +792,13 @@ async def steps(request: Request, agent: str | None = None, kind: str | None = N
     limit = min(limit, 500)
     cond, args = [], []
     if not is_owner(request):
-        # CONTENT-class floor: anonymous sees step bodies ONLY for grant-derived
-        # content-public agents (src/astryx/core/tier.py). POSITIVE `agent = ANY(public)` —
-        # fail-closed: a private or unknown agent yields zero rows, and an anon
-        # request for a private agent's steps (?agent=canopus) returns []. Never the
-        # complement (NOT IN private) — a new private agent would leak through that.
-        from astryx.core.tier import content_public_agents
-        pub = sorted(content_public_agents(agent_meta().keys()))
-        args.append(pub); cond.append(f"agent = ANY(${len(args)})")
+        # CONTENT-class floor: a non-owner sees step bodies ONLY for the agents sees() lets it read (the grant-derived
+        # public tier for anon, the inside tier for a member; src/astryx/core/tier.py). POSITIVE `agent = ANY(...)`:
+        # fail-closed, a private or unknown agent yields zero rows (?agent=canopus returns []). Never the complement
+        # (NOT IN private): a new private agent would leak through that.
+        see = sees(request)
+        ok = sorted(a for a in agent_meta().keys() if see(a))
+        args.append(ok); cond.append(f"agent = ANY(${len(args)})")
     if agent:
         args.append(agent); cond.append(f"agent = ${len(args)}")
     if kind:
@@ -1199,11 +1212,12 @@ class CharterEdit(BaseModel):
 
 
 @app.get("/api/agents/{name}/charter")
-async def charter(name: str):
+async def charter(name: str, request: Request):
     """An agent's instructions file. Org work is transparent; charters are org
-    work. Only files inside agents/ are served, never local.md."""
+    work. Only files inside agents/ are served, never local.md. A member reads the
+    charters sees() lets her read; a refused one is a 404, never a hint."""
     f = _charter_path(name)
-    if not f:
+    if not f or not sees(request)(f.stem):
         return Response(status_code=404)
     return {"name": f.stem, "charter": f.read_text(), "live": f.stem in tmux_alive()}
 
@@ -2185,9 +2199,9 @@ async def turn_detail(turn_id: int):
 
 # ============================================================ profiles
 @app.get("/api/agents/{name}/profile")
-async def agent_profile(name: str):
+async def agent_profile(name: str, request: Request):
     meta = agent_meta()
-    if name not in meta:
+    if name not in meta or not sees(request)(name):     # its recent steps and presence are insides (sees())
         return Response(status_code=404)
     hits = [p for p in (ESTATE / "agents").rglob(f"{name}.md")
             if not p.name.endswith(".example.md")
@@ -2301,27 +2315,32 @@ def _presence(r) -> dict:
 
 @app.get("/api/presence")
 async def presence_all(request: Request):
-    """Where every agent's attention is (src/astryx/core/presence.py). Owner-only: a surface name can
-    carry a private canvas or thread."""
-    if not is_owner(request):
+    """Where every agent's attention is (src/astryx/core/presence.py). For the org's insiders: a surface names a
+    canvas or thread, which every insider reads anyway (11-15: a member's chat drew every agent asleep while db
+    worked, on this 403). Rows of an agent sees() refuses are left out; the public face gets none."""
+    if not insider(request):
         return Response(status_code=403)
-    return [_presence(r) for r in await pool.fetch("SELECT * FROM presence ORDER BY updated_at DESC")]
+    see = sees(request)
+    return [_presence(r) for r in await pool.fetch("SELECT * FROM presence ORDER BY updated_at DESC") if see(r["agent"])]
 
 
 
 @app.get("/api/pulse")
 async def pulse(request: Request):
     """Each agent's heartbeat: steps per hour over the last 24h, oldest first (24 buckets). The
-    agent cards draw it as a line, so a glance says who has been working and when. Owner-only:
-    an activity RATE is exactly what the anonymous floor zeroes (plan-18)."""
-    if not is_owner(request):
+    agent cards draw it as a line, so a glance says who has been working and when. Not public:
+    an activity RATE is exactly what the anonymous floor zeroes (plan-18). Insiders read it for the agents sees()
+    lets them read."""
+    if not insider(request):
         return Response(status_code=403)
+    see = sees(request)
     rows = await pool.fetch(
         "SELECT agent, least(23, floor(extract(epoch from now() - ts) / 3600))::int AS h, count(*) AS n "
         "FROM steps WHERE ts > now() - interval '24 hours' GROUP BY 1, 2")
     out: dict[str, list[int]] = {}
     for r in rows:
-        out.setdefault(r["agent"], [0] * 24)[23 - r["h"]] = r["n"]
+        if see(r["agent"]):
+            out.setdefault(r["agent"], [0] * 24)[23 - r["h"]] = r["n"]
     return out
 
 # ============================================================ system monitor
@@ -3686,17 +3705,26 @@ def _jsonb(v):
     return v
 
 
+def insider_sees_event(data: dict, see) -> bool:
+    """An insider's live feed: every event, short of an agent sees() keeps the owner's (the personal tier). Its steps
+    and presence carry its name; messages, dags and resyncs are the wire's, which insiders read whole."""
+    return data.get("type") not in ("step", "presence") or see(data.get("agent") or "")
+
+
 @app.get("/api/events")
 async def events(request: Request):
     # EventSource cannot send headers, so owner mode rides ?key=. Anonymous
     # streams carry ONLY boundary-crossing message events; steps/dags are the
-    # agents' insides and stay owner-only.
-    owner = ((bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY) or _signed_owner(request)
-             or insider(request))                       # a member sees the org's stream too (cog-who: no walls inside)
+    # agents' insides: the owner's, and an insider's per sees().
+    owner = (bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY) or _signed_owner(request)
+    inside = owner or insider(request)                  # a member sees the org's stream too (cog-who: no walls inside)
+    see = sees(request)
 
     async def visible(data: dict) -> bool:
         if owner:
             return True
+        if inside:
+            return insider_sees_event(data, see)
         if data.get("type") == "resync":
             return True               # carries nothing: "the tap was down, catch up" (listen_task)
         # Same ONE rule as /api/messages — see anonymous_can_see(). This site previously

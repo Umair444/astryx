@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { displayName, fmtAgo } from '../../../api'
+import { displayName, fmtAgo, personName } from '../../../api'
 import AgentFace from '../../../components/AgentFace'
 import type { Version } from '../api'
 
@@ -9,7 +9,7 @@ import type { Version } from '../api'
 export const ago = (ts: string) => { const a = fmtAgo(ts); return a === 'now' ? 'just now' : `${a} ago` }
 /* when a version came to be: the message that carried it (provenance), else its commit (an import can be lazy) */
 export const when = (v: Version) => v.msg_ts ?? v.ts
-export const who = (author: string) => (author === 'owner' ? 'You' : displayName(author))
+export const who = (author: string) => personName(author)
 /* the commit message, as the store wrote it ("import x", "new version of x", "restore ab12cd3 (v2)", the owner's words) */
 export const said = (m: string) => m.trim()
 /* the store's own words for a version ("import x", "new version of x", "open as document: x") vs a version NAMED by
