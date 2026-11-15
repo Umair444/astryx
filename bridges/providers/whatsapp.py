@@ -96,8 +96,20 @@ class WhatsAppProvider(ChannelProvider):
 
     # ---- reads ---------------------------------------------------------------
     async def search_contacts(self, query: str) -> list[Contact]:
-        data = (await self._wacli_json("contacts", "search", query)).get("data") or []
+        """People AND groups whose name holds `query` (owner 11-15: "ETL" found nothing in the floor's channel rail:
+        `contacts search` knows people only, so every group was unfindable). Groups first: a route is usually one."""
+        q = (query or "").strip().lower()
         out = []
+        try:
+            groups = (await self._wacli_json("groups", "list")).get("data") or []
+        except Exception:  # noqa: BLE001  the people still come back
+            groups = []
+        for g in groups:
+            jid, name = g.get("JID") or g.get("jid") or "", g.get("Name") or g.get("name") or ""
+            left = str(g.get("LeftAt") or "")
+            if jid and q and q in name.lower() and (not left or left.startswith("0001-")):
+                out.append(Contact(channel=self.NAME, handle=f"{self.NAME}:{jid}", label=name, number=None, raw=g))
+        data = (await self._wacli_json("contacts", "search", query)).get("data") or []
         for c in data:
             jid = c.get("jid") or ""
             out.append(Contact(

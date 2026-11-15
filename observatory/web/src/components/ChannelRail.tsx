@@ -130,7 +130,7 @@ export default function ChannelRail() {
                         {chats.map((c) => <ChatRow key={c.chat} c={c} />)}
                         {chats.length === 0 && <li className="text-[12px] text-ink-mute px-1 py-2">No chats routed yet. Find one below.</li>}
                       </ul>
-                      <ContactFind channel={s.channel} known={new Set(chats.map((c) => c.chat))} />
+                      <ContactFind channel={s.channel} known={new Map(chats.map((c) => [c.chat, c.agent]))} />
                     </>
                   )}
                 </motion.div>
@@ -229,7 +229,7 @@ function ChatRow({ c }: { c: ChatRef }) {
   )
 }
 
-function ContactFind({ channel, known }: { channel: string; known: Set<string> }) {
+function ContactFind({ channel, known }: { channel: string; known: Map<string, string | null | undefined> }) {
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<ContactMatch[] | null>(null)
   const [busy, setBusy] = useState(false)
@@ -239,7 +239,7 @@ function ContactFind({ channel, known }: { channel: string; known: Set<string> }
     setBusy(true); setErr(null)
     try {
       const r = await api<{ matches: ContactMatch[]; error?: string }>(`/wire/contacts?q=${encodeURIComponent(q.trim())}&channel=${channel}`)
-      setHits(r.matches.filter((m) => !known.has(m.native)))
+      setHits(r.matches)        // a chat already routed is SHOWN, saying where it goes (owner 11-15: wm_ai found nothing)
       if (r.error) setErr(r.error)
     } catch (e) { setErr((e as Error).message) }
     setBusy(false)
@@ -255,10 +255,16 @@ function ContactFind({ channel, known }: { channel: string; known: Set<string> }
         </button>
       </form>
       {err && <div className="text-[11.5px] text-warn mt-1.5">{err}</div>}
-      {hits && hits.length === 0 && !err && <div className="text-[12px] text-ink-mute mt-1.5 px-1">No unrouted chat matches “{q}”.</div>}
+      {hits && hits.length === 0 && !err && <div className="text-[12px] text-ink-mute mt-1.5 px-1">No group or person matches “{q}”.</div>}
       {hits && hits.length > 0 && (
         <ul className="flex flex-col gap-1 mt-1.5">
-          {hits.map((m) => <ChatRow key={m.native} c={{ channel, chat: m.native, label: m.label, kind: m.native.endsWith('@g.us') || m.native.startsWith('-') ? 'group' : 'person', agent: null, enabled: true, show: 'steps' }} />)}
+          {hits.filter((m) => known.has(m.native)).map((m) => (
+            <li key={m.native} className="flex items-center gap-2 rounded-xl px-2 py-1.5 text-[12.5px]">
+              <span className="flex-1 min-w-0 truncate text-ink">{m.label}</span>
+              <span className="text-ink-mute shrink-0">{known.get(m.native) ? `already goes to ${displayName(known.get(m.native)!)}, above` : 'already in the list above'}</span>
+            </li>
+          ))}
+          {hits.filter((m) => !known.has(m.native)).map((m) => <ChatRow key={m.native} c={{ channel, chat: m.native, label: m.label, kind: m.native.endsWith('@g.us') || m.native.startsWith('-') ? 'group' : 'person', agent: null, enabled: true, show: 'steps' }} />)}
         </ul>
       )}
     </div>
