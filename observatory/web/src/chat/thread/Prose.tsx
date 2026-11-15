@@ -4,10 +4,10 @@ import DOMPurify from 'dompurify'
 import type { Msg } from '../../types'
 import TableActions from './TableActions'
 import { splitProvenance } from './provenance'
-import { codeBlock, fenceBareSql } from './code'
+import { codeBlock, escapeHtml, fenceBareSql } from './code'
 import { humanHtml } from './md'
 import { clipHtml, clipPlain, copyRich, PURIFY } from './clip'
-import { deliverableBlock, kindOf } from './deliverable'
+import { cardData, deliverableBlock, kindOf, type Card } from './deliverable'
 import { TurnActionsCtx, type TurnActionsValue } from './TurnActions'
 
 /* An agent's answer as a page: full GFM (tables, lists, code, quotes), the way canvas renders it (canvas/web/src/ui.tsx
@@ -16,11 +16,24 @@ import { TurnActionsCtx, type TurnActionsValue } from './TurnActions'
 
 /* this answer's own parser (not the shared `marked`): a fenced block draws as code with its language and a Copy
    button (./code.ts), and SQL pasted without a fence is fenced first */
-// a fence named for a DELIVERABLE kind (```email, ```doc, ```html …) draws as its card (deliverable.ts), any other as code
+// a fence named for a DELIVERABLE kind (```email, ```doc, ```html …) draws as its card (deliverable.ts), any other as code.
+// A card's data goes into the map of the answer being parsed (`cards`, set around each parse by render()), under an id
+// made now: what its buttons act on is never read back from the page (medic 12245 F1)
+let cards: Map<string, Card> | null = null
 const md: Marked = new Marked({ gfm: true, breaks: true }, { renderer: { code: ({ text, lang }) => {
   const kind = kindOf(lang)
-  return kind ? deliverableBlock(text, kind, (m) => md.parse(fenceBareSql(m), { async: false }) as string) : codeBlock(text, lang)
+  if (!kind || !cards) return codeBlock(text, lang)
+  const id = crypto.randomUUID()
+  cards.set(id, cardData(text, kind))
+  return deliverableBlock(text, kind, (m) => md.parse(fenceBareSql(m), { async: false }) as string, id)
 } } })
+function render(body: string): { html: string; cards: Map<string, Card> } {
+  const own = new Map<string, Card>()
+  const outer = cards
+  cards = own
+  try { return { html: DOMPurify.sanitize(md.parse(fenceBareSql(body), { async: false }) as string, PURIFY), cards: own } }
+  finally { cards = outer }
+}
 
 /* `msg` (an agent's turn): its tables get Chart / CSV / Excel on hover (TableActions, iteration 9) */
 // PURIFY: the one sanitizer setting for agent text, shared with the copy (clip.ts), so a paste is never more permissive
@@ -39,12 +52,12 @@ export function HumanText({ text }: { text: string }) {
    under a hairline, not body text (iteration 12) */
 export default function Prose({ text, msg }: { text: string; msg?: Msg }) {
   const { body, source } = useMemo(() => splitProvenance(text), [text])
-  const html = useMemo(() => DOMPurify.sanitize(md.parse(fenceBareSql(body), { async: false }) as string, PURIFY), [body])
+  const { html, cards: own } = useMemo(() => render(body), [body])
   const foot = useMemo(() => (source ? DOMPurify.sanitize(md.parseInline(source, { async: false }) as string, PURIFY) : ''), [source])
   const [el, setEl] = useState<HTMLDivElement | null>(null)
   useHighlight(el, html)
   const acts = useContext(TurnActionsCtx)
-  const prose = <div ref={setEl} className="ws-prose" onClick={(e) => { copyCode(e); deliver(e, acts, msg) }} dangerouslySetInnerHTML={{ __html: html }} />
+  const prose = <div ref={setEl} className="ws-prose" onClick={(e) => { copyCode(e); deliver(e, own, acts, msg) }} dangerouslySetInnerHTML={{ __html: html }} />
   const footer = foot && (
     <div className="ws-source" role="note" aria-label="Where this came from">
       <svg viewBox="0 0 16 16" className="ws-source-glyph" aria-hidden><ellipse cx="8" cy="4" rx="5" ry="2" fill="none" stroke="currentColor" strokeWidth="1.3" /><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
@@ -74,20 +87,21 @@ function useHighlight(el: HTMLElement | null, html: string) {
   }, [el, html])
 }
 
-/* A DELIVERABLE card's actions (deliverable.ts), delegated like Copy: the card carries its source in data-src (the DOM
-   hands it back decoded). Copy is formatted for a mail client or a document (clip.ts); HTML copies as its source.
+/* A DELIVERABLE card's actions (deliverable.ts), delegated like Copy, acting only on a card THIS answer's render made:
+   its data comes from the answer's map by the card's id; a card drawn by raw HTML has no entry and does nothing.
+   Copy is formatted for a mail client or a document (clip.ts); HTML copies as its source.
    Open makes it an artifact by that agent (versions, annotations, download, changes sent back): an email opens WITH
    its subject line, so the file is the whole email. */
-function deliver(e: MouseEvent<HTMLDivElement>, acts: TurnActionsValue | null, msg?: Msg) {
+function deliver(e: MouseEvent<HTMLDivElement>, own: Map<string, Card>, acts: TurnActionsValue | null, msg?: Msg) {
   const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-dl]')
-  const card = btn?.closest<HTMLElement>('.ws-dl')
+  const card = own.get(btn?.closest<HTMLElement>('.ws-dl')?.dataset.dlId ?? '')
   if (!btn || !card) return
-  const { src = '', kind = '', name = 'deliverable.md', subject = '' } = card.dataset
+  const { src, kind, name, subject } = card
   const label = btn.textContent
   const said = (s: string) => { btn.textContent = s; setTimeout(() => { btn.textContent = label }, 1500) }
   const act = btn.dataset.dl
-  if (act === 'subject') void copyRich(subject, subject).then((ok) => said(ok ? 'Copied' : 'Copy failed'))
-  else if (act === 'copy') void (kind === 'html' ? copyRich(src, src.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!))
+  if (act === 'subject') void copyRich(subject, escapeHtml(subject)).then((ok) => said(ok ? 'Copied' : 'Copy failed'))   // agent text: escaped
+  else if (act === 'copy') void (kind === 'html' ? copyRich(src, escapeHtml(src))
     : copyRich(clipPlain(src), clipHtml(src))).then((ok) => said(ok ? 'Copied' : 'Copy failed'))
   else if (act === 'open') {
     if (!acts?.openNamed || !msg) { said('Not here'); return }

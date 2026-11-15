@@ -7,8 +7,11 @@ import { codeBlock, escapeHtml } from './code'
    title in a bar, its content rendered, and the actions every deliverable has: Copy (formatted for a mail client or a
    document, clean words for a plain editor: clip.ts), Open (an artifact in the store: versions, annotations, download,
    send changes back) and, per kind, more (an email's subject on its own, a short one handed to the mail app).
-   A kind is a row in KINDS; a new kind is a row, never a new path. The card carries its source in data-src; the
-   clicks are delegated from the answer (Prose.tsx), so no script rides in the sanitized HTML. Pure: tests run it. */
+   A kind is a row in KINDS; a new kind is a row, never a new path. The clicks are delegated from the answer
+   (Prose.tsx), so no script rides in the sanitized HTML. The card's SOURCE never rides in the HTML either: an answer's
+   own raw HTML could draw a card that shows one text and copies another (medic 12245 F1). The renderer keeps each
+   card's data in the answer's own map under a random id made at render time (data-dl-id); a card whose id isn't in
+   that map is inert. Pure: tests run it. */
 
 export interface Kind { label: string; ext: string; md: boolean }
 export const KINDS: Record<string, Kind> = {
@@ -44,16 +47,23 @@ export function deliverableName(title: string, kind: string): string {
   return `${stem}.${KINDS[kind].ext}`
 }
 
-/* the card: `render` is the answer's own markdown renderer (Prose's), so a deliverable reads like the rest of it */
-export function deliverableBlock(text: string, kind: string, render: (md: string) => string): string {
+/* what a card's buttons act on, kept OUT of the HTML (the answer's map, by the card's id) */
+export interface Card { kind: string; src: string; subject: string; name: string }
+export function cardData(text: string, kind: string): Card {
+  const d = parseDeliverable(text, kind)
+  return { kind, src: d.body, subject: d.subject ?? '', name: deliverableName(d.title, kind) }
+}
+
+/* the card: `render` is the answer's own markdown renderer (Prose's), so a deliverable reads like the rest of it; `id`
+   is the render's own key for this card's data (cardData), never the data itself */
+export function deliverableBlock(text: string, kind: string, render: (md: string) => string, id: string): string {
   const k = KINDS[kind]
   const d = parseDeliverable(text, kind)
   const mailto = kind === 'email' && d.body.length <= MAILTO_MAX
     ? `mailto:?subject=${encodeURIComponent(d.subject ?? '')}&body=${encodeURIComponent(d.body)}` : ''
   const btn = (act: string, label: string, title: string) =>
     `<button type="button" class="ws-dl-btn" data-dl="${act}" title="${escapeHtml(title)}">${label}</button>`
-  return `<div class="ws-dl" data-kind="${kind}" data-name="${escapeHtml(deliverableName(d.title, kind))}" `
-    + `data-src="${escapeHtml(d.body)}" data-subject="${escapeHtml(d.subject ?? '')}">`
+  return `<div class="ws-dl" data-kind="${kind}" data-dl-id="${escapeHtml(id)}">`
     + `<div class="ws-dl-bar"><span class="ws-dl-kind">${k.label}</span><span class="ws-dl-title">${escapeHtml(d.title)}</span>`
     + (d.subject ? btn('subject', 'Copy subject', 'Copy the subject line') : '')
     + btn('copy', 'Copy', k.md ? 'Copy it, formatted: paste into an email or a document' : 'Copy the source')
