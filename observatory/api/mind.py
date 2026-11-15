@@ -2,6 +2,7 @@
 understood, read from the mind's own store. One read, nothing written:
 
     GET  /api/mind                        {energy, drives, itches, insights, yields, thinking, heat, rules}
+    GET  /api/mind/system                 the economy as a system: equations, objectives, flows, thermo, market, game
     POST /api/mind/tick                   feel now, and let whoever wants to think wake: {woke, what} | {woke: null, why}
     POST /api/mind/itch/{id}/drop         {why}   the owner lets an itch go (the reason is kept)
     POST /api/mind/insight/{id}/retire    {why}   the owner retires an idea (its epitaph)
@@ -88,6 +89,24 @@ async def mind_wonder(body: Wonder, request: Request):
 def _state() -> dict:
     with _mind.connect() as c:
         return json.loads(json.dumps(_mind.state(c), default=str))
+
+
+def _system():
+    from astryx.econ import system
+    with _mind.connect() as c:
+        return json.loads(json.dumps(system.read(c), default=str))
+
+
+@router.get("/api/mind/system")
+async def mind_system(request: Request):
+    """The org's economy as a system (src/astryx/econ/system.py): equations, objectives, flows, projection, thermo,
+    market, commons, game. One read; the owner's page."""
+    if _owner is None or not _owner(request):
+        return JSONResponse({"error": "the owner's page"}, status_code=403)
+    try:
+        return await asyncio.to_thread(_system)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"error": f"the economy's view is not answering ({type(e).__name__})"}, status_code=503)
 
 
 @router.get("/api/mind")

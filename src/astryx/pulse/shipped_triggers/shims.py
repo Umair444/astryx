@@ -53,6 +53,11 @@ run_restore_verify` (tombstones the pulse honours). Deleting this file does NOT 
 reinstall."""
 from astryx.pulse.shipped_triggers.org_backup import run_backup, run_restore_verify  # noqa: F401
 ''',
+    'influence_nightly': '''"""Live install of the shipped influence nightly (one writer: src/astryx/pulse/shipped_triggers/influence_nightly.py): keeps
+the influence graph computed so the floor's influence view has something to draw. To retire it:
+`trigger action=retire name=influence_nightly` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
+from astryx.pulse.shipped_triggers.influence_nightly import influence_nightly  # noqa: F401
+''',
 }
 
 NAMES: dict[str, tuple[str, ...]] = {
@@ -63,6 +68,7 @@ NAMES: dict[str, tuple[str, ...]] = {
     'agent_heal': ('agent_heal',),
     'upstream_prs': ('upstream_prs',),
     'org_backup': ('run_backup', 'run_restore_verify'),
+    'influence_nightly': ('influence_nightly',),
 }
 
 
