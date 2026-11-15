@@ -402,7 +402,7 @@ function OrgCardBody({ o, p }: { o: Room; p?: Pulse }) {
 }
 
 /* the mark on the org's own orb: the first letter of its name, past a domain's tail and the generic words an org name
-   carries ("astryx-org" → "A", "umairfiaz.com" → "U", "north lab" → "NL") */
+   carries ("astryx-org" → "A", "example.org" → "E", "north lab" → "NL") */
 const GENERIC = new Set(['org', 'inc', 'co', 'ltd', 'llc', 'the', 'hq'])
 export function monogram(name: string): string {
   const w = name.replace(/\.[a-z]{2,}$/i, '').split(/[\s._-]+/).filter((x) => x && !GENERIC.has(x.toLowerCase()))

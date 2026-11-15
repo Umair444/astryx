@@ -34,7 +34,7 @@ arm('codeBlock: no language reads "code"; a hostile one is reduced', codeBlock('
 const py = 'import pandas as pd\n\ndef load(path):\n    df = pd.read_csv(path)\n    return df[df.amount > 0]\n\nprint(load("x.csv"))'
 arm('python is python', codeLang('def load(path):\n    df = pd.read_csv(path)\n    return df') === 'python')
 arm('a JSON object is json', codeLang('{\n  "a": 1,\n  "b": [2, 3]\n}') === 'json')
-arm('shell commands are bash', codeLang('cd /opt/astryx\ngit pull\nnpm run build') === 'bash')
+arm('shell commands are bash', codeLang('cd /srv/app\ngit pull\nnpm run build') === 'bash')
 arm('javascript is javascript', codeLang('const x = await fetch(url);\nconst j = await x.json();\nconsole.log(j);') === 'javascript')
 arm('a list is words, never code', codeLang('- check the za space\n- drop the May tables\n- tell Pat') === null)
 arm('sentences are words, never code', codeLang('Please check the dashboard.\nIt failed again today.\nThanks.') === null)
@@ -64,7 +64,7 @@ for (const w of ["Can you check this:\nfor each row in the table: what's missing
   'cd ops team asked\ngit the latest numbers pls', 'Hi db,\n    please run the usual\n    and send it'])
   arm(`words stay words: ${JSON.stringify(w.slice(0, 32))}`, codeLang(w) === null && !fenceBareCode(w).includes('```'), [codeLang(w), fenceBareCode(w)])
 arm('python control flow with a code head is still python', codeLang('for row in rows:\n    total += row.amount\nprint(total)') === 'python')
-arm('a real shell session is still bash', codeLang('cd /opt/astryx\ngit status\nls -la logs') === 'bash')
+arm('a real shell session is still bash', codeLang('cd /srv/app\ngit status\nls -la logs') === 'bash')
 
 // medic 12168: raw HTML in a human's words is shown, never rendered (no overlay drawn on a reader's screen)
 const spoof = humanHtml('hello <div class="fixed inset-0 z-50"><a href="https://x.example">Sign in again</a></div> there')

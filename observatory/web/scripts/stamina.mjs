@@ -3,8 +3,8 @@
    route interception), and the dev API it targets refuses wire writes anyway (ASTRYX_DEV_NO_WIRE).
 
    HOW TO RUN (against the GUARDED dev API, which serves the production build of this tree):
-     cd observatory/web && npm run build && /home/astryx/astryx-ws/.devlogs/dev.sh restart-api
-     OBS_KEY=$(grep '^OBS_KEY=' /opt/astryx/.env | cut -d= -f2-) \
+     cd observatory/web && npm run build && <dev.sh> restart-api
+     OBS_KEY=$(grep '^OBS_KEY=' <org home>/.env | cut -d= -f2-) \
        PLAYWRIGHT_CORE=<dir>/node_modules/playwright-core/index.mjs CHROMIUM=~/.local/bin/chromium \
        node scripts/stamina.mjs all --base http://127.0.0.1:8092 [--out results.json] [--minutes 20]
    Modes: offline (network drop 30–120 s, then backfill), restart (API down/up; needs --dev-sh <path to dev.sh>),

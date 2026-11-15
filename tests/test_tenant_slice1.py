@@ -150,8 +150,9 @@ SITE = re.compile(r"INSERT\s+INTO\s+([A-Za-z_][\w.]*)(?:(?!INSERT\s+INTO).){0,25
                   re.I | re.S)
 
 
-# tables of the cog STORE (src/astryx/sql/cog_schema.sql: accounts, sessions, one-time links), not an org's schema
-COG_STORE = {"users", "sessions", "links"}
+# tables of the cog STORE, not an org's schema: READ from src/astryx/sql/cog_schema.sql, so a table added there is known
+# here (a hand list missed cog_grants, then email_codes)
+COG_STORE = set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", (REPO / "src" / "astryx" / "sql" / "cog_schema.sql").read_text()))
 
 
 def sites() -> list:
@@ -194,7 +195,7 @@ def main_schema() -> str:
     old = "pre-cog-window:src/astryx/sql/schema.sql"
     r = subprocess.run(["git", "-C", str(REPO), "show", old], capture_output=True, text=True)
     if r.returncode != 0:
-        r = subprocess.run(["git", "-C", "/opt/astryx", "show", old], capture_output=True, text=True, check=True)
+        r = subprocess.run(["git", "-C", str(REPO), "show", old], capture_output=True, text=True, check=True)
     return r.stdout
 
 

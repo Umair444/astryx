@@ -6,7 +6,7 @@ or no registry, is today's behaviour exactly.
 The REAL front (uvicorn front:app) before the REAL observatory (uvicorn main:app) and the REAL canvas
 (bridges/canvas.py), each a child on a loopback socket it inherits (nothing binds 8090/8091/8092). The org's HOME is a
 fake tree (<t>/home/observatory/api/main.py: paths.estate's "a copy in a tree with no package" rule), so the
-backend's estate IS the registry's home, as /opt/astryx is on the host; canvas gets that estate the same way
+backend's estate IS the registry's home, as the checkout's own is on a one-org host; canvas gets that estate the same way
 (bridges.common.ESTATE, set before it is imported). The copy's only other changes are its two fixed upstreams
 (CANVAS_UP, EAR_UP) pointed at this oracle's canvas and a stub, so no arm ever reaches a live canvas or ear. The cog
 (its key, store schema, accounts and memberships) is made by the REAL host CLI (src/astryx/cogauth.py) on a fixture
@@ -398,8 +398,8 @@ def run(t, da, ds, procs):
         st, _, body = call(F1, "/api/whoami", headers=h)
         check(f"{who}: whoami through the root, no cookie naming an org, says owner={owner}",
               st == 200 and jget(body, "owner") is owner, f"{st} {body[:200]}")
-        st, _, _ = call(F1, "/api/presence", headers=h)
-        check(f"{who}: the owner-only /api/presence with no key is {200 if owner else 403}",
+        st, _, _ = call(F1, "/api/goals", headers=h)       # /api/presence is a member's read since 11-15 (member-live)
+        check(f"{who}: the owner-only /api/goals with no key is {200 if owner else 403}",
               st == (200 if owner else 403), f"{st}")
         st, _, body = call(F1, "/auth/me", headers=h)
         mine = jget(body, "orgs", [])

@@ -85,7 +85,7 @@ def shaping():
         row(4, "db", "lending", "t-x"),
         row(5, "lending", "db", "t-x"),
         row(6, "lending", "seed", "plan-1"),
-        row(7, "db", "owner", "chat:1-a", "Here is the drift report\n[[file:/opt/astryx/homes/db/drift.csv]] (drift)"),
+        row(7, "db", "owner", "chat:1-a", "Here is the drift report\n[[file:/srv/org/homes/db/drift.csv]] (drift)"),
         row(8, "owner", "db", "chat:1-a", None),                                  # the owner answered db: not waiting
         row(9, f"wa-{CC_PHONE}", "lending", "wa:9@g.us", None),                   # a guest: never named
         row(10, "seed", "steward", "org-news", "Shipped: the workspace", "milestone"),

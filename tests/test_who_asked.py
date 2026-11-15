@@ -121,7 +121,7 @@ def main(tmp: Path, url: str):
 
     r1 = cl.post("/api/messages", json={"to": "seed", "body": "owner via key", "thread": "chat:20990101-owner"}, headers=O)
     r2 = cl.post("/api/messages", json={"to": "seed", "body": "owner signed", "thread": "chat:20990101-owner"},
-                 headers=as_("1@fxcog", "umair"))
+                 headers=as_("1@fxcog", "fx-owner"))
     with psycopg.connect(url, autocommit=True) as c:
         rows = c.execute("SELECT body, from_agent, from_org, delivery FROM messages WHERE body LIKE 'owner %' ORDER BY id").fetchall()
     arm("W2 the owner's posts are 200", r1.status_code == 200 and r2.status_code == 200, (r1.status_code, r2.status_code))

@@ -97,7 +97,7 @@ const mcp = new Server(
       `it as code with a Copy button; unfenced, its * and indentation are read as markdown. ` +
       `WHO ASKED: a human's from= is who asked (owner, cv-<name>.<n> a signed-in member with role="member", ` +
       `cv-<name> a canvas guest, wa-<n> a WhatsApp sender); reply to THAT from= on that thread. Owner-only acts ` +
-      `(spend, the law, the personal tier, GaussDB approvals, permission verdicts) still need the owner himself. ` +
+      `(spend, the law, the personal tier, database approvals, permission verdicts) still need the owner himself. ` +
       `TEAMS: when a human tags several agents, each gets the message with team= and lead= and a [team: …] line. ` +
       `The LEAD owns the answer and sends the ONE reply to the human. Helpers work with the lead over the wire on ` +
       `the same thread: start directly on what is clearly your own domain, or ask the lead first if unsure; never ` +

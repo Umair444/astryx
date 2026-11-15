@@ -17,12 +17,12 @@
 # pulse loop and starts ONLY what is dead. Run it by hand after an outage, or wire it
 # into the container entrypoint for true auto-restart on reboot (owner action — the
 # entrypoint is container config, not something the org can set for itself):
-#     command: ["/bin/bash","-c","/opt/astryx/resume.sh; exec sleep infinity"]
+#     command: ["/bin/bash","-c","<checkout>/resume.sh; exec sleep infinity"]
 #
 # On a real systemd host this script is not needed — use `systemctl start astryx-*`
 # and `systemctl enable` the units; systemd is the supervisor there.
 set -uo pipefail
-ROOT=/opt/astryx
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)   # the checkout this script lives in
 cd "$ROOT"
 mkdir -p logs
 # Do NOT `source .env`: it holds non-shell lines (e.g. WA_CLI=docker exec ... wacli)

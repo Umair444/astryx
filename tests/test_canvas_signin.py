@@ -72,7 +72,7 @@ with TestClient(b.root, base_url="http://testserver", client=("127.0.0.1", 50000
         cl.cookies.clear()
         r = cl.get("/canvas/api/me", headers=h)
         return [r.status_code, r.json() if r.status_code == 200 else None]
-    out["owner"] = me(tok("1@" + sys.argv[7], "umair"))
+    out["owner"] = me(tok("1@" + sys.argv[7], "fx-owner"))
     out["member"] = me(tok("7@" + sys.argv[7], "alice"))
     out["admin"] = me(tok("8@" + sys.argv[7], "ada"))
     out["none"] = me({})

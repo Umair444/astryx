@@ -108,7 +108,7 @@ def main():
 
     print("role")
     arm("multi-line italic subtitle, first sentence", W.role_of("# The seed\n*The founding agent. An astryx org ships\nwith one charter.*\n\nGrants: org") == "The founding agent.")
-    arm("one-line subtitle", W.role_of("# db\n*The jazzcash database seat. A methodical mind.*\n## Identity") == "The jazzcash database seat.")
+    arm("one-line subtitle", W.role_of("# db\n*The estate's database seat. A methodical mind.*\n## Identity") == "The estate's database seat.")
     arm("no subtitle: first prose line", W.role_of("# x\n\nGrants: org\nYou watch the pulse. Always.") == "You watch the pulse.")
     arm("empty charter: empty role", W.role_of("") == "")
     arm("metadata subtitle: the title's epithet", W.role_of("# medic — the org's physician\n*resident · ships with the genome ·\nmethods self-amendable*") == "The org's physician", W.role_of("# medic — the org's physician\n*resident · ships*"))

@@ -25,16 +25,16 @@ the one shared `store` schema, named for their creator and locked by schema.sql'
 THE SUPERUSER CREDENTIAL moves to a ROOT-ONLY file (default /etc/astryx/pg-super.dsn, 0600 root; ASTRYX_PG_SUPER_FILE
 names another), and the org's .env gets `ASTRYX_DSN` with user=org_<key>. The verbs that need it run under sudo:
 
-    venv/bin/python devtools/cog_roles.py stash-super --env /opt/astryx/.env --to <file>   # copy the superuser DSN
+    venv/bin/python devtools/cog_roles.py stash-super --env <org home>/.env --to <file>   # copy the superuser DSN
     sudo install -o root -g root -m 0600 <file> /etc/astryx/pg-super.dsn && shred -u <file>
     sudo venv/bin/python devtools/cog_roles.py apply --cogstore cogstore --harden   # roles, schema.sql + sweep,
                                                                      # every org's role, the cog store, maintenance dbs
-    sudo venv/bin/python devtools/cog_roles.py rotate org_astryx --env /opt/astryx/.env   # password -> the org's DSN
-    sudo venv/bin/python devtools/cog_roles.py rotate astryx_test --env /opt/astryx/.env --key ASTRYX_TEST_DSN --db postgres
-    sudo venv/bin/python devtools/cog_roles.py rotate astryx_cog --env /home/astryx/cog/.env --db cogstore
-    venv/bin/python devtools/cog_roles.py census --env /opt/astryx/.env --env /home/astryx/cog/.env   # rc 1 if any
+    sudo venv/bin/python devtools/cog_roles.py rotate org_astryx --env <org home>/.env   # password -> the org's DSN
+    sudo venv/bin/python devtools/cog_roles.py rotate astryx_test --env <org home>/.env --key ASTRYX_TEST_DSN --db postgres
+    sudo venv/bin/python devtools/cog_roles.py rotate astryx_cog --env <cog home>/.env --db cogstore
+    venv/bin/python devtools/cog_roles.py census --env <org home>/.env --env <cog home>/.env   # rc 1 if any
                                                                      # DSN there still resolves to a superuser
-    sudo venv/bin/python devtools/cog_roles.py counts --env /opt/astryx/.env   # per tenant table: org role == super
+    sudo venv/bin/python devtools/cog_roles.py counts --env <org home>/.env   # per tenant table: org role == super
 A .env written while running as root keeps its owner and mode (the services read it as the org's user).
 
 Names are parameters (`Names(prefix)`), so the oracles (tests/test_cog_roles.py, tests/test_rls_leak.py) run this
