@@ -789,7 +789,7 @@ SESSION_SQL = """
            (SELECT coalesce(sum(coalesce((t.raw_payload->'usage'->>'billable_equiv_in')::bigint, 0)), 0) FROM turns t
              WHERE t.agent = $1 AND t.session_id = last.session_id) AS session_tokens,
            (SELECT coalesce(sum(coalesce((t.raw_payload->'usage'->>'billable_equiv_in')::bigint, 0)), 0) FROM turns t
-             WHERE t.agent = $1 AND t.started_at >= date_trunc('day', now())) AS today_tokens,
+             WHERE t.agent = $1 AND t.started_at >= $2) AS today_tokens,
            (SELECT max((t.raw_payload->'usage'->>'context')::bigint) FROM
               (SELECT raw_payload FROM turns WHERE agent = $1 ORDER BY id DESC LIMIT 200) t) AS high
       FROM last"""
@@ -817,7 +817,9 @@ async def ws_session(name: str, request: Request):
     bad = interrupt_check(name, set(_roster()))
     if bad:
         return JSONResponse({"error": bad[1]}, status_code=bad[0])
-    row = await _pool(request).fetchrow(SESSION_SQL, name)
+    from datetime import datetime
+    midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)   # the org's own day (its
+    row = await _pool(request).fetchrow(SESSION_SQL, name, midnight)                              # clock), never UTC's
 
     def feel():
         try:
