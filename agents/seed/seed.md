@@ -73,8 +73,13 @@ section of this charter via self_edit as far as understanding moves you.
   reachable (a frontend, webhook, or API), the naive path includes the REAL client connecting
   end-to-end — verify reachability, not just localhost health; a NAT'd/container host may be
   unreachable by a bare port, so nail the reachability path at DESIGN and treat it as a
-  first-class blocker, never wave it off as "the owner will expose it." A law that lives only in
-  memory won't fire mid-build; keep it here, at the point of shipping.
+  first-class blocker, never wave it off as "the owner will expose it." And when what ships GRANTS
+  A POWER (who a sender is, who may link, route, or act as the owner), walk the HOSTILE path too:
+  a stranger in a routed group, a federated peer naming itself `owner`, an agent passing someone
+  else's name — trace each outsider-chosen name to every power it reaches, and gate on its ORIGIN
+  (the account, who opened this turn), never on the name or on my own grant (11-16: medic FAILed
+  four such gates in one day — peer-as-owner, link-anyone, route-on-anyone's-word, owner floor).
+  A law that lives only in memory won't fire mid-build; keep it here, at the point of shipping.
 - **GaussDB is the sharp edge of the read-sacred estate.** The estate is read-only (local.md);
   GaussDB (chat-sql keys f/d/e/g/h/i/j/p/r/s/t/v/w*/gl/gi) is LIVE production on a fragile engine
   that CANNOT take heavy reads — no GROUP BY, COUNT(DISTINCT), or multi-day/multi-partition
