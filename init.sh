@@ -49,6 +49,13 @@ fi
 # <<< org-home guard
 
 say() { echo -e "\033[36m[astryx]\033[0m $*"; }
+# every line this script adds to the env file goes in under its .lock, the lock the one writer (astryx.config._write_env)
+# takes: an observatory write at the same moment can never lose it, or lose its own (medic 12364 R2). flock(1) is
+# util-linux; where it's absent (macOS) the append is plain, as before. stdin is the line.
+env_add() {
+  if command -v flock >/dev/null 2>&1; then ( flock 9; dd of=.env oflag=append conv=notrunc status=none ) 9>>.env.lock
+  else dd of=.env oflag=append conv=notrunc status=none; fi
+}
 die() { echo -e "\033[31m[astryx]\033[0m $*" >&2; exit 1; }
 
 # The units the owner should ENABLE: [Install]-bearing, and not declared installed-but-disabled (a remote body's growbot).
@@ -506,10 +513,10 @@ active_dep_groups() {  # which manifest groups this org needs, from the channel 
 
 org_identity() {  # federation identity: org name + Ed25519 keypair, once
   grep -q '^ASTRYX_ORG=' .env 2>/dev/null || {
-    echo "ASTRYX_ORG=$(hostname -s | tr 'A-Z' 'a-z')" >> .env
+    echo "ASTRYX_ORG=$(hostname -s | tr 'A-Z' 'a-z')" | env_add
     say "org name set to '$(hostname -s | tr 'A-Z' 'a-z')' — edit ASTRYX_ORG in .env (your domain, once you have one)"; }
   grep -q '^ASTRYX_SECRET_KEY=' .env 2>/dev/null || {
-    venv/bin/python - <<'PYEOF' >> .env
+    venv/bin/python - <<'PYEOF' | env_add
 from nacl.signing import SigningKey
 from nacl.encoding import HexEncoder
 k = SigningKey.generate()
@@ -517,7 +524,7 @@ print("ASTRYX_SECRET_KEY=" + k.encode(HexEncoder).decode())
 PYEOF
     say "org keypair generated (ASTRYX_SECRET_KEY in .env — this IS your org's identity, guard it)"; }
   grep -q '^ASTRYX_URL=' .env 2>/dev/null || {
-    echo "ASTRYX_URL=" >> .env
+    echo "ASTRYX_URL=" | env_add
     say "ASTRYX_URL empty: NAT mode (your gateway will long-poll peers). Set it when you have a public address."; }
 }
 
@@ -741,7 +748,7 @@ _act_obs() { say "building the observatory (the public portal on :8090) and canv
   (cd canvas/web && npm install --no-fund --no-audit >/dev/null && npm run build >/dev/null); }
 
 _chk_obskey() { grep -q '^OBS_KEY=' .env 2>/dev/null; }
-_act_obskey() { echo "OBS_KEY=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)" >> .env; }
+_act_obskey() { echo "OBS_KEY=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)" | env_add; }
 
 _chk_ident() { grep -q '^ASTRYX_ORG=' .env 2>/dev/null && grep -q '^ASTRYX_SECRET_KEY=' .env 2>/dev/null \
   && grep -q '^ASTRYX_URL=' .env 2>/dev/null; }
@@ -1487,9 +1494,9 @@ fi
 if [ "${1:-}" = "whatsapp" ] || [ "${1:-}" = "channels" ]; then
   command -v docker >/dev/null || die "whatsapp surface needs docker (wacli container)"
   grep -q '^WA_WEBHOOK_SECRET=' .env 2>/dev/null || {
-    echo "WA_WEBHOOK_SECRET=$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> .env
+    echo "WA_WEBHOOK_SECRET=$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" | env_add
     say "generated WA_WEBHOOK_SECRET in .env"; }
-  grep -q '^WA_CLI=' .env 2>/dev/null || echo "WA_CLI=docker exec wacli-sync wacli" >> .env
+  grep -q '^WA_CLI=' .env 2>/dev/null || echo "WA_CLI=docker exec wacli-sync wacli" | env_add
   [ -f bridges/routes.json ] || { cp bridges/routes.example.json bridges/routes.json
     say "created bridges/routes.json — EDIT IT: your chat JIDs and trusted senders"; }
   units
@@ -1502,7 +1509,7 @@ if [ "${1:-}" = "whatsapp" ] || [ "${1:-}" = "channels" ]; then
   say "  docker run -d --name wacli-sync --restart unless-stopped -v $PWD/wacli-data:/data astryx/wacli \\"
   say "    sync --follow --download-media --webhook http://$(_docker_host_ip):8477/hook \\"
   say "    --webhook-secret \"\$(sed -n 's/^WA_WEBHOOK_SECRET=//p' '$PWD/.env')\" --webhook-allow-private"
-  grep -q '^WA_DATA_HOST=' .env || echo "WA_DATA_HOST=$PWD/wacli-data" >> .env
+  grep -q '^WA_DATA_HOST=' .env || echo "WA_DATA_HOST=$PWD/wacli-data" | env_add
   say "then install the bridge (cp to /etc, not symlink — /home may be a separate mount):"
   say "  sudo ./scripts/deploy.sh units && sudo systemctl enable --now astryx-whatsapp.service"
   exit 0

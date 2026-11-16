@@ -2,6 +2,7 @@ venv/
 channel/node_modules
 homes/
 .env
+.env.lock
 local.md
 PLAN.md
 relations.md

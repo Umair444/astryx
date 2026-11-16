@@ -75,7 +75,8 @@ def main():
             arm(f"set_env refuses {bad!r}", False)
         except ValueError:
             arm(f"set_env refuses {bad!r}", g.read_text() == "A=1\nB=2\n")
-    arm("no temp files are left beside .env", sorted(p.name for p in t.iterdir()) == [".env", "nonl"],
+    # the lock files are the writer's own, kept (medic 12364 R2: one exclusive lock per env file); a temp file is not
+    arm("no temp files are left beside .env", sorted(p.name for p in t.iterdir() if not p.name.endswith(".lock")) == [".env", "nonl"],
         str(sorted(p.name for p in t.iterdir())))
     # ENVREAD (plan-10224, seed #61855): decoded per line; a line that is not UTF-8 is skipped LOUDLY, never its value
     buf = io.StringIO()

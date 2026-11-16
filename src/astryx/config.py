@@ -210,8 +210,22 @@ def unset_env(key: str, path: Path | None = None) -> bool:
 
 
 def _write_env(key: str, new: str | None, path: Path | None) -> bool:
-    """The ONE .env writer: `new` replaces the key's first line (or is appended), or None removes the key."""
+    """The ONE .env writer: `new` replaces the key's first line (or is appended), or None removes the key. Under an
+    exclusive lock on <.env>.lock (init.sh's appends take the same lock), so two writers never lose each other's key;
+    the new file is fsynced before it replaces the old and the directory after, so a crash leaves one whole .env, old
+    or new, never a torn one (medic 12364 R2: a torn .env takes down the pulse and every bridge)."""
+    import fcntl
     p = Path(path) if path else env_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    lock = os.open(p.with_name(p.name + ".lock"), os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _write_env_locked(p, key, new)
+    finally:
+        os.close(lock)
+
+
+def _write_env_locked(p: Path, key: str, new: str | None) -> bool:
     try:
         text = p.read_text()
     except FileNotFoundError:
@@ -234,13 +248,19 @@ def _write_env(key: str, new: str | None, path: Path | None) -> bool:
         if lines and not lines[-1].endswith("\n"):
             lines[-1] += "\n"
         lines.append(new)
-    p.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".env.", dir=p.parent)
     try:
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write("".join(lines))
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, p)
+        dfd = os.open(p.parent, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
     except BaseException:
         try:
             os.unlink(tmp)
@@ -276,8 +296,10 @@ def _main(argv) -> int:
             print(get(argv[1], "", f, env_first="--file" not in argv))
         elif argv[:1] == ["estate"]:
             print(paths.estate())
+        elif argv[:1] == ["set"] and len(argv) == 2:
+            set_env(argv[1], sys.stdin.read().rstrip("\n"), f)   # the value on stdin: argv is visible to every ps
         else:
-            print("usage: python -m astryx.config dsn [--file] | get KEY [--file] | estate", file=sys.stderr)
+            print("usage: python -m astryx.config dsn [--file] | get KEY [--file] | estate | set KEY  (value on stdin)", file=sys.stderr)
             return 2
     except (LookupError, RuntimeError) as e:
         print(f"astryx.config: {e}", file=sys.stderr)
