@@ -242,6 +242,18 @@ arm("a label that can't be read is a labelled session (fail closed)", W2._labell
 W2.ESTATE = None
 arm("…and so is an unbound estate", W2._labelled("db") is True)
 
+print("the session card (general commands)")
+from datetime import datetime, timezone  # noqa: E402
+row = {"model": "claude-opus-5", "context": 412_000, "high": 450_000, "ended_at": datetime(2026, 11, 16, tzinfo=timezone.utc),
+       "session_turns": 7, "session_tokens": 1_234_567, "today_tokens": 2_000_000}
+v = W.session_view(row, {"known": True, "word": "rested", "fact": "x", "windows": {"h5": {"used": 40}}, "secret": "no"})
+arm("session: model, context against a proven 1M window, the session's and today's use, the org's energy",
+    v["known"] and v["window"] == 1_000_000 and v["window_proven"] and v["context"] == 412_000 and v["session_tokens"] == 1_234_567
+    and v["energy"]["windows"]["h5"]["used"] == 40 and "secret" not in v["energy"], v)
+v2 = W.session_view({**row, "model": "claude-sonnet-x", "context": 50_000, "high": 90_000}, None)
+arm("session: an unproven window is 200k, said as assumed; no energy reading is an empty one", v2["window"] == 200_000 and not v2["window_proven"] and v2["energy"]["known"] is None, v2)
+arm("session: no turn yet is unknown", W.session_view(None, None) == {"known": False})
+
 print("gate")
 main_src = (REPO / "observatory" / "api" / "main.py").read_text()
 arm("the path is not in main.PUBLIC", "/terminal" not in main_src.split("PUBLIC", 1)[1].split("\n\n", 1)[0] if "PUBLIC" in main_src else False)

@@ -65,6 +65,7 @@ const TalkMode = lazy(() => import('./talk/TalkMode'))
 import { canvasIdOf, useCanvases } from './canvas/api'
 import { interruptAgent, loadHandoffs, useTabTitle, useUnread, type Handoff } from './live'
 import TerminalPeek, { type TermRun } from './thread/TerminalPeek'
+import SessionCard, { type SessionAsk } from './thread/SessionCard'
 import ListSeam, { useListWidth } from './shell/ListSeam'
 import MoreMenu from './shell/MoreMenu'
 import { NotifyPrompt, useReplyNotifications } from './shell/notify'
@@ -153,7 +154,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const [talk, setTalk] = useState<{ agent: string; thread: string } | null>(null)
   const composer = useRef<ComposerHandle>(null)
   const [term, setTerm] = useState<{ agent: string; run: TermRun | null } | null>(null)   // the agent's terminal, open above the box
-  useEffect(() => setTerm(null), [thread])                     // it belongs to the chat it was opened in (and a command is typed once)
+  useEffect(() => { setTerm(null); setCard(null) }, [thread])                     // it belongs to the chat it was opened in (and a command is typed once)
   const current = view === 'thread' ? thread ?? '' : ''
   const panel = usePanel(view === 'thread' ? current : thread ?? '')    // the library and a project keep their own tabs
   const go = useCallback((t: string | null) => { setDrawer(false); nav(t) }, [nav])
@@ -496,21 +497,29 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     if (!termAgent) return 'Open a chat with an agent first.'
     setTerm({ agent: termAgent, run: text ? { id: Date.now(), text } : null })
   }
-  // the server's own list (workspace.py TERMINAL_BUILTIN) in words; what changes an agent's guards is not typed from here
-  const TERM: { key: string; hint: string; arg?: string }[] = [
-    { key: 'terminal', hint: 'see its screen, type its commands, answer what it asks' },
-    { key: 'compact', hint: 'summarise its context to free room' },
-    { key: 'context', hint: 'what is filling its context' },
-    { key: 'usage', hint: 'the plan’s limits, as its session sees them' },
-    { key: 'cost', hint: 'what its session has used' },
+  // THREE KINDS (owner 11-15, chat-terminal/DESIGN.md): the GENERAL commands answer from the org's records as a card;
+  // the session ACTIONS run in its terminal in the background, the card saying when they're done; /terminal is the
+  // screen itself. All act on this chat's lead. The server's list (workspace.py TERMINAL_BUILTIN) decides what types
+  const [card, setCard] = useState<SessionAsk | null>(null)
+  const GENERAL: { key: 'usage' | 'cost' | 'status' | 'context'; hint: string }[] = [
+    { key: 'usage', hint: 'the limits and when they reset' },
+    { key: 'cost', hint: 'what its session and today have used' },
+    { key: 'status', hint: 'its model, context, use and limits' },
+    { key: 'context', hint: 'how full its context is' },
+  ]
+  const ACTIONS: { key: string; hint: string; arg?: string }[] = [
+    { key: 'compact', hint: 'summarise its context to free room, in the background' },
     { key: 'model', hint: 'change the model it runs on', arg: 'name' },
-    { key: 'status', hint: 'its version, model and account' },
     { key: 'clear', hint: 'wipe its conversation and start it fresh (asks first)' },
   ]
-  const termCommands: Command[] = termAgent ? TERM.map((c) => ({
-    key: c.key, label: c.key, hint: c.hint, arg: c.arg, group: `${displayName(termAgent)}’s terminal`,
-    run: (arg: string) => typeIn(c.key === 'terminal' ? undefined : `/${c.key}${arg ? ' ' + arg : ''}`),
-  })) : []
+  const termCommands: Command[] = termAgent ? [
+    ...GENERAL.map((c) => ({ key: c.key, label: c.key, hint: c.hint, group: 'General',
+      run: () => { setTerm(null); setCard({ id: Date.now(), agent: termAgent, kind: 'info', what: c.key }) } })),
+    ...ACTIONS.map((c) => ({ key: c.key, label: c.key, hint: c.hint, arg: c.arg, group: `${displayName(termAgent)}’s session`,
+      run: (arg: string) => { setTerm(null); setCard({ id: Date.now(), agent: termAgent, kind: 'action', text: `/${c.key}${arg ? ' ' + arg : ''}` }) } })),
+    { key: 'terminal', label: 'terminal', hint: 'see its screen, type its commands, answer what it asks', group: `${displayName(termAgent)}’s session`,
+      run: () => { setCard(null); return typeIn() } },
+  ] : []
   const commands: Command[] = [
     { key: 'new', label: 'New chat', hint: 'start an empty chat', run: newChat },
     { key: 'project', label: 'Make this a project', hint: 'name it; its agents work it together', run: () => { setAsking('project') } },
@@ -842,6 +851,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         </div>
         {note && <div className="mx-auto max-w-[760px] w-full px-6 pb-1 text-[12.5px] text-ink-dim cursor-pointer" role="status" onClick={() => setNote('')}>{note}</div>}
         {view === 'thread' && !home && <NotifyPrompt waiting={pending.length > 0 || outbox.some((o) => o.thread === current)} />}
+        {view === 'thread' && !home && card && termAgent === card.agent && <SessionCard ask={card} onClose={() => { setCard(null); composer.current?.focus() }} />}
         {view === 'thread' && !home && term && termAgent === term.agent && <TerminalPeek agent={term.agent} run={term.run} onClose={() => { setTerm(null); composer.current?.focus() }} />}
         {view === 'thread' && !home && box(false)}
 
