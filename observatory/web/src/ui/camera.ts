@@ -32,6 +32,8 @@ export function useCamera({ box, paint, local, min = 0.05, max = 20, initial = D
   paintRef.current = paint
   const localRef = useRef(local)
   localRef.current = local
+  const limits = useRef({ min, max })               // read at gesture time: a listener bound once never drifts
+  limits.current = { min, max }
   const drag = useRef<{ pts: Map<number, Pt>; moved: number; pinch0?: { d: number; k: number } }>({ pts: new Map(), moved: 0 })
 
   const at = (clientX: number, clientY: number): Pt | null => {
@@ -54,7 +56,7 @@ export function useCamera({ box, paint, local, min = 0.05, max = 20, initial = D
     commit.current = window.setTimeout(() => setCamState(n), glide ? 560 : 140)
   }
   const zoomAt = (k: number, p: Pt) => setCam((c) => {
-    const nk = Math.min(max, Math.max(min, k))
+    const nk = Math.min(limits.current.max, Math.max(limits.current.min, k))
     return { k: nk, x: p.x - (p.x - c.x) * (nk / c.k), y: p.y - (p.y - c.y) * (nk / c.k) }
   })
   // the + and − buttons: about the box's centre
