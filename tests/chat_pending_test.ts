@@ -81,12 +81,14 @@ arm('…not while it has live work', !pendingOf(['seed'], asked, { seed: [st(1, 
 
 // STOPPED (owner 11-16: "users can't wait forever"): its newest step is 'stopped' (StopFailure), so the line says why
 const lim = (turn: number[]) => ({ ...st(2, '2026-11-15T12:01:00Z', turn), kind: 'stopped', content: "You've hit your session limit · resets 2:50pm" })
-const s1 = pendingOf(['seed'], asked, { seed: [st(1, '2026-11-15T12:00:30Z', [40]), lim([40])] }, 'owner')[0]
+const T = Date.parse('2026-11-15T12:10:00Z')
+const s1 = pendingOf(['seed'], asked, { seed: [st(1, '2026-11-15T12:00:30Z', [40]), lim([40])] }, 'owner', {}, T)[0]
 arm('stopped on this ask\'s own turn: the line carries the limit, in its words', s1?.stopped === "You've hit your session limit · resets 2:50pm", s1)
-const s2 = pendingOf(['seed'], asked, { seed: [lim([7])] }, 'owner')[0]
+const s2 = pendingOf(['seed'], asked, { seed: [lim([7])] }, 'owner', {}, T)[0]
 arm('…stopped on ANOTHER conversation\'s turn: still stopped here (it can take no turn), never "busy"', s2?.stopped !== undefined && !s2?.busy, s2)
 const s3 = pendingOf(['seed'], asked, { seed: [st(1, '2026-11-15T12:00:30Z', [40]), lim([40]), st(3, '2026-11-15T12:51:00Z', [40])] }, 'owner')[0]
 arm('…and once its work resumes (a newer step), it is working again', !!s3 && !s3.stopped, s3)
+arm('…a stop older than the longest window (5 h) is no claim about now', !pendingOf(['seed'], asked, { seed: [lim([40])] }, 'owner', {}, T + 6 * 3600_000)[0]?.stopped)
 arm('…not stopped when nothing was asked and no turn serves this thread', pendingOf(['seed'], [], { seed: [lim([7])] }, 'owner').length === 0)
 
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')

@@ -42,7 +42,9 @@ export function pendingOf(agents: string[], rows: Msg[], live: Record<string, St
       ? Math.max(0, ...rows.filter((m) => m.from === ask.lead && !!m.to && isHuman(m.to)).map((m) => m.id)) : 0
     const asked = !!ask && ask.id > saidAt && ask.id > leadAt
     const newest = lane[lane.length - 1]
-    const stopped = newest?.kind === 'stopped' ? newest.content || 'stopped' : undefined
+    // Claude Code resumes a limited turn by itself at the reset ("Your claude.ai usage limit has reset. Continue …"),
+    // and its steps then clear this; a stop older than the longest window (5 h) is no claim about now (medic 12566)
+    const stopped = newest?.kind === 'stopped' && now - Date.parse(newest.ts) < 5 * 3600_000 ? newest.content || 'stopped' : undefined
     // (b) the newest step of a turn this thread opened, and nothing after it from a turn another thread opened
     let k = -1
     for (let i = lane.length - 1; i >= 0; i--) { if (serves(lane[i])) { k = i; break } if (elsewhere(lane[i])) break }
