@@ -21,6 +21,7 @@ import { type AvatarStatus } from './Avatar'
 import AgentFace from './AgentFace'
 import RuntimeEditor from './RuntimeEditor'
 import { Action, Empty, FaceStack, LiveDot, Panel, SectionHead, Skeleton, Spark, ViewHeader, useNow } from '../ui/kit'
+import Vault from './Vault'
 import { moodOf, nowLine, type Mood } from '../ui/life'
 import { canvasBase } from '../cog'
 import { CogPending, NewOrgButton } from './CogNewOrg'
@@ -678,6 +679,7 @@ export default function PeopleView() {
         />
 
         {who.owner && <CogPending tick={orgTick} />}
+        {who.owner && <Vault />}
 
         {!roster.length && (
           agents.length === 0

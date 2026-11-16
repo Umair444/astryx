@@ -37,3 +37,106 @@ def env_key(name: str, env: dict, vault: dict | None = None) -> str:
     if key in env and key not in held:
         raise Refused(f"{key} is already in .env and isn't one of the vault's: choose another name")
     return key
+
+
+# ── the vault itself ──────────────────────────────────────────────────────────────────────────────────────────────────
+# credentials.json (gitignored, beside runtime.json): {"credentials": {name: entry}}. An entry NAMES a credential and
+# says how an agent uses it; its value is only ever in .env under env_key(name). Two kinds:
+#   login  a Claude subscription, signed in with `claude setup-token`: the agent runs on that account (its own limits)
+#   key    an API key: Anthropic's own (no base_url), or any endpoint that speaks Anthropic's API (base_url: a gateway,
+#          a proxy, another provider); METERED: connecting an agent to one is the owner's signed spend (local.md), so
+#          a key carries a daily token cap (medic 12364 R4)
+# An agent's runtime.json entry names its credential ({"credential": name}); astryx.core.runtime_env turns it into
+# that agent's environment at spawn.
+import json  # noqa: E402
+import os  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+KINDS = ("login", "key")
+SHAPE = {"login": re.compile(r"sk-ant-oat\d{2}-[A-Za-z0-9_-]{20,}"),
+         "anthropic-key": re.compile(r"sk-ant-api\d{2}-[A-Za-z0-9_-]{20,}"),
+         "key": re.compile(r"[A-Za-z0-9._~+/=:-]{16,512}")}        # another provider's key: one printable token
+URL = re.compile(r"https://[A-Za-z0-9.-]+(?::\d{1,5})?(?:/[A-Za-z0-9._~/-]*)?")
+TIERS = ("opus", "sonnet", "haiku")
+
+
+def path(estate: Path) -> Path:
+    return Path(estate) / "credentials.json"
+
+
+def load(estate: Path) -> dict:
+    """{name: entry}; an absent or unreadable file is an empty vault (never a crash at spawn)."""
+    try:
+        d = json.loads(path(estate).read_text())
+        c = d.get("credentials") if isinstance(d, dict) else None
+        return {k: v for k, v in (c or {}).items() if isinstance(v, dict) and v.get("kind") in KINDS}
+    except (OSError, ValueError):
+        return {}
+
+
+def save(estate: Path, entries: dict) -> None:
+    """Atomic, 0600 (it names keys, never values)."""
+    import tempfile
+    p = path(estate)
+    fd, tmp = tempfile.mkstemp(prefix=".credentials.", dir=p.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump({"credentials": entries}, f, indent=1, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def entry(name: str, kind: str, base_url: str = "", models: dict | None = None, cap: int | None = None) -> dict:
+    """A checked entry (Refused names what's wrong). A key needs a cap; a login has no endpoint."""
+    slug(name)
+    if kind not in KINDS:
+        raise Refused("a credential is a login (a Claude subscription) or a key (an API key)")
+    base_url = (base_url or "").strip()
+    if kind == "login" and base_url:
+        raise Refused("a login is a Claude subscription: it has no endpoint of its own")
+    if base_url and not URL.fullmatch(base_url):
+        raise Refused("the endpoint is an https:// address")
+    if kind == "key" and not (isinstance(cap, int) and 0 < cap <= 10**10):
+        raise Refused("an API key spends money: give it a daily cap in tokens")
+    m = {t: str(v).strip() for t, v in (models or {}).items() if t in TIERS and str(v or "").strip()}
+    if any(not re.fullmatch(r"[A-Za-z0-9._:/@-]{1,80}", v) for v in m.values()):
+        raise Refused("a model name is letters, digits and . _ : / @ -")
+    return {"kind": kind, "base_url": base_url, "models": m, **({"cap_tokens_day": cap} if kind == "key" else {})}
+
+
+def value_ok(kind: str, base_url: str, value: str) -> bool:
+    """The WHOLE value has its kind's shape (a pasted line break is no part of it)."""
+    shape = SHAPE["login"] if kind == "login" else SHAPE["key"] if base_url else SHAPE["anthropic-key"]
+    return bool(shape.fullmatch(value or ""))
+
+
+def pairs(name: str, e: dict, env: dict) -> list[tuple[str, str]] | None:
+    """The environment an agent on credential `name` gets, or None when its value isn't in .env (the caller falls
+    back to the org's default, loudly)."""
+    v = env.get(PREFIX + slug(name), "")
+    if not v:
+        return None
+    if e["kind"] == "login":
+        out = [("CLAUDE_CODE_OAUTH_TOKEN", v)]
+    elif e.get("base_url"):
+        out = [("ANTHROPIC_BASE_URL", e["base_url"]), ("ANTHROPIC_AUTH_TOKEN", v)]
+    else:
+        out = [("ANTHROPIC_API_KEY", v)]
+    return out + [(f"ANTHROPIC_DEFAULT_{t.upper()}_MODEL", m) for t, m in sorted((e.get("models") or {}).items())]
+
+
+def used_by(runtime: dict) -> dict[str, list[str]]:
+    """{credential: [agents]} from runtime.json's entries."""
+    out: dict[str, list[str]] = {}
+    for agent, ent in (runtime or {}).items():
+        if isinstance(ent, dict) and ent.get("credential"):
+            out.setdefault(ent["credential"], []).append(agent)
+    return {k: sorted(v) for k, v in out.items()}

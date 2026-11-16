@@ -194,6 +194,28 @@ def fragment(agent: str) -> str:
 
 def _pairs(agent: str, entry: dict, env: dict) -> str:
     pairs: list[tuple[str, str]] = []
+    # A NAMED CREDENTIAL (astryx.core.vault): the agent runs on that login or key instead of the org's. Its value missing
+    # from .env falls back to the org's default, loudly, never to a half-configured endpoint
+    cred = entry.get("credential")
+    if cred:
+        from astryx.core import vault
+        ent = vault.load(paths.estate(__file__)).get(cred)
+        got = vault.pairs(cred, ent, env) if ent else None
+        if got is None:
+            print(f"runtime_env: agent '{agent}': credential '{cred}' is not in the vault or has no value in .env — "
+                  "falling back to the org's login", file=sys.stderr)
+            entry = {k: v for k, v in entry.items() if k != "credential"}
+        else:
+            pairs += got
+            entry = {k: v for k, v in entry.items() if k not in ("credential", "base_url", "token_env")}
+            if entry.get("effort"):
+                pairs.append(("CLAUDE_CODE_EFFORT_LEVEL", str(entry["effort"])))
+            seen = {k for k, _ in pairs}
+            for tier, key in (("opus", "ANTHROPIC_DEFAULT_OPUS_MODEL"), ("sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL"),
+                              ("haiku", "ANTHROPIC_DEFAULT_HAIKU_MODEL")):
+                if (entry.get("models") or {}).get(tier):          # the agent's own model choice wins over the credential's
+                    pairs = [(k, v) for k, v in pairs if k != key] + [(key, str(entry["models"][tier]))]
+            return "".join(f", {json.dumps(k)}: {json.dumps(v)}" for k, v in pairs)
     base_url = entry.get("base_url")
     if not base_url:
         login = org_login(env)                   # beneath the entry: the org's own credential, by NAME from its .env

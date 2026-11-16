@@ -459,6 +459,9 @@ app.include_router(_calc.router)
 from observatory.api import mind as _mindapi  # noqa: E402 — the org's mind: itches, drives, insights (read-only)
 _mindapi.bind(owner=lambda r: owner_call(r))
 app.include_router(_mindapi.router)
+from observatory.api import vault as _vaultapi  # noqa: E402 — the org's named logins and keys (owner-only)
+_vaultapi.bind(owner_call, ESTATE)
+app.include_router(_vaultapi.router)
 
 # feat/chat-workspace: the workspace's unified conversation list (chat:, obs:, cv:) and its pins/titles; owner-only by
 # omission from PUBLIC, like /api/chat
@@ -1278,6 +1281,8 @@ class RuntimeEdit(BaseModel):
     token_env: str | None = None
     models: dict | None = None          # {opus, sonnet, haiku}
     effort: str | None = None
+    credential: str | None = None      # a name in the vault (src/astryx/core/vault.py): the agent runs on it
+    confirm_billing: bool = False      # connecting to an API KEY is metered spend: the owner's signature (local.md)
 
 
 @app.get("/api/agents/{name}/runtime")
@@ -1297,6 +1302,7 @@ async def agent_runtime(name: str):
             "token_present": bool(token_env) and token_env in env_names,
             "models": entry.get("models") or {},
             "effort": entry.get("effort") or "",
+            "credential": entry.get("credential") or "",
             "env_keys": env_names,
             "configured": bool(entry),
             "org_login": _org_login(),
@@ -1338,6 +1344,18 @@ async def agent_runtime_put(name: str, edit: RuntimeEdit, request: Request):
         entry["models"] = models
     if edit.effort and edit.effort.strip():
         entry["effort"] = edit.effort.strip()
+    cred = (edit.credential or "").strip()
+    if cred:
+        from astryx.core import vault as _v
+        ent = _v.load(ESTATE).get(cred)
+        if not ent:
+            return Response("no such credential in the vault", status_code=400)
+        if ent["kind"] == "key" and not edit.confirm_billing:
+            return JSONResponse({"needs_billing": True, "error": f"{cred} is an API key: every token {f.stem} spends on "
+                                 f"it is billed (up to {ent.get('cap_tokens_day', 0):,} tokens a day). Confirm to connect it."},
+                                status_code=409)
+        entry["credential"] = cred
+        entry.pop("base_url", None); entry.pop("token_env", None)    # a credential is the whole connection
     # a base_url with no token_env is a half-config that would fail-safe to default at spawn —
     # refuse it here so the owner gets an immediate honest error, not a silent fallback.
     if entry.get("base_url") and not entry.get("token_env"):
@@ -1348,6 +1366,9 @@ async def agent_runtime_put(name: str, edit: RuntimeEdit, request: Request):
     else:
         data.pop(f.stem, None)          # all-empty → this agent reverts to the org default
     atomic_write(RUNTIME_PATH, json.dumps(data, indent=2) + "\n")
+    if cred and pool is not None:                 # who connected which agent to what: one row on its own log
+        await pool.execute("INSERT INTO steps (agent, kind, content) VALUES ($1, 'runtime', $2)",
+                           f.stem, f"owner connected it to {cred}")
     live = f.stem in tmux_alive()
     return {"ok": True, "name": f.stem, "configured": bool(entry), "live": live,
             "note": ("saved — respawn the agent to apply" if live

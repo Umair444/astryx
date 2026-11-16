@@ -321,6 +321,9 @@ if [ "$LRC" -ne 0 ] || [ "$LBL" != "[]" ]; then
   [ -z "$RENDER" ] && install -d -m 700 "$ORGH/tier/memory/$AGENT"
 fi
 
+# settings.json carries the agent's credential VALUE (runtime_env's splice: its login or key), so it is the agent's own,
+# 0600, BEFORE a byte of it is written (medic 12364 R1): a shared 0664 file would hand every reader of the home its key
+( umask 077; : > "$HOME_D/.claude/settings.json" ) && chmod 600 "$HOME_D/.claude/settings.json"
 cat > "$HOME_D/.claude/settings.json" <<EOF
 {
   "env": { "ASTRYX_AGENT": "$AGENT", "ASTRYX_HOME": "$ORGH"$TENV$RENV },

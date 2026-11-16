@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import OrgLogin from './OrgLogin'
+import { credWord, useVault } from './Vault'
 import { api, apiSend, displayName } from '../api'
 
 /* Owner-only per-agent provider/auth, SHARED by the agent side-drawer and the Agents-tab
@@ -15,6 +15,7 @@ export type RuntimeCfg = {
   token_present: boolean
   models: { opus?: string; sonnet?: string; haiku?: string }
   effort: string
+  credential: string
   env_keys: string[]
   configured: boolean
   // the ORG's login beneath this entry (plan-10224 ORGAUTH): the .env key NAME, never its value
@@ -36,6 +37,9 @@ export default function RuntimeEditor({ name, live }: { name: string; live: bool
   const [sonnet, setSonnet] = useState('')
   const [haiku, setHaiku] = useState('')
   const [effort, setEffort] = useState('')
+  const [cred, setCred] = useState('')
+  const [billing, setBilling] = useState<string | null>(null)   // an API key asks before it bills: the server's words
+  const { creds } = useVault()
   const [saving, setSaving] = useState(false)
   const [note, setNote] = useState<string | null>(null)
 
@@ -49,6 +53,7 @@ export default function RuntimeEditor({ name, live }: { name: string; live: bool
         setSonnet(c.models?.sonnet || '')
         setHaiku(c.models?.haiku || '')
         setEffort(c.effort || '')
+        setCred(c.credential || '')
       })
       .catch(() => setCfg(null))
   }
@@ -65,27 +70,34 @@ export default function RuntimeEditor({ name, live }: { name: string; live: bool
       opus !== (cfg.models?.opus || '') ||
       sonnet !== (cfg.models?.sonnet || '') ||
       haiku !== (cfg.models?.haiku || '') ||
-      effort !== (cfg.effort || ''))
+      effort !== (cfg.effort || '') ||
+      cred !== (cfg.credential || ''))
 
-  async function save() {
+  async function save(confirmBilling = false) {
     setSaving(true)
     setNote(null)
     try {
       const r = await apiSend<{ note: string }>('PUT', `/agents/${encodeURIComponent(name)}/runtime`, {
-        base_url: baseUrl,
-        token_env: tokenEnv,
+        base_url: cred ? '' : baseUrl,
+        token_env: cred ? '' : tokenEnv,
         models: { opus, sonnet, haiku },
         effort,
+        credential: cred || null,
+        confirm_billing: confirmBilling,
       })
+      setBilling(null)
       setNote(r.note)
       load()
     } catch (e) {
-      setNote('save failed — ' + (e as Error).message)
+      const d = (e as { data?: { needs_billing?: boolean; error?: string } }).data
+      if (d?.needs_billing) setBilling(d.error ?? 'This is an API key: its tokens are billed.')
+      else setNote('save failed — ' + (e as Error).message)
     }
     setSaving(false)
   }
 
   function clearAll() {
+    setCred('')
     setBaseUrl('')
     setTokenEnv('')
     setOpus('')
@@ -126,10 +138,20 @@ export default function RuntimeEditor({ name, live }: { name: string; live: bool
             <span className="text-bad">cli {cfg.org_login.cli} not yet supported: spawn refuses</span>
           )}
           {cfg.org_login.note && <div className="text-bad">{cfg.org_login.note}</div>}
-          {cfg.org_login.supported && <OrgLogin onChanged={load} />}
         </div>
       )}
 
+      <div>
+        <div className={labelCls}>runs on</div>
+        <select value={cred} onChange={(e) => { setCred(e.currentTarget.value); setBilling(null) }} className={inputCls} aria-label="the login or key it runs on">
+          <option value="">the org's default</option>
+          {(creds ?? []).map((c) => <option key={c.name} value={c.name}>{c.name} · {credWord(c)}{c.has_value ? '' : ' (no value)'}</option>)}
+        </select>
+        <div className="text-[11px] text-ink-mute mt-1">Add logins and keys under Logins and keys on the Agents page.</div>
+      </div>
+
+      {!cred && (cfg.base_url || cfg.token_env) && (<>
+      <div className="text-[11px] text-warn">This agent still names a provider by hand. Add it under Logins and keys, then pick it above.</div>
       <div>
         <div className={labelCls}>base url (custom provider — blank = Anthropic default)</div>
         <input
@@ -167,6 +189,7 @@ export default function RuntimeEditor({ name, live }: { name: string; live: bool
           ))}
         </datalist>
       </div>
+      </>)}
 
       <div className="grid grid-cols-3 gap-2">
         {(
@@ -199,9 +222,17 @@ export default function RuntimeEditor({ name, live }: { name: string; live: bool
         </select>
       </div>
 
+      {billing && (
+        <div className="flex flex-wrap items-center gap-2 text-[12px] text-ink rounded-md border border-warn/40 bg-warn/10 px-2.5 py-1.5" role="alert">
+          <span className="flex-1 min-w-[200px]">{billing}</span>
+          <button onClick={() => void save(true)} disabled={saving} className="px-2.5 py-1 rounded-md text-xs border border-line hover:border-line-2">Connect it</button>
+          <button onClick={() => setBilling(null)} className="text-[11px] text-ink-mute hover:text-ink">Cancel</button>
+        </div>
+      )}
+
       <div className="flex items-center gap-3">
         <button
-          onClick={save}
+          onClick={() => void save()}
           disabled={!dirty || saving}
           className="px-3 py-1 rounded-md text-xs bg-cyan/15 text-cyan-soft border border-cyan/30 hover:bg-cyan/25 disabled:opacity-40 transition-colors duration-75"
         >
