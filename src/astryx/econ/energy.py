@@ -158,14 +158,19 @@ def word(tired: float) -> str:
     return "rested" if tired < 0.35 else "steady" if tired < 0.7 else "tiring" if tired < 1.0 else "tired"
 
 
-def feel(c, now: datetime | None = None, relearn_after_h: float | None = 1.0) -> dict:
+def feel(c, now: datetime | None = None, relearn_after_h: float | None = 1.0, credential: str | None = None) -> dict:
     """How the org feels now: {known, tired, word, binding, windows, say, think_pct}. `relearn_after_h=None` never
-    learns (the per-prompt reader); otherwise a kept row older than that is learned again first."""
+    learns (the per-prompt reader); otherwise a kept row older than that is learned again first. `credential`: how a
+    vault LOGIN feels, from its own reading (the pace is the org's: its agents' hours look like the org's day)."""
     now = now or datetime.now(timezone.utc)
     p = pace(c)
     if relearn_after_h is not None and (p is None or (now - _when(p["at"])).total_seconds() > relearn_after_h * 3600):
         p = learn(c)
-    g = _row(c, "SELECT five_hour_pct, seven_day_pct, five_hour_reset, seven_day_reset, age_seconds FROM current_usage")
+    # a vault login's own reading (its limits are its own, owner 11-16), else the org's: current_usage
+    g = _row(c, "SELECT five_hour_pct, seven_day_pct, five_hour_reset, seven_day_reset, "
+                "extract(epoch FROM now() - fetched_at)::float FROM usage_readings WHERE state = 'fresh' AND credential = %s "
+                "ORDER BY fetched_at DESC LIMIT 1", (credential,)) if credential else \
+        _row(c, "SELECT five_hour_pct, seven_day_pct, five_hour_reset, seven_day_reset, age_seconds FROM current_usage")
     if g and g[4] is not None and float(g[4]) > STALE_H * 3600:   # an old reading says nothing of now
         g = None
     if not p or not g:

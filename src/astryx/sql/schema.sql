@@ -228,7 +228,8 @@ CREATE VIEW usage_readings WITH (security_invoker = true) AS
          (usage_snapshot #>> '{data,seven_day_opus_utilization}')::numeric AS seven_day_opus_pct,
          usage_snapshot #>> '{data,five_hour_resets_at}'        AS five_hour_reset,
          usage_snapshot #>> '{data,seven_day_resets_at}'        AS seven_day_reset,
-         usage_snapshot                                         AS snapshot
+         usage_snapshot                                         AS snapshot,
+         usage_snapshot ->> 'credential'                        AS credential   -- the vault login it measured (NULL: the org's)
     FROM turns WHERE usage_snapshot IS NOT NULL
   UNION ALL
   SELECT (snapshot ->> 'fetched_at')::timestamptz,
@@ -241,7 +242,8 @@ CREATE VIEW usage_readings WITH (security_invoker = true) AS
          (snapshot #>> '{data,seven_day_opus_utilization}')::numeric,
          snapshot #>> '{data,five_hour_resets_at}',
          snapshot #>> '{data,seven_day_resets_at}',
-         snapshot
+         snapshot,
+         snapshot ->> 'credential'
     FROM usage_polls;
 
 -- current_usage: the ONE SERVE. The newest GOOD (state='fresh') reading across both arms,
@@ -253,7 +255,7 @@ CREATE VIEW usage_readings WITH (security_invoker = true) AS
 CREATE VIEW current_usage WITH (security_invoker = true) AS
   SELECT *, EXTRACT(EPOCH FROM (now() - fetched_at))::numeric AS age_seconds
     FROM usage_readings
-   WHERE state = 'fresh'
+   WHERE state = 'fresh' AND credential IS NULL   -- the org's own login; a vault login's: usage_readings by name
    ORDER BY fetched_at DESC, src DESC
    LIMIT 1;
 -- <<< usage-authority ────────────────────────────────────────────────────────────────────

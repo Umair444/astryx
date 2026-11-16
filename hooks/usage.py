@@ -86,7 +86,9 @@ try:
             # row and the gauge read above, never an aggregate. Its own fail-open try.
             try:
                 from astryx.econ import energy as _energy
-                f = _energy.feel(conn, relearn_after_h=None)
+                from astryx.core import vault as _vault      # an agent on a vault login feels THAT login's limits
+                cred = _vault.login_of(paths.estate(__file__), agent)[0] if agent else None
+                f = _energy.feel(conn, relearn_after_h=None, credential=cred)
                 if f.get("known"):
                     last = conn.execute(f"SELECT {_energy.BILL} FROM turns WHERE agent=%s ORDER BY id DESC LIMIT 1",
                                         (agent,)).fetchone() if agent else None

@@ -10,6 +10,7 @@ Pure arms on the arithmetic, then a fixture database (this tree's schema.sql; fi
   E4 NO SWITCH: ease() is smooth and strictly falling in tiredness, strictly rising in payback, 1 when rested
   E5 UNKNOWN IS NOT RESTED: no gauge or no learned rate gives no feeling
   E6 LEARNED FROM THE ORG'S OWN HISTORY: the hourly profile leaves self-started thinking out; the rate is gauge points per token
+  E10 a vault login's limits are its own reading; the org's feeling never reads it
   E7 the per-prompt line states the reading with no verdict word, and an agent's own heavier-than-usual turn, as facts
   E8 ONE NOTICE PER DOUBLING PER TURN: parallel calls, a tail that slides back and climbs again, a new turn (medic 12281)
 Exit 0 · 1 · 77 (no database).
@@ -136,6 +137,16 @@ def main():
                      now() - interval '3 hours', 0, 1, jsonb_build_object('state', 'fresh', 'fetched_at', (now() - interval '3 hours')::text,
                      'data', jsonb_build_object('five_hour_utilization', 98, 'seven_day_utilization', 13,
                      'five_hour_resets_at', (now() - interval '2 hours')::text, 'seven_day_resets_at', (now() + interval '2 days')::text)))""")
+        # E10 PER LOGIN (owner 11-16): a vault login's reading is its own; the org's feeling never reads it
+        c.execute("""INSERT INTO turns (agent, started_at, ended_at, tokens_in, tokens_out, usage_snapshot) VALUES ('b', now(), now(), 0, 1,
+                     jsonb_build_object('state', 'fresh', 'fetched_at', now()::text, 'credential', 'Second',
+                       'data', jsonb_build_object('five_hour_utilization', 91, 'seven_day_utilization', 50,
+                       'five_hour_resets_at', (now() + interval '1 hour')::text, 'seven_day_resets_at', (now() + interval '2 days')::text)))""")
+        own = E.feel(c, relearn_after_h=None, credential="Second")
+        org = E.feel(c, relearn_after_h=None)
+        arm("E10 a vault login feels its own reading (91% of its 5 hours); the org's feeling never reads it",
+            own.get("known") and own["windows"]["h5"]["used"] == 91 and org.get("known") and org["windows"]["h5"]["used"] == 0, (own.get("windows"), org.get("windows")))
+        arm("E10 a login with no reading of its own is unknown, never the org's", E.feel(c, relearn_after_h=None, credential="Nobody").get("known") is False)
         from astryx.pulse import pulse as P
         fr = E.feel(c, relearn_after_h=None)
         arm("E6 98% read before its 5-hour reset, the reset now past: a fresh window, and the pulse holds nothing",

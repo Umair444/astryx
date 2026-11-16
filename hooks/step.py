@@ -376,21 +376,32 @@ def parse_source(prompt):
     return src, (int(mid.group(1)) if mid else None)
 
 
-def usage_snapshot(cur):
+def _credential_of(agent):
+    """(name, token) of the vault login this agent runs on, or (None, None) (astryx.core.vault.login_of)."""
+    try:
+        from astryx import paths
+        from astryx.core import vault
+        return vault.login_of(paths.estate(__file__), agent)
+    except Exception:
+        return None, None
+
+
+def usage_snapshot(cur, agent=None):
     """Throttled, wire-safe account-usage snapshot for this turn -> Jsonb | None.
 
     THROTTLE on the last snapshot's age across the whole org (any state counts, so a down
     endpoint is not retried every turn either). Any failure returns None so the turn still
     writes — usage telemetry must never cost an agent its turn record."""
     try:
-        cur.execute("SELECT ended_at FROM turns WHERE usage_snapshot IS NOT NULL "
-                    "ORDER BY ended_at DESC LIMIT 1")
+        cred, token = _credential_of(agent) if agent else (None, None)
+        cur.execute("SELECT ended_at FROM turns WHERE usage_snapshot IS NOT NULL "          # throttled PER LOGIN
+                    "AND usage_snapshot->>'credential' IS NOT DISTINCT FROM %s ORDER BY ended_at DESC LIMIT 1", (cred,))
         row = cur.fetchone()
         if row and row[0]:
             if (datetime.now(timezone.utc) - row[0]).total_seconds() < USAGE_THROTTLE_S:
                 return None
         from nucleus.usage_refresh import snapshot
-        snap = snapshot(timeout=4)
+        snap = snapshot(timeout=4, token=token, credential=cred) if cred else snapshot(timeout=4)
         if not snap:
             return None
         from psycopg.types.json import Jsonb
@@ -706,7 +717,7 @@ def handle_stop(cur, agent, h, strip=None):
         stored_prompt = input_prompt
 
     from psycopg.types.json import Jsonb
-    usnap = usage_snapshot(cur)          # throttled /api/oauth/usage; None most turns
+    usnap = usage_snapshot(cur, agent)   # throttled /api/oauth/usage, per login; None most turns
     # ECONOMY ATTRIBUTION: which goal did this turn serve? Derived from the opening
     # message's thread (plan-<id>/goal-<id>) — the value-flow edge verified budgets
     # propagate back over. NULL when the turn served no goal thread; never guessed.
