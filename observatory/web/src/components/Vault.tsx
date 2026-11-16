@@ -121,8 +121,50 @@ function CredForm({ existing, onDone }: { existing?: Credential; onDone: () => v
         </button>
         <button type="button" onClick={onDone} className="text-[12px] text-ink-mute hover:text-ink">Cancel</button>
       </div>
-      {kind === 'login' && <div className="text-[11.5px] text-ink-mute">On a machine signed in to that Claude account, run <span className="font-mono">claude setup-token</span> and paste what it prints. Agents on it pick it up at their next start.</div>}
+      {kind === 'login' && <SignIn name={name.trim()} onDone={onDone} />}
       {err && <div className="text-[12px] text-bad" role="alert">{err}</div>}
     </form>
+  )
+}
+
+/* SIGN IN FROM HERE (owner 11-16: "when a session expires, /login gives a URL, after sign-in a token … make that
+   seamless from the agents tab"): the server runs Claude's own sign-in for this login in its own terminal; you open
+   the link, sign in to the Claude account this login should be, and paste back the code the page shows. The login
+   it produces goes straight into the vault, never past this page. */
+function SignIn({ name, onDone }: { name: string; onDone: () => void }) {
+  const [url, setUrl] = useState<string | null>(null)
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  async function start() {
+    setBusy(true); setErr(null)
+    try { setUrl((await apiSend<{ url: string }>('POST', `/vault/${encodeURIComponent(name)}/signin`, {})).url) }
+    catch (e) { setErr(e instanceof ApiError ? e.message : String(e)) }
+    setBusy(false)
+  }
+  async function finish() {
+    setBusy(true); setErr(null)
+    try { await apiSend('POST', `/vault/${encodeURIComponent(name)}/signin/code`, { code }); setCode(''); setUrl(null); onDone() }
+    catch (e) { setErr(e instanceof ApiError ? e.message : String(e)) }
+    setBusy(false)
+  }
+  const field = 'rounded-lg bg-transparent border border-line px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-mute outline-none focus:border-[color-mix(in_srgb,var(--t-accent)_55%,var(--t-line))]'
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-line px-3 py-2.5">
+      {!url ? (
+        <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-ink-dim">
+          <button type="button" disabled={busy || !name} onClick={() => void start()} className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-ink border border-line hover:border-line-2 disabled:opacity-40">
+            {busy ? 'Starting…' : 'Sign in with Claude'}</button>
+          <span>{name ? 'or paste a token from claude setup-token above' : 'Name the login first'}</span>
+        </div>
+      ) : (
+        <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); void finish() }}>
+          <a href={url} target="_blank" rel="noreferrer noopener" className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-ink border border-line hover:border-line-2">Open the sign-in page ↗</a>
+          <input value={code} onChange={(e) => setCode(e.currentTarget.value)} placeholder="Paste the code it shows" aria-label="the sign-in code" autoComplete="off" spellCheck={false} className={`${field} flex-1 min-w-[200px] font-mono`} />
+          <button disabled={busy || !code.trim()} className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-ink border border-line hover:border-line-2 disabled:opacity-40">{busy ? 'Signing in…' : 'Finish'}</button>
+        </form>
+      )}
+      {err && <div className="text-[12px] text-bad" role="alert">{err}</div>}
+    </div>
   )
 }

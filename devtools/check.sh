@@ -539,6 +539,7 @@ run "owed replies: a person's message with no reply keeps the agent from going i
 run "a turn a Stop hook made go on is ONE turn, and its continuation delivers nothing by itself (medic 12441)" "$PY" tests/test_turn_once.py
 run ".env: one locked, fsynced, atomic writer (init.sh appends under the same lock); vault keys derived, never taken (medic 12364 R2)" "$PY" tests/test_env_write.py
 run "vault: named logins and keys, values only in .env under derived keys; an agent connects to one (owner 11-16)" "$PY" tests/test_vault.py
+run "vault sign-in: setup-token in a throwaway home, the login straight into .env, never in a response (medic 12364 R3)" "$PY" tests/test_vault_signin.py
 run "economy: the tab's one read runs on this tree's schema, an empty org included (medic 12299)" "$PY" tests/test_econ_system.py
 run "cog rehearsal: the runbook's steps 2-6 end to end on a fixture registry, the double spawn seen and refused (plan-11324 S3f S6)" "$PY" tests/test_cog_rehearsal.py
 run "doctor in a cog: the primary served, its units-drift its own units only, its seats on its own server; another org refused (plan-11324 S3f S7)" "$PY" tests/test_doctor_cog.py
