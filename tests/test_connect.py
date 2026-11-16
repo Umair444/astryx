@@ -2,7 +2,7 @@
 """Oracle: connect (identity-channels P3; owner 11-16 "a single tool … call it connect … for all channels").
 On the fixture database, with a fake contact search (no channel is touched):
   C1 OPEN by name: one person on one channel → a connection row for the agent, and the exact send(to, thread) to use;
-     the bridges' lookup (bridges/common.connection) finds it and each message renews its idle time
+     the bridges' route book (bridges/common.Book) finds it and each message renews its idle time
   C2 A PERSON ON SEVERAL CHANNELS: linked accounts are found first; asked which channel; opened on the one named
   C3 GUARDS: a group is refused; a chat the owner's routes file routes stays his; a chat another agent holds is refused
      with its holder; the per-agent cap
@@ -10,6 +10,8 @@ On the fixture database, with a fake contact search (no channel is touched):
   C5 LINK: the account is asked to reply YES; the bridges' link_reply turns that YES into a link (identity_link), ends
      the row and tells the asker; a later message from that account writes as the person
   C6 THE SWEEP: an expired connection is deleted and its agent told; an expired link tells whoever asked
+  C7 THE OWNER'S ROUTE ON HIS WORD: only an agent granted `org` (seed) sets or removes a standing route, through the
+     rail's one write (route_put)
 Exit 0 · 1 · 77 (no database)."""
 import asyncio
 import json
@@ -49,10 +51,9 @@ import psycopg  # noqa: E402
 
 with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfile.TemporaryDirectory() as td:
     est = Path(td)
-    (est / "bridges").mkdir()
-    (est / "bridges" / "routes-whatsapp.json").write_text(json.dumps(
-        [{"chat": "923000000012@s.whatsapp.net", "agent": "db", "enabled": True, "open": True}]))
-    run = lambda me, *a, **k: C.run(c, me, *a, search=search, estate=est, **k)  # noqa: E731
+    c.execute("INSERT INTO route (channel, chat, agent, purpose, rule, opened_by) VALUES ('whatsapp', "
+              "'923000000012@s.whatsapp.net', 'db', 'standing', '{\"enabled\": true, \"open\": true}', 'owner')")
+    run = lambda me, *a, **k: C.run(c, me, *a, search=search, **k)  # noqa: E731
 
     print("C1 OPEN")
     out = run("lending", "open", "Kumail", note="ask about the ETL")
@@ -62,10 +63,13 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
 
     async def bridge_lookup():
         import asyncpg
-        from bridges.common import connection
+        from bridges.common import Book, renew
         pool = await asyncpg.create_pool(d["url"], min_size=1, max_size=2)
         c.execute("UPDATE route SET expires_at = now() + interval '1 minute' WHERE chat=%s", (KUMAIL,))
-        r = await connection(pool, "whatsapp", KUMAIL)
+        book = Book("whatsapp")
+        await book.refresh(pool)                       # what the bridge reads: the one route table
+        r = book.routes().chat(KUMAIL)
+        await renew(pool, r)                           # a message from the chat
         left = await pool.fetchval("SELECT expires_at - now() FROM route WHERE chat=$1", KUMAIL)
         await pool.close()
         return r, left
@@ -88,7 +92,8 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
     arm("a chat the owner routes stays his", "routes that chat to db" in run("lending", "open", "BI"))
     arm("a chat another agent holds is refused, naming it", "connected to lending" in run("consumer", "open", "Kumail"))
     for i in range(C.CAP):
-        c.execute("INSERT INTO route (channel, chat, agent, person, opened_by) VALUES ('telegram', %s, 'capper', 'x', 'capper')", (str(900 + i),))
+        c.execute("INSERT INTO route (channel, chat, agent, person, opened_by, idle, expires_at) VALUES "
+                  "('telegram', %s, 'capper', 'x', 'capper', interval '1 day', now() + interval '1 day')", (str(900 + i),))
     arm("the per-agent cap", "connections open" in run("capper", "open", "+923000000013"))
 
     print("\nC4 CLOSE")
@@ -108,9 +113,11 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
 
     async def yes():
         import asyncpg
-        from bridges.common import connection, link_reply
+        from bridges.common import Book, link_reply
         pool = await asyncpg.create_pool(d["url"], min_size=1, max_size=2)
-        r = await connection(pool, "whatsapp", "923000000013@s.whatsapp.net")
+        book = Book("whatsapp")
+        await book.refresh(pool)
+        r = book.routes().chat("923000000013@s.whatsapp.net")
         no = await link_reply(pool, "whatsapp", r, "923000000013@s.whatsapp.net", "who is this?")
         ok = await link_reply(pool, "whatsapp", r, "923000000013@s.whatsapp.net", "Yes")
         await pool.close()
@@ -121,6 +128,20 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
     arm("anything but YES is an ordinary message; YES links it, ends the row and tells the asker",
         not no and ok and who == "cv-pat.5" and told == 1
         and c.execute("SELECT count(*) FROM route WHERE purpose='link'").fetchone()[0] == 0, (no, ok, who, told))
+
+    print("\nC7 THE OWNER'S ROUTE, ON HIS WORD")
+    from astryx.core import tier
+    real = tier.grants
+    tier.grants = lambda name, *a: {"org"} if name == "seed" else set()      # seed holds `org`; lending doesn't
+    arm("an agent without `org` can't set the owner's routes", "only the org's own agent" in run("lending", "route", "ETL", to="db"))
+    out = run("seed", "route", "ETL", to="db")
+    std = c.execute("SELECT agent, opened_by, rule->>'show' FROM route WHERE chat='1203@g.us' AND purpose='standing'").fetchone()
+    arm("seed routes a group to db on his word: a standing row, through the one write", "now reaches db" in out
+        and std == ("db", "seed", "steps"), (out, std))
+    out = run("seed", "unroute", "ETL")
+    arm("…and unroutes it", "no longer routed" in out
+        and c.execute("SELECT count(*) FROM route WHERE chat='1203@g.us'").fetchone()[0] == 0, out)
+    tier.grants = real
 
     print("\nC6 THE SWEEP")
     from astryx.pulse.shipped_triggers import connection_sweep as S

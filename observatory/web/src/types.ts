@@ -501,7 +501,7 @@ export interface TurnDetail {
   events: TurnEvent[]
 }
 
-/* GET/PUT /api/wire/routes — a channel's inbound map (bridges/routes-<ch>.json).
+/* GET/PUT /api/wire/routes — a channel's inbound map (its owner routes: rows of the route table).
    Extra keys (a discord webhook) ride the index signature and are preserved. */
 export interface WireRoute {
   chat: string

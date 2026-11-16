@@ -28,8 +28,8 @@ canvas/web/dist/
 bridges/geoloc.py
 mcp/geoloc/
 *.tsbuildinfo
+# routes are rows (astryx.core.routes); an old checkout's route file still never reaches git
 **/routes*.json
-!**/routes*.example.json
 # per-agent provider/auth override (base_url + token_env name + model map); observatory-written.
 # Real file is private (references .env token keys); the .example ships the schema for cloners.
 runtime.json

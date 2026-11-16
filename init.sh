@@ -18,7 +18,7 @@ cd "$(dirname "$_self")"
 unset _self _t _hops
 # <<< self dir
 # >>> org-home guard (plan-11324 S3a): this script sets up ONE org from its checkout, and reads that org's estate
-# (.env, agents/, bridges/routes-*.json, …) relative to it. On a host that runs SEVERAL orgs the checkout carries no
+# (.env, agents/, …) relative to it. On a host that runs SEVERAL orgs the checkout carries no
 # estate, so it REFUSES before any of it: a multi-org setup is seed's estate move (#58435 item 7) and S3b's per-org
 # units, never this script guessing which org it means. units() below already serves a HOME (ORGH); the rest doesn't.
 # The ONE verb a cog may run is `units` (S3f S2): units() resolves its own org (ASTRYX_HOME; none carried is the cog's
@@ -92,7 +92,7 @@ units() {  # GENERATE systemd units from the org's declared sources of truth.
   # footgun that hid telegram/discord/gateway/canopus-inbound from the UI). The
   # set derives from four authorities (plan-17):
   #   1. shipped-set  — the units every org always has (below, unconditional)
-  #   2. channels     — inbound CONVERSATION; one per bridges/routes-<name>.json present
+  #   2. channels     — inbound CONVERSATION; one per wired channel (its token/secret in .env)
   #   3. senses       — inbound PERCEPTION; one per sense module+grant present
   #   4. runners      — per-agent pollers declared in nucleus/runners.conf
   # doctor reconciles the enabled set against this same derivation, bidirectionally.
@@ -294,9 +294,10 @@ ExecStart=${UEXEC}$PWD/scripts/spawn-all.sh
 WantedBy=multi-user.target
 EOF
 
-  # ── 2. channels — one service per present routes-<name>.json ─────────────────
-  # Presence signal = the channel's routing file exists (the org has wired it).
-  [ -f "$ORGH/bridges/routes-whatsapp.json" ] && _uw astryx-whatsapp service && cat > "$_UF" <<EOF
+  # ── 2. channels — one service per WIRED channel ──────────────────────────────
+  # Wired = its token or generated secret is in the org's .env (astryx.core.channels wired); its routes are rows.
+  local WIRED; WIRED=" $(venv/bin/python -m astryx.core.channels wired --env "$ORGH/.env" 2>/dev/null | tr '\n' ' ') "
+  [[ "$WIRED" == *" whatsapp "* ]] && _uw astryx-whatsapp service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx whatsapp bridge — owner surface on the wire
 After=network.target docker.service
@@ -310,7 +311,7 @@ Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
-  [ -f "$ORGH/bridges/routes-discord.json" ] && _uw astryx-discord service && cat > "$_UF" <<EOF
+  [[ "$WIRED" == *" discord "* ]] && _uw astryx-discord service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx discord bridge — owner surface on the wire
 After=network.target
@@ -324,7 +325,7 @@ Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
-  [ -f "$ORGH/bridges/routes-telegram.json" ] && _uw astryx-telegram service && cat > "$_UF" <<EOF
+  [[ "$WIRED" == *" telegram "* ]] && _uw astryx-telegram service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx telegram bridge — owner surface on the wire
 After=network.target
@@ -503,11 +504,10 @@ EOF
 active_dep_groups() {  # which manifest groups this org needs, from the channel authority
   # core always; media when any channel that can carry voice is wired (same
   # channels-present authority the units-generator gates on — one authority).
-  local g="core"
-  for ch in whatsapp discord telegram; do
-    [ -f "${1:-.}/bridges/routes-$ch.json" ] && { g="$g media"; break; }
-  done
-  [ -f "${1:-.}/bridges/routes-discord.json" ] && g="$g discord"   # discord.py: the discord bridge only
+  local g="core" w
+  w=" $(venv/bin/python -m astryx.core.channels wired --env "${1:-.}/.env" 2>/dev/null | tr '\n' ' ') "
+  [ -n "${w// /}" ] && g="$g media"                       # any wired channel can carry voice
+  [[ "$w" == *" discord "* ]] && g="$g discord"             # discord.py: the discord bridge only
   echo "$g"
 }
 
@@ -1437,13 +1437,10 @@ if [ "${1:-}" = "doctor" ]; then
   # leg (does the JID/chat still exist on the platform) needs the platform API and
   # stays a live reconciler; this is the org-authored half we CAN assert offline.
   routebad=""
-  for rf in "$ORGH"/bridges/routes-*.json; do
-    [ -f "$rf" ] || continue
-    while read -r a; do
-      [ -z "$a" ] && continue
-      venv/bin/python src/astryx/core/charter.py "$a" >/dev/null 2>&1 || routebad="$routebad ${rf##*/}→$a"
-    done < <(venv/bin/python -c "import json; [print(r.get('agent','')) for r in json.load(open('$rf')) if r.get('enabled')]" 2>/dev/null)
-  done
+  while read -r ch a; do                                  # the owner's enabled routes, from the route table
+    [ -z "$a" ] && continue
+    venv/bin/python src/astryx/core/charter.py "$a" >/dev/null 2>&1 || routebad="$routebad $ch→$a"
+  done < <(venv/bin/python -m astryx.core.routes agents --estate "$ORGH" 2>/dev/null)
   [ -z "$routebad" ] && ok "every enabled route targets a real agent" \
     || bad "enabled routes to UNKNOWN agents (mis-route risk):$routebad"
   # durability: the org's whole state is one docker volume — a recent dump is the only
@@ -1513,8 +1510,7 @@ if [ "${1:-}" = "whatsapp" ] || [ "${1:-}" = "channels" ]; then
     echo "WA_WEBHOOK_SECRET=$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" | env_add
     say "generated WA_WEBHOOK_SECRET in .env"; }
   grep -q '^WA_CLI=' .env 2>/dev/null || echo "WA_CLI=docker exec wacli-sync wacli" | env_add
-  [ -f bridges/routes.json ] || { cp bridges/routes.example.json bridges/routes.json
-    say "created bridges/routes.json — EDIT IT: your chat JIDs and trusted senders"; }
+  say "route your WhatsApp chats on the Floor's Channels rail once the bridge runs (routes are rows, not a file)"
   units
   # The secret is never PRINTED (stdout reaches logs and agent contexts): the docker line reads it from .env
   # when the human runs it.

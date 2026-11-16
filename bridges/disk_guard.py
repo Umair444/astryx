@@ -55,16 +55,12 @@ bridges/whatsapp.py lifespan(), beside the pulse witness:
 
     from .disk_guard import DiskGuard, read_disk_percent, read_dead_timers
 
-    # OWNER_DM: the owner's 1:1 WhatsApp DM. SOURCE IT AT RUNTIME from
-    # routes-whatsapp.json — NEVER a string literal here. A raw phone JID is
-    # human-personal tier; a literal in committed (soon-public) code is an
-    # irreversible leak (the tier-safety miss pii_sweep/steward caught pre-commit,
-    # msg 18399). routes-whatsapp.json is a list of {chat, agent, note, ...}; the
-    # owner's DM is the route noted "Umair 1:1 DM". Same discipline applies to the
-    # copy of this block that lands in whatsapp.py — source it there too.
-    import json, pathlib
-    _routes = json.loads((pathlib.Path(__file__).parent / "routes-whatsapp.json").read_text())
-    OWNER_DM = next(r["chat"] for r in _routes if r["note"].startswith("Umair 1:1 DM"))
+    # OWNER_DM: the owner's 1:1 WhatsApp DM. SOURCE IT AT RUNTIME from the route table (astryx.core.routes: the
+    # owner's whatsapp route noted "<owner> 1:1 DM") — NEVER a string literal here. A raw phone JID is human-personal
+    # tier; a literal in committed code is an irreversible leak (the tier-safety miss pii_sweep/steward caught
+    # pre-commit, msg 18399). Same discipline applies to the copy of this block that lands in whatsapp.py.
+    OWNER_DM = await pool.fetchval("SELECT chat FROM route WHERE channel = 'whatsapp' AND purpose = 'standing' "
+                                   "AND rule->>'note' LIKE '%1:1 DM%' LIMIT 1")
 
     async def _disk_send(body: str):
         # DB-FREE / DISK-FREE: direct wacli network call, NOT wire_insert. At 100% disk

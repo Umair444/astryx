@@ -27,13 +27,11 @@ if [ -n "$hits" ]; then
 fi
 
 # ---- (b) personal-tier surfaces: ignored AND untracked -------------------
-# The manifest of what must never reach the public repo. Route files are
-# derived from the live bridge layout; the rest is the fixed personal tier.
+# The manifest of what must never reach the public repo: the fixed personal tier.
 # directories carry a trailing slash: `git check-ignore` matches a dir-only pattern (triggers/) against a path that
 # does not EXIST only when the path says it is a directory, and in a clean clone (CI) these never exist
 SURFACES=(.env local.md relations.md owner.md homes/ memory/ triggers/ media/   # org-home: audit, paths of the tree it scans
-          backups/ wacli-data/ bridges/routes-whatsapp.json bridges/routes-telegram.json   # org-home: audit, paths of the tree it scans
-          bridges/routes-discord.json)
+          backups/ wacli-data/)   # org-home: audit, paths of the tree it scans (routes are rows now: none on disk)
 for s in "${SURFACES[@]}"; do
   if ! git check-ignore --no-index -q "$s" 2>/dev/null; then
     echo "FAIL (b): '$s' is NOT covered by .gitignore"

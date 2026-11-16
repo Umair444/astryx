@@ -85,7 +85,7 @@ checkout, `astryx`, its database, primary + door, today's ports and 8190):
   - `ASTRYX_DSN` naming `astryx_lab`
   - a fresh `ASTRYX_SECRET_KEY` (Ed25519 seed) and a fresh `OBS_KEY`
   - `ASTRYX_URL=` empty: it is reached through our cog gateway
-  - no channel lines (no routes-*.json, so no bridge unit is ever wanted)
+  - no channel lines (no channel wired in its .env, so no bridge unit is ever wanted)
 - its registry entry: `{"home": ".../lab", "db": "astryx_lab", "ports": {...}}`, no `primary`, no `door`
 
 The script prints every secret's NAME, never its value.

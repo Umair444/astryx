@@ -20,7 +20,7 @@ Platform translation ONLY; everything shared lives in common.py:
             from the linked phone must still count); votes wake the ASKING
             agent with the delta.
 
-Config: .env for secrets, routes-whatsapp.json for chats. A sender's name is its PERSON's (common.identity_of: the
+Config: .env for secrets; its routes are rows (astryx.core.routes). A sender's name is its PERSON's (common.identity_of: the
 owner's own numbers are `owner`, a linked member's their name); an unlinked sender is `wa-<number>`, on open routes.
 
 Run: uvicorn bridges.whatsapp:app --host "$(scripts/docker_host_ip.sh)" --port 8477  (repo root)
@@ -43,7 +43,7 @@ from fastapi import FastAPI, Request, Response
 
 from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, MEDIA_DIR, Outcome, route_target, wire_chat, describe_media,
-                     env, listen, load_routes,
+                     env, listen, Book,
                      reacted_message, reaction_signal,
                      record_poll, resolve_quoted_body, split_files, split_polls,
                      update_poll_votes, vote_body, vote_changes, wire_insert,
@@ -63,8 +63,8 @@ WA_DOCKER = WA_CLI[2] if WA_CLI[:2] == ["docker", "exec"] else ""
 from .common import signed as _signed  # noqa: E402  the sender label, one rule for every shared-identity channel
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
-from .common import connection, identity_of, link_reply  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
-ROUTES_FILE = ESTATE / "bridges" / "routes-whatsapp.json"
+from .common import identity_of, link_reply, renew  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
+BOOK = Book("whatsapp")      # this bridge's routes, from the route table (common.Book)
 
 JOB_TIMEOUT = 1800    # the live steps bubble is forgotten 30 min after it opened (bridges/progress.py)
 
@@ -78,7 +78,7 @@ def wa_name(jid: str) -> str:
 
 
 def routes() -> list[dict]:
-    return load_routes(ROUTES_FILE)
+    return BOOK.routes()
 
 
 #: A destination we can address DETERMINISTICALLY: a WhatsApp JID, or a bare phone number.
@@ -306,9 +306,10 @@ async def hook(request: Request):
         return Response(status_code=400)
 
     chat = jid_str(m.get("Chat"))
-    route = routes().chat(chat) or await connection(pool, "whatsapp", chat)   # the owner's routes, then an agent's connection
+    route = routes().chat(chat)                   # the owner's routes and the agents' connections: one table
     if route is None:
         return {"ok": True}                       # not a surface we serve
+    await renew(pool, route)                      # a connection lives on while someone writes
 
     msgid = m.get("ID") or ""
     now = time.time()
@@ -481,7 +482,7 @@ _skipped_threads: set = set()
 
 # The owner doorbell's HOME surface, pinned by NAME (forge, plan-2457 msg 13041). The
 # un-routed fallback used to be `next(iter(routes()))` — the FIRST route positionally —
-# so reordering routes-whatsapp.json (an edit that looks like formatting) would have
+# so reordering the routes (an edit that looks like formatting) would have
 # silently moved every un-routed owner-bound message: both org-dark alarms redirecting
 # to the career seat's direct number, or worse, the FAMILY group at index 2. Nothing
 # pinned it. Same family as the 2026-07-25 name-fuzzy misdelivery documented above,
@@ -582,7 +583,7 @@ async def deliver(row):
             _skipped_threads.add(row["id"])
             print(f"whatsapp: REFUSED un-routed doorbell msg {row['id']} — no route for "
                   f"sender {row['from_agent']!r} and no {HOME_AGENT!r} home route in "
-                  f"routes-whatsapp.json; refusing to guess a destination", flush=True)
+                  f"the routes; refusing to guess a destination", flush=True)
     if not chat:
         return
     if not stamped and not await door_org_ok(pool, row, "whatsapp", routes(), chat):
@@ -667,6 +668,8 @@ CLAIM = f"(to_agent='owner' OR to_agent LIKE 'wa-%' OR {address.reaches_sql('wha
 async def lifespan(app: FastAPI):
     global pool
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=2)
+    await BOOK.refresh(pool)                       # the routes, before the first message
+    _book = asyncio.create_task(BOOK.follow(pool))   # then every few seconds (a rail edit lands with no restart)
 
     # The pulse-liveness witness rides listen()'s own loop (no second timer). It reads
     # max(triggers.last_eval) and, if the one clock looks dead, doorbells the owner
@@ -686,6 +689,7 @@ async def lifespan(app: FastAPI):
         DSN, CLAIM, deliver, on_step,
         on_idle=witness.tick))
     yield
+    _book.cancel()
     task.cancel()
     await pool.close()
 

@@ -78,7 +78,7 @@ async def connect(action: str, who: str = "", channel: str = "", timeout: str = 
     from astryx.core import connect as C
     def go():
         with psycopg.connect(config.dsn(estate / ".env", env_first=False), autocommit=True) as conn:
-            return C.run(conn, me, action, who, channel, timeout, note, account, search=_search, estate=estate)
+            return C.run(conn, me, action, who, channel, timeout, note, account, search=_search)
     import asyncio
     return await asyncio.to_thread(go)
 

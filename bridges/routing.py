@@ -1,7 +1,8 @@
-"""The ONE route resolver and validator (plan-11860 E2): every reader of routes-<channel>.json decides through here.
+"""The ONE route resolver and validator (plan-11860 E2): every reader of a channel's routes (rows of the route table,
+astryx.core.routes; owner 11-16) decides through here.
 
-Its readers are the three chat bridges (inbound: which agent a chat reaches; outbound: which chat an agent's un-threaded
-doorbell rings), the observatory's routes PUT (what a write will do), and doctor (is the live file sound). Before this,
+Its readers are the chat bridges (inbound: which agent a chat reaches; outbound: which chat an agent's un-threaded
+doorbell rings), the observatory's routes PUT (what a write will do), and doctor (are the live routes sound). Before this,
 each bridge kept its own first-match loops, so a duplicate chat or an agent with two routes was decided by FILE ORDER,
 differently at each site. Now:
   - resolve(rows)   -> Routes: the enabled rows, with .chat(id) (inbound) and .doorbell(agent) (outbound)
@@ -12,13 +13,11 @@ Rules (validate enforces, resolve obeys):
   - an agent with two or more ENABLED rows marks exactly one `"home": true`: that is its doorbell. With one row, that
     row is the doorbell. An agent with several rows and no single home has NO doorbell (resolve returns None, and the
     bridge refuses to guess), never "the first one in the file".
+An agent's CONNECTION (a route with a `connection` id: connect()) reaches its agent like any route, but is never its
+doorbell: the owner's routes decide where an agent's un-threaded messages ring.
 Dependency-free on purpose (stdlib and astryx.core.channels only): the observatory imports it without the bridges'
 runtime, as owner_surfaces.
 """
-import json
-import sys
-import time
-from pathlib import Path
 
 
 class Routes(list):
@@ -36,7 +35,7 @@ class Routes(list):
 
     def doorbell(self, agent: str) -> dict | None:
         """The route an agent's un-threaded message rings: its only row, else its single `home` row, else None."""
-        mine = [r for r in self if r.get("agent") == agent]
+        mine = [r for r in self if r.get("agent") == agent and r.get("connection") is None]   # never a connection
         if len(mine) == 1:
             return mine[0]
         homes = [r for r in mine if r.get("home") is True]
@@ -50,7 +49,7 @@ def resolve(rows) -> Routes:
 def validate(rows, agents=None) -> list[str]:
     """Every problem in a route table, in words the owner can act on. `agents`: the names that exist (None: unchecked)."""
     if not isinstance(rows, list):
-        return ["the routes file must hold a list of routes"]
+        return ["the routes must be a list of routes"]
     out: list[str] = []
     seen: dict[str, str] = {}
     enabled: dict[str, list[dict]] = {}
@@ -108,41 +107,6 @@ def diff(before, after) -> dict:
         if o != n:
             out["doorbell"].append({"agent": ag, "old": o, "new": n})
     return out
-
-
-# ---------------------------------------------------------------- reading the file (BC-3)
-_last_good: dict[str, list] = {}
-_alarmed: dict[str, float] = {}
-
-
-def read_table(path: Path) -> list:
-    """The raw rows of a routes file. An unreadable or unparseable file keeps the LAST GOOD table this process read
-    (never [] = "nothing routed", which would drop every chat on a hand-edit typo) and alarms on stderr, once per
-    file version. A file that was never good reads [].
-    THE LIMIT (a1 #62023): the last-good table is per PROCESS. A bridge restarted while the file is broken has none,
-    so it reads [] (nothing routed) until the file is fixed. That case is DETECTION-grade only: the journal alarm here
-    and `astryx doctor` (which validates the live files) say so; nothing prevents it."""
-    key = str(path)
-    try:
-        rows = json.loads(Path(path).read_text())
-        if not isinstance(rows, list):
-            raise ValueError("not a list")
-        _last_good[key] = rows
-        _alarmed.pop(key, None)
-        return rows
-    except FileNotFoundError:
-        _last_good.pop(key, None)
-        return []
-    except Exception as e:  # noqa: BLE001 — a torn or hand-broken file
-        try:
-            mt = Path(path).stat().st_mtime
-        except OSError:
-            mt = time.time()
-        if _alarmed.get(key) != mt:
-            _alarmed[key] = mt
-            print(f"routes: ALARM {path} does not parse ({type(e).__name__}); keeping the last good table "
-                  f"({len(_last_good.get(key, []))} routes) until it is fixed", file=sys.stderr, flush=True)
-        return _last_good.get(key, [])
 
 
 def kind_of(channel: str, chat: str) -> str:

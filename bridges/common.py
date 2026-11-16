@@ -8,7 +8,7 @@ shared lines. Duplication beats coupling at that size.
 A chat bridge translates ONE platform to the wire; anything that isn't
 platform translation lives here:
 
-  config       env() reads .env; load_routes() re-reads a routes file per use
+  config       env() reads .env; Book holds a bridge's routes from the route table
   routing      address_agent / route_target — deliver to the @mentioned agent, or
                the last agent tagged on the thread (sticky); agent_exists() checks
                the agents/ tree
@@ -48,7 +48,7 @@ REPO = HERE.parent
 sys.path.insert(0, str(REPO / "src"))   # astryx.config/paths: the ONE resolver, this bridge's own tree (plan-11324 S3a)
 from astryx import config, paths  # noqa: E402
 from astryx.core import channels  # noqa: E402  the one channel table: a link reply names its channel's thread and title
-from .routing import Routes, read_table, resolve  # noqa: E402,F401 — the one route resolver (plan-11860 E2)
+from .routing import Routes, resolve  # noqa: E402,F401 — the one route resolver (plan-11860 E2)
 ESTATE = paths.estate(__file__)          # the org's estate: this checkout on one org, the HOME on several
 MEDIA_DIR = ESTATE / "media"
 
@@ -110,21 +110,15 @@ async def identity_of(pool, channel: str, account, fallback: str, route: dict | 
         return fallback
 
 
-async def connection(pool, channel: str, chat: str) -> dict | None:
-    """An agent's CONNECTION for this chat (connect(), the `route` table), as a route row the bridge reads like any:
-    open (the person reaches the agent), replies only (no live steps to a colleague). None: no live connection. A
-    message from the chat is activity: the connection lives on for its `idle` from now. Only where the owner's routes
-    file has no route for the chat (his routes win: see the callers)."""
+async def renew(pool, route: dict) -> None:
+    """A message on an agent's CONNECTION is activity: it lives on for its idle time from now (connection_sweep ends
+    it once no one has written for that long). A standing route has no expiry: nothing to do."""
+    if route.get("connection") is None:
+        return
     try:
-        r = await pool.fetchrow("UPDATE route SET expires_at = now() + idle WHERE channel = $1 AND chat = $2 "
-                                "AND expires_at > now() RETURNING id, agent, purpose, person", channel, str(chat))
-    except Exception as e:  # noqa: BLE001 — loud, and no connection: the chat stays unrouted, as before
-        print(f"{channel}: connection lookup FAILED ({type(e).__name__}); unrouted", flush=True)
-        return None
-    if r is None:
-        return None
-    return {"chat": str(chat), "agent": r["agent"], "enabled": True, "open": True, "show": "replies",
-            "connection": r["id"], "purpose": r["purpose"], "person": r["person"]}
+        await pool.execute("UPDATE route SET expires_at = now() + idle WHERE id = $1 AND idle IS NOT NULL", route["connection"])
+    except Exception as e:  # noqa: BLE001 — loud; the connection keeps its expiry
+        print(f"route {route['connection']}: renew FAILED ({type(e).__name__})", flush=True)
 
 
 YES = re.compile(r"^\s*(yes|y|haan|ha|ji)\s*[.!]*\s*$", re.I)
@@ -156,11 +150,37 @@ async def link_reply(pool, channel: str, route: dict, account: str, text: str) -
     return True
 
 
-def load_routes(path: Path) -> Routes:
-    """Re-read per use so routes can be edited live, no restart. The ENABLED rows, resolved by the one resolver
-    (bridges/routing.py, plan-11860 E2): look a chat up with .chat(id) and a doorbell with .doorbell(agent), never a
-    loop of your own. A file that stops parsing keeps the last good table and alarms (BC-3), never [] silently."""
-    return resolve(read_table(path))
+class Book:
+    """A bridge's ROUTES, from the one route table (astryx.core.routes; owner 11-16: "just route table"): read once at
+    start, then every EVERY seconds, so an edit on the rail or an agent's connect reaches the bridge within seconds, no
+    restart. Readers ask .routes() (sync, as they always did): the last table read, resolved by the one resolver
+    (.chat(id), .doorbell(agent)). A read that fails keeps the last good table and says so once (BC-3): a database
+    blip never unroutes a chat."""
+    EVERY = 3.0
+
+    def __init__(self, channel: str):
+        self.channel, self.table, self.failing = channel, resolve([]), False
+
+    def routes(self) -> Routes:
+        return self.table
+
+    async def refresh(self, pool) -> None:
+        from astryx.core import routes as table
+        try:
+            self.table = resolve(await table.load(pool, self.channel))
+            if self.failing:
+                print(f"{self.channel}: routes read again ({len(self.table)} enabled)", flush=True)
+            self.failing = False
+        except Exception as e:  # noqa: BLE001 — keep the last good table
+            if not self.failing:
+                print(f"{self.channel}: routes ALARM: the route table did not read ({type(e).__name__}); keeping the last "
+                      f"good table ({len(self.table)} routes)", file=sys.stderr, flush=True)
+            self.failing = True
+
+    async def follow(self, pool) -> None:
+        while True:
+            await asyncio.sleep(self.EVERY)
+            await self.refresh(pool)
 
 
 # --------------------------------------------------------------------- routing

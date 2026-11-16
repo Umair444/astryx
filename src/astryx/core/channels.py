@@ -1,7 +1,7 @@
 """astryx · channels — THE one table of the messaging channels the org speaks on (owner 11-16: "channels stuff should be
 a standard … we can't patch it by each channel. later we will add slack and teams too").
 
-Each channel is one row: its name (the from_org its bridge stamps, its provider's NAME, routes-<name>.json, the unit
+Each channel is one row: its name (the from_org its bridge stamps, its provider's NAME, the unit
 astryx-<name>, bridges/<name>.py), the prefix of its people's wire names (wa-<id>) and of its threads (wa:<chat>), and
 the SHAPE of its chat ids: which are groups (people talking among themselves, where only what addresses an agent is
 owed a reply) and which are one person. Every place that used to list channels by hand reads this instead, so adding a
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Channel:
-    name: str                 # provider NAME, routes-<name>.json, unit astryx-<name>, bridges/<name>.py
+    name: str                 # provider NAME, unit astryx-<name>, bridges/<name>.py
     title: str
     person: str               # a person's wire name is <person>-<id>
     thread: str               # a conversation's thread is <thread>:<chat>
@@ -99,3 +99,22 @@ def of_thread(thread: str | None) -> Channel | None:
 
 def connectable() -> tuple[Channel, ...]:
     return tuple(c for c in CHANNELS if c.connect)
+
+
+def wired(env: dict) -> list[str]:
+    """The channels this org has set up: the ones whose token or generated secret is in its .env (init.sh makes a
+    bridge's unit for exactly these; their routes are rows, made on the rail)."""
+    return [c.name for c in CHANNELS if (c.token_key or c.secret_key) and env.get(c.token_key or c.secret_key)]
+
+
+if __name__ == "__main__":       # shell's door to the table: `python -m astryx.core.channels wired [--env FILE]`
+    import argparse
+    import sys
+
+    from astryx import config, paths
+    ap = argparse.ArgumentParser(prog="astryx.core.channels")
+    ap.add_argument("cmd", choices=["wired"])
+    ap.add_argument("--env", default=str(paths.estate(__file__) / ".env"))
+    a = ap.parse_args()
+    print("\n".join(wired(config.read_env(a.env))))
+    sys.exit(0)

@@ -43,6 +43,7 @@ DIST = ROOT / "web" / "dist"
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 from astryx.core import charter as _charter  # noqa: E402 — the one roster rule
+from astryx.core import routes as _routes  # noqa: E402 — every route, one table (owner 11-16: "just route table")
 from astryx.core import channels as _channels  # noqa: E402 — the one channel table (owner 11-16: "a standard")
 from bridges.owner_surfaces import OWNER_ROW_BRIDGED_SQL  # noqa: E402 — the rows a bridge delivers, not the pane
 from astryx import config, orgs, paths  # noqa: E402 — the ONE resolver (plan-11324 S3a; S3b: its tmux server)
@@ -443,7 +444,7 @@ app = FastAPI(lifespan=lifespan)
 # imported through the repo package (REPO is on sys.path), so main.py loads the same way under uvicorn and when an
 # oracle loads it by path; the pool is handed over, never re-imported (steward #44464)
 from observatory.api import pilot_voice as _pilot_voice  # noqa: E402
-from observatory.api.hostfile import Conflict, atomic_write, etag  # noqa: E402 — the ONE host-file writer (plan-11860 E3)
+from observatory.api.hostfile import atomic_write  # noqa: E402 — the ONE host-file writer (plan-11860 E3)
 import hashlib  # noqa: E402
 from bridges import routing as _routing  # noqa: E402 — the ONE route resolver/validator (plan-11860 E2)
 _pilot_voice.bind(lambda: pool)
@@ -2580,33 +2581,15 @@ async def sqlfile_del(path: str):
 
 
 # ------------------------------------------------------------ wire routing
-# A channel's inbound map is bridges/routes-<channel>.json (the bridges re-read it
-# per message, so an edit here is live with no restart). These endpoints let the
+# A channel's inbound map is its rows in the route table (astryx.core.routes; each bridge re-reads it every few
+# seconds, so an edit here is live with no restart). These endpoints let the
 # owner SEE the wiring and change it — including binding an agent to a contact,
 # resolved through the same provider layer the agents use so a name never
 # silently fuzzy-matches the wrong person (the "Ali Owner" class). Owner-only.
-BRIDGES = ESTATE / "bridges"           # the routes-*.json files are org estate (data/estate_partition.json)
-
-
-def _wire_channels() -> list[str]:
-    """Channels with a routes file: routes-<channel>.json (examples excluded).
-    Derived from the filesystem, so a new channel appears here for free."""
-    return sorted(p.name[len("routes-"):-len(".json")]
-                  for p in BRIDGES.glob("routes-*.json")
-                  if not p.name.endswith(".example.json"))
-
-
-def _routes_file(channel: str) -> Path | None:
-    safe = "".join(c for c in channel if c.isalnum()).lower()
-    return BRIDGES / f"routes-{safe}.json" if safe else None
-
-
-def _read_routes(channel: str) -> list[dict]:
-    f = _routes_file(channel)
-    try:
-        return json.loads(f.read_text()) if f and f.is_file() else []
-    except Exception:
-        return []
+async def _wire_channels() -> list[str]:
+    """The channels whose routes the rail manages: every channel the owner connects (core/channels.py), and any other
+    with routes in the table (the frontends bridge). Routes are rows (astryx.core.routes, owner 11-16)."""
+    return sorted({c.name for c in _channels.connectable()} | set(await _routes.channels_in_use(pool)))
 
 
 class RouteSet(BaseModel):
@@ -2845,15 +2828,15 @@ async def growbot_proxy(path: str, request: Request):
 @app.get("/api/wire/routes")
 async def wire_routes():
     """Every channel's full route table (enabled AND disabled — the owner manages
-    both). `etag` is the file's sha256: the PUT's If-Match (plan-11860 E4);
+    both). `etag` is the routes' version (route_version): the PUT's If-Match (plan-11860 E4);
     `problems` is the one validator's verdict on the table as it stands (E2), so a hand edit shows here."""
     out = []
-    for ch in _wire_channels():
-        routes = _read_routes(ch)
+    for ch in await _wire_channels():
+        routes = await _routes.standing(pool, ch)
         c = _channels.BY_NAME.get(ch)
         # the channel's own rules ride with its table (core/channels.py), so the web holds none: which chat ids are a
         # group or one person, and whether its people are phone numbers
-        out.append({"channel": ch, "routes": routes, "etag": etag(_routes_file(ch)),
+        out.append({"channel": ch, "routes": routes, "etag": await _routes.version(pool, ch),
                     "problems": _routing.validate(routes, set(agent_meta())),
                     "group": c.group if c else ".+", "dm": c.dm if c else "", "numbers": bool(c and c.numbers)})
     return out
@@ -2861,16 +2844,15 @@ async def wire_routes():
 
 @app.put("/api/wire/routes/{channel}")
 async def wire_routes_put(channel: str, body: RouteSet, request: Request):
-    """Replace a channel's route table: THE one write path for routing (the Wiring tab and the floor both call it).
-    plan-11860 E4: the caller names the version it read (If-Match: the GET's etag; absent is 428, stale is 409), the
-    table passes the ONE validator every bridge resolves by (bridges/routing.py: a chat routes once, an agent with
-    several routes names its home), it is written atomically (E3), and the answer is the change AS THE BRIDGES WILL
-    SEE IT (added / removed / moved / doorbell), read from the same resolver. Unknown keys (a discord webhook, a note)
-    are preserved verbatim."""
+    """Replace a channel's OWNER routes: THE one write path for routing (the rail calls it; astryx.core.routes.put, rows
+    in the one route table). plan-11860 E4: the caller names the version it read (If-Match: the GET's etag; absent is
+    428, stale is 409), the routes pass the ONE validator every bridge resolves by (bridges/routing.py: a chat routes
+    once, an agent with several routes names its home), they are written in one transaction, and the answer is the
+    change AS THE BRIDGES WILL SEE IT (added / removed / moved / doorbell). Unknown keys (a discord webhook, a note)
+    are kept verbatim in the row's rule. A connection on a chat now routed here ends (the owner's route wins)."""
     if not owner_call(request):
         return Response(status_code=403)
-    f = _routes_file(channel)
-    if not f or channel not in _wire_channels():
+    if channel not in await _wire_channels():
         return Response("unknown channel", status_code=404)
     want = request.headers.get("if-match", "").strip().strip('"')
     if not want:
@@ -2878,12 +2860,12 @@ async def wire_routes_put(channel: str, body: RouteSet, request: Request):
     problems = _routing.validate(body.routes, set(agent_meta()))
     if problems:
         return JSONResponse({"error": problems[0], "problems": problems}, status_code=400)
-    before = _read_routes(channel)
+    before = await _routes.standing(pool, channel)
     try:
-        tag = atomic_write(f, json.dumps(body.routes, indent=2, ensure_ascii=False) + "\n", if_match=want)
-    except Conflict:
+        tag = await _routes.put(pool, channel, body.routes, want)
+    except _routes.Conflict:
         return JSONResponse({"error": "the routes changed since you loaded them; reload and try again",
-                             "etag": etag(f)}, status_code=409)
+                             "etag": await _routes.version(pool, channel)}, status_code=409)
     return {"ok": True, "channel": channel, "count": len(body.routes), "etag": tag,
             "diff": _routing.diff(before, body.routes)}
 
@@ -2906,7 +2888,7 @@ def glyphs_of(tables: dict[str, list]) -> list[dict]:
 
 @app.get("/api/floor/glyphs")
 async def floor_glyphs():
-    return glyphs_of({ch: _read_routes(ch) for ch in _wire_channels() if re.fullmatch(r"[a-z]{2,20}", ch)})
+    return glyphs_of({ch: await _routes.standing(pool, ch) for ch in await _wire_channels() if re.fullmatch(r"[a-z]{2,20}", ch)})
 
 
 # ---------------------------------------------------------------- identities and connections (identity-channels P3)
@@ -2962,7 +2944,7 @@ async def my_channel_link(body: MyChannel, request: Request):
             # the signed-in person IS an account (its 'web' handle): the one thing a link may join to (identity_link)
             c.execute("SELECT identity_who('web', %s, %s)", (acct, who))
             return _connect.run(c, "seed", "link", who, body.channel, account=body.account.strip(), search=search,
-                                estate=ESTATE, by=who, timeout="1d")
+                                by=who, timeout="1d")
     said = await asyncio.to_thread(go)
     return {"ok": said.startswith("asked"), "said": said, **await asyncio.to_thread(_me_sync, who)}
 
@@ -2973,7 +2955,7 @@ async def wire_connections(request: Request):
     if not owner_call(request):
         return Response(status_code=403)
     rows = await pool.fetch("SELECT id, channel, chat, agent, purpose, person, opened_by, note, expires_at FROM route "
-                            "WHERE expires_at > now() ORDER BY channel, opened")
+                            "WHERE purpose <> 'standing' AND expires_at > now() ORDER BY channel, opened")
     return [{**dict(r), "expires_at": r["expires_at"].isoformat()} for r in rows]
 
 
@@ -2982,7 +2964,7 @@ async def wire_connection_end(cid: int, request: Request):
     """The owner ends a connection; its agent is told on the wire."""
     if not owner_call(request):
         return Response(status_code=403)
-    r = await pool.fetchrow("DELETE FROM route WHERE id = $1 RETURNING agent, channel, person", cid)
+    r = await pool.fetchrow("DELETE FROM route WHERE id = $1 AND purpose <> 'standing' RETURNING agent, channel, person", cid)
     if r is None:
         return Response(status_code=404)
     await pool.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES ('owner', $1, NULL, 'chat', $2)",
@@ -4105,7 +4087,7 @@ async def channels_status(request: Request):
     for ch in (c.name for c in _channels.connectable()):
         b = await asyncio.to_thread(_bridge, ch)
         c = _channels.BY_NAME[ch]                 # what the screen needs to connect it, from the one table
-        row = {"channel": ch, "routes": ch in _wire_channels(), "title": c.title, "numbers": c.numbers,
+        row = {"channel": ch, "routes": True, "title": c.title, "numbers": c.numbers,
                "connect": "token" if c.token_key else "link", "steps": list(c.steps)}
         if ch not in CHANNEL_TOKEN_KEY:            # linked another way: WhatsApp's QR
             link = await asyncio.to_thread(_wa_link)
@@ -4125,10 +4107,10 @@ async def channels_status(request: Request):
                        activate=_activate_cmd(ch, b) if state in ("activation-needed", "written") else None,
                        invite=_discord_invite(acct["id"]) if (ch == "discord" and acct) else None)
         out.append(row)
-    # every other bridge with a routes file (the frontends bridge, a new one): its routes and its own health, no token
+    # every other bridge with routes (the frontends bridge, a new one): its routes and its own health, no token
     # flow here; then the BUILT-INS (the channel rail, owner 11-15: "I treat chat as a channel"): they are not routed per
     # chat, so `fixed` says the rail shows what they do instead of a control
-    extra = [c for c in _wire_channels() if c not in {x.name for x in _channels.connectable()}]
+    extra = [c for c in await _wire_channels() if c not in {x.name for x in _channels.connectable()}]
     for ch, b in zip(extra, await asyncio.gather(*(asyncio.to_thread(_bridge, c) for c in extra))):   # together: a down bridge costs seconds
         out.append({"channel": ch, "routes": True, "state": "connected" if b["health"] else "unknown", "account": None})
     out += [{"channel": "web", "fixed": True, "state": "connected", "shows": "everything, always"},
