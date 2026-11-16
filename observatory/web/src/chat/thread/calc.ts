@@ -6,7 +6,8 @@
    "expression = answer"; on send each box becomes its answer alone. Leaving a box resolves it, entering it shows the
    expression again (settle). Pure: tests/chat_calc_test.ts runs it under node. */
 
-export const OPEN = '⟦', CLOSE = '⟧'
+import { CLOSE, codeAt, OPEN } from './draft'
+export { CLOSE, OPEN }
 const SEP = ' = '
 
 /* "= " typed where a word can start (the line's start or after a space), outside a box: the box opens there. Returns
@@ -14,7 +15,7 @@ const SEP = ' = '
 export function openCalc(text: string, caret: number): { text: string; caret: number } | null {
   if (caret < 2 || text[caret - 1] !== ' ' || text[caret - 2] !== '=') return null
   if (caret > 2 && !/\s/.test(text[caret - 3])) return null
-  if (calcAt(text, caret - 2)) return null
+  if (calcAt(text, caret - 2) || codeAt(text, caret - 2)) return null     // in code, "= " is the code's
   return { text: text.slice(0, caret - 2) + OPEN + CLOSE + text.slice(caret), caret: caret - 1 }
 }
 

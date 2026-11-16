@@ -374,7 +374,7 @@ export default forwardRef<ComposerHandle, {
         )}
         <div className="relative">
         {paint && <DraftMirror ref={mirror} text={text} hero={hero} bad={skip} />}
-        <textarea ref={box} value={text} rows={1} aria-label="message" data-composer spellCheck={!text.includes(OPEN)}
+        <textarea ref={box} value={text} rows={1} aria-label="message" data-composer spellCheck={!paint}
           onChange={(e) => {
             const opened = openCalc(e.target.value, e.target.selectionStart ?? e.target.value.length)   // "= " opens a box
             setText(opened ? opened.text : e.target.value); setMenuOff(false); setPicker(false); setErr('')
@@ -466,7 +466,7 @@ const DraftMirror = forwardRef<HTMLDivElement, { text: string; hero: boolean; ba
     <div ref={ref} aria-hidden className={`absolute inset-x-0 top-0 bottom-0 overflow-hidden pointer-events-none whitespace-pre-wrap break-words px-4 text-ink ${hero ? 'pt-4 pb-1 text-[17px] leading-[1.55]' : 'pt-3.5 pb-1 text-[15px] leading-relaxed'}`}>
       {blocks(text).map((b, i) => {
         if (!b.fence) return <div key={i}>{spans(b.text).map(span)}{end(b.text)}</div>
-        const lines = b.text.split('\n'), closed = lines.length > 1 && /^ {0,3}`{3,}\s*$/.test(lines[lines.length - 1])
+        const lines = b.text.split('\n'), closed = !!b.closed
         const body = lines.slice(1, closed ? -1 : undefined).join('\n')
         return (
           <div key={i} className="ws-md-fence">
