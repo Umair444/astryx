@@ -175,7 +175,7 @@ export async function loadCommands(): Promise<{ skills: Skill[]; tools: McpTool[
    the older ones that were never filed. */
 export interface Turn { id: number; agent: string; started_at: string | null; ended_at: string | null; input_msg_id: number | null; elsewhere: string[]; steps: Step[]
   msgs?: number[] }               // this thread's rows the turn wrote (the server's back-filled turn_id; a live copy has none)
-export interface Work { turns: Turn[]; live: Record<string, Step[]>; unlinked: Record<string, number> }
+export interface Work { turns: Turn[]; live: Record<string, Step[]>; unlinked: Record<string, number>; ended?: Record<string, string | null> }
 export const loadWork = (thread: string) => api<Work>(`/chat/work?thread=${encodeURIComponent(thread)}`)
 
 /* ------------------------------------------------------------------------------------------------- steps */

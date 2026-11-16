@@ -390,7 +390,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   }, [current, steps, work, lanes.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // asked and not yet answered, by any human (thread/pending.ts): the live activity line
-  const pending: Pending[] = useMemo(() => pendingOf(inChat, rows, work?.live, me), [inChat, rows, work, me])
+  const pending: Pending[] = useMemo(() => pendingOf(inChat, rows, work?.live, me, work?.ended), [inChat, rows, work, me])
 
   // a conversation is LIVE while one of its agents works on it
   const live = useMemo(() => {
@@ -832,6 +832,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
             </div>
           )}
           {current && <Turns key={current} me={me} older={older} onOlder={loadOlderRows} focus={jump?.thread === current ? jump : null} rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} switches={switches} onStop={who.owner ? interruptAgent : undefined}
+            onRemind={(a) => onSend('Still waiting for your answer to my message above.', [], [a]).then(() => undefined)}
             onOpenFile={openFile} onOpenAsk={openAsk} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
             empty={histErr ? null : <FreshThread agents={inChat} status={status} roles={roles} lines={lines} />} />}
           {current && <Outbox items={outbox.filter((o) => o.thread === current)} onRetry={(o) => void deliver(o)}

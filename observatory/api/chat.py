@@ -408,9 +408,10 @@ async def work(request: Request, thread: str = ""):
         "SELECT DISTINCT x AS a FROM messages, LATERAL (VALUES (from_agent), (to_agent)) v(x) WHERE thread = $1", thread)
         if r["a"] in live_names and see(r["a"])]
     first = await pool.fetchval("SELECT min(ts) FROM messages WHERE thread = $1", thread)
-    live, unlinked = {}, {}
+    live, unlinked, ended = {}, {}, {}
     for a in parties:
         end = await pool.fetchval("SELECT max(ended_at) FROM turns WHERE agent = $1", a)
+        ended[a] = _iso(end)                   # its last turn's end: an ask older than this, still unanswered, was passed by
         rows = await pool.fetch(
             "SELECT id, ts, agent, kind, left(content, 300) AS content, turn_id, meta->'turn_msgs' AS turn_msgs, meta->'sub' AS sub FROM steps WHERE agent = $1 "
             "AND turn_id IS NULL AND ($2::timestamptz IS NULL OR ts > $2) AND kind <> ALL($3::text[]) "
@@ -423,7 +424,7 @@ async def work(request: Request, thread: str = ""):
                        "ended_at": _iso(r["ended_at"]), "input_msg_id": r["input_msg_id"],
                        "elsewhere": list(r["elsewhere"]), "msgs": list(r["msgs"]),
                        "steps": by_turn.get(r["id"], [])} for r in turns],
-            "live": live, "unlinked": unlinked}
+            "live": live, "unlinked": unlinked, "ended": ended}
 
 
 def _iso(t):

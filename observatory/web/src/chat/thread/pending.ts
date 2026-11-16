@@ -12,9 +12,13 @@ import { isHuman, type Msg, type Step } from '../../types'
    the viewer, so the line reads "for Pat". 11-15: (a) once compared from to the literal 'owner'. */
 /* `busy`: asked here, but its newest step belongs to a turn another conversation opened: it hasn't reached this message
    yet (owner 11-15: the line said "reading your message" for 20 minutes while seed worked on something else) */
-export interface Pending { agent: string; since: string; steps: Step[]; by?: string; leads?: boolean; busy?: boolean }
+/* `passed`: asked here, its newest turn ENDED after the ask, nothing from it since and nothing running: it finished
+   without replying (owner 11-15: "you never replied, so the counter ran for 20 minutes"). The line says so and offers
+   a reminder instead of a timer that never stops. */
+export interface Pending { agent: string; since: string; steps: Step[]; by?: string; leads?: boolean; busy?: boolean; passed?: boolean }
 
-export function pendingOf(agents: string[], rows: Msg[], live: Record<string, Step[]> | undefined, me: string): Pending[] {
+export function pendingOf(agents: string[], rows: Msg[], live: Record<string, Step[]> | undefined, me: string,
+                          ended: Record<string, string | null> = {}): Pending[] {
   const out: Pending[] = []
   const here = new Set(rows.map((m) => m.id))
   const serves = (s: Step) => !!s.turn_msgs?.some((id) => here.has(id))
@@ -49,9 +53,11 @@ export function pendingOf(agents: string[], rows: Msg[], live: Record<string, St
     if (!asked) continue
     const t0 = Date.parse(ask!.ts)
     const last = lane[lane.length - 1]
+    const end = ended[a] ? Date.parse(ended[a]!) : 0
     out.push({ agent: a, since: ask!.ts, by: ask!.from === me ? undefined : ask!.from!,
                steps: lane.filter((s) => Date.parse(s.ts) >= t0 && !elsewhere(s)),
-               busy: !!last && elsewhere(last) && Date.parse(last.ts) >= t0 - 600_000 })
+               busy: !!last && elsewhere(last) && Date.parse(last.ts) >= t0 - 600_000,
+               passed: !lane.length && end > t0 + 1000 })
   }
   // A TEAM's lead first (LiveActivity draws a team as ONE line, the lead's): the newest human ask here that named one
   const lead = t?.lead

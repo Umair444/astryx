@@ -64,6 +64,7 @@ export function actionOf(s: Step | undefined, busy = false): { verb: string; det
 export const helperName = (s: Step) => (s.sub?.desc || s.sub?.type || 'helper').slice(0, 40)
 
 export type StopFn = (agent: string) => Promise<void>
+export type RemindFn = (agent: string) => Promise<void>
 type StopState = 'confirm' | 'stopping' | 'stopped' | { err: string }
 const OK_KEY = 'ws.stop.confirmed'
 const confirmed = () => { try { return sessionStorage.getItem(OK_KEY) === '1' } catch { return false } }
@@ -72,12 +73,42 @@ const confirmed = () => { try { return sessionStorage.getItem(OK_KEY) === '1' } 
    and consolidated working should be shown"): two or more agents on this chat are ONE line, the lead's (the chat's
    first agent, the one that replies): its face in front of the others', what it is doing now, "+N helping", one
    timer from the earliest ask. A click opens each agent's own line (its steps, its own Stop). One agent: its line. */
-export default function LiveActivity({ pending, onStop }: { pending: Pending[]; onStop?: StopFn }) {
+export default function LiveActivity({ pending, onStop, onRemind }: { pending: Pending[]; onStop?: StopFn; onRemind?: RemindFn }) {
   const now = useNow(1000)
+  const working = pending.filter((p) => !p.passed)
+  const passed = pending.filter((p) => p.passed)
   if (!pending.length) return null
   return (
     <div aria-live="polite">
-      {pending.length === 1 ? <Line p={pending[0]} now={now} onStop={onStop} /> : <Team pending={pending} now={now} onStop={onStop} />}
+      {working.length === 1 ? <Line p={working[0]} now={now} onStop={onStop} /> : working.length > 1 ? <Team pending={working} now={now} onStop={onStop} /> : null}
+      {passed.map((p) => <Passed key={p.agent} p={p} onRemind={onRemind} />)}
+    </div>
+  )
+}
+
+/* FINISHED WITHOUT REPLYING (owner 11-15: "you never replied, so the counter ran for 20 minutes"): its turn ended after
+   the ask and nothing came back. No timer that never stops: the line says what happened and offers one reminder, a
+   message from you on this conversation like any other (it wakes the agent, and the Stop hook won't let it go idle
+   again with the ask unanswered: astryx.core.owed). */
+function Passed({ p, onRemind }: { p: Pending; onRemind?: RemindFn }) {
+  const [state, setState] = useState<'idle' | 'sending' | 'sent' | { err: string }>('idle')
+  const name = displayName(p.agent)
+  async function remind() {
+    setState('sending')
+    try { await onRemind!(p.agent); setState('sent') } catch (e) { setState({ err: String((e as Error).message || e) }) }
+  }
+  return (
+    <div className="flex items-center gap-3 rounded-[12px] -mx-2 px-2 py-1.5" style={{ ['--ws-agent' as string]: agentColor(p.agent) }}>
+      <Presence agent={p.agent} status="awake" size={24} ring={false} />
+      <span className="min-w-0 flex-1 text-[13.5px] text-ink truncate">
+        <span className="font-medium">{name}</span> <span className="text-ink-dim">{state === 'sent' ? 'has been reminded' : 'finished without replying'}{p.by ? ` to ${humanName(p.by)}` : ''}</span>
+      </span>
+      {typeof state === 'object' && <span className="shrink-0 text-[12px] text-bad truncate max-w-[220px]" role="status">{state.err}</span>}
+      {onRemind && state !== 'sent' && (
+        <button className="ws-stop shrink-0" disabled={state === 'sending'} onClick={() => void remind()} title={`Send ${name} a reminder on this conversation`}>
+          {state === 'sending' ? 'Reminding…' : 'Remind'}
+        </button>
+      )}
     </div>
   )
 }

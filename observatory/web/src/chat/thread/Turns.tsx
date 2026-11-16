@@ -9,7 +9,7 @@ import { embeds, parts, PROJECT_BLOCK, stripEmbeds, type Turn as WTurn, type Wor
 import { InlineFile } from './Inline'
 import { inlineParts } from './flow'
 import FileChip, { type OpenRequest } from '../artifacts/FileChip'
-import LiveActivity, { type Pending, type StopFn } from './LiveActivity'
+import LiveActivity, { type Pending, type RemindFn, type StopFn } from './LiveActivity'
 import Replay from './Replay'
 import { handoffLabel, type Handoff as WHandoff } from '../live'
 import AskChip from '../artifacts/annotate/AskChip'
@@ -131,7 +131,7 @@ export function blocksOf(items: Row[], roster: Set<string>, handoffs: WHandoff[]
   return out
 }
 
-export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty, handoffs, switches, onStop, focus = null, older = false, onOlder, me = 'owner' }: {
+export default function Turns({ rows, work, pending, roster, roles, onOpenFile, onOpenAsk, onEdit, loading, empty, handoffs, switches, onStop, onRemind, focus = null, older = false, onOlder, me = 'owner' }: {
   rows: Msg[]
   me?: string                                  // the viewer's wire handle (cog-gaps): whose words sit on the right
   switches?: Switch[]                          // the owner's switches of this chat's agents: a boundary at each
@@ -140,6 +140,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   focus?: Focus | null                         // open AT this message (a search hit): thread/focus.ts
   handoffs?: WHandoff[]
   onStop?: StopFn
+  onRemind?: RemindFn
   work: Work | null
   pending: Pending[]
   roster: string[]
@@ -197,7 +198,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
       )}
       {win.shown.map((b) => <Fragment key={b.key}>{blockMsg(b.key) !== null && <span data-msg={blockMsg(b.key)!} hidden />}
         <BlockView b={b} role={b.kind === 'theirs' ? roles[b.msg.from] : undefined} cb={cb} asks={!!onOpenAsk} /></Fragment>)}
-      {pending.length > 0 && <div className="pt-5"><LiveActivity pending={pending} onStop={onStop} /></div>}
+      {pending.length > 0 && <div className="pt-5"><LiveActivity pending={pending} onStop={onStop} onRemind={onRemind} /></div>}
       <div ref={end} />
     </div>
   )
