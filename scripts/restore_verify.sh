@@ -28,6 +28,23 @@ DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file 2>/dev/nul
 # DROPping it: two orgs' weekly verifies would drop each other's restore mid-check
 SCRATCH="$(pg_dsn_db "$DSN")_restorecheck"
 SCRATCH_DSN="${DSN%/*}/$SCRATCH"
+# >>> super dsn
+# cog-rls slice 2: a provisioned org's DSN is org_<key>, which can't CREATE DATABASE and counts only the rows its
+# row-level security shows, while the dump (backup.sh's) holds every row. The verify is the PROVISIONER's, as the dump
+# is: the root-only superuser file, on the same database (backup.sh's switch). Readable only under sudo/root; otherwise
+# the org DSN is used and CREATE DATABASE fails LOUD below, never a partial verify.
+SUPER_FILE=${ASTRYX_PG_SUPER_FILE:-/etc/astryx/pg-super.dsn}
+if [ -r "$SUPER_FILE" ]; then
+  # the DSNs ride the environment, never argv (ps shows argv to every user); a URL stays a URL, key=value stays key=value
+  # one DSN per line: a key=value DSN holds spaces
+  { read -r DSN && read -r SCRATCH_DSN; } < <(ORG_DSN="$DSN" SUPER_FILE="$SUPER_FILE" SCRATCH="$SCRATCH" "$ROOT/venv/bin/python" -c 'import os; from urllib.parse import quote, urlsplit
+from psycopg.conninfo import make_conninfo, conninfo_to_dict
+s = open(os.environ["SUPER_FILE"]).read().strip(); db = conninfo_to_dict(os.environ["ORG_DSN"]).get("dbname")
+on = lambda d: urlsplit(s)._replace(path="/" + quote(d, safe="")).geturl() if "://" in s else make_conninfo(s, dbname=d)
+print(on(db) if db else s); print(on(os.environ["SCRATCH"]))') \
+    || { echo "restore-verify: the provisioner DSN file is unreadable as a DSN" >&2; exit 1; }
+fi
+# <<< super dsn
 
 newest=$(ls -1t "$BK"/astryx-*.dump 2>/dev/null | head -1)
 [ -n "$newest" ] || { echo "restore-verify: no backup to verify (run scripts/backup.sh first)" >&2; exit 1; }
