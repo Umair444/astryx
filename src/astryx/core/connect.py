@@ -160,7 +160,8 @@ def _owner_asked(conn, me: str) -> bool:
     every one must be the owner's own (address.person_sql's rule, so a peer's 'owner' is not him). Unknown: refused."""
     from astryx.core import address
     r = conn.execute("SELECT meta->'turn_msgs' FROM steps WHERE agent = %s AND kind = 'tool' "
-                     "AND left(content, 23) = 'mcp__channels__connect:' ORDER BY id DESC LIMIT 1", (me,)).fetchone()
+                     "AND left(content, 23) = 'mcp__channels__connect:' AND ts > now() - interval '60 seconds' "
+                     "ORDER BY id DESC LIMIT 1", (me,)).fetchone()     # THIS call's, never an older one (medic 12652)
     ids = [int(x) for x in (r[0] or [])] if r else []
     if not ids:
         return False

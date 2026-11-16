@@ -146,6 +146,9 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
     turn_of("owner", "peer.example")
     arm("…nor on a federated peer's 'owner'", "only on the owner's own message" in run("seed", "unroute", "ETL"))
     turn_of("owner")
+    c.execute("UPDATE steps SET ts = now() - interval '2 minutes' WHERE agent='seed'")      # this call's step was lost
+    arm("…nor on an older owner turn's step (this call's own is missing)", "only on the owner's own message" in run("seed", "route", "ETL", to="db"))
+    turn_of("owner")
     out = run("seed", "route", "ETL", to="db")
     std = c.execute("SELECT agent, opened_by, rule->>'show' FROM route WHERE chat='1203@g.us' AND purpose='standing'").fetchone()
     arm("seed routes a group to db on his word: a standing row, through the one write", "now reaches db" in out
