@@ -397,6 +397,8 @@
 
 /* the lead of a team (owner 11-13): a quiet accent ring on its chip, in the composer and on the message */
 .ws-lead { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t-accent) 45%, transparent); color: var(--t-fg); }
+/* a face's ×, a badge on its corner: shown where a pointer can hover it (or a key reaches it); on touch it stays */
+@media (hover: hover) { .ws-to-x { opacity: 0; } .ws-to span:hover > .ws-to-x, .ws-to-x:focus-visible { opacity: 1; } }
 
 /* the composer's calculator box (thread/calc.ts, Composer.tsx CalcMirror): drawn BEHIND the transparent textarea, so it
    may not change a single glyph's width: colour, background and a shadow for its edge, never padding or a border */

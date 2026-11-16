@@ -189,7 +189,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     </div>
   )
   return (
-    <div className="mx-auto w-full max-w-[720px] px-5 md:px-6 pt-8 pb-6 flex flex-col" role="log" aria-label="conversation">
+    <div className="mx-auto w-full max-w-[720px] px-5 md:px-6 pt-8 flex flex-col" role="log" aria-label="conversation">
       {blocks.length === 0 && empty}
       {(win.hidden > 0 || (older && !!onOlder)) && (
         <button onClick={() => void earlier()} disabled={fetching} className="ws-earlier w-full mb-2 py-2 hover:text-ink">
@@ -199,7 +199,8 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
       {win.shown.map((b) => <Fragment key={b.key}>{blockMsg(b.key) !== null && <span data-msg={blockMsg(b.key)!} hidden />}
         <BlockView b={b} role={b.kind === 'theirs' ? roles[b.msg.from] : undefined} cb={cb} asks={!!onOpenAsk} /></Fragment>)}
       {pending.length > 0 && <div className="pt-5"><LiveActivity pending={pending} onStop={onStop} onRemind={onRemind} /></div>}
-      <div ref={end} />
+      {/* the end carries the log's bottom space, so scrolling it into view lands at the true end, not 24px short */}
+      <div ref={end} className="h-6 shrink-0" />
     </div>
   )
 }

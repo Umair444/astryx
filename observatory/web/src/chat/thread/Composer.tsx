@@ -401,21 +401,20 @@ export default forwardRef<ComposerHandle, {
           )}
           {to.length > 0 && (
             // the "To" CHIPS (owner 11-13): each agent with its own ×, a hairline between them, and a + that opens the
-            // roster to add or remove; the first named leads a team (its reply is the one the human gets)
+            // roster to add or remove; the first named leads a team (its reply is the one the human gets). Faces only
+            // (owner 11-16): the name is the hover title and the label, the lead its accent ring
             <div className="ws-to flex items-center min-w-0 ml-1.5 text-[12px] text-ink-mute" role="group" aria-label={`To ${to.map(displayName).join(', ')}`}>
               <span className="max-sm:hidden mr-1.5">To</span>
               <span className="flex items-center min-w-0 overflow-x-auto [scrollbar-width:none]">
                 {to.map((n, i) => (
                   <span key={n} className="flex items-center shrink-0">
                     {i > 0 && <span className="mx-1 h-3.5 w-px bg-line" aria-hidden />}
-                    <span className={`inline-flex items-center gap-1 rounded-full pl-0.5 pr-1 py-[1px] text-ink-dim ${i === 0 && to.length > 1 ? 'ws-lead' : ''}`}
+                    <span className={`relative inline-flex items-center rounded-full p-[2px] text-ink-dim ${i === 0 && to.length > 1 ? 'ws-lead' : ''}`}
                       title={i === 0 && to.length > 1 ? `${displayName(n)} leads: it replies, the others help` : displayName(n)}>
-                      <AgentFace name={n} size={16} />
-                      <span className="max-w-[9rem] truncate">{displayName(n)}</span>
-                      {i === 0 && to.length > 1 && <span className="text-[10px] text-ink-mute">leads</span>}
+                      <AgentFace name={n} size={18} />
                       {onSwitch && !named.length && to.length > 1 && (
                         <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => onSwitch(to.filter((x) => x !== n))}
-                          className="ml-0.5 w-4 h-4 grid place-items-center rounded-full text-ink-mute hover:text-ink hover:bg-[color-mix(in_srgb,var(--t-fg)_8%,transparent)]"
+                          className="ws-to-x absolute -top-1 -right-1.5 w-3.5 h-3.5 grid place-items-center rounded-full text-[10px] leading-none border border-line bg-[var(--t-panel)] text-ink-mute hover:text-ink"
                           aria-label={`remove ${displayName(n)}`} title={`Remove ${displayName(n)}`}>×</button>
                       )}
                     </span>
