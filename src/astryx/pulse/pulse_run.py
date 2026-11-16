@@ -28,6 +28,7 @@ import requests
 
 REPO = repo_root(__file__)
 LOG_KEEP = 50                      # ctx.log lines a trigger keeps (state["_log"])
+LOG_WIDTH = 300                    # … and the characters kept of each
 
 
 def _dsn() -> str:
@@ -71,9 +72,10 @@ class Ctx:
     def log(self, line):
         """Record a run that decided nothing: no wake, just a line the observatory's trigger view
         shows, so a quiet check is visibly working. say() is a decision due; log() is the rest.
-        Kept in state["_log"], the last LOG_KEEP lines."""
+        Kept in state["_log"], the last LOG_KEEP lines, each cut to LOG_WIDTH characters. A line is a
+        viewable page: shapes and counts only, never personal data (local.md's personal tier)."""
         self.state["_log"] = (self.state.get("_log") or [])[-(LOG_KEEP - 1):] + [
-            {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "line": str(line)}]
+            {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "line": str(line)[:LOG_WIDTH]}]
 
     def sql(self, query, params=()):
         if _WAKE_WRITE.search(_COMMENT.sub(" ", str(query))):

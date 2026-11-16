@@ -2,7 +2,7 @@
 """ctx.log (pulse_run.Ctx.log): a run that decided nothing leaves a line, never a wake (memory 12690).
 
   L1 log() appends {ts, line} to state["_log"] and queues no wake
-  L2 the log keeps only the last LOG_KEEP lines, oldest dropped
+  L2 the log keeps only the last LOG_KEEP lines, oldest dropped, each cut to LOG_WIDTH characters
   L3 through pulse_run itself (the isolation boundary): the lines come back in the returned state, the next run
      appends to them, and wakes stays empty
 
@@ -28,6 +28,8 @@ c = pr.Ctx({"_log": [{"ts": "t", "line": str(i)} for i in range(pr.LOG_KEEP)]})
 c.log("new")
 lines = [e["line"] for e in c.state["_log"]]
 assert len(lines) == pr.LOG_KEEP and lines[0] == "1" and lines[-1] == "new", lines[:2] + lines[-1:]
+c.log("x" * (pr.LOG_WIDTH + 50))
+assert len(c.state["_log"][-1]["line"]) == pr.LOG_WIDTH
 print("L2 ok")
 
 with tempfile.TemporaryDirectory(dir=ROOT) as d:
