@@ -18,7 +18,7 @@ import { isHuman, type Msg, type Step } from '../../types'
 export interface Pending { agent: string; since: string; steps: Step[]; by?: string; leads?: boolean; busy?: boolean; passed?: boolean }
 
 export function pendingOf(agents: string[], rows: Msg[], live: Record<string, Step[]> | undefined, me: string,
-                          ended: Record<string, string | null> = {}): Pending[] {
+                          ended: Record<string, string | null> = {}, now = Date.now()): Pending[] {
   const out: Pending[] = []
   const here = new Set(rows.map((m) => m.id))
   const serves = (s: Step) => !!s.turn_msgs?.some((id) => here.has(id))
@@ -57,7 +57,9 @@ export function pendingOf(agents: string[], rows: Msg[], live: Record<string, St
     out.push({ agent: a, since: ask!.ts, by: ask!.from === me ? undefined : ask!.from!,
                steps: lane.filter((s) => Date.parse(s.ts) >= t0 && !elsewhere(s)),
                busy: !!last && elsewhere(last) && Date.parse(last.ts) >= t0 - 600_000,
-               passed: !lane.length && end > t0 + 1000 })
+               // a GRACE both ways (medic 12453): an ask that lands at a turn boundary isn't "passed" in the seconds
+               // before its own turn starts; only a turn that ended a minute after the ask, half a minute ago, passed it
+               passed: !lane.length && end > t0 + 60_000 && now - end > 30_000 })
   }
   // A TEAM's lead first (LiveActivity draws a team as ONE line, the lead's): the newest human ask here that named one
   const lead = t?.lead

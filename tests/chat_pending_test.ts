@@ -71,4 +71,12 @@ const mid = { seed: [st(1, '2026-11-15T11:01:00Z', [])] }
 arm("…a turn that absorbed the message (stamped []) is not busy elsewhere", pendingOf(['seed'], ask, mid, 'owner')[0]?.busy === false, pendingOf(['seed'], ask, mid, 'owner'))
 arm("…no lane at all: not busy, just not started", !pendingOf(['seed'], ask, {}, 'owner')[0]?.busy)
 
+// PASSED (owner 11-15: the counter ran 20 minutes): asked, its turn ended well after the ask, nothing back, nothing running
+const asked = [row(40, 'owner', 'seed', '2026-11-15T12:00:00Z')] as never[]
+const later = { seed: '2026-11-15T12:05:00Z' }
+arm('passed: its turn ended five minutes after the ask, half a minute ago, no reply, no live work', pendingOf(['seed'], asked, { seed: [] }, 'owner', later, Date.parse('2026-11-15T12:06:00Z'))[0]?.passed === true)
+arm('…not in the seconds after that turn ended (its own turn may be about to start)', !pendingOf(['seed'], asked, { seed: [] }, 'owner', later, Date.parse('2026-11-15T12:05:10Z'))[0]?.passed)
+arm('…not when the turn ended right at the ask (a boundary)', !pendingOf(['seed'], asked, { seed: [] }, 'owner', { seed: '2026-11-15T12:00:20Z' }, Date.parse('2026-11-15T12:06:00Z'))[0]?.passed)
+arm('…not while it has live work', !pendingOf(['seed'], asked, { seed: [st(1, '2026-11-15T12:05:30Z', [40])] }, 'owner', later, Date.parse('2026-11-15T12:06:00Z'))[0]?.passed)
+
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')
