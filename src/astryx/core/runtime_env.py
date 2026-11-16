@@ -186,10 +186,17 @@ def fragment(agent: str) -> str:
     except (ValueError, OSError) as e:  # malformed store must never break a spawn
         print(f"runtime_env: cannot read runtime.json ({e}) — falling back to default", file=sys.stderr)
         return _pairs(agent, {}, env)
-    entry = cfg.get(agent)
-    if not isinstance(entry, dict):
-        entry = {}
-    return _pairs(agent, entry, env)
+    from astryx.core import vault
+    return _pairs(agent, vault.connection(cfg, agent), env)
+
+
+def connection(agent: str) -> dict:
+    """`agent`'s connection (runtime.json through vault.connection): {harness, credential, model, effort}, or {}."""
+    from astryx.core import vault
+    try:
+        return vault.connection(json.loads((paths.estate(__file__) / "runtime.json").read_text()), agent)
+    except (OSError, ValueError):
+        return {}
 
 
 def _pairs(agent: str, entry: dict, env: dict) -> str:
@@ -198,24 +205,20 @@ def _pairs(agent: str, entry: dict, env: dict) -> str:
     # from .env falls back to the org's default, loudly, never to a half-configured endpoint
     cred = entry.get("credential")
     if cred:
-        from astryx.core import vault
+        # A KEY (astryx.core.vault, Harness and Keys): the catalog plugs it into the connection's harness. Its value
+        # missing from .env falls back to the org's default, loudly, never to a half-configured endpoint
+        from astryx.core import catalog, vault
         ent = vault.load(paths.estate(__file__)).get(cred)
-        got = vault.pairs(cred, ent, env) if ent else None
+        if ent and entry.get("models"):                     # the agent's own tier choice wins over the key's
+            ent = {**ent, "models": {**(ent.get("models") or {}), **entry["models"]}}
+        harness = _ROWS.get(entry.get("harness") or "claude", {})
+        got = vault.pairs(cred, ent, env, harness, str(entry.get("effort") or "")) if ent else None
         if got is None:
-            print(f"runtime_env: agent '{agent}': credential '{cred}' is not in the vault or has no value in .env — "
+            print(f"runtime_env: agent '{agent}': key '{cred}' is not in the vault or has no value in .env — "
                   "falling back to the org's login", file=sys.stderr)
             entry = {k: v for k, v in entry.items() if k != "credential"}
         else:
-            pairs += got
-            entry = {k: v for k, v in entry.items() if k not in ("credential", "base_url", "token_env")}
-            if entry.get("effort"):
-                pairs.append(("CLAUDE_CODE_EFFORT_LEVEL", str(entry["effort"])))
-            seen = {k for k, _ in pairs}
-            for tier, key in (("opus", "ANTHROPIC_DEFAULT_OPUS_MODEL"), ("sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL"),
-                              ("haiku", "ANTHROPIC_DEFAULT_HAIKU_MODEL")):
-                if (entry.get("models") or {}).get(tier):          # the agent's own model choice wins over the credential's
-                    pairs = [(k, v) for k, v in pairs if k != key] + [(key, str(entry["models"][tier]))]
-            return "".join(f", {json.dumps(k)}: {json.dumps(v)}" for k, v in pairs)
+            return "".join(f", {json.dumps(k)}: {json.dumps(v)}" for k, v in got)
     base_url = entry.get("base_url")
     if not base_url:
         login = org_login(env)                   # beneath the entry: the org's own credential, by NAME from its .env
@@ -274,10 +277,13 @@ if __name__ == "__main__":
         for a in ("--cli", "--model", "--perm", "--mcp"):
             ap.add_argument(a, required=True)
         ap.add_argument("--resume")
+        ap.add_argument("--agent", default="")
         a = ap.parse_args(sys.argv[2:])
-        cli = org_login()["cli"]
+        conn = connection(a.agent) if a.agent else {}
+        cli = conn.get("harness") or org_login()["cli"]     # the agent's own harness and model win over the org's
         try:
-            print(_adapters.line(_adapters.launch(cli, binary=a.cli, model=a.model, perm=a.perm, mcp=a.mcp,
+            print(_adapters.line(_adapters.launch(cli, binary=a.cli, model=conn.get("model") or a.model, perm=a.perm,
+                                                  mcp=a.mcp,
                                                   resume=a.resume, rows=_ROWS)))
         except _adapters.AdapterError as e:
             print(f"runtime_env: {e}", file=sys.stderr)

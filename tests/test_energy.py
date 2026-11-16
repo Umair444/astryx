@@ -153,7 +153,7 @@ def main():
         with _tf.TemporaryDirectory() as est:
             est = Path(est)
             (est / "runtime.json").write_text('{"b": {"credential": "Second"}, "z": {"credential": "Third"}}')
-            _V.save(est, {"Second": _V.entry("Second", "login"), "Third": _V.entry("Third", "login")})
+            _V.save(est, {"Second": _V.entry("Second", "claude"), "Third": _V.entry("Third", "claude")})
             (est / ".env").write_text("ASTRYX_CRED_SECOND=sk-ant-oat01-" + "x" * 30 + "\nASTRYX_CRED_THIRD=sk-ant-oat01-" + "y" * 30 + "\n")
             ln_b, keep_b = E.prompt_line(c, "b", est)
             ln_z, keep_z = E.prompt_line(c, "z", est)

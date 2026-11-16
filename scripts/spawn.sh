@@ -420,7 +420,7 @@ resolve_cli || { echo "$CLI_REFUSED"; exit 1; }
 # the permission mode, the strict MCP config, the AskUserQuestion deny) live in ONE row, and every value is shell-quoted,
 # so a charter's Model: with a space, `;` or `$(…)` is one argument, never split or run (a2 #62560). No line, no spawn:
 # a malformed table or a CLI with no launcher refuses here, never a line nobody declared.
-LINE=$("$PY" "$ROOT/src/astryx/core/runtime_env.py" --launch --cli "$CLI" --model "$MODEL" --perm "$PERMMODE" \
+LINE=$("$PY" "$ROOT/src/astryx/core/runtime_env.py" --launch --agent "$AGENT" --cli "$CLI" --model "$MODEL" --perm "$PERMMODE" \
   --mcp "$HOME_D/.mcp.json" ${RESUME:+--resume "$RESUME"}) || { echo "spawn: $AGENT not spawned: no launch line (runtime_env said why above)" >&2; exit 1; }
 tmux send-keys -t "=$SESS:" "$LINE" Enter
 

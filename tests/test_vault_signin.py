@@ -74,26 +74,26 @@ with tempfile.TemporaryDirectory() as td:
     seen = Path(td) / "seen"
     os.environ["FAKE_SEEN"] = str(seen)
     API._shutil.which = lambda n: str(bindir / "claude")
-    st, b = call(API.vault_signin_start, "Second", owner=False)
+    st, b = call(API.key_signin_start, "Second", owner=False)
     arm("S5 not the owner: 403", st == 403)
     import subprocess as _sp
     real_popen = _sp.Popen
     _sp.Popen = lambda *a, **k: real_popen(*a, **{**k, "env": {**k["env"], "FAKE_SEEN": str(seen)}})
     try:
-        st, b = call(API.vault_signin_start, "Second")
+        st, b = call(API.key_signin_start, "Second")
         arm("S1 start answers the sign-in URL and nothing else", st == 200 and set(b) == {"url"} and b["url"].startswith("https://claude.com/cai/oauth/authorize?"), (st, b))
         home = API._SIGNIN["now"]["home"]
         for bad in ("", "a\nb", "x\x1b[A", "has space"):
-            st2, b2 = call(API.vault_signin_code, "Second", API.Code(code=bad))
+            st2, b2 = call(API.key_signin_code, "Second", API.Code(code=bad))
             arm(f"S2 a code of the wrong shape is refused: {bad!r}", st2 == 400 and "ASTRYX_CRED_SECOND" not in config.read_env(EST / ".env"), (st2, b2))
-        API._proves = lambda home, token: False
-        st, b = call(API.vault_signin_code, "Second", API.Code(code="GOOD-CODE-123"))
+        API._proves = lambda home, token, harness: False
+        st, b = call(API.key_signin_code, "Second", API.Code(code="GOOD-CODE-123"))
         arm("S7 a login the proof call rejects: 400, nothing in .env", st == 400 and "ASTRYX_CRED_SECOND" not in config.read_env(EST / ".env"), (st, b))
         proved = []
-        API._proves = lambda home, token: proved.append(token) or True
-        st, b = call(API.vault_signin_start, "Second")
+        API._proves = lambda home, token, harness: proved.append(token) or True
+        st, b = call(API.key_signin_start, "Second")
         home = API._SIGNIN["now"]["home"]
-        st, b = call(API.vault_signin_code, "Second", API.Code(code="GOOD-CODE-123"))
+        st, b = call(API.key_signin_code, "Second", API.Code(code="GOOD-CODE-123"))
         env = config.read_env(EST / ".env")
         arm("S6 the token in two writes with a styled word after it: stored WHOLE, no suffix", env.get("ASTRYX_CRED_SECOND") == TOKEN and proved == [TOKEN], (env.get("ASTRYX_CRED_SECOND", "")[-20:], len(proved)))
         arm("S3 the login lands under the derived key, and the vault holds it as a login", st == 200 and env.get("ASTRYX_CRED_SECOND") == TOKEN and V.load(EST).get("Second", {}).get("kind") == "login", (st, b))
@@ -102,7 +102,7 @@ with tempfile.TemporaryDirectory() as td:
         h, cfg = seen.read_text().split("\n")
         arm("S3 setup-token ran with HOME and its config inside the throwaway home, never the real one",
             h == home and cfg == os.path.join(home, "cfg") and h != os.path.expanduser("~"), (h, cfg))
-        st, b = call(API.vault_signin_code, "Second", API.Code(code="GOOD-CODE-123"))
+        st, b = call(API.key_signin_code, "Second", API.Code(code="GOOD-CODE-123"))
         arm("S4 a code for a sign-in that isn't running: 409", st == 409, (st, b))
     finally:
         _sp.Popen = real_popen

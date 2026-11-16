@@ -460,7 +460,7 @@ from observatory.api import mind as _mindapi  # noqa: E402 — the org's mind: i
 _mindapi.bind(owner=lambda r: owner_call(r))
 app.include_router(_mindapi.router)
 from observatory.api import vault as _vaultapi  # noqa: E402 — the org's named logins and keys (owner-only)
-_vaultapi.bind(owner_call, ESTATE)
+_vaultapi.bind(owner_call, ESTATE, pool=lambda: pool, roster=lambda: set(agent_meta()), alive=lambda: tmux_alive())
 app.include_router(_vaultapi.router)
 
 # feat/chat-workspace: the workspace's unified conversation list (chat:, obs:, cv:) and its pins/titles; owner-only by
@@ -1251,129 +1251,7 @@ async def charter_put(name: str, edit: CharterEdit, request: Request):
                      else "saved — applies on next spawn")}
 
 
-# ---------------------------------------------------------- per-agent runtime / provider
-# Each resident is its own `claude` process and may run on a different provider (Anthropic
-# direct, a GLM/Huawei endpoint, an OpenAI-compatible gateway) with its own key + model map.
-# The owner sets that here; spawn.sh injects it into homes/<name>/.claude/settings.json's env
-# block on the next respawn (see src/astryx/core/runtime_env.py). SECRETS NEVER TRANSIT THIS API:
-# runtime.json stores the NAME of the .env key holding the token, never the value — read
-# redacts, write refuses a token value. No entry for an agent → it uses the org's default.
-RUNTIME_PATH = ESTATE / "runtime.json"
-
-
-def _load_runtime() -> dict:
-    if not RUNTIME_PATH.exists():
-        return {}
-    try:
-        d = json.loads(RUNTIME_PATH.read_text())
-        return d if isinstance(d, dict) else {}
-    except (ValueError, OSError):
-        return {}
-
-
-def _env_key_names() -> list[str]:
-    """NAMES only of .env keys (never values) — lets the UI pick which key holds the token."""
-    return list(config.read_env(ESTATE / ".env"))    # the ONE .env reader, per line (plan-10224 ENVREAD)
-
-
-class RuntimeEdit(BaseModel):
-    base_url: str | None = None
-    token_env: str | None = None
-    models: dict | None = None          # {opus, sonnet, haiku}
-    effort: str | None = None
-    credential: str | None = None      # a name in the vault (src/astryx/core/vault.py): the agent runs on it
-    confirm_billing: bool = False      # connecting to an API KEY is metered spend: the owner's signature (local.md)
-
-
-@app.get("/api/agents/{name}/runtime")
-async def agent_runtime(name: str):
-    """This agent's provider/auth override, TOKEN REDACTED. token_present says whether the
-    named .env key actually resolves; env_keys offers the .env key NAMES for the picker. No
-    entry → all-empty → the agent runs on the org's ambient default."""
-    f = _charter_path(name)
-    if not f:
-        return Response(status_code=404)
-    entry = _load_runtime().get(f.stem) or {}
-    token_env = entry.get("token_env") or ""
-    env_names = _env_key_names()
-    return {"name": f.stem,
-            "base_url": entry.get("base_url") or "",
-            "token_env": token_env,
-            "token_present": bool(token_env) and token_env in env_names,
-            "models": entry.get("models") or {},
-            "effort": entry.get("effort") or "",
-            "credential": entry.get("credential") or "",
-            "env_keys": env_names,
-            "configured": bool(entry),
-            "org_login": _org_login(),
-            "live": f.stem in tmux_alive()}
-
-
-def _org_login() -> dict:
-    """The ORG's login beneath every agent's entry (plan-10224 ORGAUTH), NAMES only: {cli, key, billing, supported,
-    note, source}. key = the .env key spliced into an agent with no base_url of its own, or None (the ambient login);
-    source says the billing in words. runtime_env.org_login is the one rule; never a value."""
-    from astryx.core import runtime_env
-    try:
-        d = runtime_env.org_login(config.read_env(ESTATE / ".env"))
-    except OSError:
-        return {"cli": "claude", "key": None, "billing": "ambient", "supported": True, "note": None,
-                "source": "unreadable"}
-    return {**d, "source": runtime_env.BILLING_WORDS[d["billing"]]}
-
-
-@app.put("/api/agents/{name}/runtime")
-async def agent_runtime_put(name: str, edit: RuntimeEdit, request: Request):
-    """Owner sets an agent's provider/key/model map from the UI. Writes runtime.json
-    (gitignored); the token stays in .env, we store only token_env's NAME. An all-empty edit
-    REMOVES the entry (revert to the org default). Applies on the agent's next respawn."""
-    if not owner_call(request):
-        return Response(status_code=403)
-    f = _charter_path(name)
-    if not f:
-        return Response("no such agent", status_code=404)
-    data = _load_runtime()
-    models = {k: v for k, v in (edit.models or {}).items()
-              if k in ("opus", "sonnet", "haiku") and v}
-    entry: dict = {}
-    if edit.base_url and edit.base_url.strip():
-        entry["base_url"] = edit.base_url.strip()
-    if edit.token_env and edit.token_env.strip():
-        entry["token_env"] = edit.token_env.strip()
-    if models:
-        entry["models"] = models
-    if edit.effort and edit.effort.strip():
-        entry["effort"] = edit.effort.strip()
-    cred = (edit.credential or "").strip()
-    if cred:
-        from astryx.core import vault as _v
-        ent = _v.load(ESTATE).get(cred)
-        if not ent:
-            return Response("no such credential in the vault", status_code=400)
-        if ent["kind"] == "key":
-            # a cap shown but not enforced is worse than none (medic 12468): an API key is connected once its daily cap
-            # stops the spending, which comes with energy per credential. Logins first
-            return JSONResponse({"error": f"{cred} is an API key, billed per token. Agents can run on a key once its "
-                                 "daily cap is enforced; until then connect them to a Claude login."}, status_code=409)
-        entry["credential"] = cred
-        entry.pop("base_url", None); entry.pop("token_env", None)    # a credential is the whole connection
-    # a base_url with no token_env is a half-config that would fail-safe to default at spawn —
-    # refuse it here so the owner gets an immediate honest error, not a silent fallback.
-    if entry.get("base_url") and not entry.get("token_env"):
-        return Response("a custom base_url needs token_env (the .env key holding its token)",
-                        status_code=400)
-    if entry:
-        data[f.stem] = entry
-    else:
-        data.pop(f.stem, None)          # all-empty → this agent reverts to the org default
-    atomic_write(RUNTIME_PATH, json.dumps(data, indent=2) + "\n")
-    if cred and pool is not None:                 # who connected which agent to what: one row on its own log
-        await pool.execute("INSERT INTO steps (agent, kind, content) VALUES ($1, 'runtime', $2)",
-                           f.stem, f"owner connected it to {cred}")
-    live = f.stem in tmux_alive()
-    return {"ok": True, "name": f.stem, "configured": bool(entry), "live": live,
-            "note": ("saved — respawn the agent to apply" if live
-                     else "saved — applies on next spawn")}
+# per-agent runtime: an agent's harness, key and model are its CONNECTION (observatory/api/vault.py, Harness and Keys)
 
 
 # ---------------------------------------------------------- agent lifecycle & profile
