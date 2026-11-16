@@ -147,6 +147,18 @@ def main():
         arm("E10 a vault login feels its own reading (91% of its 5 hours); the org's feeling never reads it",
             own.get("known") and own["windows"]["h5"]["used"] == 91 and org.get("known") and org["windows"]["h5"]["used"] == 0, (own.get("windows"), org.get("windows")))
         arm("E10 a login with no reading of its own is unknown, never the org's", E.feel(c, relearn_after_h=None, credential="Nobody").get("known") is False)
+        import tempfile as _tf
+        from astryx.core import vault as _V
+        with _tf.TemporaryDirectory() as est:
+            est = Path(est)
+            (est / "runtime.json").write_text('{"b": {"credential": "Second"}, "z": {"credential": "Third"}}')
+            _V.save(est, {"Second": _V.entry("Second", "login"), "Third": _V.entry("Third", "login")})
+            (est / ".env").write_text("ASTRYX_CRED_SECOND=sk-ant-oat01-" + "x" * 30 + "\nASTRYX_CRED_THIRD=sk-ant-oat01-" + "y" * 30 + "\n")
+            ln_b, keep_b = E.prompt_line(c, "b", est)
+            ln_z, keep_z = E.prompt_line(c, "z", est)
+            arm("E10 the prompt line of an agent on a login reads that login (its own reading)", ln_b.startswith("[energy] ") and "50% left" in ln_b and not keep_b, ln_b)
+            arm("E10 …a login with no reading says so, with no percentage, and hides the org's gauges (medic 12481)",
+                ln_z == "[energy] Third: no reading of this login's limits yet" and not keep_z and "%" not in ln_z, (ln_z, keep_z))
         from astryx.pulse import pulse as P
         fr = E.feel(c, relearn_after_h=None)
         arm("E6 98% read before its 5-hour reset, the reset now past: a fresh window, and the pulse holds nothing",

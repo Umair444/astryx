@@ -299,6 +299,21 @@ def during(c, agent: str, transcript: str, said: str | None = None) -> str:
             + (f" · {f['fact']}" if f.get("known") else ""))
 
 
+def prompt_line(c, agent: str | None, estate) -> tuple[str, bool]:
+    """(the [energy] line, keep the raw gauges) for `agent`'s next prompt. An agent on a vault LOGIN feels that login;
+    with no reading of it yet the line says so and the org's gauges are NOT shown as its own (medic 12481). An agent
+    on the org's login reads the org's feeling; unknown keeps the raw gauges."""
+    from astryx.core import vault
+    cred = vault.login_of(estate, agent)[0] if agent else None
+    f = feel(c, relearn_after_h=None, credential=cred)
+    if cred and not f.get("known"):
+        return f"[energy] {cred}: no reading of this login's limits yet", False
+    if not f.get("known"):
+        return "", True
+    last = _row(c, f"SELECT {BILL} FROM turns WHERE agent=%s ORDER BY id DESC LIMIT 1", (agent,)) if agent else None
+    return line(f, mine(f, agent, last[0] if last else None)), False
+
+
 def line(f: dict, own: str = "") -> str:
     """The per-prompt line: the feeling as a fact (owner 08-21: numbers, no advice)."""
     return "[energy] " + f["fact"] + (f" · {own}" if own else "") if f.get("known") else ""
