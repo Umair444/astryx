@@ -138,6 +138,10 @@ def durable_then_crash(ctx):
     ctx.say("steward", "not durable", from_agent="seed")
     raise RuntimeError("boom")
 
+def two_logins(ctx):
+    ctx.say("steward", "beta to steward", from_agent="seed")
+    ctx.say("seed", "beta to seed", from_agent="pulse")
+
 def to_owner(ctx):
     ctx.say("owner", "the org has gone quiet", thread="esc-x", intent="chat", from_agent="seed")
 '''
@@ -312,7 +316,7 @@ def main():
                   (fa, fo, ta, to, th, it) == ("seed", "local", "steward", "local", "t-x", "trigger"),
                   repr(m[0][:6]))
             check("A3 held stamp prefixes the body (P4)",
-                  body.startswith("[held wake · raised ") and "while the org was too tired for it]\nalpha" in body, body)
+                  body.startswith("[held wake · raised ") and "while its login was too tired for it]\nalpha" in body, body)
             check("A3 delivery.held_from records the raised time (B2)", bool(dv and dv.get("held_from")), repr(dv))
         check("A3 release liveness: no held row survives a tick below 85%", not held(conn, "alpha"))
 
@@ -485,6 +489,26 @@ def main():
         check("A22 the elided row stays readable, marked released",
               conn.execute("SELECT count(*) FROM held_wakes WHERE body='lost-ish' AND elided "
                            "AND released_at IS NOT NULL").fetchone()[0] == 1)
+
+        # A26 — per login (owner 11-16): a wake is held by its RECIPIENT's login, released when that login rests
+        conn.execute("DELETE FROM held_wakes")
+        steward_tired = lambda a: a == "steward"
+        t25 = make_trigger(conn, "per_login", "two_logins", checks)
+        pulse.process(conn, [fresh(conn, t25)], datetime.now().astimezone(), hot=steward_tired)
+        check("A26 steward's login tired, seed's rested: the wake to steward held, the one to seed delivered",
+              len(held(conn, "beta to steward")) == 1 and not msgs(conn, "beta to steward")
+              and len(msgs(conn, "beta to seed")) == 1, (held(conn, "beta%"), msgs(conn, "beta%")))
+        pulse.release(conn, steward_tired)
+        check("A26 …a release while steward's login is still tired keeps it held",
+              len(held(conn, "beta to steward")) == 1 and not msgs(conn, "beta to steward"))
+        pulse.release(conn, lambda a: a == "seed")
+        check("A26 …and steward's login rested (seed's tired now): delivered, stamped with its login",
+              not held(conn, "beta to steward") and len(msgs(conn, "%beta to steward")) == 1
+              and "while its login was too tired" in msgs(conn, "%beta to steward")[0][6], msgs(conn, "%beta to steward"))
+        hb = {"agent": "steward", "name": "hb", "kind": "heartbeat", "premium": 0}
+        hb2 = {"agent": "seed", "name": "hb", "kind": "heartbeat", "premium": 0}
+        kept = pulse.shed([hb, hb2], conn, steward_tired)
+        check("A26 a heartbeat waits only when ITS agent's login is tired", kept == [hb2], kept)
 
         # A23 — a trigger that vanishes mid-evaluation
         t23 = make_trigger(conn, "twentythree", "counted", checks)

@@ -306,15 +306,29 @@ def held_now(f: dict) -> bool | None:
     return None if w is None else w["tired"] >= 1.0
 
 
-def pressure(conn) -> bool | None:
-    """The tick's one read of held_now() (fail-open: an error is unknown). A reading taken before its window reset is a
-    fresh window (energy.window), so a quiet night after a hot evening can never hold the morning's wakes (11-16: an
-    evening's 98% held every wake for nine hours past the reset). The pace is relearned here at most hourly."""
+def pressure(conn):
+    """The tick's one reading: agent -> held_now() of the login that agent runs on (energy.by_agent: each login read
+    once a tick), None for the org's own. Fail-open: an error, or a login with no reading yet, is unknown, and unknown
+    delivers. A reading taken before its window reset is a fresh window (energy.window), so a quiet night after a hot
+    evening can never hold the morning's wakes (11-16: an evening's 98% held every wake for nine hours past the reset).
+    An agent on a rested login is never held for a tired one (owner 11-16: agents on different Claude logins)."""
     try:
         from astryx.econ import energy
-        return held_now(energy.feel(conn, relearn_after_h=1.0))
+        feels = energy.by_agent(conn, ESTATE)
     except Exception:
-        return None
+        return lambda agent: None
+
+    def tired(agent: str | None) -> bool | None:
+        try:
+            return held_now(feels(agent))
+        except Exception:
+            return None
+    return tired
+
+
+def _tired(hot):
+    """`hot` as agent -> bool | None: pressure()'s reading, or one answer for every agent (True/False/None)."""
+    return hot if callable(hot) else (lambda agent: hot)
 
 
 _UNREAD = object()   # "no caller read the gauge": distinct from pressure()'s None (no gauge), which is itself a reading
@@ -335,15 +349,12 @@ def shed(due: list[dict], conn, hot=_UNREAD) -> list[dict]:
     clock-advanced) by the claim was then dropped by process(), the same lost day (a4 #62398 R1). Read here only
     when no caller passes it (tests driving shed() or process() directly).
     Reads NO value number (S1a). Fail-open: no gauge = no shedding."""
-    if hot is _UNREAD:
-        hot = pressure(conn)
-    if not hot:
-        return due
+    tired = _tired(pressure(conn) if hot is _UNREAD else hot)
     kept = [t for t in due
-            if t.get("kind") != "heartbeat" or int(t.get("premium") or 0) > 0]
+            if t.get("kind") != "heartbeat" or int(t.get("premium") or 0) > 0 or not tired(t["agent"])]
     for t in due:
         if t not in kept:
-            print(f"shed {t['agent']}/{t['name']} (too tired: the usual work would outrun the limit)")
+            print(f"shed {t['agent']}/{t['name']} (too tired: the usual work would outrun its login's limit)")
     return kept
 
 
@@ -416,8 +427,9 @@ def _held_for(raised_at, now) -> str:
     return f"{m // 60}h{m % 60:02d}m" if m >= 60 else f"{m}m"
 
 
-def release(conn):
-    """Deliver every held wake, oldest first, in ONE transaction (called when not under pressure).
+def release(conn, hot=None):
+    """Deliver every held wake whose recipient is no longer too tired (`hot`, as shed() takes it: a wake held for a
+    tired login stays held while another login rests), oldest first, in ONE transaction.
     Each body carries the facts a reader needs to judge staleness (P4), and delivery.held_from
     records the raised time (B2). Elided rows are announced by one marker per key and stay
     readable for 7 days after it."""
@@ -426,7 +438,10 @@ def release(conn):
         keys = conn.execute(
             "SELECT DISTINCT agent, trigger, to_agent, thread FROM held_wakes "
             "WHERE NOT elided OR released_at IS NULL").fetchall()
+        tired = _tired(hot)
         for key in keys:
+            if tired(key[2]):
+                continue
             n, first = conn.execute(
                 f"SELECT count(*), min(raised_at) FROM held_wakes WHERE {_KEY} "
                 "AND elided AND released_at IS NULL", key).fetchone()
@@ -448,7 +463,7 @@ def release(conn):
                          "AND elided AND released_at IS NULL", key)
             for (hid, fa, fo, ta, to_org, th, it, body, raised) in rows:
                 stamp = (f"[held wake · raised {raised.astimezone().isoformat(timespec='seconds')} · "
-                         f"held {_held_for(raised, now)} while the org was too tired for it]\n")
+                         f"held {_held_for(raised, now)} while its login was too tired for it]\n")
                 emit(conn, {"from_agent": fa, "from_org": fo, "to_agent": ta, "to_org": to_org,
                             "thread": th, "intent": it, "body": stamp + body}, held_from=raised)
             conn.execute("DELETE FROM held_wakes WHERE id = ANY(%s)", ([r[0] for r in rows],))
@@ -458,20 +473,18 @@ def release(conn):
 def process(conn, due: list[dict], now, hot=_UNREAD):
     """Evaluate the claimed triggers and route their wakes: the one path every trigger wake takes.
 
-    Held = the org is too tired (pressure(): the usual pace would outrun a limit before it resets), the trigger has no survival flag (premium=0), AND the
-    recipient spends plan quota (a resident agent). Per trigger, the state UPDATE and ALL of its wake writes (sends or holds) commit in ONE
+    Held = the RECIPIENT's login is too tired (pressure(): the usual pace would outrun its limit before it resets), the trigger has no survival
+    flag (premium=0), AND the recipient spends plan quota (a resident agent). Per trigger, the state UPDATE and ALL of its wake writes (sends or holds) commit in ONE
     transaction (C1.3): if any part fails, nothing of it lands, the state is unchanged, and the
     check re-detects next tick (at-least-once, the duplicate direction). A held wake is persisted,
     never rewound, so no side effect of the evaluation re-runs. Returned fire strings take the same
     path, keeping say()'s header and its pending-coalesce when they are sent."""
-    if hot is _UNREAD:
-        hot = pressure(conn)
-    if not hot:
-        try:
-            release(conn)
-        except Exception as e:
-            print(f"release failed (held wakes kept): {e}", file=sys.stderr)
-    for t in shed(due, conn, hot):                 # evaluate outside the claim's lock
+    tired = _tired(pressure(conn) if hot is _UNREAD else hot)
+    try:
+        release(conn, tired)
+    except Exception as e:
+        print(f"release failed (held wakes kept): {e}", file=sys.stderr)
+    for t in shed(due, conn, tired):                 # evaluate outside the claim's lock
         try:
             fired, state, wakes = evaluate(t, conn)
             failed = False
@@ -479,7 +492,7 @@ def process(conn, due: list[dict], now, hot=_UNREAD):
             fired, state, wakes = f"[trigger {t['name']}] evaluator error: {e}", t["state"], []
             failed = True
         once = bool(t.get("once")) and bool(fired) and not failed
-        held_here = bool(hot) and int(t.get("premium") or 0) <= 0
+        survival, held = int(t.get("premium") or 0) > 0, False
         try:
             with conn.transaction():
                 # Retired FIRST, in this transaction: no row back means another claim already fired it. A one-shot's
@@ -492,7 +505,8 @@ def process(conn, due: list[dict], now, hot=_UNREAD):
                 sent = False
                 if fired:
                     body = fired if fired.startswith("[trigger") else f"[trigger {t['name']}] {fired}"
-                    if held_here and t["agent"] in residents():
+                    if not survival and t["agent"] in residents() and tired(t["agent"]):
+                        held = True
                         hold(conn, t, {"from_agent": "pulse", "to_agent": t["agent"],
                                        "intent": "trigger", "body": body[:3000]})
                     elif once:                     # a one-shot is never swallowed by an unread wake
@@ -505,7 +519,8 @@ def process(conn, due: list[dict], now, hot=_UNREAD):
                     if t.get("_off") and "_swallowed" in t:
                         conn.execute("UPDATE triggers SET off_reason=%s, enabled=false WHERE id=%s", (t["_off"], t["id"]))
                 for w in wakes:
-                    if held_here and costs_quota(w):
+                    if not survival and costs_quota(w) and tired(w["to_agent"]):
+                        held = True
                         hold(conn, t, w)
                     else:
                         emit(conn, w)
@@ -513,7 +528,7 @@ def process(conn, due: list[dict], now, hot=_UNREAD):
                 if sent:
                     conn.execute("UPDATE triggers SET last_fired=%s WHERE id=%s", (now, t["id"]))
                     print(f"fired {t['agent']}/{t['name']}")
-                elif held_here and (fired or wakes):
+                elif held:
                     print(f"wake held {t['agent']}/{t['name']} (too tired)")
         except Exception as e:
             print(f"wake write failed {t['agent']}/{t['name']} — state kept, re-detects next tick: {e}",

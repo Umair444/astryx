@@ -533,7 +533,7 @@ def tick_rules(c):
     set_ok(c, name="sh", at="2099-01-01T17:00", note="n")
     c.execute("UPDATE triggers SET next_fire=now()-interval '1 hour' WHERE name='sh'")
     saved = pulse.pressure
-    pulse.pressure = lambda conn: True
+    pulse.pressure = lambda conn: lambda agent: True
     n = wakes("sh")
     _tick(c)
     check("F1 hot gauge: the deadline waits, unfired, unretired", wakes("sh") == n and row("sh")["enabled"] is True)
