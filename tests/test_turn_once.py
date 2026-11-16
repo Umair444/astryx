@@ -24,7 +24,7 @@ os.environ["ASTRYX_AGENT"] = "seed"
 spec = importlib.util.spec_from_file_location("step_hook_once", REPO / "hooks" / "step.py")
 S = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(S)
-S.usage_snapshot = lambda cur: None
+S.usage_snapshot = lambda cur, agent=None: None
 S._label = lambda agent: (None, None)
 S.cleaner = lambda: ((lambda o: o), True)          # no secrets in this fixture: a clean clone has no .env (medic 12455)
 fails = []

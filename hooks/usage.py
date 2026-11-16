@@ -86,11 +86,8 @@ try:
             # row and the gauge read above, never an aggregate. Its own fail-open try.
             try:
                 from astryx.econ import energy as _energy
-                f = _energy.feel(conn, relearn_after_h=None)
-                if f.get("known"):
-                    last = conn.execute(f"SELECT {_energy.BILL} FROM turns WHERE agent=%s ORDER BY id DESC LIMIT 1",
-                                        (agent,)).fetchone() if agent else None
-                    energy_line = _energy.line(f, _energy.mine(f, agent, last[0] if last else None))
+                energy_line, keep = _energy.prompt_line(conn, agent, paths.estate(__file__))   # its own login's
+                if not keep:
                     plan = ""
             except Exception:
                 conn.rollback()

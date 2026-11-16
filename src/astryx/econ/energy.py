@@ -158,14 +158,19 @@ def word(tired: float) -> str:
     return "rested" if tired < 0.35 else "steady" if tired < 0.7 else "tiring" if tired < 1.0 else "tired"
 
 
-def feel(c, now: datetime | None = None, relearn_after_h: float | None = 1.0) -> dict:
+def feel(c, now: datetime | None = None, relearn_after_h: float | None = 1.0, credential: str | None = None) -> dict:
     """How the org feels now: {known, tired, word, binding, windows, say, think_pct}. `relearn_after_h=None` never
-    learns (the per-prompt reader); otherwise a kept row older than that is learned again first."""
+    learns (the per-prompt reader); otherwise a kept row older than that is learned again first. `credential`: how a
+    vault LOGIN feels, from its own reading (the pace is the org's: its agents' hours look like the org's day)."""
     now = now or datetime.now(timezone.utc)
     p = pace(c)
     if relearn_after_h is not None and (p is None or (now - _when(p["at"])).total_seconds() > relearn_after_h * 3600):
         p = learn(c)
-    g = _row(c, "SELECT five_hour_pct, seven_day_pct, five_hour_reset, seven_day_reset, age_seconds FROM current_usage")
+    # a vault login's own reading (its limits are its own, owner 11-16), else the org's: current_usage
+    g = _row(c, "SELECT five_hour_pct, seven_day_pct, five_hour_reset, seven_day_reset, "
+                "extract(epoch FROM now() - fetched_at)::float FROM usage_readings WHERE state = 'fresh' AND credential = %s "
+                "ORDER BY fetched_at DESC LIMIT 1", (credential,)) if credential else \
+        _row(c, "SELECT five_hour_pct, seven_day_pct, five_hour_reset, seven_day_reset, age_seconds FROM current_usage")
     if g and g[4] is not None and float(g[4]) > STALE_H * 3600:   # an old reading says nothing of now
         g = None
     if not p or not g:
@@ -292,6 +297,21 @@ def during(c, agent: str, transcript: str, said: str | None = None) -> str:
     f = feel(c, relearn_after_h=None)
     return (f"[energy] this turn has taken {x}× your usual so far{_share(p, total)}"
             + (f" · {f['fact']}" if f.get("known") else ""))
+
+
+def prompt_line(c, agent: str | None, estate) -> tuple[str, bool]:
+    """(the [energy] line, keep the raw gauges) for `agent`'s next prompt. An agent on a vault LOGIN feels that login;
+    with no reading of it yet the line says so and the org's gauges are NOT shown as its own (medic 12481). An agent
+    on the org's login reads the org's feeling; unknown keeps the raw gauges."""
+    from astryx.core import vault
+    cred = vault.login_of(estate, agent)[0] if agent else None
+    f = feel(c, relearn_after_h=None, credential=cred)
+    if cred and not f.get("known"):
+        return f"[energy] {cred}: no reading of this login's limits yet", False
+    if not f.get("known"):
+        return "", True
+    last = _row(c, f"SELECT {BILL} FROM turns WHERE agent=%s ORDER BY id DESC LIMIT 1", (agent,)) if agent else None
+    return line(f, mine(f, agent, last[0] if last else None)), False
 
 
 def line(f: dict, own: str = "") -> str:
