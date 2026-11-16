@@ -5,6 +5,8 @@ No database; temp directories only, synthetic values.
   E2 a crash between the write and the rename leaves the OLD file whole, and no temp file behind
   E3 a writer waits for the lock another holds (init.sh's env_add takes the same one)
   E4 the shell's `set KEY` reads the value from stdin (never argv)
+  E5 a symlinked .env (a worktree's) is written where it points, never replaced by a copy
+  V2 two names folding to one key: the second is refused; the same name rotates
   V1 the vault's key is derived from the name: ASTRYX_CRED_<SLUG>; a key the vault doesn't own is refused; no name can
      produce one of the org's own keys
 Exit 0 · 1."""
@@ -81,6 +83,16 @@ with tempfile.TemporaryDirectory() as td:
     sh.wait(5)
     arm("E3 …and appends once it's free", config.read_env(env).get("SHELL_ADDED") == "1")
 
+    real_dir = Path(td) / "real"
+    real_dir.mkdir()
+    (real_dir / ".env").write_text("A=1\n")
+    linked = Path(td) / "tree"
+    linked.mkdir()
+    (linked / ".env").symlink_to(real_dir / ".env")
+    config.set_env("B", "2", linked / ".env")
+    arm("E5 a symlinked .env is written where it points: the link stays a link, the target holds the key, no copy",
+        (linked / ".env").is_symlink() and config.read_env(real_dir / ".env").get("B") == "2"
+        and sorted(x.name for x in linked.iterdir()) == [".env"], sorted(x.name for x in linked.iterdir()))
     import io
     real_estate, real_stdin = config._cli_estate, sys.stdin
     config._cli_estate = lambda invoked: Path(td)          # the CLI's tree, pinned to this temp dir: no real .env is touched
@@ -103,7 +115,13 @@ try:
     arm("V1 a key in .env that the vault doesn't own is refused", False)
 except vault.Refused:
     arm("V1 a key in .env that the vault doesn't own is refused", True)
-arm("V1 …the vault's own name maps to its own key", vault.env_key("work", {"ASTRYX_CRED_WORK": "x"}, {"Work"}) == "ASTRYX_CRED_WORK")
+arm("V1 …the vault's own name maps to its own key", vault.env_key("Work", {"ASTRYX_CRED_WORK": "x"}, {"Work": 1}) == "ASTRYX_CRED_WORK")
+try:
+    vault.env_key("prod-key", {"ASTRYX_CRED_PROD_KEY": "x"}, {"Prod Key": 1})
+    arm("V2 a second name folding to a held key is refused, naming the first", False)
+except vault.Refused as e:
+    arm("V2 a second name folding to a held key is refused, naming the first", "Prod Key" in str(e), str(e))
+arm("V2 …the same name (a rotation) is allowed", vault.env_key("Prod Key", {"ASTRYX_CRED_PROD_KEY": "x"}, {"Prod Key": 1}) == "ASTRYX_CRED_PROD_KEY")
 arm("V1 no name yields one of the org's own keys", all(vault.env_key(n, {}).startswith("ASTRYX_CRED_") for n in ("ASTRYX_DSN", "WA_WEBHOOK_SECRET", "CLAUDE_CODE_OAUTH_TOKEN")))
 
 print(f"\n{'ALL PASS' if not fails else f'FAILED ({len(fails)})'}: one locked, atomic .env writer, and derived credential keys")

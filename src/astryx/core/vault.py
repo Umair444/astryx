@@ -25,10 +25,15 @@ def slug(name: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "_", name.strip().upper()).strip("_")
 
 
-def env_key(name: str, env: dict, vault_names: set[str] = frozenset()) -> str:
-    """The .env key for credential `name`. `env`: the org's .env as read; `vault_names`: the names the vault already
-    holds (their keys are the vault's own). A key held in .env by anything else is refused (409 at the route)."""
+def env_key(name: str, env: dict, vault: dict | None = None) -> str:
+    """The .env key for credential `name`. `env`: the org's .env as read; `vault`: {name: anything} of what the vault
+    holds. Allowed only when the key is unused, or used by THIS entry (the same name: a rotation). Another name that
+    folds to the same key ("Prod Key", "prod-key") is refused, never allowed to overwrite the first's value (medic
+    12463); so is a key in .env that the vault doesn't own."""
     key = PREFIX + slug(name)
-    if key in env and slug(name) not in {slug(n) for n in vault_names}:
+    held = {PREFIX + slug(n): n for n in (vault or {})}
+    if key in held and held[key] != name:
+        raise Refused(f"'{name}' would share {key} with '{held[key]}': choose another name")
+    if key in env and key not in held:
         raise Refused(f"{key} is already in .env and isn't one of the vault's: choose another name")
     return key

@@ -215,7 +215,9 @@ def _write_env(key: str, new: str | None, path: Path | None) -> bool:
     the new file is fsynced before it replaces the old and the directory after, so a crash leaves one whole .env, old
     or new, never a torn one (medic 12364 R2: a torn .env takes down the pulse and every bridge)."""
     import fcntl
-    p = Path(path) if path else env_path()
+    # a LINKED .env (a worktree's, by the house rule: ln -s, never copy) is written where it points: replacing the link
+    # would leave the real one stale and a full private copy of every secret in the linking tree (medic 12463)
+    p = (Path(path) if path else env_path()).resolve()
     p.parent.mkdir(parents=True, exist_ok=True)
     lock = os.open(p.with_name(p.name + ".lock"), os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
