@@ -540,6 +540,7 @@ export interface ContactMatch {
   number: string | null
   handle: string
   native: string // the platform chat id (handle minus the channel: prefix)
+  registered: boolean | null // a number typed in: has a WhatsApp account, has none, or not asked; a known chat is true
 }
 
 /* GET /api/agents/{name}/profile — an agent AS A PERSON (main.py agent_profile).
