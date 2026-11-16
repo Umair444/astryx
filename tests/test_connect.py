@@ -10,8 +10,8 @@ On the fixture database, with a fake contact search (no channel is touched):
   C5 LINK: the account is asked to reply YES; the bridges' link_reply turns that YES into a link (identity_link), ends
      the row and tells the asker; a later message from that account writes as the person
   C6 THE SWEEP: an expired connection is deleted and its agent told; an expired link tells whoever asked
-  C7 THE OWNER'S ROUTE ON HIS WORD: only an agent granted `org` (seed) sets or removes a standing route, through the
-     rail's one write (route_put)
+  C7 THE OWNER'S ROUTE ON HIS WORD: only an agent granted `org` (seed), and only in a turn the owner alone opened (a
+     stranger's or a peer's 'owner' message is refused), sets or removes a standing route, through route_put
 Exit 0 · 1 · 77 (no database)."""
 import asyncio
 import json
@@ -134,12 +134,24 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
     real = tier.grants
     tier.grants = lambda name, *a: {"org"} if name == "seed" else set()      # seed holds `org`; lending doesn't
     arm("an agent without `org` can't set the owner's routes", "only the org's own agent" in run("lending", "route", "ETL", to="db"))
+
+    def turn_of(frm, org="local"):                 # the turn this call runs in, as the step hook records it
+        mid = c.execute("INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body) VALUES (%s, %s, 'seed', "
+                        "'obs:seed', 'chat', 'route it') RETURNING id", (frm, org)).fetchone()[0]
+        c.execute("INSERT INTO steps (agent, kind, content, meta) VALUES ('seed', 'tool', 'mcp__channels__connect: x', %s)",
+                  (json.dumps({"turn_msgs": [mid]}),))
+    turn_of("wa-923000000099", "whatsapp")
+    arm("…nor seed on a stranger's message (medic 12649)", "only on the owner's own message" in run("seed", "route", "ETL", to="db"))
+    c.execute("INSERT INTO peers (org, status) VALUES ('peer.example', 'introduced') ON CONFLICT DO NOTHING")
+    turn_of("owner", "peer.example")
+    arm("…nor on a federated peer's 'owner'", "only on the owner's own message" in run("seed", "unroute", "ETL"))
+    turn_of("owner")
     out = run("seed", "route", "ETL", to="db")
     std = c.execute("SELECT agent, opened_by, rule->>'show' FROM route WHERE chat='1203@g.us' AND purpose='standing'").fetchone()
     arm("seed routes a group to db on his word: a standing row, through the one write", "now reaches db" in out
         and std == ("db", "seed", "steps"), (out, std))
     out = run("seed", "unroute", "ETL")
-    arm("…and unroutes it", "no longer routed" in out
+    arm("…and unroutes it (still the owner's turn)", "no longer routed" in out
         and c.execute("SELECT count(*) FROM route WHERE chat='1203@g.us'").fetchone()[0] == 0, out)
     tier.grants = real
 

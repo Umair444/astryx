@@ -154,12 +154,29 @@ def _open(conn, me, h: Handle, purpose, idle, note, person=None, prompt=None, by
             f"connect action=close who={h.person!r} ends it")
 
 
+def _owner_asked(conn, me: str) -> bool:
+    """The turn this call runs in was opened by the OWNER alone (medic 12649: the code decides, never the prompt). The
+    step hook writes this very tool call's step before the tool runs, with the turn's opening messages (meta.turn_msgs);
+    every one must be the owner's own (address.person_sql's rule, so a peer's 'owner' is not him). Unknown: refused."""
+    from astryx.core import address
+    r = conn.execute("SELECT meta->'turn_msgs' FROM steps WHERE agent = %s AND kind = 'tool' "
+                     "AND left(content, 23) = 'mcp__channels__connect:' ORDER BY id DESC LIMIT 1", (me,)).fetchone()
+    ids = [int(x) for x in (r[0] or [])] if r else []
+    if not ids:
+        return False
+    n = conn.execute(f"SELECT count(*) FROM messages m WHERE m.id = ANY(%s) AND m.from_agent = 'owner' AND "
+                     f"{address.person_sql('m.from_agent', org='m.from_org')}", (ids,)).fetchone()[0]
+    return n == len(ids)
+
+
 def _route(conn, me, action, who, channel, to, note, search) -> str:
     """The owner's STANDING route, set by the org's own agent on his word (an agent granted `org`: seed). One write
     path with the rail (route_put): the channel's owner routes, read with their version, replaced in one act."""
     from astryx.core import tier
     if "org" not in (tier.grants(me) or set()):
         return "only the org's own agent (granted org: seed) sets the owner's routes; ask seed, or use the Channels rail"
+    if not _owner_asked(conn, me):
+        return "only on the owner's own message: ask him to do it, or to change it in the Channels rail"
     if action == "route" and not to:
         return "route needs to=<the agent the chat should reach>"
     hits = find(conn, who, channel, search)
@@ -184,5 +201,7 @@ def _route(conn, me, action, who, channel, to, note, search) -> str:
     if problems:
         return "refused: " + problems[0]
     routes.put_sync(conn, h.channel, keep, routes.version_sync(conn, h.channel), by=me)
-    return (f"{h.label} on {channels.BY_NAME[h.channel].title} now reaches {to}" if action == "route"
+    opened = action == "route" and not old
+    return (f"{h.label} on {channels.BY_NAME[h.channel].title} now reaches {to}"
+            + (" (open to everyone in it; the owner can close it in the Channels rail)" if opened else "") if action == "route"
             else f"{h.label} on {channels.BY_NAME[h.channel].title} is no longer routed")
