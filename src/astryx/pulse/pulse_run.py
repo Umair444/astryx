@@ -20,12 +20,14 @@ import os
 import re
 import runpy
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import psycopg
 import requests
 
 REPO = repo_root(__file__)
+LOG_KEEP = 50                      # ctx.log lines a trigger keeps (state["_log"])
 
 
 def _dsn() -> str:
@@ -65,6 +67,13 @@ class Ctx:
         self.wakes.append(w)
         if durable:                   # handed over NOW: survives a later raise, hang or kill
             print(json.dumps({"durable_wake": w}, default=str), flush=True)
+
+    def log(self, line):
+        """Record a run that decided nothing: no wake, just a line the observatory's trigger view
+        shows, so a quiet check is visibly working. say() is a decision due; log() is the rest.
+        Kept in state["_log"], the last LOG_KEEP lines."""
+        self.state["_log"] = (self.state.get("_log") or [])[-(LOG_KEEP - 1):] + [
+            {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "line": str(line)}]
 
     def sql(self, query, params=()):
         if _WAKE_WRITE.search(_COMMENT.sub(" ", str(query))):
