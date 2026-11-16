@@ -106,7 +106,7 @@ def org_login(env: dict | None = None) -> dict:
 # THE SPAWN BUDGET GATE (cog-rebuild Phase 3). An org that is not the cog's primary (a sign-up's org, any second org)
 # spawns NO resident until it has a token budget: its .env's ASTRYX_ORG_BUDGET_TOKENS, else the budget a cog admin
 # approved for it (the cog store's org_requests row, cogauth.py / front.py). And it never runs on the host owner's
-# Claude login: with no login of its own (an org key above, or the agent's runtime.json provider) the ambient
+# Claude login: with no login of its own (an org key above, or a key its connection names) the ambient
 # login would be the owner's, spent silently, so that refuses too. The primary, and a host of one org, pass as before.
 BUDGET = "ASTRYX_ORG_BUDGET_TOKENS"
 
@@ -159,16 +159,13 @@ def budget_gate(agent: str, env: dict | None = None, reg_env=None) -> str:
     if budget is None:
         raise NoBudget(f"org {org} has no token budget ({BUDGET} in its .env, or a cog admin's approval): its "
                        "residents are not spawned")
-    entry = {}
-    try:
-        cfg = json.loads((home / "runtime.json").read_text())
-        entry = cfg.get(agent) if isinstance(cfg.get(agent), dict) else {}
-    except (OSError, ValueError, AttributeError):
-        pass
-    own_provider = bool(entry.get("base_url") and entry.get("token_env") and env.get(entry["token_env"]))
+    from astryx.core import vault
+    entry = connection(agent)             # its own, or everyone else's: a key it runs on is a login of the org's own
+    own_provider = bool(entry.get("base_url") and entry.get("token_env") and env.get(entry["token_env"])) \
+        or bool(entry.get("credential") and env.get(vault.PREFIX + vault.slug(entry["credential"])))
     if not (org_login(env)["key"] or own_provider):
         raise NoBudget(f"org {org} has a budget but no Claude login of its own (CLAUDE_CODE_OAUTH_TOKEN, an opted-in "
-                       "key, or a runtime.json provider): it would run on this host's ambient login, the owner's")
+                       "key, or a key it is connected to): it would run on this host's ambient login, the owner's")
     return f"{org}: budget {budget} tokens ({source})"
 
 
