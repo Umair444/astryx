@@ -37,13 +37,25 @@ def block():
     return m.group(0) if m else None
 
 
+def interpreter() -> str | None:
+    """The python the block will run as $ROOT/venv/bin/python: the checkout's venv when it has one, else this one;
+    None when neither imports psycopg (a clean clone without its deps: the arms can't say anything, 77)."""
+    for py in (REPO / "venv" / "bin" / "python", Path(sys.executable)):
+        if py.exists() and subprocess.run([str(py), "-c", "import psycopg"], capture_output=True).returncode == 0:
+            return str(py)
+    return None
+
+
+PY = interpreter()
+
+
 def run(td: Path, super_file: Path):
     """The block in bash: its DSN and SCRATCH_DSN after it, its rc and stderr."""
     root = td / "root"
     (root / "venv" / "bin").mkdir(parents=True, exist_ok=True)
     py = root / "venv" / "bin" / "python"
     if not py.exists():     # a wrapper, not a symlink: a venv's python moved out of its venv loses its packages
-        py.write_text(f"#!/bin/sh\nexec {sys.executable} \"$@\"\n")
+        py.write_text(f"#!/bin/sh\nexec {PY} \"$@\"\n")
         py.chmod(0o755)
     src = (f"set -uo pipefail\nROOT={root}\nDSN='{ORG}'\nSCRATCH='{SCRATCH}'\nSCRATCH_DSN=\"${{DSN%/*}}/$SCRATCH\"\n"
            f"{block()}\nprintf '%s\\n%s\\n' \"$DSN\" \"$SCRATCH_DSN\"\n")
@@ -58,6 +70,9 @@ def main() -> int:
         check("restore_verify.sh carries the super-dsn block", False, "no `# >>> super dsn` block")
         print(f"\nFAIL: restore-verify as the provisioner ({len(fails)} failing)")
         return 1
+    if PY is None:
+        print("  SKIP (77): no python here imports psycopg (the block's DSN rewrite needs it); nothing was verified")
+        return 77
     with tempfile.TemporaryDirectory() as t:
         td = Path(t)
         sf = td / "pg-super.dsn"
