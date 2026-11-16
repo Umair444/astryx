@@ -17,6 +17,8 @@ export default function MyChannels() {
   useEffect(() => { api<Mine>('/me/channels').then((m) => { setMine(m); setChannel(m.channels[0]?.channel ?? '') }).catch(() => setSaid("Couldn't read your channels.")) }, [])
   if (!mine) return <p className="text-[13px] text-ink-mute">{said ?? 'Reading…'}</p>
   const numbers = mine.channels.find((c) => c.channel === channel)?.numbers
+  // a channel whose people are phone numbers shows the number, never the platform's id around it
+  const shown = (r: Row) => (mine.channels.find((c) => c.channel === r.channel)?.numbers ? `+${r.account.split('@')[0]}` : r.account)
   async function add() {
     if (!account.trim() || busy) return
     setBusy(true); setSaid(null)
@@ -31,8 +33,8 @@ export default function MyChannels() {
     <div className="flex flex-col gap-3 text-[13px]">
       <p className="text-ink-dim">Messages you send from a linked account reach the agents as <span className="text-ink">{mine.who}</span>, on every channel.</p>
       <ul className="flex flex-col gap-1">
-        {mine.linked.map((r) => <li key={r.channel + r.account} className="flex gap-2"><span className="text-ink-mute w-20 shrink-0">{r.title}</span><span className="text-ink truncate">{r.account}</span></li>)}
-        {mine.asked.map((r) => <li key={'a' + r.channel + r.account} className="flex gap-2"><span className="text-ink-mute w-20 shrink-0">{r.title}</span><span className="text-ink-dim truncate">{r.account} · waiting for your YES</span></li>)}
+        {mine.linked.map((r) => <li key={r.channel + r.account} className="flex gap-2"><span className="text-ink-mute w-20 shrink-0">{r.title}</span><span className="text-ink truncate">{shown(r)}</span></li>)}
+        {mine.asked.map((r) => <li key={'a' + r.channel + r.account} className="flex gap-2"><span className="text-ink-mute w-20 shrink-0">{r.title}</span><span className="text-ink-dim truncate">{shown(r)} · waiting for your YES</span></li>)}
         {!mine.linked.length && !mine.asked.length && <li className="text-ink-mute">No accounts linked yet.</li>}
       </ul>
       <form onSubmit={(e) => { e.preventDefault(); add() }} className="flex gap-1.5">
