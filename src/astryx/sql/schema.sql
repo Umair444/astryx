@@ -1384,6 +1384,9 @@ DECLARE
   i bigint;
   held bigint;
 BEGIN
+  IF p_wire_name = 'owner' THEN           -- the owner's accounts come only from identity_own (medic 12642): a floor
+    RAISE EXCEPTION 'the owner''s accounts are linked by identity_own only' USING ERRCODE = 'foreign_key_violation';
+  END IF;
   SELECT x.id INTO i FROM identity x WHERE x.wire_name = p_wire_name AND EXISTS (
     SELECT 1 FROM identity_handle w WHERE w.identity_id = x.id AND w.tenant = x.tenant AND w.channel = 'web');
   IF i IS NULL THEN
@@ -1398,6 +1401,21 @@ BEGIN
     ON CONFLICT ON CONSTRAINT identity_handle_pkey DO UPDATE SET identity_id = EXCLUDED.identity_id;
   RETURN i;
 END $lnk$;
+
+-- THE OWNER'S OWN ACCOUNT: one of the owner's accounts → the identity 'owner'. Called only by the operator's
+-- import (identity.import_owner) and by a link the OWNER opened for himself from the observatory (bridges link_reply:
+-- a purpose='link' row with person = opened_by = 'owner', which only an owner_call writes). Never identity_link.
+CREATE OR REPLACE FUNCTION identity_own(p_channel text, p_account text) RETURNS bigint
+LANGUAGE plpgsql AS $own$
+DECLARE
+  i bigint;
+BEGIN
+  INSERT INTO identity (wire_name) VALUES ('owner') ON CONFLICT ON CONSTRAINT identity_wire_name_key DO NOTHING;
+  SELECT id INTO i FROM identity WHERE wire_name = 'owner';
+  INSERT INTO identity_handle (channel, account, identity_id) VALUES (p_channel, p_account, i)
+    ON CONFLICT ON CONSTRAINT identity_handle_pkey DO UPDATE SET identity_id = EXCLUDED.identity_id;
+  RETURN i;
+END $own$;
 
 -- ROUTES AS ROWS, first the agents' own (identity-channels P2/P3, owner 11-15 "agents should have tools … a row in
 -- postgres"): a CONNECTION an agent opened with connect() — one person's chat on one channel, routed to that agent until

@@ -139,8 +139,11 @@ async def link_reply(pool, channel: str, route: dict, account: str, text: str) -
     person, agent = route["person"], route["agent"]
     try:
         async with pool.acquire() as c, c.transaction():
-            await c.fetchval("SELECT identity_link($1, $2, $3)", person, channel, str(account))
             asker = await c.fetchval("DELETE FROM route WHERE id = $1 RETURNING opened_by", route["connection"])
+            if person == "owner" and asker == "owner":      # the owner adding his own account (an owner_call opened it)
+                await c.fetchval("SELECT identity_own($1, $2)", channel, str(account))
+            else:                                            # anyone else: identity_link, which never reaches 'owner'
+                await c.fetchval("SELECT identity_link($1, $2, $3)", person, channel, str(account))
             await c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES ($1,$2,NULL,'chat',$3)",
                             "pulse", agent, f"[link] {channel} account confirmed by its holder: now linked to {person} "
                             f"(asked by {asker}). Their messages on {channel} arrive as {person}.")

@@ -33,12 +33,9 @@ def link(conn, wire_name: str, channel: str, account: str) -> int:
 
 
 def _own(conn, channel: str, account: str) -> None:
-    """One of the owner's own accounts → the identity `owner`. Only import_owner, the operator's act, writes this: no
-    link (an agent's, a stranger's YES) can ever make an account the owner's."""
-    conn.execute("INSERT INTO identity (wire_name) VALUES ('owner') ON CONFLICT ON CONSTRAINT identity_wire_name_key DO NOTHING")
-    conn.execute("INSERT INTO identity_handle (channel, account, identity_id) SELECT %s, %s, id FROM identity WHERE "
-                 "wire_name = 'owner' ON CONFLICT ON CONSTRAINT identity_handle_pkey DO UPDATE SET identity_id = EXCLUDED.identity_id",
-                 (channel, account))
+    """One of the owner's own accounts → the identity `owner` (identity_own, schema.sql). Only import_owner, the
+    operator's act, and a link the owner opened for himself reach it: no YES on any other link can (identity_link)."""
+    conn.execute("SELECT identity_own(%s, %s)", (channel, account))
 
 
 def import_owner(conn, estate: Path) -> int:
@@ -67,7 +64,6 @@ if __name__ == "__main__":
     ap.add_argument("cmd", choices=["import-owner"])
     ap.add_argument("--estate", default=str(paths.estate(__file__)))
     a = ap.parse_args()
-    dsn = config.read_env(Path(a.estate) / ".env").get("ASTRYX_DSN")
-    with psycopg.connect(dsn) as conn:
+    with psycopg.connect(config.dsn(Path(a.estate) / ".env", env_first=False)) as conn:   # the one DSN resolver
         print(f"linked {import_owner(conn, Path(a.estate))} trusted account(s) to the owner")
     sys.exit(0)
