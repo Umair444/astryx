@@ -459,8 +459,9 @@ def tick(say=None, dry: bool = False) -> dict:
 
 
 def _news(c, agent: str, body: str) -> None:
-    """The org hears of it: one row on org-news (the fan-out carries it to every agent)."""
-    c.execute("INSERT INTO messages (from_agent, from_org, to_agent, intent, thread, body) VALUES (%s, 'local', 'steward', 'milestone', 'org-news', %s)",
+    """The org's record of it: one row on org-news, intent 'idea'. An idea is PULLED, not pushed: an agent recalls it at
+    the moment of need and night-reviews read org-news whole, so the fan-out wakes nobody for it (philosopher 12412)."""
+    c.execute("INSERT INTO messages (from_agent, from_org, to_agent, intent, thread, body) VALUES (%s, 'local', 'steward', 'idea', 'org-news', %s)",
               (agent, body))
 
 
@@ -484,7 +485,7 @@ def keep(c, agent, name, thought, kind, lives, itches=(), on=(), check="") -> di
     if itches:
         c.execute(f"UPDATE {_t('itch')} SET state = 'resolved', insight_id = %s WHERE id = ANY(%s) AND state = 'open'", (r["id"], list(itches)))
     _news(c, agent, f"New idea from {agent}: {name} ({kind}). {thought}" + (f" Lives at {lives}." if lives else "")
-          + f" Recall it with: {sys.executable} {os.path.realpath(__file__)} recall {name.split()[0].lower()}")
+          + f" Recall it with: {sys.executable} {os.path.realpath(__file__)} recall {max(re.findall(r"[A-Za-z0-9]{3,}", name) or [name], key=len).lower()}")
     return {"kept": r["id"], "name": name}
 
 
