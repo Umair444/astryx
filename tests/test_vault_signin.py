@@ -4,6 +4,8 @@ on PATH stands in for Claude Code's setup-token: it prints an OSC-8 sign-in link
 synthetic token. No network, temp estate.
   S1 start: the answer is the sign-in URL and nothing else of the terminal's text
   S2 a code of the wrong shape (a newline, a control byte, empty): 400, nothing written
+  S6 the token arriving in two writes, a styled word right after it: the WHOLE token, no suffix (medic 12472)
+  S7 a login Claude doesn't accept (the proof call fails): 400, nothing in .env
   S3 the right code: the login lands in .env under the derived key and in the vault as a login; no response carries the
      token; the throwaway home is gone; the fake saw HOME and CLAUDE_CONFIG_DIR inside that home, never the real one
   S4 a code for a sign-in that isn't running: 409
@@ -39,8 +41,12 @@ open(os.environ["FAKE_SEEN"], "w").write(os.environ.get("HOME", "") + "\\n" + os
 sys.stdout.write("Welcome\\r\\n\\x1b]8;id=1;https://claude.com/cai/oauth/authorize?code=true&state=abc\\x1b\\\\link\\x1b]8;;\\x1b\\\\\\r\\nPaste code here if prompted > ")
 sys.stdout.flush()
 code = sys.stdin.readline().strip()
-if code == "GOOD-CODE-123":
-    sys.stdout.write("\\r\\nYour OAuth token (valid for 1 year):\\r\\n{TOKEN}\\r\\n")
+import time
+if code == "GOOD-CODE-123":                  # the token in two writes 200 ms apart, then a styled word right after it
+    sys.stdout.write("\\r\\nYour OAuth token (valid for 1 year):\\r\\n{TOKEN[:30]}")
+    sys.stdout.flush()
+    time.sleep(0.2)
+    sys.stdout.write("{TOKEN[30:]}\\x1b[1mStore it safely\\x1b[0m\\r\\n")
 else:
     sys.stdout.write("\\r\\nOAuth error\\r\\n")
 sys.stdout.flush()
@@ -80,8 +86,16 @@ with tempfile.TemporaryDirectory() as td:
         for bad in ("", "a\nb", "x\x1b[A", "has space"):
             st2, b2 = call(API.vault_signin_code, "Second", API.Code(code=bad))
             arm(f"S2 a code of the wrong shape is refused: {bad!r}", st2 == 400 and "ASTRYX_CRED_SECOND" not in config.read_env(EST / ".env"), (st2, b2))
+        API._proves = lambda home, token: False
+        st, b = call(API.vault_signin_code, "Second", API.Code(code="GOOD-CODE-123"))
+        arm("S7 a login the proof call rejects: 400, nothing in .env", st == 400 and "ASTRYX_CRED_SECOND" not in config.read_env(EST / ".env"), (st, b))
+        proved = []
+        API._proves = lambda home, token: proved.append(token) or True
+        st, b = call(API.vault_signin_start, "Second")
+        home = API._SIGNIN["now"]["home"]
         st, b = call(API.vault_signin_code, "Second", API.Code(code="GOOD-CODE-123"))
         env = config.read_env(EST / ".env")
+        arm("S6 the token in two writes with a styled word after it: stored WHOLE, no suffix", env.get("ASTRYX_CRED_SECOND") == TOKEN and proved == [TOKEN], (env.get("ASTRYX_CRED_SECOND", "")[-20:], len(proved)))
         arm("S3 the login lands under the derived key, and the vault holds it as a login", st == 200 and env.get("ASTRYX_CRED_SECOND") == TOKEN and V.load(EST).get("Second", {}).get("kind") == "login", (st, b))
         arm("S3 no response carries the token", TOKEN not in json.dumps(b))
         arm("S3 the throwaway home is removed", not Path(home).exists())

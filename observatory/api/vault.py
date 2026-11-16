@@ -123,7 +123,8 @@ async def vault_delete(name: str, request: Request):
 # ~/.claude that every agent's session uses. One at a time, killed (its whole process group) after SIGNIN_MAX_S. The
 # browser gets the sign-in URL; the code it posts back is shape-checked and typed; the token is matched by its exact
 # shape from the output, kept only in memory until the one .env write, and never returned. Nothing of the terminal's
-# text is logged, returned or stored: the answers are {url} and then {ok, name}.
+# text is logged, returned or stored: the answers are {url} and then {ok, name}. The sign-in in flight lives in THIS
+# process: with several workers, a code landing in another one is refused (409, "start it again"), never mixed up.
 import os as _os  # noqa: E402
 import re as _re  # noqa: E402
 import shutil as _shutil  # noqa: E402
@@ -153,25 +154,53 @@ def _signin_end() -> None:
     _shutil.rmtree(s["home"], ignore_errors=True)
 
 
-def _read_until(fd: int, pattern, seconds: float) -> str | None:
-    """The first match of `pattern` in the terminal's output within `seconds` (the text itself is never kept)."""
+def _read_until(fd: int, pattern, seconds: float, raw: bool = False) -> str | None:
+    """The first COMPLETE match of `pattern` in the terminal's output within `seconds`: in the ANSI-stripped text, a
+    match counts only once something ends it (whitespace, BEL, ESC, CR), or once the stream has been quiet for half a
+    second with the match at its very end. Claude's sign-in is a redrawing TUI: a token can arrive across reads, and a
+    first-20-characters match would store a prefix (medic 12472). `raw`: search the output as it came (the sign-in
+    LINK is a terminal hyperlink, OSC 8, whose target the stripped text loses; its own terminator, ESC or BEL, ends it).
+    Never raw for a token: a style code inside it would end a prefix. The text is dropped on return."""
     import select
-    buf, end = "", _time.time() + seconds
-    while _time.time() < end:
-        r, _w, _x = select.select([fd], [], [], 0.5)
-        if not r:
-            continue
-        try:
-            chunk = _os.read(fd, 65536).decode(errors="replace")
-        except OSError:
-            break
-        if not chunk:
-            break
-        buf = (buf + chunk)[-200_000:]
-        m = pattern.search(buf) or pattern.search("".join(_ANSI.sub("", buf).split()))
-        if m:
-            return m.group(0)
-    return None
+    done = _re.compile(r"(?:" + pattern.pattern + r")(?=[\s\x07\x1b\r])")
+    tail = _re.compile(r"(?:" + pattern.pattern + r")$")
+    buf, end, quiet_since = "", _time.time() + seconds, _time.time()
+    try:
+        while _time.time() < end:
+            r, _w, _x = select.select([fd], [], [], 0.1)
+            if r:
+                try:
+                    chunk = _os.read(fd, 65536).decode(errors="replace")
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                buf, quiet_since = (buf + chunk)[-200_000:], _time.time()
+            text = buf if raw else _ANSI.sub(" ", buf)
+            m = done.search(text)
+            if m:
+                return m.group(0)
+            m = tail.search(text.rstrip("\x00"))
+            if m and _time.time() - quiet_since >= 0.5:
+                return m.group(0)
+        return None
+    finally:
+        buf = ""
+
+
+def _proves(home: str, token: str) -> bool:
+    """One minimal authenticated call with the new login, inside the same throwaway home: a sign-in that Claude doesn't
+    actually accept is never stored (medic 12472)."""
+    import subprocess
+    cli = _shutil.which("claude")
+    env = {"PATH": "/usr/local/bin:/usr/bin:/bin:" + _os.path.dirname(cli or "/usr/bin/claude"), "HOME": home,
+           "CLAUDE_CONFIG_DIR": _os.path.join(home, "proof"), "CLAUDE_CODE_OAUTH_TOKEN": token, "TERM": "dumb"}
+    try:
+        r = subprocess.run([cli, "-p", "Reply with the word ok.", "--model", "haiku"], cwd=home, env=env,
+                           capture_output=True, text=True, timeout=90, stdin=subprocess.DEVNULL)
+        return r.returncode == 0 and bool(r.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def _signin_start(name: str) -> dict:
@@ -199,7 +228,7 @@ def _signin_start(name: str) -> dict:
     t = threading.Timer(SIGNIN_MAX_S, lambda: _SIGNIN.get("now") is mine and _signin_end())   # abandoned: ended, not left
     t.daemon = True
     t.start()
-    url = _read_until(master, _URL, 30)
+    url = _read_until(master, _URL, 30, raw=True)
     if not url:
         _signin_end()
         return {"error": "Claude Code didn't offer a sign-in link: try again in a minute"}
@@ -243,8 +272,10 @@ async def vault_signin_code(name: str, body: Code, request: Request):
         try:
             _os.write(s["fd"], code.encode() + b"\r")
             token = _read_until(s["fd"], V.SHAPE["login"], 60)
-            if not token:
+            if not token or not V.SHAPE["login"].fullmatch(token):
                 return JSONResponse({"error": "Claude didn't accept that code: start the sign-in again"}, status_code=400)
+            if not _proves(s["home"], token):
+                return JSONResponse({"error": "Claude didn't accept that sign-in: start it again"}, status_code=400)
             vault = V.load(ESTATE)
             key = V.env_key(name, config.read_env(ESTATE / ".env"), vault)
             config.set_env(key, token, ESTATE / ".env")
