@@ -83,7 +83,7 @@ class World:
         wa.seen_msgids.clear()
         wa.routes = lambda: Routes([ROUTE])      # what routes() returns: the resolved table (plan-11860 E2)
 
-        async def identity_of(pool, channel, account, fallback):     # the one minter (identity_who): the owner's number
+        async def identity_of(pool, channel, account, fallback, route=None):     # the one minter (identity_who): the owner's number
             return "owner" if account == OWNER else fallback          # is the owner's handle, everyone else as minted
         wa.identity_of = identity_of
 

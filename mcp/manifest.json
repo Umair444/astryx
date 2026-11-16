@@ -78,6 +78,10 @@
         {
           "name": "list_chats",
           "description": "List conversations across your channels (or one). Returns send-ready handles."
+        },
+        {
+          "name": "connect",
+          "description": "Open, close or confirm a conversation with a PERSON on any channel, so their replies come to you."
         }
       ]
     },
@@ -193,5 +197,5 @@
       ]
     }
   ],
-  "total_tools": 33
+  "total_tools": 34
 }

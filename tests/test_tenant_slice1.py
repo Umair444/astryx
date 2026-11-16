@@ -46,7 +46,7 @@ TENANT_TABLES = {
                "influence_value", "influence_query", "peers", "social_person", "social_edge", "social_relation",
                "members", "canvases", "canvas_versions", "canvas_data", "canvas_threads", "canvas_users",
                "canvas_sessions", "canvas_voice_usage", "utterances", "voices", "hearings",
-               "identity", "identity_handle"],
+               "identity", "identity_handle", "route"],
     "library": ["passage", "lexeme_df", "stats"],
 }
 COG_TABLES = ["leases", "relay_orgs", "relay_mail", "usage_polls"]
@@ -69,6 +69,7 @@ WIDENED = {   # (schema, table, constraint) -> columns
     ("public", "voices", "voices_label_key"): ["tenant", "label"],
     ("public", "identity", "identity_wire_name_key"): ["tenant", "wire_name"],
     ("public", "identity_handle", "identity_handle_pkey"): ["tenant", "channel", "account"],
+    ("public", "route", "route_chat_key"): ["tenant", "channel", "chat"],
     ("library", "passage", "passage_pkey"): ["tenant", "node_id"],
     ("library", "lexeme_df", "lexeme_df_pkey"): ["tenant", "word"],
     ("library", "stats", "stats_pkey"): ["tenant", "one"],

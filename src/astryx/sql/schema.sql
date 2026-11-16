@@ -1346,9 +1346,11 @@ CREATE TABLE IF NOT EXISTS identity_handle (
 );
 -- THE ONE MINTER: the wire name a message from (channel, account) is written as. The linked identity's name, else
 -- `fallback` (the bridge's own mint, so an unlinked sender's name is what it always was). A first-seen account is
--- recorded as a stranger's handle. A web account IS a person: its first sight makes its identity, named `fallback`.
+-- recorded as a stranger's handle (p_record: never on a closed route, medic 12635). A web account IS a person: its first sight makes its identity, named `fallback`.
 -- SECURITY INVOKER: the caller's org sees and writes only its own rows (RLS below).
-CREATE OR REPLACE FUNCTION identity_who(p_channel text, p_account text, p_fallback text) RETURNS text
+DROP FUNCTION IF EXISTS identity_who(text, text, text);
+CREATE OR REPLACE FUNCTION identity_who(p_channel text, p_account text, p_fallback text, p_record boolean DEFAULT true)
+RETURNS text
 LANGUAGE plpgsql AS $who$
 DECLARE
   w text;
@@ -1359,6 +1361,9 @@ BEGIN
   IF w IS NOT NULL THEN
     RETURN w;
   END IF;
+  IF NOT p_record THEN             -- a closed route: who it is decides, a stranger who spoke there leaves nothing
+    RETURN p_fallback;
+  END IF;
   IF p_channel = 'web' THEN
     INSERT INTO identity (wire_name) VALUES (p_fallback) ON CONFLICT ON CONSTRAINT identity_wire_name_key DO NOTHING;
     SELECT id INTO i FROM identity WHERE wire_name = p_fallback;
@@ -1367,6 +1372,48 @@ BEGIN
     ON CONFLICT ON CONSTRAINT identity_handle_pkey DO UPDATE SET identity_id = coalesce(identity_handle.identity_id, EXCLUDED.identity_id);
   RETURN p_fallback;
 END $who$;
+
+-- THE ONE LINK: attach (channel, account) to the person named p_wire_name (made if new). An account linked to someone
+-- ELSE is refused (an unlink comes first, never a silent move). Returns the identity id. Every linker calls this.
+CREATE OR REPLACE FUNCTION identity_link(p_wire_name text, p_channel text, p_account text) RETURNS bigint
+LANGUAGE plpgsql AS $lnk$
+DECLARE
+  i bigint;
+  held bigint;
+BEGIN
+  INSERT INTO identity (wire_name) VALUES (p_wire_name) ON CONFLICT ON CONSTRAINT identity_wire_name_key DO NOTHING;
+  SELECT id INTO i FROM identity WHERE wire_name = p_wire_name;
+  SELECT identity_id INTO held FROM identity_handle WHERE channel = p_channel AND account = p_account;
+  IF held IS NOT NULL AND held <> i THEN
+    RAISE EXCEPTION 'that % account is already linked to another person', p_channel USING ERRCODE = 'unique_violation';
+  END IF;
+  INSERT INTO identity_handle (channel, account, identity_id) VALUES (p_channel, p_account, i)
+    ON CONFLICT ON CONSTRAINT identity_handle_pkey DO UPDATE SET identity_id = EXCLUDED.identity_id;
+  RETURN i;
+END $lnk$;
+
+-- ROUTES AS ROWS, first the agents' own (identity-channels P2/P3, owner 11-15 "agents should have tools … a row in
+-- postgres"): a CONNECTION an agent opened with connect() — one person's chat on one channel, routed to that agent until
+-- it closes it or no one has written for `idle`. The owner's route files stay the owner's and win: a bridge looks a chat
+-- up in its file first, then here. One agent per chat at a time (the key). purpose 'link': the person was asked to
+-- reply YES from this account to link it to `person` (an identity's wire_name); their YES links it and ends the row.
+-- Expired rows are closed by the connection_sweep trigger, which tells the agent on the wire.
+CREATE TABLE IF NOT EXISTS route (
+  tenant     text NOT NULL DEFAULT 'astryx',
+  id         bigserial,
+  channel    text NOT NULL,
+  chat       text NOT NULL,
+  agent      text NOT NULL,
+  purpose    text NOT NULL DEFAULT 'open' CHECK (purpose IN ('open', 'link')),
+  person     text,                                -- who is on the other end (a wire name), or whom a link names
+  opened_by  text NOT NULL,                       -- the agent, or the member/owner who asked for a link
+  note       text,
+  idle       interval NOT NULL DEFAULT interval '1 day',
+  opened     timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL DEFAULT now() + interval '1 day',
+  CONSTRAINT route_pkey PRIMARY KEY (tenant, id),
+  CONSTRAINT route_chat_key UNIQUE (tenant, channel, chat)
+);
 
 -- ── ROW-LEVEL SECURITY (cog-rls slice 3, RLS.md §2). LAST-but-one: it covers every table above. ─────────────────────
 -- Every table with a `tenant` column in the core schemas (partitions included: a partition queried directly does not

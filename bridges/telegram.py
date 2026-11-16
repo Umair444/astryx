@@ -55,7 +55,7 @@ FILE_API = f"{API_BASE}/file/bot{TOKEN}"
 from .common import signed  # noqa: E402  the sender label (one bot speaks for every agent), as WhatsApp's
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
-from .common import identity_of  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
+from .common import connection, identity_of, link_reply  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
 ROUTES_FILE = ESTATE / "bridges" / "routes-telegram.json"
 
 pool: asyncpg.Pool | None = None
@@ -220,7 +220,7 @@ async def fetch_file(file_id: str, name: str, kind: str = "") -> str:
 
 async def on_message(msg: dict):
     chat = str(msg.get("chat", {}).get("id", ""))
-    route = routes().chat(chat)
+    route = routes().chat(chat) or await connection(pool, "telegram", chat)   # the owner's routes, then an agent's connection
     sender = msg.get("from", {}) or {}
     uid = sender.get("id")
     if route is None:
@@ -240,7 +240,9 @@ async def on_message(msg: dict):
             break
     if not text:
         return
-    who = await identity_of(pool, "telegram", uid, f"tg-{uid}")   # the one minter: a linked person's name
+    who = await identity_of(pool, "telegram", uid, f"tg-{uid}", route)   # the one minter: a linked person's name
+    if await link_reply(pool, "telegram", route, uid, text):      # YES to "link this account to <person>"
+        return
     if who != "owner":
         if not route.get("open"):
             print(f"telegram: sender {uid} on closed chat {chat} — dropped (the owner only)",
@@ -296,7 +298,7 @@ async def on_poll_answer(pa: dict):
     name = user.get("first_name") or str(user.get("id"))
     changes = [f'{name} → {", ".join(picked) if picked else "(retracted)"}']
     await wire_insert(
-        pool, await identity_of(pool, "telegram", user.get("id"), f"tg-{user.get('id')}"), "telegram",
+        pool, await identity_of(pool, "telegram", user.get("id"), f"tg-{user.get('id')}", route), "telegram",
         rec["agent"] or (route and route["agent"]) or "seed", chat, "poll",
         vote_body(rec["question"], changes, agg), route=route)
 
@@ -309,7 +311,7 @@ async def on_message_reaction(mr: dict):
     if route is None:
         return
     uid = (mr.get("user") or {}).get("id")
-    who = await identity_of(pool, "telegram", uid, f"tg-{uid}")
+    who = await identity_of(pool, "telegram", uid, f"tg-{uid}", route)
     if who != "owner" and not route.get("open"):
         return
     new = mr.get("new_reaction") or []

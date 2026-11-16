@@ -288,7 +288,7 @@ async def on_message(msg: discord.Message):
         text = f"{text}\n{got}" if text else got
     if not text:
         return
-    who = await identity_of(pool, "discord", msg.author.id, f"dc-{msg.author.id}")   # the one minter
+    who = await identity_of(pool, "discord", msg.author.id, f"dc-{msg.author.id}", route)   # the one minter
     if who != "owner":
         if not route.get("open"):
             print(f"discord: sender {msg.author.id} on closed "
@@ -353,7 +353,7 @@ async def _poll_event(payload):
     cid = str(payload.channel_id)
     route = routes().chat(cid)
     await wire_insert(
-        pool, await identity_of(pool, "discord", payload.user_id, f"dc-{payload.user_id}"), "discord",
+        pool, await identity_of(pool, "discord", payload.user_id, f"dc-{payload.user_id}", route), "discord",
         rec["agent"] or (route and route["agent"]) or "seed", f"dc:{cid}", "poll",
         vote_body(rec["question"], changes, agg), route=route)
 
@@ -379,7 +379,7 @@ async def on_raw_reaction_add(payload):
     route = routes().chat(cid)
     if route is None:
         return
-    who = await identity_of(pool, "discord", payload.user_id, f"dc-{payload.user_id}")
+    who = await identity_of(pool, "discord", payload.user_id, f"dc-{payload.user_id}", route)
     if who != "owner" and not route.get("open"):
         return
     # Resolve the sender and text from Discord itself: agents post under their own

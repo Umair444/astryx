@@ -41,6 +41,8 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c:
     arm("an unlinked sender keeps its bridge's name", who("whatsapp", "923000000001@s.whatsapp.net", "wa-923000000001") == "wa-923000000001")
     arm("…and is recorded as a stranger's handle (no identity)", c.execute(
         "SELECT identity_id FROM identity_handle WHERE channel='whatsapp' AND account='923000000001@s.whatsapp.net'").fetchone() == (None,))
+    arm("a stranger on a CLOSED route is not recorded (medic 12635)", c.execute("SELECT identity_who('whatsapp', '923000000002@s.whatsapp.net', 'wa-923000000002', false)").fetchone()[0] == "wa-923000000002"
+        and c.execute("SELECT count(*) FROM identity_handle WHERE account='923000000002@s.whatsapp.net'").fetchone()[0] == 0)
     arm("a web account's first sight is its person", who("web", "2@cog", "cv-faran.2") == "cv-faran.2"
         and c.execute("SELECT count(*) FROM identity WHERE wire_name='cv-faran.2'").fetchone()[0] == 1)
 

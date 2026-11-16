@@ -63,7 +63,7 @@ WA_DOCKER = WA_CLI[2] if WA_CLI[:2] == ["docker", "exec"] else ""
 from .common import signed as _signed  # noqa: E402  the sender label, one rule for every shared-identity channel
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
-from .common import identity_of  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
+from .common import connection, identity_of, link_reply  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
 ROUTES_FILE = ESTATE / "bridges" / "routes-whatsapp.json"
 
 JOB_TIMEOUT = 1800    # the live steps bubble is forgotten 30 min after it opened (bridges/progress.py)
@@ -306,7 +306,7 @@ async def hook(request: Request):
         return Response(status_code=400)
 
     chat = jid_str(m.get("Chat"))
-    route = routes().chat(chat)
+    route = routes().chat(chat) or await connection(pool, "whatsapp", chat)   # the owner's routes, then an agent's connection
     if route is None:
         return {"ok": True}                       # not a surface we serve
 
@@ -333,7 +333,7 @@ async def hook(request: Request):
             ask = (rec and rec["agent"]) or route["agent"]
             changes = vote_changes(old, d.get("voters", []))
             voter_jid = jid_str(m.get("SenderJID"))
-            sender = await identity_of(pool, "whatsapp", voter_jid, wa_name(voter_jid))
+            sender = await identity_of(pool, "whatsapp", voter_jid, wa_name(voter_jid), route)
             await wire_insert(pool, sender, "whatsapp", ask, f"wa:{chat}", "poll",
                               vote_body(d.get("question", "?"), changes,
                                         d.get("aggregates", {})), route=route)
@@ -349,7 +349,7 @@ async def hook(request: Request):
         sender_jid = jid_str(m.get("SenderJID"))
         await wire_insert(
             pool,
-            await identity_of(pool, "whatsapp", sender_jid, wa_name(sender_jid)),
+            await identity_of(pool, "whatsapp", sender_jid, wa_name(sender_jid), route),
             "whatsapp", route["agent"], f"wa:{chat}", "poll",
             f'posted a poll ({msgid}): "{pc.get("Question")}" — '
             + " | ".join(pc.get("Options", [])), route=route)
@@ -367,7 +367,7 @@ async def hook(request: Request):
         if not emoji or (msgid and msgid in seen_msgids):
             return {"ok": True}
         rj = jid_str(m.get("SenderJID"))
-        if not (m.get("FromMe") or await identity_of(pool, "whatsapp", rj, wa_name(rj)) == "owner"):
+        if not (m.get("FromMe") or await identity_of(pool, "whatsapp", rj, wa_name(rj), route) == "owner"):
             return {"ok": True}
         agent, snippet = await reacted_message(pool, f"wa:{chat}", m["ReactionToID"])
         if agent is None:
@@ -404,7 +404,9 @@ async def hook(request: Request):
         seen_msgids[msgid] = now
 
     sender_jid = jid_str(m.get("SenderJID"))
-    sender = await identity_of(pool, "whatsapp", sender_jid, wa_name(sender_jid))    # the one minter: a linked person's name
+    sender = await identity_of(pool, "whatsapp", sender_jid, wa_name(sender_jid), route)    # the one minter: a linked person's name
+    if await link_reply(pool, "whatsapp", route, sender_jid, text):    # YES to "link this number to <person>"
+        return {"ok": True}
     if sender != "owner":
         if not route.get("open"):                 # closed surface: the owner only
             return {"ok": True}

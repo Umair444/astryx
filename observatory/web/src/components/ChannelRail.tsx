@@ -1,11 +1,13 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Modal } from '@mantine/core'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { api, displayName } from '../api'
+import { api, apiSend, displayName } from '../api'
 import type { ContactMatch } from '../types'
 import { BRAND } from '../ui/brands'
 import { ChannelMark } from '../ui/glyphs'
 import { arm, DRAG_MIME, dismissToast, homeChat, kindOf, patchChat, refOf, unrouteChat, useRoutes, type ChatRef, type Show } from '../ui/routes'
 import AgentFace from './AgentFace'
+import MyChannels from './MyChannels'
 import ChannelConnect, { useChannels, type ChannelState } from './ChannelConnect'
 
 /* THE CHANNEL RAIL (owner 11-15: "the floor is the place for channels: on the side, vertical, scrolling, infinite
@@ -15,7 +17,17 @@ import ChannelConnect, { useChannels, type ChannelState } from './ChannelConnect
    (drag it onto an agent, or tap it and then the agent), whether it's on, and what it SHOWS of the work (Steps: live
    steps then the reply; Replies: the reply only). Every change is the one routes write (PUT /api/wire/routes, If-Match,
    validated, its diff in the toast, undo). Owner-only, as that write is. It replaces the floor's bottom dock and the
-   Wire tab's Wiring. */
+   Wire tab's Wiring. Under each channel, the AGENTS' connections (connect(), the `route` table): who is talking with
+   whom, until when and why; the owner ends any. At the foot, "Your channels": the owner's own linked accounts. */
+
+interface Conn { id: number; channel: string; chat: string; agent: string; purpose: 'open' | 'link'; person: string | null; note: string | null; expires_at: string }
+
+function useConnections() {
+  const [rows, setRows] = useState<Conn[]>([])
+  const load = useCallback(() => { api<Conn[]>('/wire/connections').then(setRows).catch(() => {}) }, [])
+  useEffect(() => { load(); const t = setInterval(load, 30_000); return () => clearInterval(t) }, [load])
+  return { rows, load }
+}
 
 const SHOWS: { v: Show; label: string; hint: string }[] = [
   { v: 'steps', label: 'Steps', hint: 'live steps while it works, then the reply' },
@@ -32,6 +44,8 @@ export default function ChannelRail() {
   const reduce = useReducedMotion()
   const [open, setOpen] = useState<string | null>('whatsapp')
   const rows: ChannelState[] = ch.rows ?? []
+  const conns = useConnections()
+  const [mine, setMine] = useState(false)
   return (
     // it arrives and folds the way the rest of astryx's panels do (owner 11-15: "make the sidebar open with some
     // transition"): it slides in from its edge once, its width eases between folded and open, a channel's chats unfold
@@ -132,11 +146,32 @@ export default function ChannelRail() {
               )}
               </AnimatePresence>
               {isOpen && s.fixed && <p className="px-3 pb-2.5 text-[12px] text-ink-mute">{s.shows}</p>}
+              {isOpen && conns.rows.some((c) => c.channel === s.channel) && (
+                <ul className="px-2 pb-2 flex flex-col gap-1" aria-label={`${title} connections`}>
+                  {conns.rows.filter((c) => c.channel === s.channel).map((c) => (
+                    <li key={c.id} className="flex items-center gap-2 rounded-xl px-2 py-1.5 text-[12.5px]" title={c.note ?? undefined}>
+                      <AgentFace name={c.agent} size={18} />
+                      <span className="flex-1 min-w-0 truncate text-ink">
+                        {c.purpose === 'link' ? `asking ${c.chat.split('@')[0]} to link to ${displayName(c.person ?? '')}` : `↔ ${displayName(c.person ?? c.chat)}`}
+                        <span className="text-ink-mute"> · until {new Date(c.expires_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{c.note ? ` · ${c.note}` : ''}</span>
+                      </span>
+                      <button onClick={() => void apiSend('DELETE', `/wire/connections/${c.id}`).then(conns.load)}
+                        className="text-[11.5px] text-ink-mute hover:text-ink underline underline-offset-2" aria-label={`end ${c.agent}'s connection`}>End</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
             </Fragment>
           )
         })}
       </div>
+      {!shut && (
+        <button onClick={() => setMine(true)} className="shrink-0 mx-2 mb-2 rounded-xl px-3 py-2 text-left text-[12.5px] text-ink-dim hover:text-ink border border-line">
+          Your channels: link your own WhatsApp, Telegram…
+        </button>
+      )}
+      <Modal opened={mine} onClose={() => setMine(false)} title="Your channels" centered radius="lg">{mine && <MyChannels />}</Modal>
       {armed && !shut && (
         <div className="shrink-0 m-2 rounded-xl px-3 py-2 text-[12px] text-ink border border-cyan/40 bg-deck-2 flex items-center gap-2" role="status">
           <span className="flex-1">Tap an agent on the floor to route <b className="font-medium">{armed.label}</b> there</span>

@@ -22,21 +22,14 @@ from pathlib import Path
 from astryx.core import channels
 
 
-def link(conn, wire_name: str, channel: str, account: str, label: str | None = None) -> int:
-    """Attach (channel, account) to the person named wire_name, creating that identity if it is new. Returns its id.
-    An account already linked to SOMEONE ELSE is refused (ValueError): moving a handle between people is an unlink
-    first, never a silent overwrite."""
-    conn.execute("INSERT INTO identity (wire_name, label) VALUES (%s, %s) ON CONFLICT ON CONSTRAINT identity_wire_name_key "
-                 "DO NOTHING", (wire_name, label))
-    pid = conn.execute("SELECT id FROM identity WHERE wire_name = %s", (wire_name,)).fetchone()[0]
-    held = conn.execute("SELECT identity_id FROM identity_handle WHERE channel = %s AND account = %s",
-                        (channel, str(account))).fetchone()
-    if held and held[0] not in (None, pid):
-        raise ValueError(f"that {channel} account is already linked to another person")
-    conn.execute("INSERT INTO identity_handle (channel, account, identity_id) VALUES (%s, %s, %s) "
-                 "ON CONFLICT ON CONSTRAINT identity_handle_pkey DO UPDATE SET identity_id = EXCLUDED.identity_id",
-                 (channel, str(account), pid))
-    return pid
+def link(conn, wire_name: str, channel: str, account: str) -> int:
+    """Attach (channel, account) to the person named wire_name (identity_link, schema.sql: the one linker). Returns
+    its id. An account already linked to SOMEONE ELSE is refused (ValueError): moving it is an unlink first."""
+    import psycopg
+    try:
+        return conn.execute("SELECT identity_link(%s, %s, %s)", (wire_name, channel, str(account))).fetchone()[0]
+    except psycopg.errors.UniqueViolation as e:
+        raise ValueError(str(e).splitlines()[0]) from None
 
 
 def import_owner(conn, estate: Path) -> int:
