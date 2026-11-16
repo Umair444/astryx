@@ -12,7 +12,8 @@ Rules (validate enforces, resolve obeys):
   - an agent with two or more ENABLED rows marks exactly one `"home": true`: that is its doorbell. With one row, that
     row is the doorbell. An agent with several rows and no single home has NO doorbell (resolve returns None, and the
     bridge refuses to guess), never "the first one in the file".
-Dependency-free on purpose (stdlib only): the observatory imports it without the bridges' runtime, as owner_surfaces.
+Dependency-free on purpose (stdlib and astryx.core.channels only): the observatory imports it without the bridges'
+runtime, as owner_surfaces.
 """
 import json
 import sys
@@ -145,9 +146,7 @@ def read_table(path: Path) -> list:
 
 
 def kind_of(channel: str, chat: str) -> str:
-    """group or person, from the chat id's shape alone (the public glyphs carry this, never the id)."""
-    if channel == "whatsapp":
-        return "group" if chat.endswith("@g.us") else "person"
-    if channel == "telegram":
-        return "group" if chat.startswith("-") else "person"
-    return "group"          # a discord route is a guild channel
+    """group or person, from the chat id's shape alone (the public glyphs carry this, never the id): the one channel
+    table's rule (core/channels.py), a shape it can't place drawn as a person."""
+    from astryx.core.channels import chat_kind
+    return "group" if chat_kind(channel, chat) == "group" else "person"

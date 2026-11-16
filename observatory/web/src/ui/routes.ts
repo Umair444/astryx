@@ -47,10 +47,12 @@ let loadingRoutes: Promise<void> | null = null
 let loadingGlyphs: Promise<void> | null = null
 let toastSeq = 0
 
+// a channel's own rules ride with its route table (the server's one channel table, core/channels.py): which chat ids
+// are groups, and whether its people are phone numbers. The web keeps no channel's rules of its own
+const tableOf = (channel: string) => state.data?.find((c) => c.channel === channel)
 export function kindOf(channel: string, chat: string): ChatKind {
-  if (channel === 'whatsapp') return chat.endsWith('@g.us') ? 'group' : 'person'
-  if (channel === 'telegram') return chat.startsWith('-') ? 'group' : 'person'
-  return 'group'
+  const g = tableOf(channel)?.group ?? '.+'
+  return g && new RegExp(`^(?:${g})$`).test(chat) ? 'group' : 'person'
 }
 
 // a route's note is written "<who> -> <agent> (<why>)"; the who is the chat's name. Else a short form of its id.
@@ -58,7 +60,7 @@ export function labelOf(r: WireRoute, channel: string): string {
   const n = (r.note ?? '').split(/\s+->\s+|\s+→\s+/)[0].trim()
   if (n) return n.length > 40 ? n.slice(0, 39) + '…' : n
   const id = String(r.chat).split('@')[0]
-  return channel === 'whatsapp' && /^\d{8,}$/.test(id) ? `+${id}` : id
+  return tableOf(channel)?.numbers && /^\d{8,}$/.test(id) ? `+${id}` : id
 }
 
 export function refOf(r: WireRoute, channel: string): ChatRef {

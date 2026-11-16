@@ -13,14 +13,14 @@ from __future__ import annotations
 
 import re
 
-from astryx.core import address
+from astryx.core import address, channels
 
 BODY = 160
 SIGN = "\u25b8 "        # bridges/common.SIGN: the label line every shared-identity channel signs an agent's message with
 # a GROUP conversation: a WhatsApp group, a Telegram group (a negative chat id), a Discord channel. There, people talk
 # among themselves, and a message is owed only when it ADDRESSES the agent (medic 12441): an @mention of its name, a
 # reply to one of its messages (their quoted first line is its label), a task, or a team ask it leads
-GROUP = "m.thread LIKE 'wa:%%@g.us' OR m.thread LIKE 'tg:-%%' OR m.thread LIKE 'dc:%%'"
+GROUP = channels.group_thread_sql("m.thread")     # the one channel table's rule (core/channels.py)
 
 
 def owed(cur, agent: str, since) -> list[tuple]:

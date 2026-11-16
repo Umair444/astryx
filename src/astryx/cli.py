@@ -25,6 +25,7 @@ from pathlib import Path
 
 import astryx
 from astryx import config, orgs, paths, tree
+from astryx.core import channels as _channels
 from astryx.ui import UI
 
 RUNNER = subprocess.run            # seam: tests replace it
@@ -34,14 +35,11 @@ OBS_URL = "http://localhost:8090/"
 FULL_CONTROL = ("Agents get full control of this machine: sudo, and Claude Code in bypassPermissions mode. "
                 "That is the design. Run ASTRYX on a dedicated VM or machine, never on your daily laptop.")
 
-CHANNELS = {
-    "telegram": {"key": "TG_BOT_TOKEN", "ask": "Telegram bot token (from @BotFather)",
-                 "routes": "bridges/routes-telegram.json", "unit": "astryx-telegram"},
-    "discord": {"key": "DISCORD_BOT_TOKEN", "ask": "Discord bot token (Developer Portal → Bot → Reset Token)",
-                "routes": "bridges/routes-discord.json", "unit": "astryx-discord"},
-    "whatsapp": {"key": "WA_WEBHOOK_SECRET", "ask": "WhatsApp webhook secret (press Enter to generate one)",
-                 "routes": "bridges/routes-whatsapp.json", "unit": "astryx-whatsapp", "generate": True},
-}
+# the channels `astryx connect` wires, from the one channel table (core/channels.py): the .env key it asks for (a bot
+# token, or a secret this org generates), its routes file and its unit
+CHANNELS = {c.name: {"key": c.token_key or c.secret_key, "ask": c.token_ask or c.secret_ask,
+                     "routes": f"bridges/routes-{c.name}.json", "unit": f"astryx-{c.name}", "generate": not c.token_key}
+            for c in _channels.connectable()}
 
 
 class CliError(Exception):
@@ -535,7 +533,7 @@ def cmd_channels(ctx: Ctx, a) -> int:
                      "yes" if (root / ch["routes"]).is_file() else "no", state))
     ctx.ui.table("", ["channel", "credential", "routes", "bridge"], rows)
     ctx.ui.blank()
-    ctx.ui.dim("  connect one: astryx connect telegram|discord|whatsapp")
+    ctx.ui.dim(f"  connect one: astryx connect {'|'.join(CHANNELS)}")
     return 0
 
 
@@ -592,7 +590,7 @@ VERBS = [
     ("pause", cmd_pause, "pause or resume the org's clock"),
     ("spawn", cmd_spawn, "bring an agent to life (or resume it)"),
     ("retire", cmd_retire, "how to retire an agent"),
-    ("connect", cmd_connect, "wire a channel (telegram|discord|whatsapp), or watch an agent"),
+    ("connect", cmd_connect, f"wire a channel ({'|'.join(CHANNELS)}), or watch an agent"),
     ("channels", cmd_channels, "which channels are wired"),
     ("federate", cmd_federate, "join the network of orgs"),
     ("join", cmd_join, "introduce this org to a peer"),
@@ -634,7 +632,7 @@ def parser() -> argparse.ArgumentParser:
     sp["pause"].add_argument("until", nargs="?", help='when it ends, e.g. "tomorrow 9am"')
     sp["spawn"].add_argument("agent")
     sp["retire"].add_argument("agent")
-    sp["connect"].add_argument("target", metavar="telegram|discord|whatsapp|<agent>")
+    sp["connect"].add_argument("target", metavar="|".join(CHANNELS) + "|<agent>")
     sp["connect"].add_argument("--replace", action="store_true", help="replace a credential that is already set")
     sp["join"].add_argument("url", metavar="PEER_URL")
     sp["federate"].set_defaults(rest=[])   # every argument the CLI doesn't know passes to the wizard, in order (main)

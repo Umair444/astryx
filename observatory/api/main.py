@@ -43,6 +43,7 @@ DIST = ROOT / "web" / "dist"
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 from astryx.core import charter as _charter  # noqa: E402 — the one roster rule
+from astryx.core import channels as _channels  # noqa: E402 — the one channel table (owner 11-16: "a standard")
 from bridges.owner_surfaces import OWNER_ROW_BRIDGED_SQL  # noqa: E402 — the rows a bridge delivers, not the pane
 from astryx import config, orgs, paths  # noqa: E402 — the ONE resolver (plan-11324 S3a; S3b: its tmux server)
 # The org's estate (.env, agents/, triggers/, units/, …): this checkout on one org, the HOME on several. The observatory
@@ -2849,10 +2850,13 @@ async def wire_routes():
     out = []
     for ch in _wire_channels():
         routes = _read_routes(ch)
-        key = "trusted_jids" if (ch == "whatsapp"
-                                 or any("trusted_jids" in r for r in routes)) else "trusted_ids"
+        c = _channels.BY_NAME.get(ch)
+        key = c.trusted_key if c else "trusted_jids" if any("trusted_jids" in r for r in routes) else "trusted_ids"
+        # the channel's own rules ride with its table (core/channels.py), so the web holds none: which chat ids are a
+        # group or one person, and whether its people are phone numbers
         out.append({"channel": ch, "routes": routes, "trusted_key": key, "etag": etag(_routes_file(ch)),
-                    "problems": _routing.validate(routes, set(agent_meta()))})
+                    "problems": _routing.validate(routes, set(agent_meta())),
+                    "group": c.group if c else ".+", "dm": c.dm if c else "", "numbers": bool(c and c.numbers)})
     return out
 
 
@@ -3896,9 +3900,9 @@ async def hands_vnc(ws: WebSocket, agent: str):
 #   E8  WhatsApp has no token: wacli pairs by QR. The link state is read first (a constant, read-only argv); unknown
 #       means refuse; a linked phone is never replaced from here. Pairing streams over a fetch carrying x-obs-key.
 ENV_FILE = ESTATE / ".env"                     # the org's .env (a seam: the oracle points it at a fixture file)
-CHANNEL_TOKEN_KEY = {"telegram": "TG_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
-_TOKEN_SHAPE = {"telegram": re.compile(r"^\d{5,16}:[A-Za-z0-9_-]{30,64}$"),
-                "discord": re.compile(r"^[A-Za-z0-9_-]{20,40}\.[A-Za-z0-9_-]{4,10}\.[A-Za-z0-9_-]{20,60}$")}
+# the bot channels and their tokens, from the one channel table (core/channels.py)
+CHANNEL_TOKEN_KEY = {c.name: c.token_key for c in _channels.connectable() if c.token_key}
+_TOKEN_SHAPE = {c.name: re.compile(rf"^(?:{c.token_shape})$") for c in _channels.connectable() if c.token_key}
 _PROBE_TRANSPORT = None                         # a seam: the oracle hands httpx a MockTransport
 _account_cache: dict[str, tuple[float, str, dict | None]] = {}
 ACCOUNT_TTL = 300
@@ -4018,10 +4022,12 @@ async def channels_status(request: Request):
     except OSError:
         env_mtime = 0.0
     out = []
-    for ch in ("whatsapp", "telegram", "discord"):
+    for ch in (c.name for c in _channels.connectable()):
         b = await asyncio.to_thread(_bridge, ch)
-        row = {"channel": ch, "routes": ch in _wire_channels()}
-        if ch == "whatsapp":
+        c = _channels.BY_NAME[ch]                 # what the screen needs to connect it, from the one table
+        row = {"channel": ch, "routes": ch in _wire_channels(), "title": c.title, "numbers": c.numbers,
+               "connect": "token" if c.token_key else "link", "steps": list(c.steps)}
+        if ch not in CHANNEL_TOKEN_KEY:            # linked another way: WhatsApp's QR
             link = await asyncio.to_thread(_wa_link)
             state = ("connected" if link["state"] == "linked" and b["health"] else
                      "activation-needed" if link["state"] == "linked" else
@@ -4042,7 +4048,7 @@ async def channels_status(request: Request):
     # every other bridge with a routes file (the frontends bridge, a new one): its routes and its own health, no token
     # flow here; then the BUILT-INS (the channel rail, owner 11-15: "I treat chat as a channel"): they are not routed per
     # chat, so `fixed` says the rail shows what they do instead of a control
-    extra = [c for c in _wire_channels() if c not in ("whatsapp", "telegram", "discord")]
+    extra = [c for c in _wire_channels() if c not in {x.name for x in _channels.connectable()}]
     for ch, b in zip(extra, await asyncio.gather(*(asyncio.to_thread(_bridge, c) for c in extra))):   # together: a down bridge costs seconds
         out.append({"channel": ch, "routes": True, "state": "connected" if b["health"] else "unknown", "account": None})
     out += [{"channel": "web", "fixed": True, "state": "connected", "shows": "everything, always"},
@@ -4069,7 +4075,7 @@ async def channel_token(channel: str, body: ChannelToken, request: Request):
     key = CHANNEL_TOKEN_KEY.get(channel)
     if not key:
         return JSONResponse({"ok": False, "error": "This channel connects without a token."}, status_code=404)
-    title, token = channel.capitalize(), body.token.strip()
+    title, token = _channels.BY_NAME[channel].title, body.token.strip()
     if not _TOKEN_SHAPE[channel].match(token):
         return JSONResponse({"ok": False, "error": f"That doesn't look like a {title} bot token. Copy the whole token and paste it again."},
                             status_code=400)
