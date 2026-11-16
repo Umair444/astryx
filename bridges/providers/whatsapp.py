@@ -32,10 +32,11 @@ WACLI_TRANSIENT = re.compile(r"store is locked|status 429|rate-overlimit", re.I)
 WACLI_RETRY_WAITS = (2, 5, 15, 30)              # seconds before each retry: bounded, ~52 s of waiting worst case
 
 
-async def run_wacli(cmd: list[str], *args: str) -> str:
+async def run_wacli(cmd: list[str], *args: str, retry: bool = True) -> str:
     """Run one wacli call; retry ONLY a transient failure, at most len(WACLI_RETRY_WAITS) times (read per call, so a
-    test can zero the waits). Raises on any other failure."""
-    for attempt, wait in enumerate((*WACLI_RETRY_WAITS, None)):
+    test can zero the waits). Raises on any other failure. `retry=False`: one attempt, for a lookup a person is
+    waiting on, where a minute of lock retries is worse than an answer that says it could not ask."""
+    for attempt, wait in enumerate((*(WACLI_RETRY_WAITS if retry else ()), None)):
         proc = await asyncio.create_subprocess_exec(
             *cmd, *args,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -72,6 +73,14 @@ def _find_id(obj: Any) -> str | None:
             if got:
                 return got
     return None
+
+
+def _number(query: str) -> str | None:
+    """The digits of a phone number typed into a search, in international form (+92…, 0092… or 92…; spaces, dashes,
+    dots and brackets allowed), or None. A national '0…' form names no country, so it is not guessed."""
+    t = re.sub(r"[\s().-]", "", query or "")
+    t = t[2:] if t.startswith("00") else t[1:] if t.startswith("+") else None if t.startswith("0") else t
+    return t if t and re.fullmatch(r"\d{8,15}", t) else None
 
 
 def _label(c: dict) -> str:
@@ -118,7 +127,29 @@ class WhatsAppProvider(ChannelProvider):
                 label=_label(c),
                 number=c.get("phone") or None,
                 raw=c))
+        n = _number(query)
+        if n and not any((c.number or "").lstrip("+") == n or c.handle.endswith(f":{n}@s.whatsapp.net") for c in out):   # an @lid contact saved as "+92…" too (medic 12615)
+            out.append(await self._by_number(n))
         return out
+
+    async def _by_number(self, n: str) -> Contact:
+        """A number nobody has chatted with yet (owner 11-16: "when I open wa.me/92… it shows the number exists"):
+        WhatsApp's own registration lookup (`contacts check`, the one wa.me makes), done by the running sync's session
+        from wacli 0.21 on. raw['registered']: True, False (a confirmed no), or None (not asked: an older wacli whose
+        sync holds the store, or no answer); unasked, the number is still offered, and a send to it is WhatsApp's
+        own check. One attempt: a person is waiting on the search."""
+        jid, registered = f"{n}@s.whatsapp.net", None
+        try:
+            res = json.loads(await run_wacli(self._cmd, "--json", "contacts", "check", f"+{n}", retry=False))
+            rows = res if isinstance(res, list) else (res.get("data") or []) if isinstance(res, dict) else []
+            r = next((x for x in rows if isinstance(x, dict) and x.get("responded")), None)
+            if r is not None:
+                registered = bool(r.get("registered"))
+                jid = r.get("jid") or jid
+        except Exception:  # noqa: BLE001  unasked is an answer too: the number is offered, marked unchecked
+            pass
+        return Contact(channel=self.NAME, handle=f"{self.NAME}:{jid}" if registered is not False else "",
+                       label=f"+{n}", number=n, raw={"registered": registered})
 
     async def resolve(self, handle: str) -> Contact | None:
         _, _, native = handle.partition(":")

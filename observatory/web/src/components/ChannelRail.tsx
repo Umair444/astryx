@@ -254,13 +254,19 @@ function ContactFind({ channel, known }: { channel: string; known: Map<string, s
       {hits && hits.length === 0 && !err && <div className="text-[12px] text-ink-mute mt-1.5 px-1">No group or person matches “{q}”.</div>}
       {hits && hits.length > 0 && (
         <ul className="flex flex-col gap-1 mt-1.5">
-          {hits.filter((m) => known.has(m.native)).map((m) => (
+          {hits.filter((m) => m.registered !== false && known.has(m.native)).map((m) => (
             <li key={m.native} className="flex items-center gap-2 rounded-xl px-2 py-1.5 text-[12.5px]">
               <span className="flex-1 min-w-0 truncate text-ink">{m.label}</span>
               <span className="text-ink-mute shrink-0">{known.get(m.native) ? `already goes to ${displayName(known.get(m.native)!)}, above` : 'already in the list above'}</span>
             </li>
           ))}
-          {hits.filter((m) => !known.has(m.native)).map((m) => <ChatRow key={m.native} c={{ channel, chat: m.native, label: m.label, kind: m.native.endsWith('@g.us') || m.native.startsWith('-') ? 'group' : 'person', agent: null, enabled: true, show: 'steps' }} />)}
+          {hits.filter((m) => m.registered === false).map((m) => (
+            <li key={`no-${m.native}`} className="rounded-xl px-2 py-1.5 text-[12.5px] text-ink-dim">{m.label} has no {BRAND[channel].title} account.</li>
+          ))}
+          {hits.filter((m) => m.registered === null && !known.has(m.native)).map((m) => (
+            <li key={`unchecked-${m.native}`} className="px-2 text-[11.5px] text-ink-mute">{BRAND[channel].title} couldn't be asked whether {m.label} has an account; add it and the first message will tell.</li>
+          ))}
+          {hits.filter((m) => m.registered !== false && !known.has(m.native)).map((m) => <ChatRow key={m.native} c={{ channel, chat: m.native, label: m.label, kind: m.native.endsWith('@g.us') || m.native.startsWith('-') ? 'group' : 'person', agent: null, enabled: true, show: 'steps' }} />)}
         </ul>
       )}
     </div>

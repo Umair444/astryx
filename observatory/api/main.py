@@ -2919,9 +2919,12 @@ async def wire_contacts(q: str, channel: str = ""):
         found = await registry.search_contacts(q, [channel] if channel else None)
     except Exception as e:
         return {"matches": [], "error": str(e)[:200]}
+    # a number typed in (WhatsApp) carries its registration: True, False (no account: shown, not offered), None (not
+    # asked); every other match is a known chat, registered by having one
     matches = [{"channel": c.channel, "label": c.label, "number": c.number,
-                "handle": c.handle, "native": c.handle.split(":", 1)[1]}
-               for c in found if c.handle and ":" in c.handle]
+                "handle": c.handle, "native": c.handle.split(":", 1)[1] if ":" in c.handle else c.number or "",
+                "registered": c.raw.get("registered", True) if isinstance(c.raw, dict) else True}
+               for c in found if (c.handle and ":" in c.handle) or (isinstance(c.raw, dict) and c.raw.get("registered") is False)]
     return {"matches": matches, "count": len(matches)}
 
 
