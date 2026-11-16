@@ -276,9 +276,11 @@ export default function AdminView() {
         {activity && (activity.a === null ? <p className="text-[13px] text-ink-mute">Reading…</p>
           : activity.a === false ? <p className="text-[13px] text-bad">Couldn't read this account's activity. Close and open it again.</p> : (
           <div className="grid grid-cols-3 gap-3">
-            <Fact label="Messages sent" value={String(activity.a.messages)} />
+            <Fact label={activity.a.scope === 'owner' ? 'Owner messages' : 'Messages sent'} value={String(activity.a.messages)} />
             <Fact label="Threads" value={String(activity.a.threads)} />
             <Fact label="Last sign-in" value={activity.user.last_session ? `${fmtAgo(activity.user.last_session)} ago` : 'never'} />
+            {activity.a.scope === 'owner' && <p className="col-span-3 text-[12.5px] text-ink-mute leading-relaxed">
+              Every message written as the owner, from the chat, WhatsApp and Discord together, not this account alone.</p>}
           </div>
         ))}
       </Modal>
@@ -286,7 +288,7 @@ export default function AdminView() {
   )
 }
 
-interface Activity { messages: number; threads: number; last_message: string | null }
+interface Activity { scope: 'owner' | 'account'; messages: number; threads: number; last_message: string | null }
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (

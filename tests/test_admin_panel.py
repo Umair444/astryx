@@ -561,7 +561,11 @@ def run(t, da, dbb, procs):
           "(3 messages, 2 threads; 11-16: the panel said the wire could not tell them apart)",
           sent == [200] * 3 and st == 200 and aj.get("messages") == 3 and aj.get("threads") == 2, f"{sent} {st} {aj}")
     st, _, aj = call(F, f"/o/{oa}/api/admin/activity?uid={U['adm']}", headers=as_("owner"))
-    check("...and another account's count does not take them", st == 200 and aj.get("messages") == 0, f"{st} {aj}")
+    check("...and another account's count does not take them", st == 200 and aj.get("messages") == 0
+          and aj.get("scope") == "account", f"{st} {aj}")
+    st, _, aj = call(F, f"/o/{oa}/api/admin/activity?uid={U['owner']}", headers=as_("owner"))
+    check("...an owner account's count is the owner channel's, and says so (scope owner: WhatsApp, Discord and the key "
+          "write as 'owner' too, medic 12598)", st == 200 and aj.get("scope") == "owner", f"{st} {aj}")
 
 
     print("\nM11 THE EMAIL CODE AT ACCEPT")

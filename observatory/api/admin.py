@@ -10,7 +10,7 @@ every write through astryx.cogauth.grant/revoke, the one writer (D8).
     PUT    /api/admin/members         {uid, node?, role}: grant (an upsert on that node)
     DELETE /api/admin/members         {uid, node?}: one node's row, or (no node) every row of the uid
     GET    /api/admin/nodes           the agents/ tree as grantable nodes: [{node, kind: group|agent, depth}]
-    GET    /api/admin/activity?uid=   {messages, threads, last_message}: counts, never bodies
+    GET    /api/admin/activity?uid=   {scope owner|account, messages, threads, last_message}: counts, never bodies
 
 WHO MAY: the org's owner (the owner key, or a signed-in owner) and a signed-in ADMIN. main.privacy_gate admits an
 admin to exactly ADMIN_ROUTES; each handler judges again. THE GUARDS: an admin can neither grant `owner` nor change or
@@ -167,6 +167,8 @@ async def activity(request: Request, uid: str = ""):
     tags = await M.sender_tags(pool, uid)
     r = await pool.fetchrow("SELECT count(*) AS n, count(DISTINCT thread) AS t, max(ts) AS last FROM messages "
                             "WHERE from_agent = ANY($1::text[]) AND from_org = 'local'", tags)
-    return JSONResponse({"uid": uid, "messages": r["n"], "threads": r["t"],
+    # 'owner' is also every trusted WhatsApp/Discord sender and the owner key (medic 12598): an owner account's count is
+    # the owner channel's, all surfaces, and says so; a member's is exactly its own
+    return JSONResponse({"uid": uid, "scope": "owner" if tags == ["owner"] else "account", "messages": r["n"], "threads": r["t"],
                          "last_message": r["last"].isoformat() if r["last"] else None},
                         headers={"cache-control": "no-store"})
