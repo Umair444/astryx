@@ -53,6 +53,11 @@ run_restore_verify` (tombstones the pulse honours). Deleting this file does NOT 
 reinstall."""
 from astryx.pulse.shipped_triggers.org_backup import run_backup, run_restore_verify  # noqa: F401
 ''',
+    'usage_idle': '''"""Live install of the shipped idle usage reading (one writer: src/astryx/pulse/shipped_triggers/usage_idle.py): reads each
+login's limits when no turn has, and says when no reading has landed in 3 h. To retire it:
+`trigger action=retire name=usage_idle` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
+from astryx.pulse.shipped_triggers.usage_idle import usage_idle  # noqa: F401
+''',
     'influence_nightly': '''"""Live install of the shipped influence nightly (one writer: src/astryx/pulse/shipped_triggers/influence_nightly.py): keeps
 the influence graph computed so the floor's influence view has something to draw. To retire it:
 `trigger action=retire name=influence_nightly` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
@@ -69,6 +74,7 @@ NAMES: dict[str, tuple[str, ...]] = {
     'upstream_prs': ('upstream_prs',),
     'org_backup': ('run_backup', 'run_restore_verify'),
     'influence_nightly': ('influence_nightly',),
+    'usage_idle': ('usage_idle',),
 }
 
 
