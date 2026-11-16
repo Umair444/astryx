@@ -430,3 +430,7 @@ a.auth-chip { padding: 0 12px; }
 .ws-seg > button { font-size: 11.5px; padding: 1px 8px; border-radius: 6px; color: var(--t-mute, inherit); }
 .ws-seg > button[aria-checked="true"] { background: color-mix(in srgb, var(--t-accent) 18%, transparent); color: var(--t-fg); font-weight: 500; }
 .ws-seg > button:not([aria-checked="true"]):hover { color: var(--t-fg); }
+
+/* a surface whose controls size from their own utilities: Mantine's global `input, button { font: inherit }` (the chat
+   loads it) is unlayered and beats every layered text-[…] size (the chat's own twin: gate.css .ws-gate) */
+.ax-controls :where(button, input, select, textarea) { font: revert-layer; }

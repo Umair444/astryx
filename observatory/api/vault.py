@@ -1,20 +1,27 @@
-"""astryx observatory · the vault: the org's named logins and keys (src/astryx/core/vault.py;
-homes/seed/agents-credentials/DESIGN.md, medic 12364). Owner-only, every route, positively.
+"""astryx observatory · HARNESS AND KEYS: what the org's agents run on, and which agent runs on what (owner 11-16;
+docs/superpowers/specs/2026-11-16-harness-and-keys-design.md). Owner-only, every route, positively.
 
-    GET    /api/vault                 every credential: name, kind, endpoint, models, cap, whether a value is set, who uses it
-    PUT    /api/vault/{name}          add or change one; `value` (optional on a change) is written to .env and never returned
-    DELETE /api/vault/{name}          remove one (refused while an agent uses it)
+    GET    /api/harness               the whole page: harnesses, the provider catalog, the keys, the org's own login,
+                                      every agent's connection
+    PUT    /api/keys/{name}           add or change a key; `value` (optional on a change) is written to .env, never returned
+    DELETE /api/keys/{name}           remove one (refused while an agent runs on it)
+    POST   /api/keys/{name}/signin    sign a login in through its harness: the answer is the link to open
+    POST   /api/keys/{name}/signin/code   the code that page shows; the login it yields is proved, then stored
+    PUT    /api/connections/{agent}   an agent's harness, key and model ('*': everyone else); an empty one = the default
 
 A value goes to .env under the key the server derives from the name (vault.env_key), through the one locked writer
-(config.set_env), and is never echoed, logged or stored anywhere else. An agent is connected to a credential through
-its runtime entry (PUT /api/agents/{name}/runtime, `credential`): a KEY is metered spend, so that needs the owner's
-confirm_billing, as the org's own metered login does (local.md Economy).
+(config.set_env), and is never echoed, logged or stored anywhere else. What fits what is the catalog's
+(astryx.core.catalog), never decided here. An API key is metered spend: connecting an agent to one is the owner's
+confirmed act (confirm_billing), and its daily cap holds: runtime_env.key_cap at spawn, energy (its day) at the pulse.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -24,24 +31,29 @@ from pydantic import BaseModel
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 from astryx import config  # noqa: E402
+from observatory.api import hostfile  # noqa: E402
+from astryx.core import catalog as C  # noqa: E402
+from astryx.core import runtime_env as RE  # noqa: E402
 from astryx.core import vault as V  # noqa: E402
+from astryx.econ import energy as E  # noqa: E402
 
 router = APIRouter()
-_owner = None
+_owner = _pool = _roster = _alive = None
 ESTATE: Path | None = None
+APPLIES = "at each connected agent's next start"
 
 
-def bind(owner, estate) -> None:
-    global _owner, ESTATE
-    _owner, ESTATE = owner, Path(estate)
+def bind(owner, estate, pool=None, roster=None, alive=None) -> None:
+    global _owner, ESTATE, _pool, _roster, _alive
+    _owner, ESTATE, _pool, _roster, _alive = owner, Path(estate), pool, roster, alive
 
 
-class Cred(BaseModel):
-    kind: str
-    base_url: str = ""
-    models: dict | None = None
-    cap_tokens_day: int | None = None
-    value: str = ""
+def _deny(request: Request):
+    return None if (_owner is not None and _owner(request)) else JSONResponse({"error": "the owner's page"}, status_code=403)
+
+
+def _err(msg: str, status: int = 400):
+    return JSONResponse({"error": msg}, status_code=status)
 
 
 def _runtime() -> dict:
@@ -52,53 +64,132 @@ def _runtime() -> dict:
         return {}
 
 
-def _view() -> dict:
-    env, vault, uses = config.read_env(ESTATE / ".env"), V.load(ESTATE), V.used_by(_runtime())
-    return {"credentials": [{"name": n, **e, "has_value": bool(env.get(V.PREFIX + V.slug(n))), "used_by": uses.get(n, [])}
-                            for n, e in sorted(vault.items())]}
+def _write_runtime(d: dict) -> None:
+    hostfile.atomic_write(ESTATE / "runtime.json", json.dumps(d, indent=2, sort_keys=True) + "\n")   # the one writer
 
 
-def _deny(request: Request):
-    return None if (_owner is not None and _owner(request)) else JSONResponse({"error": "the owner's page"}, status_code=403)
+# ── what a key can do ────────────────────────────────────────────────────────────────────────────────────────────────
+def _usable(e: dict, harness: dict, has_value: bool, cat: dict) -> str | None:
+    """Why an agent on `harness` can't run on this key now, or None: it can."""
+    if not harness.get("launcher"):
+        return f"{harness['name']} isn't ready to run agents yet"
+    if not C.fits(harness, e["provider"], e, cat):
+        return f"{harness['name']} can't use {cat[e['provider']]['name']}"
+    if not has_value:
+        return "it has no value yet"
+    if cat[e["provider"]]["billing"] == "metered" and not e.get("cap_tokens_day"):
+        return "an API key needs a daily cap before an agent runs on it"
+    return None
 
 
-@router.get("/api/vault")
-async def vault_get(request: Request):
-    return _deny(request) or await asyncio.to_thread(_view)
+def _harnesses(cat: dict) -> list[dict]:
+    return [{"id": h, "name": r.get("name", h), "by": r.get("by", ""), "ready": r.get("launcher") is True,
+             "why": r.get("why"), "speaks": r.get("speaks", []), "logins": r.get("logins", []),
+             "signin": (r.get("signin") or {}).get("provider")} for h, r in C.harnesses().items()]
 
 
-@router.put("/api/vault/{name}")
-async def vault_put(name: str, body: Cred, request: Request):
-    """Add or change a credential. A new one needs its value; a change keeps the old value unless a new one is given."""
+async def _energy(names: list) -> dict:
+    """{name | None: the newest fresh reading of that login's limits}: the org's own is None."""
+    if _pool is None or _pool() is None:
+        return {}
+    rows = await _pool().fetch(
+        "SELECT DISTINCT ON (credential) credential, five_hour_pct, five_hour_reset, seven_day_pct, seven_day_reset, "
+        "extract(epoch FROM now() - fetched_at)::float AS age FROM usage_readings WHERE state = 'fresh' "
+        "AND (credential IS NULL OR credential = ANY($1::text[])) ORDER BY credential, fetched_at DESC", names)
+    num = lambda v: None if v is None else float(v)   # noqa: E731
+    return {r["credential"]: {"h5": num(r["five_hour_pct"]), "h5_reset": r["five_hour_reset"], "d7": num(r["seven_day_pct"]),
+                              "d7_reset": r["seven_day_reset"], "age_s": r["age"]} for r in rows}
+
+
+async def _spent(names: list) -> dict:
+    """{key: billable tokens its agents ran on it today} (energy.spent's sum, for every key in one read)."""
+    if not names or _pool is None or _pool() is None:
+        return {}
+    rows = await _pool().fetch(f"SELECT run_on, coalesce(sum({E.BILL}), 0)::float AS t FROM turns "
+                               "WHERE run_on = ANY($1::text[]) AND started_at >= $2 GROUP BY run_on",
+                               names, E.midnight(datetime.now(timezone.utc)))
+    return {r["run_on"]: r["t"] for r in rows}
+
+
+async def _view() -> dict:
+    def read():
+        env, vault, rt = config.read_env(ESTATE / ".env"), V.load(ESTATE), _runtime()
+        return env, vault, rt, C.providers(), C.harnesses(), RE.org_login(env)
+    env, vault, rt, cat, rows, org = await asyncio.to_thread(read)
+    uses = V.used_by(rt)
+    energy = await _energy([n for n, e in vault.items() if e["kind"] == "login"])
+    spend = await _spent([n for n, e in vault.items() if e["kind"] == "key"])
+    keys = []
+    for n, e in sorted(vault.items()):
+        has = bool(env.get(V.PREFIX + V.slug(n)))
+        keys.append({"name": n, **e, "has_value": has, "used_by": uses.get(n, []),
+                     "fits": [h for h, r in rows.items() if C.fits(r, e["provider"], e, cat)],
+                     "why_not": {h: _usable(e, r, has, cat) for h, r in rows.items() if C.fits(r, e["provider"], e, cat)},
+                     "energy": energy.get(n) if e["kind"] == "login" else None,
+                     "spent_today": spend.get(n, 0.0) if e["kind"] == "key" else None})
+    roster = sorted(_roster()) if _roster else []
+    alive = _alive() if _alive else set()
+    return {"harnesses": _harnesses(cat), "providers": cat, "keys": keys,
+            "org": {"billing": org["billing"], "harness": org["cli"], "energy": energy.get(None)},
+            "default": {k: v for k, v in (rt.get("*") or {}).items() if k in ("harness", "credential", "model", "effort")},
+            "agents": [{"name": a, "own": a in rt, "alive": a in alive,
+                        "connection": {k: v for k, v in V.connection(rt, a).items()
+                                       if k in ("harness", "credential", "model", "effort")}} for a in roster]}
+
+
+@router.get("/api/harness")
+async def harness_get(request: Request):
+    return _deny(request) or await _view()
+
+
+# ── keys ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+class Key(BaseModel):
+    provider: str
+    base_url: str = ""
+    format: str = ""
+    models: dict | None = None
+    cap_tokens_day: int | None = None
+    value: str = ""
+
+
+@router.put("/api/keys/{name}")
+async def key_put(name: str, body: Key, request: Request):
+    """Add or change a key. A new one needs its value (a login can be signed in instead); a change keeps the old value
+    unless a new one is given. An API key the provider can check is checked first: a rejected one is never stored."""
     if (d := _deny(request)):
         return d
-    name = (name or "").strip()                 # one spelling per credential: a stray space is never a second name
+    name = (name or "").strip()                 # one spelling per key: a stray space is never a second name
     value = "".join((body.value or "").split())  # a terminal wraps what it prints: a pasted line break is no part of it
 
     def run():
         vault = V.load(ESTATE)
         try:
-            e = V.entry(name, body.kind, body.base_url, body.models, body.cap_tokens_day)
+            e = V.entry(name, body.provider, body.base_url, body.format, body.models, body.cap_tokens_day)
             key = V.env_key(name, config.read_env(ESTATE / ".env"), vault)
         except V.Refused as x:
-            return JSONResponse({"error": str(x)}, status_code=409 if "share" in str(x) or "already" in str(x) else 400)
+            return _err(str(x), 409 if "share" in str(x) or "already" in str(x) else 400)
+        if name in vault and vault[name]["provider"] != e["provider"]:
+            return _err(f"'{name}' is a {C.providers()[vault[name]['provider']]['name']} key: name the new one differently")
         if name not in vault and not value:
-            return JSONResponse({"error": "a new credential needs its login token or key"}, status_code=400)
-        if value and not V.value_ok(e["kind"], e["base_url"], value):
-            return JSONResponse({"error": "that doesn't look like a Claude login token (claude setup-token)" if e["kind"] == "login"
-                                 else "that doesn't look like an API key for that endpoint"}, status_code=400)
+            return _err("paste its key" if e["kind"] == "key" else "sign it in, or paste its token")
+        if value and not V.value_ok(e, value):
+            return _err(f"that doesn't look like a {C.providers()[e['provider']]['name']} "
+                        f"{'token' if e['kind'] == 'login' else 'key'}")
+        if value and e["kind"] == "key" and C.check(e["provider"], value) == "rejected":
+            return _err(f"{C.providers()[e['provider']]['name']} rejected that key")
         if value:
             config.set_env(key, value, ESTATE / ".env")
         V.save(ESTATE, {**vault, name: e})
-        return {"ok": True, **_view(), "applies": "at each connected agent's next spawn"}
+        return None
     try:
-        return await asyncio.to_thread(run)
+        out = await asyncio.to_thread(run)
     finally:
         value = ""
+    return out or {"ok": True, "applies": APPLIES, **(await _view())}
 
 
-@router.delete("/api/vault/{name}")
-async def vault_delete(name: str, request: Request):
+@router.delete("/api/keys/{name}")
+async def key_delete(name: str, request: Request):
     if (d := _deny(request)):
         return d
     name = (name or "").strip()
@@ -106,15 +197,78 @@ async def vault_delete(name: str, request: Request):
     def run():
         vault = V.load(ESTATE)
         if name not in vault:
-            return JSONResponse({"error": "no such credential"}, status_code=404)
+            return _err("no such key", 404)
         users = V.used_by(_runtime()).get(name)
         if users:
-            return JSONResponse({"error": f"{', '.join(users)} still use{'s' if len(users) == 1 else ''} it: connect "
-                                 "them to another login first"}, status_code=409)
+            who = ", ".join("everyone else" if u == "*" else u for u in users)
+            return _err(f"{who} still run{'s' if len(users) == 1 and users != ['*'] else ''} on it: connect them to "
+                        "another key first", 409)
         config.unset_env(V.PREFIX + V.slug(name), ESTATE / ".env")
         V.save(ESTATE, {k: v for k, v in vault.items() if k != name})
-        return {"ok": True, **_view()}
-    return await asyncio.to_thread(run)
+        return None
+    return await asyncio.to_thread(run) or {"ok": True, **(await _view())}
+
+
+# ── connections ──────────────────────────────────────────────────────────────────────────────────────────────────────
+class Connection(BaseModel):
+    harness: str = ""
+    credential: str = ""
+    model: str = ""
+    effort: str = ""
+    confirm_billing: bool = False      # putting an agent on an API key is the owner's signed spend (local.md Economy)
+
+
+EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
+
+
+@router.put("/api/connections/{agent}")
+async def connection_put(agent: str, body: Connection, request: Request):
+    """`agent` ('*': everyone else) runs on this harness, key and model from its next start. An empty connection
+    removes the agent's own (it runs as everyone else; for '*', on the org's login)."""
+    if (d := _deny(request)):
+        return d
+    if agent != "*" and agent not in (_roster() if _roster else set()):
+        return _err("no such agent", 404)
+    c = {k: v.strip() for k, v in body.model_dump().items() if isinstance(v, str) and v.strip()}
+
+    def run():
+        rows, cat, vault = C.harnesses(), C.providers(), V.load(ESTATE)
+        h = c.get("harness") or "claude"
+        if h not in rows:
+            return _err("no such harness")
+        if c.get("credential"):
+            e = vault.get(c["credential"])
+            if e is None:
+                return _err("no such key")
+            has = bool(config.read_env(ESTATE / ".env").get(V.PREFIX + V.slug(c["credential"])))
+            if (why := _usable(e, rows[h], has, cat)):
+                return _err(f"{c['credential']}: {why}", 409)
+            if e["kind"] == "key" and not body.confirm_billing \
+                    and V.connection(_runtime(), agent).get("credential") != c["credential"]:
+                return JSONResponse({"error": f"{c['credential']} is billed per token, up to "
+                                     f"{e['cap_tokens_day']:,} tokens a day", "needs_billing": True}, status_code=409)
+        elif not rows[h].get("launcher"):
+            return _err(f"{rows[h].get('name', h)} isn't ready to run agents yet", 409)
+        if c.get("model") and not C.MODEL.fullmatch(c["model"]):
+            return _err("a model name is letters, digits and . _ : / @ -")
+        if c.get("effort", "") not in EFFORTS:
+            return _err(f"effort is one of {', '.join(e for e in EFFORTS if e)}")
+        rt = _runtime()
+        if c:
+            rt[agent] = c
+        else:
+            rt.pop(agent, None)
+        _write_runtime(rt)
+        return None
+    out = await asyncio.to_thread(run)
+    if out:
+        return out
+    if _pool is not None and _pool() is not None:           # who connected what: one row on the agent's own log
+        who = "seed" if agent == "*" else agent
+        what = " · ".join(c[k] for k in ("harness", "credential", "model") if c.get(k)) or "the org's login"
+        await _pool().execute("INSERT INTO steps (agent, kind, content) VALUES ($1, 'runtime', $2)", who,
+                              f"owner connected {'everyone else' if agent == '*' else 'it'} to {what}")
+    return {"ok": True, "applies": APPLIES, **(await _view())}
 
 
 # ── sign in from the tab (medic 12364 R3) ─────────────────────────────────────────────────────────────────────────────
@@ -125,16 +279,13 @@ async def vault_delete(name: str, request: Request):
 # shape from the output, kept only in memory until the one .env write, and never returned. Nothing of the terminal's
 # text is logged, returned or stored: the answers are {url} and then {ok, name}. The sign-in in flight lives in THIS
 # process: with several workers, a code landing in another one is refused (409, "start it again"), never mixed up.
-import os as _os  # noqa: E402
 import re as _re  # noqa: E402
 import shutil as _shutil  # noqa: E402
 import signal as _signal  # noqa: E402
-import tempfile as _tempfile  # noqa: E402
 import time as _time  # noqa: E402
 
 SIGNIN_MAX_S = 600
 _SIGNIN: dict = {}                  # the one sign-in in flight: {name, proc, fd, home, started}
-_URL = _re.compile(r"https://claude\.com/cai/oauth/authorize\?[^\s\x1b\x07\\]+")
 _CODE = _re.compile(r"[A-Za-z0-9#._~=-]{8,400}")
 _ANSI = _re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]")
 
@@ -144,11 +295,11 @@ def _signin_end() -> None:
     if not s:
         return
     try:
-        _os.killpg(s["proc"].pid, _signal.SIGKILL)
+        os.killpg(s["proc"].pid, _signal.SIGKILL)
     except OSError:
         pass
     try:
-        _os.close(s["fd"])
+        os.close(s["fd"])
     except OSError:
         pass
     _shutil.rmtree(s["home"], ignore_errors=True)
@@ -170,7 +321,7 @@ def _read_until(fd: int, pattern, seconds: float, raw: bool = False) -> str | No
             r, _w, _x = select.select([fd], [], [], 0.1)
             if r:
                 try:
-                    chunk = _os.read(fd, 65536).decode(errors="replace")
+                    chunk = os.read(fd, 65536).decode(errors="replace")
                 except OSError:
                     break
                 if not chunk:
@@ -188,50 +339,55 @@ def _read_until(fd: int, pattern, seconds: float, raw: bool = False) -> str | No
         buf = ""
 
 
-def _proves(home: str, token: str) -> bool:
-    """One minimal authenticated call with the new login, inside the same throwaway home: a sign-in that Claude doesn't
-    actually accept is never stored (medic 12472)."""
+def _proves(home: str, token: str, harness: dict) -> bool:
+    """One minimal authenticated call with the new login, inside the same throwaway home: a sign-in that the harness
+    doesn't actually accept is never stored (medic 12472). The call and the env var the token goes in are the harness
+    row's (signin.prove, connect.login)."""
     import subprocess
-    cli = _shutil.which("claude")
-    env = {"PATH": "/usr/local/bin:/usr/bin:/bin:" + _os.path.dirname(cli or "/usr/bin/claude"), "HOME": home,
-           "CLAUDE_CONFIG_DIR": _os.path.join(home, "proof"), "CLAUDE_CODE_OAUTH_TOKEN": token, "TERM": "dumb"}
+    si = harness["signin"]
+    cli = _shutil.which(harness.get("binary") or "")
+    if not cli:
+        return False
+    env = {"PATH": "/usr/local/bin:/usr/bin:/bin:" + os.path.dirname(cli), "HOME": home, "TERM": "dumb",
+           si["config_dir"]: os.path.join(home, "proof"), harness["connect"]["login"][si["provider"]]: token}
     try:
-        r = subprocess.run([cli, "-p", "Reply with the word ok.", "--model", "haiku"], cwd=home, env=env,
+        r = subprocess.run([cli, *si["prove"]], cwd=home, env=env,
                            capture_output=True, text=True, timeout=90, stdin=subprocess.DEVNULL)
         return r.returncode == 0 and bool(r.stdout.strip())
     except (OSError, subprocess.TimeoutExpired):
         return False
 
 
-def _signin_start(name: str) -> dict:
+def _signin_start(name: str, harness: dict) -> dict:
     import fcntl
     import pty
     import struct
     import subprocess
     import termios
     _signin_end()                                   # one at a time: a new start ends the old one
-    cli = _shutil.which("claude")
+    si = harness["signin"]
+    cli = _shutil.which(harness.get("binary") or "")
     if not cli:
-        return {"error": "Claude Code isn't installed on this machine"}
-    home = _tempfile.mkdtemp(prefix="astryx-signin-")
-    _os.chmod(home, 0o700)
+        return {"error": f"{harness['name']} isn't installed on this machine"}
+    home = tempfile.mkdtemp(prefix="astryx-signin-")
+    os.chmod(home, 0o700)
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 1000, 0, 0))   # wide: no URL or token wraps
-    env = {"PATH": "/usr/local/bin:/usr/bin:/bin:" + _os.path.dirname(cli), "HOME": home,
-           "CLAUDE_CONFIG_DIR": _os.path.join(home, "cfg"), "TERM": "xterm-256color", "BROWSER": "/bin/false"}
-    proc = subprocess.Popen([cli, "setup-token"], stdin=slave, stdout=slave, stderr=slave, cwd=home, env=env,
+    env = {"PATH": "/usr/local/bin:/usr/bin:/bin:" + os.path.dirname(cli), "HOME": home,
+           si["config_dir"]: os.path.join(home, "cfg"), "TERM": "xterm-256color", "BROWSER": "/bin/false"}
+    proc = subprocess.Popen([cli, *si["args"]], stdin=slave, stdout=slave, stderr=slave, cwd=home, env=env,
                             start_new_session=True, close_fds=True)
-    _os.close(slave)
-    _SIGNIN["now"] = {"name": name, "proc": proc, "fd": master, "home": home, "started": _time.time()}
+    os.close(slave)
+    _SIGNIN["now"] = {"name": name, "proc": proc, "fd": master, "home": home, "started": _time.time(), "harness": harness}
     import threading
     mine = _SIGNIN["now"]
     t = threading.Timer(SIGNIN_MAX_S, lambda: _SIGNIN.get("now") is mine and _signin_end())   # abandoned: ended, not left
     t.daemon = True
     t.start()
-    url = _read_until(master, _URL, 30, raw=True)
+    url = _read_until(master, _re.compile(si["link"] + r"[^\s\x1b\x07\\]+"), 30, raw=True)
     if not url:
         _signin_end()
-        return {"error": "Claude Code didn't offer a sign-in link: try again in a minute"}
+        return {"error": f"{harness['name']} didn't offer a sign-in link: try again in a minute"}
     return {"url": url}
 
 
@@ -239,23 +395,31 @@ class Code(BaseModel):
     code: str
 
 
-@router.post("/api/vault/{name}/signin")
-async def vault_signin_start(name: str, request: Request):
-    """Start signing a Claude login in: the answer is the sign-in URL to open."""
+def _signer(provider: str) -> dict | None:
+    """The harness that signs `provider`'s logins in (its adapter row's `signin`), or None."""
+    return next((r for r in C.harnesses().values() if (r.get("signin") or {}).get("provider") == provider), None)
+
+
+@router.post("/api/keys/{name}/signin")
+async def key_signin_start(name: str, request: Request, provider: str = "claude"):
+    """Start signing a login in through its harness: the answer is the sign-in URL to open."""
     if (d := _deny(request)):
         return d
     name = (name or "").strip()
+    harness = _signer(provider)
+    if harness is None:
+        return _err("signing in to that from here isn't built yet")
     try:
         V.slug(name)
         V.env_key(name, config.read_env(ESTATE / ".env"), V.load(ESTATE))
     except V.Refused as x:
-        return JSONResponse({"error": str(x)}, status_code=409)
-    out = await asyncio.to_thread(_signin_start, name)
+        return _err(str(x), 409)
+    out = await asyncio.to_thread(_signin_start, name, harness)
     return JSONResponse(out, status_code=503) if "error" in out else out
 
 
-@router.post("/api/vault/{name}/signin/code")
-async def vault_signin_code(name: str, body: Code, request: Request):
+@router.post("/api/keys/{name}/signin/code")
+async def key_signin_code(name: str, body: Code, request: Request):
     """The code the sign-in page showed: typed into the waiting setup-token; the login it prints goes into the vault."""
     if (d := _deny(request)):
         return d
@@ -270,25 +434,22 @@ async def vault_signin_code(name: str, body: Code, request: Request):
 
     def run():
         try:
-            _os.write(s["fd"], code.encode() + b"\r")
-            token = _read_until(s["fd"], V.SHAPE["login"], 60)
-            if not token or not V.SHAPE["login"].fullmatch(token):
-                return JSONResponse({"error": "Claude didn't accept that code: start the sign-in again"}, status_code=400)
-            if not _proves(s["home"], token):
-                return JSONResponse({"error": "Claude didn't accept that sign-in: start it again"}, status_code=400)
+            os.write(s["fd"], code.encode() + b"\r")
+            h = s["harness"]
+            pid = h["signin"]["provider"]
+            shape = _re.compile(C.providers()[pid]["shape"])
+            token = _read_until(s["fd"], shape, 60)
+            if not token or not shape.fullmatch(token):
+                return _err(f"{h['name']} didn't accept that code: start the sign-in again")
+            if not _proves(s["home"], token, h):
+                return _err(f"{h['name']} didn't accept that sign-in: start it again")
             vault = V.load(ESTATE)
             key = V.env_key(name, config.read_env(ESTATE / ".env"), vault)
             config.set_env(key, token, ESTATE / ".env")
-            V.save(ESTATE, {**vault, name: vault.get(name) or V.entry(name, "login")})
-            return {"ok": True, "name": name, **_view(), "applies": "at each connected agent's next spawn"}
+            V.save(ESTATE, {**vault, name: vault.get(name) or V.entry(name, pid)})
+            return None
         finally:
             _signin_end()
-    return await asyncio.to_thread(run)
+    return await asyncio.to_thread(run) or {"ok": True, "name": name, "applies": APPLIES, **(await _view())}
 
 
-@router.delete("/api/vault/signin")
-async def vault_signin_cancel(request: Request):
-    if (d := _deny(request)):
-        return d
-    await asyncio.to_thread(_signin_end)
-    return {"ok": True}

@@ -301,8 +301,10 @@ def held_now(f: dict) -> bool | None:
     hold is a SURVIVAL BRAKE: don't spend the last of the 5-hour window on what can wait. So it reads the 5-hour window
     alone: True when, at the usual pace, it runs out before it resets (tired >= 1). The week's forecast is a planning
     signal (the mind, the [energy] line), never a reason to silence the org: right after a weekly reset it reads above 1
-    for days (medic 12383). None when unknown (no reading, a stale one): unknown delivers."""
-    w = (f.get("windows") or {}).get("h5") if f.get("known") else None
+    for days (medic 12383). An API key's survival window is its day against its cap (energy.feel `survival`), so a key
+    that would run past its cap holds its agents' wakes the same way. None when unknown (no reading, a stale one):
+    unknown delivers."""
+    w = (f.get("windows") or {}).get(f.get("survival") or "h5") if f.get("known") else None
     return None if w is None else w["tired"] >= 1.0
 
 

@@ -1,9 +1,20 @@
 {
- "_": "plan-11859 U5 (D10, a1 F7): the CLI ADAPTER TABLE, one row per CLI an org may run its agents on, the ONE source of every fact about it. src/astryx/core/cli_adapters.py is its only reader (runtime_env derives CLIS and LAUNCHERS from it, launch_flags the flags doctor checks, spawn.sh types `runtime_env.py --launch`). `credentials`: the .env keys that CLI reads, by billing class (subscription: used when present; metered: only on the org's ASTRYX_ORG_LOGIN opt-in). `launcher: false` refuses loudly with its `why` (spawn exits; never claude in its place). A launcher's `launch` is the argv, `{name}` slots filled by spawn and every value shell-quoted ({resume} is 0 or 2 elements); it must carry `channel_flag channel_server` (without it the wire's doorbell is dropped silently) and `{mcp}`, and its `permission_flag` must take `{perm}`.",
+ "_": "plan-11859 U5 (D10, a1 F7): the CLI ADAPTER TABLE, one row per CLI an org may run its agents on, the ONE source of every fact about it. src/astryx/core/cli_adapters.py is its only reader (runtime_env derives CLIS and LAUNCHERS from it, launch_flags the flags doctor checks, spawn.sh types `runtime_env.py --launch`). `credentials`: the .env keys that CLI reads, by billing class (subscription: used when present; metered: only on the org's ASTRYX_ORG_LOGIN opt-in). `launcher: false` refuses loudly with its `why` (spawn exits; never claude in its place). A launcher's `launch` is the argv, `{name}` slots filled by spawn and every value shell-quoted ({resume} is 0 or 2 elements); it must carry `channel_flag channel_server` (without it the wire's doorbell is dropped silently) and `{mcp}`, and its `permission_flag` must take `{perm}`. HARNESS AND KEYS (owner 11-16): a CLI is a HARNESS; `name`/`by` are what the Agents tab shows; `speaks`: the API formats it runs on (a key fits it when the key's provider serves one: src/astryx/data/providers.json); `logins`: the providers it signs in to; `signin`: how the Agents tab signs one in (the CLI's args that print a sign-in `link`, take the code, and print the provider's token; `prove`: the args of one minimal call that proves the token before it is stored; `config_dir`: the env var that keeps the CLI's own files in a throwaway dir); `connect` (a launcher's): how a key plugs in, the env vars it reads: login {provider: var}; per format {key: the var for a provider whose native format this is, token + base_url: any other endpoint of that format}; tiers: the model var per tier alias; effort.",
  "adapters": {
   "claude": {
+   "name": "Claude Code", "by": "Anthropic",
    "launcher": true,
    "binary": "claude",
+   "speaks": ["anthropic"],
+   "logins": ["claude"],
+   "signin": {"provider": "claude", "args": ["setup-token"], "link": "https://claude\\.com/cai/oauth/authorize\\?",
+              "prove": ["-p", "Reply with the word ok.", "--model", "haiku"], "config_dir": "CLAUDE_CONFIG_DIR"},
+   "connect": {
+    "login": {"claude": "CLAUDE_CODE_OAUTH_TOKEN"},
+    "anthropic": {"key": "ANTHROPIC_API_KEY", "token": "ANTHROPIC_AUTH_TOKEN", "base_url": "ANTHROPIC_BASE_URL"},
+    "tiers": {"opus": "ANTHROPIC_DEFAULT_OPUS_MODEL", "sonnet": "ANTHROPIC_DEFAULT_SONNET_MODEL", "haiku": "ANTHROPIC_DEFAULT_HAIKU_MODEL"},
+    "effort": "CLAUDE_CODE_EFFORT_LEVEL"
+   },
    "credentials": {"subscription": ["CLAUDE_CODE_OAUTH_TOKEN"], "metered": ["ANTHROPIC_API_KEY"]},
    "channel_flag": "--dangerously-load-development-channels",
    "channel_server": "server:astryx",
@@ -12,15 +23,21 @@
               "--disallowedTools", "AskUserQuestion", "--strict-mcp-config", "--mcp-config", "{mcp}",
               "--dangerously-load-development-channels", "server:astryx"]
   },
+  "codex": {
+   "name": "Codex", "by": "OpenAI",
+   "launcher": false,
+   "why": "codex-cli has no launcher here yet: its channel (the wire's doorbell) and MCP wiring aren't built",
+   "speaks": ["openai"],
+   "logins": ["chatgpt"],
+   "credentials": {"subscription": [], "metered": ["OPENAI_API_KEY"]}
+  },
   "gemini": {
+   "name": "Gemini CLI", "by": "Google",
+   "speaks": ["gemini"],
+   "logins": ["google"],
    "launcher": false,
    "why": "gemini-cli has no launcher here yet: its channel (the wire's doorbell) and MCP wiring aren't built",
    "credentials": {"subscription": [], "metered": ["GEMINI_API_KEY"]}
-  },
-  "codex": {
-   "launcher": false,
-   "why": "codex-cli has no launcher here yet: its channel (the wire's doorbell) and MCP wiring aren't built",
-   "credentials": {"subscription": [], "metered": ["OPENAI_API_KEY"]}
   }
  }
 }

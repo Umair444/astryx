@@ -156,6 +156,11 @@ CREATE TABLE IF NOT EXISTS turns (
   goal_id       bigint
 );
 ALTER TABLE turns ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';   -- before turns_v, which snapshots t.*
+-- the KEY the turn ran on (Harness and Keys, owner 11-16): its name in the vault, NULL for the org's own login. Stamped
+-- by spawn into the session (ASTRYX_RUN_ON) and written by the Stop hook, so it is what the session really ran on, not
+-- what its connection says now. A metered key's spend today is a sum over it (energy, the daily cap).
+ALTER TABLE turns ADD COLUMN IF NOT EXISTS run_on text;
+CREATE INDEX IF NOT EXISTS turns_run_on_time ON turns (run_on, started_at) WHERE run_on IS NOT NULL;
 CREATE INDEX IF NOT EXISTS turns_goal ON turns (goal_id) WHERE goal_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS turns_tenant_agent_time ON turns (tenant, agent, ended_at DESC);   -- was turns_agent_time
 DROP INDEX IF EXISTS turns_agent_time;

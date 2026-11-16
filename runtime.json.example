@@ -1,18 +1,14 @@
 {
-  "_README": "Per-agent provider/auth override. Copy to runtime.json (gitignored) and edit, or let the observatory agent tab write it. Any agent NOT listed here falls through to the org's ambient default (your user-level login/settings) — that is the intended 'default = settings.json' behaviour. spawn.sh injects these into homes/<agent>/.claude/settings.json's env block on every spawn; takes effect on the agent's next respawn. SECRETS: put the actual token in .env under the name you give in token_env; NEVER put a token value in this file.",
+  "_README": "Each agent's CONNECTION: the harness it runs in, the key it runs on, its model (Harness and Keys on the observatory's Agents tab writes this file; docs/superpowers/specs/2026-11-16-harness-and-keys-design.md). `*` is everyone else: an agent with no entry of its own runs on it, and with neither, on the org's own login. `credential` names a key in credentials.json (whose value is in .env, never here); `harness` a row of src/astryx/data/cli_adapters.json (default claude); `model` the model it runs, over its charter's Model:; `models` maps the harness's tier aliases for this agent; `effort` its effort level. Takes effect at the agent's next start. An older entry with base_url + token_env (the NAME of an .env key) still works.",
 
-  "example-agent-on-huawei": {
-    "base_url": "https://api-ap-southeast-1.modelarts-maas.com/anthropic",
-    "token_env": "PROVIDER_HUAWEI_TOKEN",
-    "models": {
-      "opus": "glm-5.2",
-      "sonnet": "qwen3-32b",
-      "haiku": "deepseek-v3.1-terminus"
-    },
-    "effort": "high"
+  "*": {
+    "credential": "Work account"
   },
 
-  "example-agent-just-effort": {
+  "example-agent-on-deepseek": {
+    "harness": "claude",
+    "credential": "DeepSeek",
+    "model": "deepseek-chat",
     "effort": "high"
   }
 }

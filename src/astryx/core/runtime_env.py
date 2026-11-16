@@ -106,7 +106,7 @@ def org_login(env: dict | None = None) -> dict:
 # THE SPAWN BUDGET GATE (cog-rebuild Phase 3). An org that is not the cog's primary (a sign-up's org, any second org)
 # spawns NO resident until it has a token budget: its .env's ASTRYX_ORG_BUDGET_TOKENS, else the budget a cog admin
 # approved for it (the cog store's org_requests row, cogauth.py / front.py). And it never runs on the host owner's
-# Claude login: with no login of its own (an org key above, or the agent's runtime.json provider) the ambient
+# Claude login: with no login of its own (an org key above, or a key its connection names) the ambient
 # login would be the owner's, spent silently, so that refuses too. The primary, and a host of one org, pass as before.
 BUDGET = "ASTRYX_ORG_BUDGET_TOKENS"
 
@@ -141,9 +141,33 @@ def approved_budget(org: str, reg_env=None) -> int | None:
     return _positive(row[0]) if row else None
 
 
+def key_cap(agent: str) -> str | None:
+    """Why `agent` may NOT start today, or None. An agent on a metered key (an API key, astryx.core.vault) starts only
+    while that key has spent less than its daily cap (energy.spent: turns.run_on since the org's midnight): money leaves
+    the org per token, and the cap is the owner's signature on how much (local.md Economy; medic 12364 R4). A spend
+    that can't be read refuses too: unknown spend is never under the cap."""
+    from astryx.core import vault
+    name = connection(agent).get("credential")
+    e = vault.load(paths.estate(__file__)).get(name) if name else None
+    if not e or e["kind"] != "key":
+        return None
+    try:
+        import psycopg
+        from astryx.econ import energy
+        with psycopg.connect(config.dsn(paths.estate(__file__) / ".env"), connect_timeout=5) as c:
+            used = energy.spent(c, name)
+    except Exception as x:  # noqa: BLE001 — named by type only (a DSN can ride in a message)
+        return f"{name}'s spend today can't be read ({type(x).__name__}), so it isn't started on that key"
+    cap = e.get("cap_tokens_day") or 0
+    return None if used < cap else f"{name} has spent its daily cap ({used:,.0f} of {cap:,} tokens): it starts again after midnight"
+
+
 def budget_gate(agent: str, env: dict | None = None, reg_env=None) -> str:
-    """Why THIS org may spawn `agent` (one line), or NoBudget naming why not. See the block above."""
+    """Why THIS org may spawn `agent` (one line), or NoBudget naming why not. See the block above. A key at its daily
+    cap refuses on every host (key_cap); the token budget below is a cog's."""
     from astryx import orgs
+    if (capped := key_cap(agent)):
+        raise NoBudget(capped)
     if not orgs.multi(reg_env):
         return "one org on this host: no budget gate"
     home = paths.estate(__file__)
@@ -159,16 +183,13 @@ def budget_gate(agent: str, env: dict | None = None, reg_env=None) -> str:
     if budget is None:
         raise NoBudget(f"org {org} has no token budget ({BUDGET} in its .env, or a cog admin's approval): its "
                        "residents are not spawned")
-    entry = {}
-    try:
-        cfg = json.loads((home / "runtime.json").read_text())
-        entry = cfg.get(agent) if isinstance(cfg.get(agent), dict) else {}
-    except (OSError, ValueError, AttributeError):
-        pass
-    own_provider = bool(entry.get("base_url") and entry.get("token_env") and env.get(entry["token_env"]))
+    from astryx.core import vault
+    entry = connection(agent)             # its own, or everyone else's: a key it runs on is a login of the org's own
+    own_provider = bool(entry.get("base_url") and entry.get("token_env") and env.get(entry["token_env"])) \
+        or bool(entry.get("credential") and env.get(vault.PREFIX + vault.slug(entry["credential"])))
     if not (org_login(env)["key"] or own_provider):
         raise NoBudget(f"org {org} has a budget but no Claude login of its own (CLAUDE_CODE_OAUTH_TOKEN, an opted-in "
-                       "key, or a runtime.json provider): it would run on this host's ambient login, the owner's")
+                       "key, or a key it is connected to): it would run on this host's ambient login, the owner's")
     return f"{org}: budget {budget} tokens ({source})"
 
 
@@ -186,10 +207,17 @@ def fragment(agent: str) -> str:
     except (ValueError, OSError) as e:  # malformed store must never break a spawn
         print(f"runtime_env: cannot read runtime.json ({e}) — falling back to default", file=sys.stderr)
         return _pairs(agent, {}, env)
-    entry = cfg.get(agent)
-    if not isinstance(entry, dict):
-        entry = {}
-    return _pairs(agent, entry, env)
+    from astryx.core import vault
+    return _pairs(agent, vault.connection(cfg, agent), env)
+
+
+def connection(agent: str) -> dict:
+    """`agent`'s connection (runtime.json through vault.connection): {harness, credential, model, effort}, or {}."""
+    from astryx.core import vault
+    try:
+        return vault.connection(json.loads((paths.estate(__file__) / "runtime.json").read_text()), agent)
+    except (OSError, ValueError):
+        return {}
 
 
 def _pairs(agent: str, entry: dict, env: dict) -> str:
@@ -198,24 +226,20 @@ def _pairs(agent: str, entry: dict, env: dict) -> str:
     # from .env falls back to the org's default, loudly, never to a half-configured endpoint
     cred = entry.get("credential")
     if cred:
-        from astryx.core import vault
+        # A KEY (astryx.core.vault, Harness and Keys): the catalog plugs it into the connection's harness. Its value
+        # missing from .env falls back to the org's default, loudly, never to a half-configured endpoint
+        from astryx.core import catalog, vault
         ent = vault.load(paths.estate(__file__)).get(cred)
-        got = vault.pairs(cred, ent, env) if ent else None
+        if ent and entry.get("models"):                     # the agent's own tier choice wins over the key's
+            ent = {**ent, "models": {**(ent.get("models") or {}), **entry["models"]}}
+        harness = _ROWS.get(entry.get("harness") or "claude", {})
+        got = vault.pairs(cred, ent, env, harness, str(entry.get("effort") or "")) if ent else None
         if got is None:
-            print(f"runtime_env: agent '{agent}': credential '{cred}' is not in the vault or has no value in .env — "
+            print(f"runtime_env: agent '{agent}': key '{cred}' is not in the vault or has no value in .env — "
                   "falling back to the org's login", file=sys.stderr)
             entry = {k: v for k, v in entry.items() if k != "credential"}
-        else:
-            pairs += got
-            entry = {k: v for k, v in entry.items() if k not in ("credential", "base_url", "token_env")}
-            if entry.get("effort"):
-                pairs.append(("CLAUDE_CODE_EFFORT_LEVEL", str(entry["effort"])))
-            seen = {k for k, _ in pairs}
-            for tier, key in (("opus", "ANTHROPIC_DEFAULT_OPUS_MODEL"), ("sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL"),
-                              ("haiku", "ANTHROPIC_DEFAULT_HAIKU_MODEL")):
-                if (entry.get("models") or {}).get(tier):          # the agent's own model choice wins over the credential's
-                    pairs = [(k, v) for k, v in pairs if k != key] + [(key, str(entry["models"][tier]))]
-            return "".join(f", {json.dumps(k)}: {json.dumps(v)}" for k, v in pairs)
+        else:   # ASTRYX_RUN_ON: the key this session runs on, so its turns are counted against it (turns.run_on)
+            return "".join(f", {json.dumps(k)}: {json.dumps(v)}" for k, v in [*got, ("ASTRYX_RUN_ON", cred)])
     base_url = entry.get("base_url")
     if not base_url:
         login = org_login(env)                   # beneath the entry: the org's own credential, by NAME from its .env
@@ -274,10 +298,13 @@ if __name__ == "__main__":
         for a in ("--cli", "--model", "--perm", "--mcp"):
             ap.add_argument(a, required=True)
         ap.add_argument("--resume")
+        ap.add_argument("--agent", default="")
         a = ap.parse_args(sys.argv[2:])
-        cli = org_login()["cli"]
+        conn = connection(a.agent) if a.agent else {}
+        cli = conn.get("harness") or org_login()["cli"]     # the agent's own harness and model win over the org's
         try:
-            print(_adapters.line(_adapters.launch(cli, binary=a.cli, model=a.model, perm=a.perm, mcp=a.mcp,
+            print(_adapters.line(_adapters.launch(cli, binary=a.cli, model=conn.get("model") or a.model, perm=a.perm,
+                                                  mcp=a.mcp,
                                                   resume=a.resume, rows=_ROWS)))
         except _adapters.AdapterError as e:
             print(f"runtime_env: {e}", file=sys.stderr)

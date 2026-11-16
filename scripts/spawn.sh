@@ -128,10 +128,11 @@ fi
 # THE BUDGET GATE (cog-rebuild Phase 3): an org that is not the cog's primary spawns no resident without a token budget
 # (its .env's ASTRYX_ORG_BUDGET_TOKENS, or a cog admin's approval) and a login of its own, never the host owner's
 # ambient one. Before every side effect of a real spawn; one org, or the primary, passes as before. Any answer but
-# "yes" refuses: a gate that crashed is no permission (tests/test_signup.py G-arms).
+# "yes" refuses: a gate that crashed is no permission (tests/test_signup.py G-arms). On every host, an agent on an API
+# key that has spent its daily cap waits for the org's midnight (runtime_env.key_cap).
 if [ -z "$RENDER" ]; then
   GATE=$("$PY" "$ROOT/src/astryx/core/runtime_env.py" --gate "$AGENT") || {
-    echo "spawn: $AGENT not spawned: its org has no budget to run on (runtime_env said why above)" >&2; exit 1; }
+    echo "spawn: $AGENT not spawned: no budget or key to run on now (runtime_env said why above)" >&2; exit 1; }
 fi
 SESS="ax-$AGENT"
 HOME_D="$ORGH/homes/$AGENT"
@@ -420,7 +421,7 @@ resolve_cli || { echo "$CLI_REFUSED"; exit 1; }
 # the permission mode, the strict MCP config, the AskUserQuestion deny) live in ONE row, and every value is shell-quoted,
 # so a charter's Model: with a space, `;` or `$(…)` is one argument, never split or run (a2 #62560). No line, no spawn:
 # a malformed table or a CLI with no launcher refuses here, never a line nobody declared.
-LINE=$("$PY" "$ROOT/src/astryx/core/runtime_env.py" --launch --cli "$CLI" --model "$MODEL" --perm "$PERMMODE" \
+LINE=$("$PY" "$ROOT/src/astryx/core/runtime_env.py" --launch --agent "$AGENT" --cli "$CLI" --model "$MODEL" --perm "$PERMMODE" \
   --mcp "$HOME_D/.mcp.json" ${RESUME:+--resume "$RESUME"}) || { echo "spawn: $AGENT not spawned: no launch line (runtime_env said why above)" >&2; exit 1; }
 tmux send-keys -t "=$SESS:" "$LINE" Enter
 
