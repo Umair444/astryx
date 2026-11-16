@@ -39,8 +39,9 @@ from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, Outcome, reacted_message, reaction_signal, route_target, wire_chat, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
-                     step_line, update_poll_votes, vote_body, wire_insert,
+                     update_poll_votes, vote_body, wire_insert,
                      door_open, door_org_ok, live_steps_ok, released)
+from .progress import Progress
 from .providers.telegram import TelegramProvider
 
 PROVIDER = TelegramProvider()          # Bot API send logic
@@ -58,7 +59,6 @@ ROUTES_FILE = ESTATE / "bridges" / "routes-telegram.json"
 pool: asyncpg.Pool | None = None
 http: httpx.AsyncClient | None = None
 JOB_TIMEOUT = 1800    # a progress job is forgotten 30 min after it opened (or after its last reply)
-jobs: dict[str, dict] = {}            # agent -> live progress job
 
 
 def routes() -> list[dict]:
@@ -97,15 +97,14 @@ async def deliver(row):
     text = signed(agent, text, routes().chat(chat))   # one bot for every agent: name the sender (plain text, no bold)
     out = Outcome()
     try:
-        job = jobs.pop(agent, None)
-        if job and job["chat"] == chat and live_steps_ok(routes().chat(chat)):   # a reply is not the end of the work: next steps get a new bubble
-            jobs[agent] = {**job, "ph_id": None, "sent": "", "opened": time.time()}
+        # a reply is not the end of the work: the job stays bubble-less for further steps (bridges/progress.py)
+        ph = await progress.take(agent, chat, keep=live_steps_ok(routes().chat(chat)))
         sent = False
-        if text and job and job["chat"] == chat and job["ph_id"]:
+        if text and ph:
             try:                                   # replace the progress bubble
                 await tg("editMessageText", chat_id=int(chat),
-                         message_id=job["ph_id"], text=text[:4096])
-                out.sent(job["ph_id"])
+                         message_id=ph, text=text[:4096])
+                out.sent(ph)
                 sent = True
             except Exception:
                 pass                               # falls through to a normal send below
@@ -179,29 +178,25 @@ async def deliver(row):
                            out.receipt(f"telegram:{chat}", text, door="org-unstamped"))
 
 
-async def on_step(ev: dict):
-    agent, kind = ev.get("agent", ""), ev.get("kind", "")
-    job = jobs.get(agent)
-    if not job:
-        return
-    if time.time() - job.get("opened", 0) > JOB_TIMEOUT:     # a job outlives its reply now: forget it after 30 min
-        jobs.pop(agent, None)
-        return
-    line = await step_line(pool, ev.get("id", 0), kind, agent=agent, thread=job["thread"])   # only this chat's work
-    if not line or line == job.get("sent"):
-        return
-    job["sent"] = line
-    line = signed(agent, line, routes().chat(job["chat"]))
-    try:
-        if job["ph_id"] is None:
-            msg = await tg("sendMessage", chat_id=int(job["chat"]), text=line)
-            job["ph_id"] = msg["message_id"]
-        else:
-            await tg("editMessageText", chat_id=int(job["chat"]),
-                     message_id=job["ph_id"], text=line)
-        await tg("sendChatAction", chat_id=int(job["chat"]), action="typing")
-    except Exception:
-        pass
+async def _post(agent: str, chat: str, line: str):
+    return (await tg("sendMessage", chat_id=int(chat), text=signed(agent, line, routes().chat(chat))))["message_id"]
+
+
+async def _edit(agent: str, chat: str, ph, line: str):
+    await tg("editMessageText", chat_id=int(chat), message_id=ph, text=signed(agent, line, routes().chat(chat)))
+
+
+async def _remove(chat: str, ph):
+    await tg("deleteMessage", chat_id=int(chat), message_id=ph)
+
+
+async def _typing(chat: str):
+    await tg("sendChatAction", chat_id=int(chat), action="typing")
+
+
+# the live steps bubble: one lifecycle for every channel (bridges/progress.py); Telegram's four acts
+progress = Progress(lambda: pool, post=_post, edit=_edit, remove=_remove, typing=_typing, timeout=JOB_TIMEOUT)
+on_step = progress.on_step
 
 
 # -------------------------------------------------------------------- inbound
@@ -272,7 +267,7 @@ async def on_message(msg: dict):
     # this chat asked for: on_step's step_line(thread=...) drops a step whose turn another thread opened (medic 12159)
     if live_steps_ok(route):                      # S1c: never on a tiered route (its second egress)
         for agent in agents:                       # a team: each member's live steps
-            jobs[agent] = {"chat": chat, "thread": f"tg:{chat}", "ph_id": None, "sent": "", "opened": time.time()}
+            progress.open(agent, chat, f"tg:{chat}")
         try:
             await tg("sendChatAction", chat_id=int(chat), action="typing")
         except Exception:
@@ -372,4 +367,4 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "routes": len(routes()), "jobs": list(jobs)}
+    return {"ok": True, "routes": len(routes()), "jobs": list(progress.jobs)}

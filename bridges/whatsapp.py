@@ -46,8 +46,9 @@ from .common import (HERE, MEDIA_DIR, Outcome, route_target, wire_chat, describe
                      env, listen, load_routes,
                      reacted_message, reaction_signal,
                      record_poll, resolve_quoted_body, split_files, split_polls,
-                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert,
+                     update_poll_votes, vote_body, vote_changes, wire_insert,
                      door_open, door_org_ok, live_steps_ok, released)
+from .progress import Progress
 from .pulse_witness import PulseWitness
 from .providers.whatsapp import WhatsAppProvider, run_wacli
 
@@ -63,11 +64,10 @@ from .common import signed as _signed  # noqa: E402  the sender label, one rule 
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 ROUTES_FILE = ESTATE / "bridges" / "routes-whatsapp.json"
 
-JOB_TIMEOUT = 1800    # lifecycle GC only: forget a job nobody answered in 30 min
+JOB_TIMEOUT = 1800    # the live steps bubble is forgotten 30 min after it opened (bridges/progress.py)
 
 pool: asyncpg.Pool | None = None
 seen_msgids: dict[str, float] = {}       # webhook dedup (wacli retries)
-jobs: dict[str, dict] = {}               # agent -> live progress job
 
 
 def routes() -> list[dict]:
@@ -254,7 +254,7 @@ app = FastAPI()
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "routes": len(routes()), "jobs": list(jobs)}
+    return {"ok": True, "routes": len(routes()), "jobs": list(progress.jobs)}
 
 
 async def stored_text(chat: str, msgid: str, waits=(2, 5, 12)) -> str:
@@ -430,8 +430,7 @@ async def hook(request: Request):
     # this chat asked for: on_step's step_line(thread=...) drops a step whose turn another thread opened (medic 12159)
     if live_steps_ok(route):                      # S1c: never on a tiered route (its second egress)
         for agent in agents:                      # a team: each member's live steps show it working
-            jobs[agent] = {"chat": chat, "thread": f"wa:{chat}", "opened": now,
-                           "ph_id": None, "latest": "", "sent": "", "busy": False}
+            progress.open(agent, chat, f"wa:{chat}")
         asyncio.get_event_loop().create_task(typing(chat))
     return {"ok": True}
 
@@ -444,53 +443,22 @@ async def typing(chat: str):
 
 
 # ------------------------------------------------------------------- progress
-async def on_step(ev: dict):
-    """A hook event landed for an agent with an open job. No clocks here: every
-    event updates the target line and pokes the worker; the worker coalesces."""
-    agent = ev.get("agent", "")
-    job = jobs.get(agent)
-    if not job:
-        return
-    if time.time() - job["opened"] > JOB_TIMEOUT:
-        jobs.pop(agent, None)
-        return
-    line = await step_line(pool, int(ev.get("id", 0)), ev.get("kind", ""), agent=agent,
-                           label=agent, thread=job["thread"])     # only the work this chat asked for
-    if not line:
-        return
-    job["latest"] = line
-    if not job["busy"]:
-        asyncio.get_event_loop().create_task(worker(agent))
+async def _post(agent: str, chat: str, line: str):
+    out = await wacli("--json", "send", "text", "--to", chat, "--message", signed(agent, line, chat))
+    return find_id(json.loads(out))
 
 
-async def worker(agent: str):
-    """Serialized editor for one job: always pushes the latest line, skipping
-    intermediates. WhatsApp round-trip time is the only rate limit."""
-    job = jobs.get(agent)
-    if not job or job["busy"]:
-        return
-    job["busy"] = True
-    try:
-        while job is jobs.get(agent) and job["latest"] != job["sent"]:
-            raw = job["latest"]
-            line = signed(agent, raw, job["chat"])
-            await typing(job["chat"])
-            try:
-                if job["ph_id"] is None:
-                    out = await wacli("--json", "send", "text",
-                                      "--to", job["chat"], "--message", line)
-                    try:
-                        job["ph_id"] = find_id(json.loads(out))
-                    except Exception:
-                        pass
-                else:
-                    await wacli("messages", "edit", "--chat", job["chat"],
-                                "--id", job["ph_id"], "--message", line)
-            except Exception:
-                pass
-            job["sent"] = raw
-    finally:
-        job["busy"] = False
+async def _edit(agent: str, chat: str, ph, line: str):
+    await wacli("messages", "edit", "--chat", chat, "--id", ph, "--message", signed(agent, line, chat))
+
+
+async def _remove(chat: str, ph):
+    await wacli("messages", "revoke", "--chat", chat, "--id", ph)
+
+
+# the live steps bubble: one lifecycle for every channel (bridges/progress.py); WhatsApp's four acts
+progress = Progress(lambda: pool, post=_post, edit=_edit, remove=_remove, typing=typing, timeout=JOB_TIMEOUT)
+on_step = progress.on_step
 
 
 # ------------------------------------------------------------------- outbound
@@ -617,20 +585,15 @@ async def deliver(row):
     text = signed(agent, text, chat)
     out = Outcome()
     try:
-        job = jobs.pop(agent, None)
-        while job and job["busy"]:                # let an in-flight edit finish
-            await asyncio.sleep(0.2)
-        if job and job["chat"] == chat and live_steps_ok(routes().chat(chat)):
-            # a reply is not the end of the work (owner 11-15: "it replied but is still working … I'm not seeing
-            # anything"): the job stays, with no bubble, so the agent's next steps for THIS chat (its turn going on,
-            # a helper it launched) open a fresh progress bubble under the reply. Scoped like every line (step_line)
-            jobs[agent] = {**job, "opened": time.time(), "ph_id": None, "latest": "", "sent": "", "busy": False}
+        # a reply is not the end of the work (owner 11-15): the job stays, bubble-less, so further steps for THIS chat
+        # open a new bubble under the reply (bridges/progress.py)
+        ph = await progress.take(agent, chat, keep=live_steps_ok(routes().chat(chat)))
         sent = False
-        if text and job and job["chat"] == chat and job["ph_id"] and len(text) < 3500:
+        if text and ph and len(text) < 3500:
             try:                                  # reuse the live progress bubble
                 await wacli("messages", "edit", "--chat", chat,
-                            "--id", job["ph_id"], "--message", text)
-                out.sent(job["ph_id"])
+                            "--id", ph, "--message", text)
+                out.sent(ph)
                 sent = True
             except Exception:
                 pass                              # falls through to a normal send below

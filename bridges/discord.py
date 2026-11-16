@@ -40,18 +40,18 @@ from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_signal, route_target, wire_chat, describe_media, env, listen,
                      load_routes, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
-                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert,
+                     update_poll_votes, vote_body, vote_changes, wire_insert,
                      door_open, door_org_ok, live_steps_ok, released)
 
 DSN = env("ASTRYX_DSN")
 TOKEN = env("DISCORD_BOT_TOKEN")
+from .progress import Progress  # noqa: E402
 from .common import signed  # noqa: E402  the sender label when the BOT speaks (a webhook names the agent itself)
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 ROUTES_FILE = ESTATE / "bridges" / "routes-discord.json"
 
 pool: asyncpg.Pool | None = None
 JOB_TIMEOUT = 1800    # a progress job is forgotten 30 min after it opened (or after its last reply)
-jobs: dict[str, dict] = {}            # agent -> live progress job
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -134,16 +134,15 @@ async def deliver(row):
         hook = route.get("webhook") if route else None
         if not hook:                               # the bot speaks for every agent: name the sender, as WhatsApp does
             text = signed(agent, text, route, "**")
-        job = jobs.pop(agent, None)
-        if job and job["chat"] == cid and live_steps_ok(route):   # a reply is not the end of the work: next steps get a new bubble
-            jobs[agent] = {**job, "ph": None, "sent": "", "opened": time.time()}
+        # a reply is not the end of the work: the job stays bubble-less for further steps (bridges/progress.py)
+        ph = await progress.take(agent, cid, keep=live_steps_ok(route))
         sent = False
-        if text and job and job["chat"] == cid and job.get("ph"):
+        if text and ph:
             try:                                   # replace the progress bubble
-                if hook and isinstance(job["ph"], str):
-                    sent = await hook_edit(hook, job["ph"], text)
-                elif not isinstance(job["ph"], str):   # a bot placeholder (no webhook, or its fallback): named
-                    await job["ph"].edit(content=(signed(agent, text, route, "**") if hook else text)[:2000])
+                if hook and isinstance(ph, str):
+                    sent = await hook_edit(hook, ph, text)
+                elif not isinstance(ph, str):      # a bot placeholder (no webhook, or its fallback): named
+                    await ph.edit(content=(signed(agent, text, route, "**") if hook else text)[:2000])
                     sent = True
             except Exception:
                 pass
@@ -226,34 +225,41 @@ async def deliver(row):
                            out.receipt(f"discord:{cid}", text, door="org-unstamped"))
 
 
-async def on_step(ev: dict):
-    agent, kind = ev.get("agent", ""), ev.get("kind", "")
-    job = jobs.get(agent)
-    if not job:
-        return
-    if time.time() - job.get("opened", 0) > JOB_TIMEOUT:     # a job outlives its reply now: forget it after 30 min
-        jobs.pop(agent, None)
-        return
-    line = await step_line(pool, ev.get("id", 0), kind, agent=agent, thread=job["thread"])   # only this chat's work
-    if not line or line == job.get("sent"):
-        return
-    job["sent"] = line
-    try:
-        route = routes().chat(job["chat"])
-        hook = route.get("webhook") if route else None
-        ch = client.get_channel(int(job["chat"]))
-        if job.get("ph") is None:
-            # webhook placeholder carries the agent's own name; job["ph"] is a
-            # str (webhook message id) or a discord.Message (bot fallback)
-            job["ph"] = (await hook_send(hook, agent, line)) if hook \
-                else await ch.send(signed(agent, line, route, "**"))
-        elif isinstance(job["ph"], str):
-            await hook_edit(hook, job["ph"], line)
-        else:
-            await job["ph"].edit(content=signed(agent, line, route, "**"))
+async def _post(agent: str, cid: str, line: str):
+    """A webhook bubble carries the agent's own name (its id is a str); the bot's fallback is a Message, named."""
+    route = routes().chat(cid)
+    hook = route.get("webhook") if route else None
+    if hook:
+        return await hook_send(hook, agent, line)
+    ch = client.get_channel(int(cid)) or await client.fetch_channel(int(cid))
+    return await ch.send(signed(agent, line, route, "**"))
+
+
+async def _edit(agent: str, cid: str, ph, line: str):
+    route = routes().chat(cid)
+    if isinstance(ph, str):
+        await hook_edit(route.get("webhook"), ph, line)
+    else:
+        await ph.edit(content=signed(agent, line, route, "**"))
+
+
+async def _remove(cid: str, ph):
+    if isinstance(ph, str):
+        async with httpx.AsyncClient() as hx:
+            await hx.delete(f"{routes().chat(cid).get('webhook')}/messages/{ph}", timeout=60)
+    else:
+        await ph.delete()
+
+
+async def _typing(cid: str):
+    ch = client.get_channel(int(cid))
+    if ch:
         await ch.typing()
-    except Exception:
-        pass
+
+
+# the live steps bubble: one lifecycle for every channel (bridges/progress.py); Discord's four acts
+progress = Progress(lambda: pool, post=_post, edit=_edit, remove=_remove, typing=_typing, timeout=JOB_TIMEOUT)
+on_step = progress.on_step
 
 
 # -------------------------------------------------------------------- inbound
@@ -309,7 +315,7 @@ async def on_message(msg: discord.Message):
     # this chat asked for: on_step's step_line(thread=...) drops a step whose turn another thread opened (medic 12159)
     if live_steps_ok(route):                      # S1c: never on a tiered route (its second egress)
         for agent in agents:                       # a team: each member's live steps
-            jobs[agent] = {"chat": cid, "thread": f"dc:{cid}", "ph": None, "sent": "", "opened": time.time()}
+            progress.open(agent, cid, f"dc:{cid}")
         try:
             await msg.channel.typing()
         except Exception:
@@ -425,4 +431,4 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/health")
 async def health():
     return {"ok": True, "connected": client.is_ready(), "routes": len(routes()),
-            "jobs": list(jobs)}
+            "jobs": list(progress.jobs)}

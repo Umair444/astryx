@@ -212,7 +212,7 @@ class World:
         m = BR[ch]
         m.pool = self.pool
         m.routes = lambda: Routes(ROUTES[ch])        # the resolved table, enabled rows only (plan-11860 E2)
-        m.jobs.clear()
+        m.progress.jobs.clear()
         w = self
 
         class Prov:
@@ -366,11 +366,11 @@ asyncio.run(bridge_arms())
 # ── PAIRING (AST) ─────────────────────────────────────────────────────────────────────────────────────────────────
 print("pairing:")
 # the functions a TEXT-carrying platform send may sit in. A new one fails here until a reviewer classifies it: inside
-# deliver() (door-gated), a helper deliver() calls, the platform primitive itself, or the live_steps path (on_step /
-# worker), whose jobs are created only under live_steps_ok()
-EGRESS = {"whatsapp": {"deliver", "send_files", "send_poll", "worker"},
-          "telegram": {"deliver", "on_step", "tg"},
-          "discord": {"deliver", "on_step", "hook_send", "hook_file", "hook_poll", "hook_edit"}}
+# deliver() (door-gated), a helper deliver() calls, the platform primitive itself, or a live-steps act (_post / _edit,
+# the channel's acts handed to bridges/progress.py), whose jobs are opened only under live_steps_ok()
+EGRESS = {"whatsapp": {"deliver", "send_files", "send_poll", "_post", "_edit"},
+          "telegram": {"deliver", "tg", "_post", "_edit"},
+          "discord": {"deliver", "hook_send", "hook_file", "hook_poll", "hook_edit", "_post", "_edit"}}
 TG_TEXT = {"sendMessage", "editMessageText", "sendPoll", "sendPhoto", "sendDocument", "sendMediaGroup", "sendAudio",
            "sendVoice", "sendVideo", "copyMessage", "forwardMessage"}
 
@@ -411,8 +411,8 @@ for ch, m in BR.items():
     check(f"{ch}: deliver() asks the door (door_open AND door_org_ok) before its first platform send",
           "door_open" in calls and "door_org_ok" in calls and max(calls["door_open"], calls["door_org_ok"]) < first_send,
           repr({k: calls.get(k) for k in ("door_open", "door_org_ok")}))
-    makes = [n for n in ast.walk(tree) if isinstance(n, ast.Assign) and any(
-        isinstance(t, ast.Subscript) and ast.unparse(t.value) == "jobs" for t in n.targets)]
+    makes = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr == "open" and ast.unparse(n.func.value) == "progress"]
 
     def guarded(n):
         while n in parent:
