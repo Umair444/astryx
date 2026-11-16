@@ -778,6 +778,60 @@ async def ws_terminal_screen(name: str, request: Request):
     return JSONResponse({"agent": name, "screen": terminal_tail(cap.stdout)}, headers=NO_STORE)
 
 
+# ------------------------------------------------------------------------------------------------------- session
+# THE GENERAL COMMANDS (owner 11-15: "/usage doesn't belong to the terminal category, they are general commands"):
+# /usage, /cost, /status and /context answered from the org's own records, never by typing into a terminal. One read:
+# the agent's newest turn (its model, its context), its session's turns (their cost), today's, and the org's energy.
+SESSION_SQL = """
+    WITH last AS (SELECT session_id, model, ended_at, (raw_payload->'usage'->>'context')::bigint AS context
+                    FROM turns WHERE agent = $1 ORDER BY id DESC LIMIT 1)
+    SELECT last.*, (SELECT count(*) FROM turns t WHERE t.agent = $1 AND t.session_id = last.session_id) AS session_turns,
+           (SELECT coalesce(sum(coalesce((t.raw_payload->'usage'->>'billable_equiv_in')::bigint, 0)), 0) FROM turns t
+             WHERE t.agent = $1 AND t.session_id = last.session_id) AS session_tokens,
+           (SELECT coalesce(sum(coalesce((t.raw_payload->'usage'->>'billable_equiv_in')::bigint, 0)), 0) FROM turns t
+             WHERE t.agent = $1 AND t.started_at >= $2) AS today_tokens,
+           (SELECT max((t.raw_payload->'usage'->>'context')::bigint) FROM
+              (SELECT raw_payload FROM turns WHERE agent = $1 ORDER BY id DESC LIMIT 200) t) AS high
+      FROM last"""
+
+
+def session_view(row, feel: dict | None) -> dict:
+    """PURE. The card's facts from the turn read and the org's feeling. The window is 1M for an Opus model or once a
+    load past 200k proves it (hooks/usage.py's rule), else 200k, said as assumed."""
+    if not row:
+        return {"known": False}
+    model, ctx, high = row["model"] or "", row["context"] or 0, row["high"] or 0
+    window, proven = (1_000_000, True) if ("opus" in model.lower() or max(ctx, high) > 200_000) else (200_000, False)
+    return {"known": True, "model": model, "context": ctx, "window": window, "window_proven": proven,
+            "last_turn_ended": row["ended_at"].isoformat() if row["ended_at"] else None,
+            "session_turns": row["session_turns"], "session_tokens": int(row["session_tokens"] or 0),
+            "today_tokens": int(row["today_tokens"] or 0),
+            "energy": {k: (feel or {}).get(k) for k in ("known", "word", "fact", "windows")}}
+
+
+@router.get("/api/ws/agents/{name}/session")
+async def ws_session(name: str, request: Request):
+    """The agent's session as the chat's general commands show it. Owner-only, as the terminal is."""
+    if not _owner(request):
+        return JSONResponse({"error": "owner only"}, status_code=403)
+    bad = interrupt_check(name, set(_roster()))
+    if bad:
+        return JSONResponse({"error": bad[1]}, status_code=bad[0])
+    from datetime import datetime
+    midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)   # the org's own day (its
+    row = await _pool(request).fetchrow(SESSION_SQL, name, midnight)                              # clock), never UTC's
+
+    def feel():
+        try:
+            from astryx.econ import energy
+            from astryx.mind import mind
+            with mind.connect() as c:
+                return energy.feel(c, relearn_after_h=None)
+        except Exception:  # noqa: BLE001  the card shows what it has
+            return None
+    return JSONResponse(session_view(row, await asyncio.to_thread(feel)), headers=NO_STORE)
+
+
 # -------------------------------------------------------------------------------------------------------- search
 # Full text over the owner's conversations: the bodies of the threads GET /api/ws/threads lists (an owner-party
 # chat:/obs:/cv: thread, an archived canvas chat left out). Two matchers, either one is a hit: Postgres full text as
