@@ -29,7 +29,7 @@ from astryx.core.charter import resolve, Collision, AGENTS
 # POSITIVE allowlist: grants that only ACTUATE on the org's behalf and read no owner
 # PII. Everything else floors content to private. Add a grant here ONLY after
 # confirming it reads no owner-personal data. Do NOT convert to a PII denylist.
-ORG_ACTUATION_GRANTS = frozenset({"compose", "channels"})
+ORG_ACTUATION_GRANTS = frozenset({"compose"})   # (channels is every agent's now, spawn.sh: no grant to weigh)
 
 
 def _grants(name: str, agents_dir=AGENTS) -> set | None:

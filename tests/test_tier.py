@@ -38,10 +38,9 @@ def test_no_grants_is_public():
 
 
 def test_org_actuation_only_is_public():
-    d = _tree({"memory": "compose", "poster": "channels", "both": "compose, channels"})
+    d = _tree({"memory": "compose", "poster": "compose"})
     assert is_content_public("memory", d)
     assert is_content_public("poster", d)
-    assert is_content_public("both", d)
 
 
 def test_any_pii_grant_is_private():
