@@ -118,6 +118,16 @@ def main():
         got = E.pace(c)
         arm("E6 kept in one row and read back", got and got["rate"] == p["rate"])
         arm("E5 a reading a day old says nothing of now: unknown, not rested", E.feel(c, relearn_after_h=None)["known"] is False)
+        # 11-16: an evening's 98% read before the window reset held every pulse wake for nine hours. A reading whose
+        # reset has passed is a fresh window, so the pulse's hold (pulse.pressure reads this feeling) lets wakes go
+        c.execute("""INSERT INTO turns (agent, started_at, ended_at, tokens_in, tokens_out, usage_snapshot) VALUES ('a', now() - interval '3 hours',
+                     now() - interval '3 hours', 0, 1, jsonb_build_object('state', 'fresh', 'fetched_at', (now() - interval '3 hours')::text,
+                     'data', jsonb_build_object('five_hour_utilization', 98, 'seven_day_utilization', 13,
+                     'five_hour_resets_at', (now() - interval '2 hours')::text, 'seven_day_resets_at', (now() + interval '2 days')::text)))""")
+        from astryx.pulse import pulse as P
+        fr = E.feel(c, relearn_after_h=None)
+        arm("E6 98% read before its 5-hour reset, the reset now past: a fresh window, and the pulse holds nothing",
+            fr.get("known") and fr["windows"]["h5"]["used"] == 0 and P.pressure(c) is False, (fr.get("windows"), P.pressure(c)))
         turn(0, 100_000, 14)
         fl = E.feel(c, relearn_after_h=None)
         arm("E6 feel: known, the tighter window binds, a word and a sentence",

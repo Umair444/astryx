@@ -55,7 +55,6 @@ def __getattr__(name):            # `pulse.DSN` and `from astryx.pulse.pulse imp
 
 
 CHECK_TIMEOUT = 30
-PRESSURE_PCT = 85        # 5h gauge at/above this: non-survival wakes are held, not sent
 HOLD_K = 5               # per held key, the newest K are delivered; older ones are elided (kept, marked)
 
 
@@ -298,15 +297,19 @@ def evaluate(t: dict, conn) -> tuple[str | None, dict, list[dict]]:
 
 
 def pressure(conn) -> bool | None:
-    """Is the account's 5h window at/above PRESSURE_PCT? True / False, or None when the gauge is
-    missing or unreadable. Callers treat None as NOT under pressure (fail-open: unknown pressure
-    delivers)."""
+    """Is the org too tired for wakes that aren't for survival? The ORG'S ONE FEELING (astryx.econ.energy, owner 11-15:
+    "nothing should be a switch … humans get tired"), not a gauge line of its own: True when, at the usual pace, the
+    tighter limit runs out before it resets (tired >= 1: there isn't energy for the usual work, so what can wait,
+    waits). None when the feeling is unknown: no reading, or a reading too old to say anything of now; callers treat
+    None as NOT tired (fail-open: unknown delivers). A reading taken before its window reset is a fresh window, so a
+    quiet night after a hot evening can never hold the morning's wakes (11-16: an evening's 98% held every wake for
+    nine hours past the reset). The pace is relearned here at most hourly: the pulse is the org's one clock."""
     try:
-        g = conn.execute(
-            "SELECT five_hour_pct FROM current_usage").fetchone()   # unified authority (3833)
-        return None if not g or g[0] is None else float(g[0]) >= PRESSURE_PCT
+        from astryx.econ import energy
+        f = energy.feel(conn, relearn_after_h=1.0)
     except Exception:
         return None
+    return None if not f.get("known") else f["tired"] >= 1.0
 
 
 _UNREAD = object()   # "no caller read the gauge": distinct from pressure()'s None (no gauge), which is itself a reading
@@ -335,7 +338,7 @@ def shed(due: list[dict], conn, hot=_UNREAD) -> list[dict]:
             if t.get("kind") != "heartbeat" or int(t.get("premium") or 0) > 0]
     for t in due:
         if t not in kept:
-            print(f"shed {t['agent']}/{t['name']} (5h >={PRESSURE_PCT}%)")
+            print(f"shed {t['agent']}/{t['name']} (too tired: the usual work would outrun the limit)")
     return kept
 
 
@@ -440,7 +443,7 @@ def release(conn):
                          "AND elided AND released_at IS NULL", key)
             for (hid, fa, fo, ta, to_org, th, it, body, raised) in rows:
                 stamp = (f"[held wake · raised {raised.astimezone().isoformat(timespec='seconds')} · "
-                         f"held {_held_for(raised, now)} under 5h ≥{PRESSURE_PCT}% quota pressure]\n")
+                         f"held {_held_for(raised, now)} while the org was too tired for it]\n")
                 emit(conn, {"from_agent": fa, "from_org": fo, "to_agent": ta, "to_org": to_org,
                             "thread": th, "intent": it, "body": stamp + body}, held_from=raised)
             conn.execute("DELETE FROM held_wakes WHERE id = ANY(%s)", ([r[0] for r in rows],))
@@ -450,7 +453,7 @@ def release(conn):
 def process(conn, due: list[dict], now, hot=_UNREAD):
     """Evaluate the claimed triggers and route their wakes: the one path every trigger wake takes.
 
-    Held = the 5h gauge reads >=PRESSURE_PCT, the trigger has no survival flag (premium=0), AND the
+    Held = the org is too tired (pressure(): the usual pace would outrun a limit before it resets), the trigger has no survival flag (premium=0), AND the
     recipient spends plan quota (a resident agent). Per trigger, the state UPDATE and ALL of its wake writes (sends or holds) commit in ONE
     transaction (C1.3): if any part fails, nothing of it lands, the state is unchanged, and the
     check re-detects next tick (at-least-once, the duplicate direction). A held wake is persisted,
@@ -506,7 +509,7 @@ def process(conn, due: list[dict], now, hot=_UNREAD):
                     conn.execute("UPDATE triggers SET last_fired=%s WHERE id=%s", (now, t["id"]))
                     print(f"fired {t['agent']}/{t['name']}")
                 elif held_here and (fired or wakes):
-                    print(f"wake held {t['agent']}/{t['name']} (5h >={PRESSURE_PCT}%)")
+                    print(f"wake held {t['agent']}/{t['name']} (too tired)")
         except Exception as e:
             print(f"wake write failed {t['agent']}/{t['name']} — state kept, re-detects next tick: {e}",
                   file=sys.stderr)

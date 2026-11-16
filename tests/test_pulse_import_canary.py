@@ -130,9 +130,18 @@ def main():
                 from datetime import datetime
                 c.execute("DELETE FROM usage_polls")
                 c.execute("DELETE FROM turns WHERE usage_snapshot IS NOT NULL")
+                from datetime import timedelta
+                from astryx.econ import energy as _E
+                # the pulse holds by the org's feeling (astryx.econ.energy), not an 85% line: a reading with its reset
+                # two hours out and a usual pace needing 12 points by then, so 90% is tired (tests/test_wake_chokepoint.py)
                 snap = {"state": "fresh", "fetched_at": datetime.now().astimezone().isoformat(),
-                        "data": {"five_hour_utilization": pct}}
+                        "data": {"five_hour_utilization": pct, "seven_day_utilization": 10,
+                                 "five_hour_resets_at": (datetime.now().astimezone() + timedelta(hours=2)).isoformat(),
+                                 "seven_day_resets_at": (datetime.now().astimezone() + timedelta(days=3)).isoformat()}}
                 c.execute("INSERT INTO usage_polls (state, snapshot) VALUES ('fresh', %s::jsonb)", (json.dumps(snap),))
+                c.execute(f"CREATE TABLE IF NOT EXISTS {_E._t()} (id int PRIMARY KEY, at timestamptz NOT NULL DEFAULT now(), body jsonb NOT NULL)")
+                c.execute(f"INSERT INTO {_E._t()} (id, body) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET at = now(), body = EXCLUDED.body",
+                          (json.dumps({"at": datetime.now().astimezone().isoformat(), "hourly": [1e6] * 24, "rate": {"h5": 6e-6, "d7": 1e-7}, "think": 1e5, "usual": {}}),))
 
             c.execute("INSERT INTO triggers (agent, name, schedule, kind, state, note, premium, next_fire) "
                       "VALUES ('zzagent', 'zz_daily_hb', '0 3 * * *', 'heartbeat', '{}'::jsonb, 'daily', 0, "

@@ -85,6 +85,22 @@ def names(ts):
     return sorted(f"{t['agent']}/{t['name']}" for t in ts)
 
 
+# 11-16: the pulse's hold reads the org's ONE feeling (astryx.econ.energy), not an 85% line of its own. These arms keep
+# their gauge vocabulary: a FakeConn at 85% or more stands for a tired org (tired >= 1), below it a rested one, None for
+# no reading, a raising gauge for an unreadable one. tests/test_energy.py proves the feeling itself on a real database.
+from astryx.econ import energy as _energy  # noqa: E402
+
+
+def _feel(conn, relearn_after_h=None):
+    if getattr(conn, "gauge_raises", False):
+        raise RuntimeError("gauge unreadable")
+    pct = getattr(conn, "pct", None)
+    return {"known": False} if pct is None else {"known": True, "tired": 1.2 if pct >= 85 else 0.3}
+
+
+_energy.feel = _feel
+
+
 def main():
     loser = trig("seed", "wedge_watch", 0)
     paid = trig("seed", "heartbeat", 1, kind="heartbeat")

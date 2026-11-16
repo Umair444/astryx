@@ -57,7 +57,7 @@ import os
 import re
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -143,14 +143,28 @@ def to_owner(ctx):
 '''
 
 
+# 11-16: the pulse holds by the org's FEELING (astryx.econ.energy: need before the reset over what is left), not an 85%
+# line. A gauge here is therefore a reading with a reset two hours out and a usual pace that needs 12 points in those two
+# hours: 90% (10 left) is tired, 84% or less (16+ left) is not, the old rung's meaning kept.
+def _pace(conn):
+    import json as _j
+    from astryx.econ import energy as _E
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {_E._t()} (id int PRIMARY KEY, at timestamptz NOT NULL DEFAULT now(), body jsonb NOT NULL)")
+    body = {"at": datetime.now().astimezone().isoformat(), "hourly": [1e6] * 24, "rate": {"h5": 6e-6, "d7": 1e-7}, "think": 1e5, "usual": {}}
+    conn.execute(f"INSERT INTO {_E._t()} (id, body) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET at = now(), body = EXCLUDED.body", (_j.dumps(body),))
+
+
 def set_gauge(conn, pct):
     conn.execute("DELETE FROM usage_polls")
     conn.execute("DELETE FROM turns WHERE usage_snapshot IS NOT NULL")
     if pct is not None:
         snap = {"state": "fresh", "fetched_at": datetime.now().astimezone().isoformat(),
-                "data": {"five_hour_utilization": pct}}
+                "data": {"five_hour_utilization": pct, "seven_day_utilization": 10,
+                         "five_hour_resets_at": (datetime.now().astimezone() + timedelta(hours=2)).isoformat(),
+                         "seven_day_resets_at": (datetime.now().astimezone() + timedelta(days=3)).isoformat()}}
         conn.execute("INSERT INTO usage_polls (state, snapshot) VALUES ('fresh', %s::jsonb)",
                      (json.dumps(snap),))
+        _pace(conn)
 
 
 def make_trigger(conn, name, func, checks, premium=0, kind="python", note=None):
@@ -298,7 +312,7 @@ def main():
                   (fa, fo, ta, to, th, it) == ("seed", "local", "steward", "local", "t-x", "trigger"),
                   repr(m[0][:6]))
             check("A3 held stamp prefixes the body (P4)",
-                  body.startswith("[held wake · raised ") and "under 5h ≥85% quota pressure]\nalpha" in body, body)
+                  body.startswith("[held wake · raised ") and "while the org was too tired for it]\nalpha" in body, body)
             check("A3 delivery.held_from records the raised time (B2)", bool(dv and dv.get("held_from")), repr(dv))
         check("A3 release liveness: no held row survives a tick below 85%", not held(conn, "alpha"))
 
