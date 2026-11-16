@@ -6,6 +6,8 @@ reader stubbed (no network).
      the same id the first Stop stamped
   T2 the first Stop auto-delivers the forgotten reply to the person who asked; the continuation's Stop delivers
      NOTHING (its last words answer the hook, not the person)
+  T5 that delivery is ONE rule for every surface (address.SURFACES' persons): the web chat's owner and a signed-in
+     member get their forgotten reply as a WhatsApp sender does; an agent's message gets none
 Exit 0 · 1 · 77 (no database)."""
 import importlib.util
 import json
@@ -70,6 +72,23 @@ def main():
             cur.execute("SELECT run_on FROM turns WHERE agent='seed'")
             arm("T3 the turn names the key its session ran on (turns.run_on, from ASTRYX_RUN_ON)", cur.fetchone() == ("DeepSeek",))
             os.environ.pop("ASTRYX_RUN_ON", None)
+        conn.rollback()
+        # T5 THE ONE RULE (owner 11-16: "a standard … we can't patch it by each channel"): a forgotten reply reaches any
+        # PERSON (address.SURFACES), the web chat's owner and a signed-in member as WhatsApp did; an agent's message
+        # opens a turn that auto-messages no one
+        for who, org, thread, owed_ in (("owner", "local", "obs:seed", True), ("cv-pat.2", "local", "chat:20261116-t5", True),
+                                        ("owner", "whatsapp", "wa:120363000000000000@g.us", True), ("db", "local", "w:t5", False)):
+            cur.execute("""INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, status, delivered_at)
+                           VALUES (%s, %s, 'seed', %s, 'chat', 'hi', 'delivered', now()) RETURNING id""", (who, org, thread))
+            m5 = cur.fetchone()[0]
+            with tempfile.TemporaryDirectory() as td:
+                tp = Path(td) / "t.jsonl"
+                tp.write_text(line("user", f'<channel source="astryx" from="{who}" thread="{thread}" intent="chat" msg_id="{m5}">hi</channel>', "2026-11-16T06:00:00Z")
+                              + line("assistant", [{"type": "text", "text": f"answer for {who}"}], "2026-11-16T06:00:04Z", f"b{m5}", u))
+                S.handle_stop(cur, "seed", {"transcript_path": str(tp), "session_id": f"t5-{m5}"})
+            got = cur.execute("SELECT to_agent, thread, body FROM messages WHERE from_agent='seed' AND thread=%s", (thread,)).fetchall()
+            arm(f"T5 {who} on {org} {thread.split(':')[0]}: " + ("its forgotten reply comes back to it on its thread" if owed_ else "an agent's message auto-messages no one"),
+                got == ([(who, thread, f"answer for {who}")] if owed_ else []), got)
         conn.rollback()
         # T4 a turn that ends on a usage limit (StopFailure: no Stop runs) leaves one 'stopped' step in its own words,
         # in its turn's scope, so the chat's live line says why instead of a timer (owner 11-16)

@@ -78,6 +78,11 @@ arm('passed: its turn ended five minutes after the ask, half a minute ago, no re
 arm('…not in the seconds after that turn ended (its own turn may be about to start)', !pendingOf(['seed'], asked, { seed: [] }, 'owner', later, Date.parse('2026-11-15T12:05:10Z'))[0]?.passed)
 arm('…not when the turn ended right at the ask (a boundary)', !pendingOf(['seed'], asked, { seed: [] }, 'owner', { seed: '2026-11-15T12:00:20Z' }, Date.parse('2026-11-15T12:06:00Z'))[0]?.passed)
 arm('…not while it has live work', !pendingOf(['seed'], asked, { seed: [st(1, '2026-11-15T12:05:30Z', [40])] }, 'owner', later, Date.parse('2026-11-15T12:06:00Z'))[0]?.passed)
+const quick = { seed: '2026-11-15T12:00:05Z' }, opened = [{ agent: 'seed', input_msg_id: 40, ended_at: '2026-11-15T12:00:05Z' }]
+arm('passed: the turn THIS ask opened ended, even 5 s after it (owner 11-16: the line read "reading" for good)',
+  pendingOf(['seed'], asked, { seed: [] }, 'owner', quick, Date.parse('2026-11-15T12:00:06Z'), opened)[0]?.passed === true)
+arm('…a turn another message opened, ending as quickly, is still a boundary, not this ask passed',
+  !pendingOf(['seed'], asked, { seed: [] }, 'owner', quick, Date.parse('2026-11-15T12:00:06Z'), [{ ...opened[0], input_msg_id: 39 }])[0]?.passed)
 
 // STOPPED (owner 11-16: "users can't wait forever"): its newest step is 'stopped' (StopFailure), so the line says why
 const lim = (turn: number[]) => ({ ...st(2, '2026-11-15T12:01:00Z', turn), kind: 'stopped', content: "You've hit your session limit · resets 2:50pm" })

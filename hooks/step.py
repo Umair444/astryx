@@ -798,13 +798,14 @@ def handle_stop(cur, agent, h, strip=None):
     if turn_id and input_msg_id and last_text and last_text.strip() and not h.get("stop_hook_active"):
         src = cur.execute("SELECT from_agent, from_org, thread FROM messages WHERE id=%s",
                           (input_msg_id,)).fetchone()
-        # Fire for a HUMAN channel message — the owner OR anyone on wa/tg/discord. A person
-        # whose trusted_jid is off arrives as 'wa-<num>' (not 'owner') and shows NO progress
-        # bubble, so guarding on 'owner' would strand exactly them; guard on from_org being a
-        # channel instead. Internal ('local') agent turns and pulse triggers never match, so
-        # they can't auto-message anyone. No bubble is fine — deliver() falls back to a fresh
-        # send. Reply goes BACK to that same sender on that same surface (to_agent + thread).
-        if src and src[1] in ("whatsapp", "telegram", "discord"):
+        # Fire for a PERSON's message, on ANY surface: address.SURFACES is the one table of who is a person (the owner,
+        # a WhatsApp/Telegram/Discord sender, a signed-in member, a canvas user, a frontend), the same one owed.py's
+        # reminder reads, so a new channel is one row there and inherits this (owner 11-16: "a standard … we can't
+        # patch it by each channel"; the web chat had been left out and its line said "reading your message" for
+        # good). Agent turns and pulse triggers are no person, so they can't auto-message anyone. No bubble is fine:
+        # a bridge's deliver() falls back to a fresh send. The reply goes BACK to that sender on that thread.
+        from astryx.core import address
+        if src and address.surface_of(src[0]) in address.PERSONS:
             already = cur.execute(
                 "SELECT count(*) FROM messages WHERE turn_id=%s AND to_agent=%s",
                 (turn_id, src[0])).fetchone()[0]

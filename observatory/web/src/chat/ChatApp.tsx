@@ -391,7 +391,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   }, [current, steps, work, lanes.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // asked and not yet answered, by any human (thread/pending.ts): the live activity line
-  const pending: Pending[] = useMemo(() => pendingOf(inChat, rows, work?.live, me, work?.ended), [inChat, rows, work, me])
+  const pending: Pending[] = useMemo(() => pendingOf(inChat, rows, work?.live, me, work?.ended, Date.now(), work?.turns), [inChat, rows, work, me])
 
   // a conversation is LIVE while one of its agents works on it
   const live = useMemo(() => {
