@@ -2,8 +2,9 @@
 minutes … agents can sometimes forget to reply; it's not a good experience").
 
 A reply is OWED for a person's message (said or asked: intent chat or task; a reaction or a poll tap is not) to an agent (address.person_sql: owner, a WhatsApp, Telegram or Discord sender,
-a signed-in member, a frontend) that reached it, when the agent has written nothing on that thread since. A team's ask
-is owed by its LEAD only (messages.delivery {team, lead}, bridges/common.team_stamp): the helpers answer the lead.
+a signed-in member, a frontend) that reached it, when the agent has written nothing on that thread since. In a GROUP, only what addresses the agent is owed
+(an @mention, a reply to its message, a task); people talking among themselves owe it nothing. A team's ask is owed by
+its LEAD only (messages.delivery {team, lead}, bridges/common.team_stamp): the helpers answer the lead.
 
 The one reader for every place that needs it: the Stop hook (an agent can't go idle with a reply owed: it is told
 once per message and decides; hooks/step.py) and the chat's line ("finished without replying").
@@ -13,6 +14,10 @@ from __future__ import annotations
 from astryx.core import address
 
 BODY = 160
+# a GROUP conversation: a WhatsApp group, a Telegram group (a negative chat id), a Discord channel. There, people talk
+# among themselves, and a message is owed only when it ADDRESSES the agent (medic 12441): an @mention of its name, a
+# reply to one of its messages (their quoted first line is its label), a task, or a team ask it leads
+GROUP = "m.thread LIKE 'wa:%%@g.us' OR m.thread LIKE 'tg:-%%' OR m.thread LIKE 'dc:%%'"
 
 
 def owed(cur, agent: str, since) -> list[tuple]:
@@ -22,11 +27,13 @@ def owed(cur, agent: str, since) -> list[tuple]:
         SELECT m.id, m.thread, m.from_agent, left(m.body, {BODY}) FROM messages m
          WHERE m.to_agent = %s AND {address.person_sql('m.from_agent')} AND m.status = 'delivered'
            AND m.intent IN ('chat', 'task')
+           AND (m.intent = 'task' OR m.delivery ? 'lead' OR NOT ({GROUP}) OR m.body ~* ('(^|[^[:alnum:]_])@' || %s || '([^[:alnum:]_-]|$)')
+                OR split_part(m.delivery->>'reply_to_body', chr(10), 1) ILIKE '%%' || %s || '%%')
            AND m.delivered_at > coalesce(%s, now() - interval '1 day')
            AND coalesce(m.delivery->>'lead', %s) = %s
            AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.from_agent = %s AND r.thread IS NOT DISTINCT FROM m.thread
                                                        AND r.id > m.id)
-         ORDER BY m.id""", (agent, since, agent, agent, agent))
+         ORDER BY m.id""", (agent, agent, agent, since, agent, agent, agent))
     return cur.fetchall()
 
 

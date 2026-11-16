@@ -719,15 +719,26 @@ def handle_stop(cur, agent, h, strip=None):
             goal_id = r[0] if r else None
         except Exception:
             goal_id = None
-    row = cur.execute(
-        """INSERT INTO turns (agent, session_id, started_at, ended_at, duration_ms, source,
-             input_prompt, input_msg_id, num_responses, num_tools, char_count,
-             tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id)
-           VALUES (%s,%s,%s::timestamptz, now(), %s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-           RETURNING id""",
-        (agent, h.get("session_id"), started_at, duration_ms, source,
-         stored_prompt, input_msg_id, num_responses, num_tools, char_count,
-         tin, tout, model, stop_reason, Jsonb(payload), usnap, goal_id)).fetchone()
+    # ONE TURN, ONE ROW: a turn is (agent, session, the prompt that opened it). A Stop hook that blocks (owed replies)
+    # makes the same turn go on and stop again; that Stop rewrites the turn's row with the whole turn's figures,
+    # never a second row double-counting it (medic 12441)
+    same = cur.execute("SELECT id FROM turns WHERE agent=%s AND session_id IS NOT DISTINCT FROM %s AND started_at=%s::timestamptz "
+                       "ORDER BY id DESC LIMIT 1", (agent, h.get("session_id"), started_at)).fetchone() if started_at else None
+    vals = (duration_ms, source, stored_prompt, input_msg_id, num_responses, num_tools, char_count,
+            tin, tout, model, stop_reason, Jsonb(payload), usnap, goal_id)
+    if same:                                   # updated IN PLACE: what the first Stop stamped with its id stays its
+        row = cur.execute(
+            """UPDATE turns SET ended_at=now(), duration_ms=%s, source=%s, input_prompt=%s, input_msg_id=%s,
+                 num_responses=%s, num_tools=%s, char_count=%s, tokens_in=%s, tokens_out=%s, model=%s,
+                 stop_reason=%s, raw_payload=%s, usage_snapshot=%s, goal_id=%s
+               WHERE id=%s RETURNING id""", (*vals, same[0])).fetchone()
+    else:
+        row = cur.execute(
+            """INSERT INTO turns (agent, session_id, started_at, ended_at, duration_ms, source,
+                 input_prompt, input_msg_id, num_responses, num_tools, char_count,
+                 tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id)
+               VALUES (%s,%s,%s::timestamptz, now(), %s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               RETURNING id""", (agent, h.get("session_id"), started_at, *vals)).fetchone()
     turn_id = row[0] if row else None
 
     # The nudge hook labels a prompt before its turn exists; claim its classification rows the
@@ -770,7 +781,9 @@ def handle_stop(cur, agent, h, strip=None):
     # to OWNER-triggered turns so an internal/cron turn never auto-messages him. NO double
     # send: the back-fill above stamped this turn's real sends with turn_id, so a turn that
     # DID reply to the owner shows already>0 and is skipped.
-    if turn_id and input_msg_id and last_text and last_text.strip():
+    # a turn going on after a Stop hook's block (stop_hook_active) delivers nothing by itself: its last words are the
+    # agent's answer to the HOOK ("that message needs no answer"), not to the person (medic 12441)
+    if turn_id and input_msg_id and last_text and last_text.strip() and not h.get("stop_hook_active"):
         src = cur.execute("SELECT from_agent, from_org, thread FROM messages WHERE id=%s",
                           (input_msg_id,)).fetchone()
         # Fire for a HUMAN channel message — the owner OR anyone on wa/tg/discord. A person
@@ -911,7 +924,7 @@ def main():
             # a person's message that reached this agent since its last turn, with nothing from it on that thread
             # since (astryx.core.owed), keeps it from going idle: it is told once per message and decides. The turn
             # is written first, so nothing here can cost it. Fail-open.
-            if res:
+            if res and not h.get("stop_hook_active"):      # one block per stop chain: the second stop ends the turn
                 conn.commit()
                 try:
                     from astryx.core import owed as _owed

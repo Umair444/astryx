@@ -7,6 +7,7 @@ one owed (owner 11-15). A fixture database (this tree's schema.sql), fixture row
   O4 a team's ask is owed by its lead only
   O5 told once per message: the second stop ends the turn; a new message is told
   O6 the reminder names who and where, never the message's words
+  O8 in a GROUP, people talking among themselves owe nothing; an @mention, a reply to the agent's message, or a task does
   O7 person_sql is the one table's people (owner, wa-, tg-, dc-, cv-, fe-), and nothing else
 Exit 0 · 1 · 77 (no database)."""
 import os
@@ -49,7 +50,7 @@ def main():
 
         since = None
         a = msg("owner", "seed", "obs:seed", "SECRET-WORDS fix the menu")
-        b = msg("wa-923000000000", "seed", "wa:g1")
+        b = msg("wa-923000000000", "seed", "wa:923000000000@s.whatsapp.net")
         ids = lambda: [r[0] for r in O.owed(cur, "seed", since)]   # noqa: E731
         arm("O1 a person's messages with nothing from the agent since: owed, oldest first", ids() == [a, b], ids())
         msg("seed", "owner", "obs:other", "elsewhere", ago_min=1)
@@ -68,10 +69,22 @@ def main():
         t = msg("owner", "seed", "obs:team", delivery={"team": ["db", "seed"], "lead": "db"})
         t2 = msg("owner", "db", "obs:team", delivery={"team": ["db", "seed"], "lead": "db"})
         arm("O4 a team's ask is owed by its lead only", t not in ids() and t2 in [r[0] for r in O.owed(cur, "db", None)], (ids(), O.owed(cur, "db", None)))
+        g = "wa:1203@g.us"
+        cur.execute("SELECT now() - interval '30 seconds'")
+        since = cur.fetchone()[0]
+        msg("wa-111", "seed", g, "lunch at 2?", ago_min=0)
+        msg("wa-222", "seed", g, "sure, see you", ago_min=0)
+        arm("O8 two people chatting in a routed group: nothing owed", ids() == [], ids())
+        m1 = msg("wa-111", "seed", g, "@seed how many loans yesterday?", ago_min=0)
+        m2 = msg("wa-222", "seed", g, "and the week?", ago_min=0, delivery={"reply_to_body": "▸ *seed*\nLoans: 189K"})
+        m3 = msg("wa-333", "seed", g, "do this", intent="task", ago_min=0)
+        msg("wa-444", "seed", g, "email me@seedling.com", ago_min=0)
+        arm("O8 an @mention, a reply to its message, a task: owed; an address that merely contains its name: not", ids() == [m1, m2, m3], ids())
+        since = None
         with tempfile.TemporaryDirectory() as dd:
             arm("O5 told once per message", O.told(dd, [b, 7]) == [b, 7] and O.told(dd, [b, 7]) == [] and O.told(dd, [b, 9]) == [9])
         rem = O.reminder(O.owed(cur, "seed", None))
-        arm("O6 the reminder names who and where, never the words", "wa-923000000000 on wa:g1" in rem and "SECRET" not in rem and "please look" not in rem, rem)
+        arm("O6 the reminder names who and where, never the words", "wa-923000000000 on wa:923000000000@s.whatsapp.net" in rem and "SECRET" not in rem and "please look" not in rem, rem)
 
 
 try:
