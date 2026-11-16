@@ -12,8 +12,10 @@ when no turn has, and says when no reading has landed (medic 12485).
 Exit 0 · 1."""
 import importlib
 import json
+import shutil
 import socket
 import sys
+import tempfile
 import time
 import urllib.request
 from datetime import datetime, timezone
@@ -83,15 +85,14 @@ def run(ctx, logins=(), status=200, hang=0.0):
         return Resp()
     saved = (urllib.request.urlopen, U.vault.logins, R.CRED)
     urllib.request.urlopen, U.vault.logins = urlopen, (lambda estate, env=None: list(logins))
-    cred = REPO / "var" / "test_usage_idle_cred.json"
-    cred.parent.mkdir(exist_ok=True)
+    cred = Path(tempfile.mkdtemp()) / "credentials.json"
     cred.write_text(json.dumps({"claudeAiOauth": {"accessToken": "host-token"}}))
     R.CRED = cred
     try:
         return U.usage_idle(ctx)
     finally:
         urllib.request.urlopen, U.vault.logins, R.CRED = saved
-        cred.unlink()
+        shutil.rmtree(cred.parent)
 
 
 import urllib.error  # noqa: E402
@@ -141,24 +142,22 @@ c = Ctx([(None, "fresh", t - 60)])
 c.state = {"nagged": t - 60}
 arm("U6 a landed reading re-arms it", run(c) is None and c.state["nagged"] == 0, c.state)
 
-# U7 the real database: a tagged row reaches usage_readings, and never current_usage (the org's own)
+# U7 a real database, never the org's own (medic 12495): a fixture with schema.sql applied, dropped after
+skipped = False
 try:
     import psycopg
     from psycopg.types.json import Jsonb
-    from astryx import config, paths
-    dsn = config.dsn(paths.estate(__file__) / ".env")
-    tag = f"test-usage-idle-{int(t)}"
-    with psycopg.connect(dsn, autocommit=True) as conn:
-        try:
-            conn.execute("INSERT INTO usage_polls (state, snapshot) VALUES ('unavailable', %s)",
-                         (Jsonb({"fetched_at": datetime.now(timezone.utc).isoformat(), "state": "unavailable", "credential": tag}),))
-            r = conn.execute("SELECT src, state FROM usage_readings WHERE credential = %s", (tag,)).fetchall()
-            cur = conn.execute("SELECT count(*) FROM current_usage WHERE credential = %s", (tag,)).fetchone()[0]
-            arm("U7 a usage_polls row reaches usage_readings tagged, never current_usage", r == [("polls", "unavailable")] and cur == 0, (r, cur))
-        finally:
-            conn.execute("DELETE FROM usage_polls WHERE snapshot->>'credential' = %s", (tag,))
-except Exception as e:
-    arm("U7 the real database", False, e)
+    from astryx.security.sqlguard.fixture import FixtureUnavailable, fixture_db
+    with fixture_db() as fx, psycopg.connect(fx["dsn"], autocommit=True) as conn:
+        tag = "test-usage-idle"
+        conn.execute("INSERT INTO usage_polls (state, snapshot) VALUES ('unavailable', %s)",
+                     (Jsonb({"fetched_at": datetime.now(timezone.utc).isoformat(), "state": "unavailable", "credential": tag}),))
+        r = conn.execute("SELECT src, state FROM usage_readings WHERE credential = %s", (tag,)).fetchall()
+        cur = conn.execute("SELECT count(*) FROM current_usage").fetchone()[0]
+        arm("U7 a usage_polls row reaches usage_readings tagged, never current_usage", r == [("polls", "unavailable")] and cur == 0, (r, cur))
+except (ImportError, FixtureUnavailable) as e:
+    skipped = True
+    print(f"  NOT RUN  U7: no fixture database here ({type(e).__name__}: {str(e)[:120]})")
 
 # U8 shipped
 from astryx.pulse.shipped_triggers import shims  # noqa: E402
@@ -170,5 +169,8 @@ arm("U8 init.sh: node, reconcile list, reinstall list",
     "_act_usageidle()" in init and '"usageidle|interior"' in init and '"usage_idle|usageidle"' in init)
 arm("U8 a cog org gets it", '"usage_idle")' in cog)
 
-print("ALL PASS" if not fails else f"FAILED: {fails}")
-sys.exit(1 if fails else 0)
+if fails:
+    print(f"FAILED: {fails}")
+    sys.exit(1)
+print("ALL PASS" if not skipped else "PASS, U7 not run (77)")
+sys.exit(77 if skipped else 0)
