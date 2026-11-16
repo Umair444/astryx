@@ -26,6 +26,7 @@ S = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(S)
 S.usage_snapshot = lambda cur: None
 S._label = lambda agent: (None, None)
+S.cleaner = lambda: ((lambda o: o), True)          # no secrets in this fixture: a clean clone has no .env (medic 12455)
 fails = []
 
 
