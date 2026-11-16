@@ -243,7 +243,7 @@ async def _edit(agent: str, cid: str, ph, line: str):
         await ph.edit(content=signed(agent, line, route, "**"))
 
 
-async def _remove(cid: str, ph):
+async def _finish(agent: str, cid: str, ph, steps: int):          # Discord leaves no trace of a deleted message
     if isinstance(ph, str):
         async with httpx.AsyncClient() as hx:
             await hx.delete(f"{routes().chat(cid).get('webhook')}/messages/{ph}", timeout=60)
@@ -258,7 +258,7 @@ async def _typing(cid: str):
 
 
 # the live steps bubble: one lifecycle for every channel (bridges/progress.py); Discord's four acts
-progress = Progress(lambda: pool, post=_post, edit=_edit, remove=_remove, typing=_typing, timeout=JOB_TIMEOUT)
+progress = Progress(lambda: pool, post=_post, edit=_edit, finish=_finish, typing=_typing, timeout=JOB_TIMEOUT)
 on_step = progress.on_step
 
 
@@ -431,4 +431,4 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/health")
 async def health():
     return {"ok": True, "connected": client.is_ready(), "routes": len(routes()),
-            "jobs": list(progress.jobs)}
+            "jobs": sorted({a for a, _c in progress.jobs})}

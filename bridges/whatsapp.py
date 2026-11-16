@@ -254,7 +254,7 @@ app = FastAPI()
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "routes": len(routes()), "jobs": list(progress.jobs)}
+    return {"ok": True, "routes": len(routes()), "jobs": sorted({a for a, _c in progress.jobs})}
 
 
 async def stored_text(chat: str, msgid: str, waits=(2, 5, 12)) -> str:
@@ -452,12 +452,15 @@ async def _edit(agent: str, chat: str, ph, line: str):
     await wacli("messages", "edit", "--chat", chat, "--id", ph, "--message", signed(agent, line, chat))
 
 
-async def _remove(chat: str, ph):
-    await wacli("messages", "revoke", "--chat", chat, "--id", ph)
+async def _finish(agent: str, chat: str, ph, steps: int):
+    """A bubble of steps only, at its turn's end: one true closing line, not a revoke (a revoke leaves a "This message
+    was deleted" tombstone in the group, read as a retraction; medic 12418)."""
+    await wacli("messages", "edit", "--chat", chat, "--id", ph,
+                "--message", signed(agent, f"✓ finished · {steps} step{'s' if steps != 1 else ''}", chat))
 
 
 # the live steps bubble: one lifecycle for every channel (bridges/progress.py); WhatsApp's four acts
-progress = Progress(lambda: pool, post=_post, edit=_edit, remove=_remove, typing=typing, timeout=JOB_TIMEOUT)
+progress = Progress(lambda: pool, post=_post, edit=_edit, finish=_finish, typing=typing, timeout=JOB_TIMEOUT)
 on_step = progress.on_step
 
 

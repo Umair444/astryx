@@ -186,8 +186,8 @@ async def _edit(agent: str, chat: str, ph, line: str):
     await tg("editMessageText", chat_id=int(chat), message_id=ph, text=signed(agent, line, routes().chat(chat)))
 
 
-async def _remove(chat: str, ph):
-    await tg("deleteMessage", chat_id=int(chat), message_id=ph)
+async def _finish(agent: str, chat: str, ph, steps: int):
+    await tg("deleteMessage", chat_id=int(chat), message_id=ph)      # Telegram leaves no trace of a deleted message
 
 
 async def _typing(chat: str):
@@ -195,7 +195,7 @@ async def _typing(chat: str):
 
 
 # the live steps bubble: one lifecycle for every channel (bridges/progress.py); Telegram's four acts
-progress = Progress(lambda: pool, post=_post, edit=_edit, remove=_remove, typing=_typing, timeout=JOB_TIMEOUT)
+progress = Progress(lambda: pool, post=_post, edit=_edit, finish=_finish, typing=_typing, timeout=JOB_TIMEOUT)
 on_step = progress.on_step
 
 
@@ -367,4 +367,4 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "routes": len(routes()), "jobs": list(progress.jobs)}
+    return {"ok": True, "routes": len(routes()), "jobs": sorted({a for a, _c in progress.jobs})}

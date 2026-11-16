@@ -368,7 +368,7 @@ print("pairing:")
 # the functions a TEXT-carrying platform send may sit in. A new one fails here until a reviewer classifies it: inside
 # deliver() (door-gated), a helper deliver() calls, the platform primitive itself, or a live-steps act (_post / _edit,
 # the channel's acts handed to bridges/progress.py), whose jobs are opened only under live_steps_ok()
-EGRESS = {"whatsapp": {"deliver", "send_files", "send_poll", "_post", "_edit"},
+EGRESS = {"whatsapp": {"deliver", "send_files", "send_poll", "_post", "_edit", "_finish"},
           "telegram": {"deliver", "tg", "_post", "_edit"},
           "discord": {"deliver", "hook_send", "hook_file", "hook_poll", "hook_edit", "_post", "_edit"}}
 TG_TEXT = {"sendMessage", "editMessageText", "sendPoll", "sendPhoto", "sendDocument", "sendMediaGroup", "sendAudio",
