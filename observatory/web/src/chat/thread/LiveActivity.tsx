@@ -75,13 +75,15 @@ const confirmed = () => { try { return sessionStorage.getItem(OK_KEY) === '1' } 
    timer from the earliest ask. A click opens each agent's own line (its steps, its own Stop). One agent: its line. */
 export default function LiveActivity({ pending, onStop, onRemind }: { pending: Pending[]; onStop?: StopFn; onRemind?: RemindFn }) {
   const now = useNow(1000)
-  const working = pending.filter((p) => !p.passed)
-  const passed = pending.filter((p) => p.passed)
+  const working = pending.filter((p) => !p.passed && !p.stopped)
+  const passed = pending.filter((p) => p.passed && !p.stopped)
+  const stopped = pending.filter((p) => p.stopped)
   if (!pending.length) return null
   return (
     <div aria-live="polite">
       {working.length === 1 ? <Line p={working[0]} now={now} onStop={onStop} /> : working.length > 1 ? <Team pending={working} now={now} onStop={onStop} /> : null}
       {passed.map((p) => <Passed key={p.agent} p={p} onRemind={onRemind} />)}
+      {stopped.map((p) => <Stopped key={p.agent} p={p} />)}
     </div>
   )
 }
@@ -109,6 +111,20 @@ function Passed({ p, onRemind }: { p: Pending; onRemind?: RemindFn }) {
           {state === 'sending' ? 'Reminding…' : 'Remind'}
         </button>
       )}
+    </div>
+  )
+}
+
+/* STOPPED (owner 11-16: "limit message should also come … users can't wait forever"): its turn ended on an API error,
+   most often a usage limit. Claude Code's own words say what and until when; a limited turn picks up by itself when the
+   limit resets, and the line gives way to its work then. */
+function Stopped({ p }: { p: Pending }) {
+  return (
+    <div className="flex items-center gap-3 rounded-[12px] -mx-2 px-2 py-1.5" role="status" style={{ ['--ws-agent' as string]: agentColor(p.agent) }}>
+      <Presence agent={p.agent} status="awake" size={24} ring={false} />
+      <span className="min-w-0 flex-1 text-[13.5px] text-ink truncate" title={p.stopped}>
+        <span className="font-medium">{displayName(p.agent)}</span> <span className="text-ink-dim">is paused · {p.stopped}</span>
+      </span>
     </div>
   )
 }

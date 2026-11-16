@@ -931,6 +931,20 @@ def main():
                 except Exception:  # noqa: BLE001
                     pass
 
+        elif ev == "StopFailure":
+            # THE TURN ENDED ON AN API ERROR (owner 11-16: "limit message should also come … users can't wait
+            # forever"): a usage limit, an overload, a server error. No Stop runs, so nothing else would say it: one
+            # 'stopped' step in the turn's scope carries Claude Code's own words ("You've hit your session limit ·
+            # resets 2:50pm"), and the chat's live line shows it instead of a timer. A limit's turn resumes on its
+            # own when the limit resets ("Your claude.ai usage limit has reset. Continue …"), and its steps follow.
+            launch_close(agent)
+            msgs, sub = scope(h, agent)
+            said = "" if strip else (h.get("last_assistant_message") or "").strip()   # S1d: a stripped session's text stays out
+            said = said or f"stopped: {h.get('error') or 'unknown error'}"
+            from psycopg.types.json import Jsonb
+            cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'stopped',%s,%s)",
+                        (agent, brief(said, 300), step_meta(Jsonb({"error": str(h.get("error") or "unknown")[:40]}), msgs, sub)))
+
         elif ev == "Stop":
             launch_close(agent)                        # the turn ended: no launch of it is still in flight
             try:                                       # …and the next turn feels its own doublings afresh (energy.claim)

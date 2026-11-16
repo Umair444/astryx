@@ -71,6 +71,25 @@ def main():
             arm("T3 the turn names the key its session ran on (turns.run_on, from ASTRYX_RUN_ON)", cur.fetchone() == ("DeepSeek",))
             os.environ.pop("ASTRYX_RUN_ON", None)
         conn.rollback()
+        # T4 a turn that ends on a usage limit (StopFailure: no Stop runs) leaves one 'stopped' step in its own words,
+        # in its turn's scope, so the chat's live line says why instead of a timer (owner 11-16)
+        import io
+        with tempfile.TemporaryDirectory() as td:
+            tp = Path(td) / "t.jsonl"
+            tp.write_text(line("user", f'<channel source="astryx" from="owner" thread="obs:seed" intent="chat" msg_id="{mid}">hi</channel>', "2026-11-16T09:50:00Z"))
+            ev = {"hook_event_name": "StopFailure", "error": "rate_limit", "transcript_path": str(tp), "session_id": "s2",
+                  "last_assistant_message": "You've hit your session limit · resets 2:50pm (Asia/Karachi)"}
+            S.dsn, stdin = (lambda: d["url"]), sys.stdin
+            sys.stdin = io.StringIO(json.dumps(ev))
+            try:
+                S.main()
+            finally:
+                sys.stdin = stdin
+        with psycopg.connect(d["url"]) as c2:
+            got = c2.execute("SELECT kind, content, meta->>'error', meta->'turn_msgs' FROM steps WHERE agent='seed' ORDER BY id DESC LIMIT 1").fetchone()
+            arm("T4 StopFailure: one 'stopped' step, Claude Code's words, its error and its turn's opening message",
+                got is not None and got[0] == "stopped" and got[1].startswith("You've hit your session limit") and got[2] == "rate_limit"
+                and got[3] == [mid], got)
 
 
 try:

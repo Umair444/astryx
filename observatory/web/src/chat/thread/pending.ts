@@ -15,7 +15,10 @@ import { isHuman, type Msg, type Step } from '../../types'
 /* `passed`: asked here, its newest turn ENDED after the ask, nothing from it since and nothing running: it finished
    without replying (owner 11-15: "you never replied, so the counter ran for 20 minutes"). The line says so and offers
    a reminder instead of a timer that never stops. */
-export interface Pending { agent: string; since: string; steps: Step[]; by?: string; leads?: boolean; busy?: boolean; passed?: boolean }
+/* `stopped`: its newest step is 'stopped' (hooks/step.py StopFailure: a usage limit, an overload, a server error), in
+   Claude Code's own words ("You've hit your session limit · resets 2:50pm"). It can't take a turn until that clears, for
+   this conversation or any other, so the line says why instead of a timer (owner 11-16: "users can't wait forever"). */
+export interface Pending { agent: string; since: string; steps: Step[]; by?: string; leads?: boolean; busy?: boolean; passed?: boolean; stopped?: string }
 
 export function pendingOf(agents: string[], rows: Msg[], live: Record<string, Step[]> | undefined, me: string,
                           ended: Record<string, string | null> = {}, now = Date.now()): Pending[] {
@@ -38,6 +41,8 @@ export function pendingOf(agents: string[], rows: Msg[], live: Record<string, St
     const leadAt = ask?.lead && ask.lead !== a
       ? Math.max(0, ...rows.filter((m) => m.from === ask.lead && !!m.to && isHuman(m.to)).map((m) => m.id)) : 0
     const asked = !!ask && ask.id > saidAt && ask.id > leadAt
+    const newest = lane[lane.length - 1]
+    const stopped = newest?.kind === 'stopped' ? newest.content || 'stopped' : undefined
     // (b) the newest step of a turn this thread opened, and nothing after it from a turn another thread opened
     let k = -1
     for (let i = lane.length - 1; i >= 0; i--) { if (serves(lane[i])) { k = i; break } if (elsewhere(lane[i])) break }
@@ -46,7 +51,7 @@ export function pendingOf(agents: string[], rows: Msg[], live: Record<string, St
       while (start > 0 && !elsewhere(lane[start - 1])) start--
       const opener = rows.find((m) => lane[k].turn_msgs!.includes(m.id))
       const who = asked ? ask!.from : opener?.from
-      out.push({ agent: a, since: asked ? ask!.ts : lane[start].ts, steps: lane.slice(start),
+      out.push({ agent: a, since: asked ? ask!.ts : lane[start].ts, steps: lane.slice(start), stopped,
                  by: who && isHuman(who) && who !== me ? who : undefined })
       continue
     }
@@ -56,7 +61,8 @@ export function pendingOf(agents: string[], rows: Msg[], live: Record<string, St
     const end = ended[a] ? Date.parse(ended[a]!) : 0
     out.push({ agent: a, since: ask!.ts, by: ask!.from === me ? undefined : ask!.from!,
                steps: lane.filter((s) => Date.parse(s.ts) >= t0 && !elsewhere(s)),
-               busy: !!last && elsewhere(last) && Date.parse(last.ts) >= t0 - 600_000,
+               stopped,
+               busy: !stopped && !!last && elsewhere(last) && Date.parse(last.ts) >= t0 - 600_000,
                // a GRACE both ways (medic 12453): an ask that lands at a turn boundary isn't "passed" in the seconds
                // before its own turn starts; only a turn that ended a minute after the ask, half a minute ago, passed it
                passed: !lane.length && end > t0 + 60_000 && now - end > 30_000 })
