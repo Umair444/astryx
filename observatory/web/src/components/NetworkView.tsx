@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import PeopleGraph from './PeopleGraph'
 import FederationLayer from './FederationLayer'
 import AgentFace from './AgentFace'
@@ -9,6 +9,7 @@ import '@xyflow/react/dist/style.css'
 import { displayName, fmtTokens, shortModel } from '../api'
 import { useStore } from '../store'
 import { useTheme } from '../theme'
+import { useCamera } from '../ui/camera'
 import type { AgentRow, Presence } from '../types'
 import { LiveDot, Orb, Panel, RoomOrb, Tabs, ViewHeader, useNow } from '../ui/kit'
 import { moodOf, nowLine, type Mood } from '../ui/life'
@@ -197,6 +198,14 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
   const [peekSib, setPeekSib] = useState<string | null>(null)
   // opening (or closing) a sibling reframes the map to hold its people, a glide unless motion is reduced
   const [rf, setRf] = useState<ReactFlowInstance | null>(null)
+  // the observatory's one camera (ui/camera.ts; owner 11-15: "zooming and moving is very good in the floor tab, not in
+  // network"): React Flow's own pan and zoom are off, the camera's gestures paint its viewport, and a fitView React
+  // Flow does by itself is adopted as the camera's truth (onMove)
+  const flowBox = useRef<HTMLDivElement>(null)
+  const rfRef = useRef<ReactFlowInstance | null>(null)
+  rfRef.current = rf
+  const { bind: camBind, adopt } = useCamera({ box: flowBox, min: 0.15, max: 1.6,
+    paint: (c) => { void rfRef.current?.setViewport({ x: c.x, y: c.y, zoom: c.k }) } })
   useEffect(() => {
     if (!rf || !siblings.length) return
     const still = matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -744,7 +753,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
           <div className="px-4 pt-[132px] pb-8 max-w-[1400px] mx-auto"><FederationLayer onOpenAgent={onOpenAgent} focus={focusPeer} /></div>
         </ScrollArea>
       ) : (
-      <div className="absolute inset-0">
+      <div ref={flowBox} className="absolute inset-0" {...camBind}>
         <ReactFlow
           key={layoutKey}
           nodes={flow.nodes}
@@ -755,11 +764,14 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
           fitViewOptions={{ padding: 0.2 }}
           minZoom={0.15}
           maxZoom={1.6}
-          // the floor's hands (owner 10-19: "the scroll in network tab is a little slow"): a two-finger scroll PANS at
-          // the floor's pace, a pinch (or ctrl/cmd + wheel) zooms; nodes off screen aren't rendered while it moves
-          panOnScroll
-          panOnScrollSpeed={1.1}
-          zoomOnPinch
+          // the camera above owns every gesture; React Flow only draws, and reports its own fits back
+          panOnDrag={false}
+          panOnScroll={false}
+          zoomOnScroll={false}
+          zoomOnPinch={false}
+          zoomOnDoubleClick={false}
+          preventScrolling={false}
+          onMove={(_e, vp) => adopt({ x: vp.x, y: vp.y, k: vp.zoom })}
           onlyRenderVisibleElements
           nodesDraggable={false}
           nodesConnectable={false}
