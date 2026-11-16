@@ -73,6 +73,8 @@ try:
     from astryx.security.sqlguard.fixture import fixture_db
     with fixture_db() as d, psycopg.connect(d["url"]) as conn:
         q = lambda pred, t: conn.execute(f"SELECT {pred} FROM (SELECT %s::text AS thread, NULL::jsonb AS delivery) m", (t,)).fetchone()[0]  # noqa: E731
+        arm("the regexes' backslashes reach Postgres as written (standard_conforming_strings on; medic 12631)",
+            conn.execute("SHOW standard_conforming_strings").fetchone()[0] == "on")
         old_group = "(thread LIKE 'wa:%%@g.us' OR thread LIKE 'tg:-%%' OR thread LIKE 'dc:%%')"
         arm("a group conversation (owed): as before", [q(owed.GROUP.replace("m.thread", "thread"), t) for t in threads] == [q(old_group, t) for t in threads])
         old_bridged = ("(thread IS NULL OR thread = '' OR thread LIKE 't-%%' OR thread LIKE 'wa:%%' OR thread LIKE 'tg:%%' "
