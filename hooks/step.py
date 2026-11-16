@@ -907,6 +907,23 @@ def main():
             else:
                 cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'response',%s)",
                             (agent, "(turn unreadable)"))
+            # A REPLY OWED (owner 11-15: "you never replied, so the counter ran for 20 minutes … agents can forget"):
+            # a person's message that reached this agent since its last turn, with nothing from it on that thread
+            # since (astryx.core.owed), keeps it from going idle: it is told once per message and decides. The turn
+            # is written first, so nothing here can cost it. Fail-open.
+            if res:
+                conn.commit()
+                try:
+                    from astryx.core import owed as _owed
+                    cur.execute("SELECT ended_at FROM turns WHERE agent=%s ORDER BY id DESC OFFSET 1 LIMIT 1", (agent,))
+                    prev = cur.fetchone()
+                    rows = _owed.owed(cur, agent, prev[0] if prev else None)
+                    fresh = set(_owed.told(_subs_dir(agent, "owed"), [r[0] for r in rows]))
+                    if fresh:
+                        print(json.dumps({"decision": "block",
+                                          "reason": _owed.reminder([r for r in rows if r[0] in fresh])}), flush=True)
+                except Exception:  # noqa: BLE001
+                    conn.rollback()
 
 
 if __name__ == "__main__":

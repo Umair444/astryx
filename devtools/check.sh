@@ -535,6 +535,7 @@ run "init.sh schedules a one-org backup, deferentially by either name (seed 6152
 run "influence nightly: every org computes its influence graph, so the floor draws it (owner 11-15)" "$PY" tests/test_influence_nightly.py
 run "whatsapp: the chat search finds groups as well as people (owner 11-15)" "$PY" tests/test_wa_group_search.py
 run "bridges: one live steps bubble for every channel; the wire's own send never opens one; a steps-only bubble goes at the turn's end (owner 11-16)" "$PY" tests/test_bridge_progress.py
+run "owed replies: a person's message with no reply keeps the agent from going idle, once per message (owner 11-15)" "$PY" tests/test_owed.py
 run "economy: the tab's one read runs on this tree's schema, an empty org included (medic 12299)" "$PY" tests/test_econ_system.py
 run "cog rehearsal: the runbook's steps 2-6 end to end on a fixture registry, the double spawn seen and refused (plan-11324 S3f S6)" "$PY" tests/test_cog_rehearsal.py
 run "doctor in a cog: the primary served, its units-drift its own units only, its seats on its own server; another org refused (plan-11324 S3f S7)" "$PY" tests/test_doctor_cog.py

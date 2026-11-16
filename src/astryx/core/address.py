@@ -49,6 +49,17 @@ SURFACES = (
 )
 
 
+# the surfaces where a PERSON speaks (a canvas page and the room are places, not people)
+PERSONS = ("owner", "whatsapp", "telegram", "discord", "canvas user", "frontend")
+
+
+def person_sql(col: str, params: bool = True) -> str:
+    """One SQL predicate: `col` names a person, from SURFACES (the one table of who is who). `params`: the statement
+    carries bind parameters, so a LIKE's % is doubled for the driver."""
+    out = [pred.replace("to_agent", col) for cls, _rx, _f, pred in SURFACES if cls in PERSONS]
+    return "(" + " OR ".join(o.replace("%", "%%") if params else o for o in out) + ")"
+
+
 def surface_of(name: str) -> str | None:
     return next((cls for cls, rx, _, _ in SURFACES if rx.match(name)), None)
 
