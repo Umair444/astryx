@@ -524,10 +524,11 @@ _WIRE_WRITE = re.compile(r"^/api/(messages|ws/agents/[^/]+/interrupt|federation/
 # per agent, so the personal tier stays the owner's.
 MEMBER = {("POST", "/api/messages"), ("POST", "/api/thread/read"), ("POST", "/api/chat/upload"),
           ("PUT", "/api/ws/threads/meta"), ("PUT", "/api/chat/projects"),
-          ("POST", "/api/chat/dictate/session"), ("POST", "/api/chat/dictate/usage"), ("POST", "/api/chat/calc")}
+          ("POST", "/api/chat/dictate/session"), ("POST", "/api/chat/dictate/usage"), ("POST", "/api/chat/calc"),
+          ("POST", "/api/me/channels")}   # a person links THEIR OWN account (identity-channels P3)
 MEMBER_GET = ("/api/ws/threads", "/api/ws/thread-titles", "/api/ws/search", "/api/ws/handoffs", "/api/ws/agents",
               "/api/ws/briefing", "/api/ws/media", "/api/ws/artifacts", "/api/chat/", "/api/presence",
-              "/api/steps", "/api/pulse")
+              "/api/steps", "/api/pulse", "/api/me/channels")
 _MEMBER_AGENT_GET = re.compile(r"^/api/agents/[^/]+/(profile|charter)$")
 
 
@@ -2844,17 +2845,15 @@ async def growbot_proxy(path: str, request: Request):
 @app.get("/api/wire/routes")
 async def wire_routes():
     """Every channel's full route table (enabled AND disabled — the owner manages
-    both). trusted_key names the per-channel sender-trust field (jids vs numeric
-    ids) so the editor renders the right control. `etag` is the file's sha256: the PUT's If-Match (plan-11860 E4);
+    both). `etag` is the file's sha256: the PUT's If-Match (plan-11860 E4);
     `problems` is the one validator's verdict on the table as it stands (E2), so a hand edit shows here."""
     out = []
     for ch in _wire_channels():
         routes = _read_routes(ch)
         c = _channels.BY_NAME.get(ch)
-        key = c.trusted_key if c else "trusted_jids" if any("trusted_jids" in r for r in routes) else "trusted_ids"
         # the channel's own rules ride with its table (core/channels.py), so the web holds none: which chat ids are a
         # group or one person, and whether its people are phone numbers
-        out.append({"channel": ch, "routes": routes, "trusted_key": key, "etag": etag(_routes_file(ch)),
+        out.append({"channel": ch, "routes": routes, "etag": etag(_routes_file(ch)),
                     "problems": _routing.validate(routes, set(agent_meta())),
                     "group": c.group if c else ".+", "dm": c.dm if c else "", "numbers": bool(c and c.numbers)})
     return out
@@ -2908,6 +2907,87 @@ def glyphs_of(tables: dict[str, list]) -> list[dict]:
 @app.get("/api/floor/glyphs")
 async def floor_glyphs():
     return glyphs_of({ch: _read_routes(ch) for ch in _wire_channels() if re.fullmatch(r"[a-z]{2,20}", ch)})
+
+
+# ---------------------------------------------------------------- identities and connections (identity-channels P3)
+# One person, many accounts (astryx.core.identity); an agent's door to a person is a CONNECTION, a `route` row
+# (astryx.core.connect). "Your channels": a signed-in person (or the owner) sees the accounts linked to them and adds
+# one: that account is asked to reply YES (through seed), and the YES links it. The rail lists the agents' connections;
+# the owner can end any.
+class MyChannel(BaseModel):
+    channel: str
+    account: str
+
+
+def _me_sync(who: str) -> dict:
+    import psycopg
+    with psycopg.connect(DSN, autocommit=True) as c:
+        linked = c.execute("SELECT h.channel, h.account FROM identity_handle h JOIN identity i ON i.id = h.identity_id "
+                           "AND i.tenant = h.tenant WHERE i.wire_name = %s AND h.channel <> 'web' ORDER BY 1, 2", (who,)).fetchall()
+        asked = c.execute("SELECT channel, chat, expires_at FROM route WHERE purpose = 'link' AND person = %s "
+                          "AND expires_at > now() ORDER BY opened", (who,)).fetchall()
+    title = lambda ch: _channels.BY_NAME[ch].title if ch in _channels.BY_NAME else ch  # noqa: E731
+    return {"who": who, "linked": [{"channel": ch, "title": title(ch), "account": a} for ch, a in linked],
+            "asked": [{"channel": ch, "title": title(ch), "account": a, "until": t.isoformat() if t else None} for ch, a, t in asked],
+            "channels": [{"channel": c.name, "title": c.title, "numbers": c.numbers} for c in _channels.connectable()]}
+
+
+@app.get("/api/me/channels")
+async def my_channels(request: Request):
+    who = wire_handle(request)
+    if who is None:
+        return Response(status_code=403)
+    return await asyncio.to_thread(_me_sync, who)
+
+
+@app.post("/api/me/channels")
+async def my_channel_link(body: MyChannel, request: Request):
+    """Link one of MY accounts: that account is asked (by seed) to reply YES; nothing links until it does."""
+    who = wire_handle(request)
+    if who is None:
+        return Response(status_code=403)
+    if body.channel not in {c.name for c in _channels.connectable()} or not body.account.strip():
+        return JSONResponse({"error": "pick a channel and type the account (a WhatsApp number in full, +92…)"}, status_code=400)
+    from bridges.providers import registry
+    from astryx.core import connect as _connect
+
+    def search(q, ch=""):
+        return asyncio.run(registry.search_contacts(q, [ch] if ch else None))
+
+    acct = getattr(request.state, "uid", "") or ("owner-key" if who == "owner" else "")
+
+    def go():
+        import psycopg
+        with psycopg.connect(DSN, autocommit=True) as c:
+            # the signed-in person IS an account (its 'web' handle): the one thing a link may join to (identity_link)
+            c.execute("SELECT identity_who('web', %s, %s)", (acct, who))
+            return _connect.run(c, "seed", "link", who, body.channel, account=body.account.strip(), search=search,
+                                estate=ESTATE, by=who, timeout="1d")
+    said = await asyncio.to_thread(go)
+    return {"ok": said.startswith("asked"), "said": said, **await asyncio.to_thread(_me_sync, who)}
+
+
+@app.get("/api/wire/connections")
+async def wire_connections(request: Request):
+    """Every live connection and pending link, for the rail (owner only: rows name people)."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    rows = await pool.fetch("SELECT id, channel, chat, agent, purpose, person, opened_by, note, expires_at FROM route "
+                            "WHERE expires_at > now() ORDER BY channel, opened")
+    return [{**dict(r), "expires_at": r["expires_at"].isoformat()} for r in rows]
+
+
+@app.delete("/api/wire/connections/{cid}")
+async def wire_connection_end(cid: int, request: Request):
+    """The owner ends a connection; its agent is told on the wire."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    r = await pool.fetchrow("DELETE FROM route WHERE id = $1 RETURNING agent, channel, person", cid)
+    if r is None:
+        return Response(status_code=404)
+    await pool.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES ('owner', $1, NULL, 'chat', $2)",
+                       r["agent"], f"[connect] the owner ended your connection to {r['person']} on {r['channel']}.")
+    return {"ok": True}
 
 
 @app.get("/api/wire/contacts")

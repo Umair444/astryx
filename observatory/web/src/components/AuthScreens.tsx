@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import '@fontsource/instrument-serif/400.css'
 import '@fontsource/instrument-serif/400-italic.css'
-import { Menu } from '@mantine/core'
+import { Menu, Modal } from '@mantine/core'
+import MyChannels from './MyChannels'
 import { ACCEPT_WORDS, CODE_WORDS, ORG_KEY, SIGNUP_WORDS, WORDS, acceptLink, linkToken, nextHash, orgKey, readLink, readMe, roleWords, signIn, signInHref, signOut, signUp } from '../auth'
 import type { Accept, AuthOrg, LinkInfo, Me, MeState, OrgRequest } from '../auth'
 import { agentColor, saveObsKey } from '../api'
@@ -644,11 +645,16 @@ export function AuthChooser({ cog, fallback }: { cog: Cog; fallback: ReactNode }
 export function AccountMenu() {
   const [me, setMe] = useState<MeState | null>(null)
   const [failed, setFailed] = useState(false)
+  const [linking, setLinking] = useState(false)      // "Your channels": link your own WhatsApp, Telegram … (MyChannels)
   useEffect(() => { readMe().then(setMe) }, [])
   if (!me || me.state === 'unavailable') return null
   if (me.state === 'out') return <a href={signInHref()} className="auth-chip">Sign in</a>
   const many = me.me.orgs.length > 1
   return (
+    <>
+    <Modal opened={linking} onClose={() => setLinking(false)} title="Your channels" centered radius="lg">
+      {linking && <MyChannels />}
+    </Modal>
     <Menu position="bottom-end" width={240} shadow="md">
       <Menu.Target>
         <button type="button" className="auth-chip" aria-label={`Account: ${me.me.user}`} title={me.me.user}>
@@ -659,11 +665,13 @@ export function AccountMenu() {
       <Menu.Dropdown>
         <Menu.Label>Signed in as {me.me.user}</Menu.Label>
         {many && <Menu.Item component="a" href={`#/orgs?next=${encodeURIComponent(location.hash.slice(1) || '/')}`}>Switch org</Menu.Item>}
+        <Menu.Item onClick={() => setLinking(true)}>Your channels</Menu.Item>
         <Menu.Item onClick={async () => {
           if (await signOut()) { location.hash = '#/signed-out'; location.reload() } else setFailed(true)
         }}>{failed ? WORDS['signout-failed'] : 'Sign out'}</Menu.Item>
       </Menu.Dropdown>
     </Menu>
+    </>
   )
 }
 

@@ -220,10 +220,6 @@ for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' 
   \"jobs\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/jobs/server.py\"] }";;
     docpdf) EXTRA="$EXTRA,
   \"docpdf\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/docpdf/server.py\"] }";;
-    contacts) EXTRA="$EXTRA,
-  \"contacts\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/contacts/server.py\"] }";;
-    channels) EXTRA="$EXTRA,
-  \"channels\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/channels/server.py\"] }";;
     # browser: official @playwright/mcp (adopt-mature-OSS; the one sanctioned Node
     # MCP). Headless, system chromium, persistent per-agent profile so logins the
     # owner establishes survive respawns — the agent never sees a password.
@@ -277,6 +273,8 @@ cat > "$HOME_D/.mcp.json" <<EOF
     "env": { "ASTRYX_AGENT": "$AGENT", "XDG_RUNTIME_DIR": "/run/user/$(id -u)",
       "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/$(id -u)/bus" } },
   "influence": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/influence/server.py"],
+    "env": { "ASTRYX_AGENT": "$AGENT" } },
+  "channels": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/channels/server.py"],
     "env": { "ASTRYX_AGENT": "$AGENT" } }$PHONE$EXTRA } }
 EOF
 

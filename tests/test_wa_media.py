@@ -50,7 +50,7 @@ spec.loader.exec_module(wa)
 
 CHAT = "wa-test-group@g.us"               # fake-in-shape ids (no digit run: privacy_gate (c))
 OWNER = "wa-test-owner@lid"
-ROUTE = {"chat": CHAT, "agent": "seed", "enabled": True, "open": False, "trusted_jids": [OWNER]}
+ROUTE = {"chat": CHAT, "agent": "seed", "enabled": True, "open": False}
 CAPTION = "synthetic caption: make this better"
 fails = []
 
@@ -108,6 +108,10 @@ class World:
             return P()
         wa.asyncio.create_subprocess_exec = exec_
         wa.routes = lambda: Routes([ROUTE])
+
+        async def identity_of(pool, channel, account, fallback, route=None):     # the one minter (identity_who): the owner's number
+            return "owner" if account == OWNER else fallback          # is the owner's handle, everyone else as minted
+        wa.identity_of = identity_of
         self.root.mkdir(parents=True, exist_ok=True)
         wa.DATA_HOST, wa.WA_DOCKER = str(self.root), docker
 

@@ -88,7 +88,7 @@ done
 # by hand at the infra/pg cutover; nothing regenerates it, and a restore of genesis-pg needs it.
 state_files=(local.md .env owner.md relations.md PLAN.md nucleus/runners.conf   # org-home: relative to $ORGH, the org's HOME (cd above)
          bridges/routes-whatsapp.json bridges/routes-telegram.json
-         bridges/routes-discord.json mcp/contacts/test_server.py   # org-home: relative to $ORGH, the org's HOME (cd above)
+         bridges/routes-discord.json   # org-home: relative to $ORGH, the org's HOME (cd above)
          bridges/geoloc.py infra/pg/.env)   # org-home: relative to $ORGH, the org's HOME (cd above)
 for f in "${state_files[@]}"; do
   if [ -f "$f" ]; then state_dirs="$state_dirs $f"; fi

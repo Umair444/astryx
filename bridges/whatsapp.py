@@ -20,8 +20,8 @@ Platform translation ONLY; everything shared lives in common.py:
             from the linked phone must still count); votes wake the ASKING
             agent with the delta.
 
-Config: .env for secrets, routes-whatsapp.json for chats (trusted_jids =
-sender JIDs stamped `owner`; others are `wa-<number>` on open routes).
+Config: .env for secrets, routes-whatsapp.json for chats. A sender's name is its PERSON's (common.identity_of: the
+owner's own numbers are `owner`, a linked member's their name); an unlinked sender is `wa-<number>`, on open routes.
 
 Run: uvicorn bridges.whatsapp:app --host "$(scripts/docker_host_ip.sh)" --port 8477  (repo root)
      (the docker host address: 172.17.0.1 on docker-ce Linux; ASTRYX_DOCKER_HOST_IP overrides)
@@ -62,12 +62,19 @@ DATA_CTR = env("WA_DATA_CTR", "/data")    # same dir as the wacli process sees i
 WA_DOCKER = WA_CLI[2] if WA_CLI[:2] == ["docker", "exec"] else ""
 from .common import signed as _signed  # noqa: E402  the sender label, one rule for every shared-identity channel
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
+from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
+from .common import connection, identity_of, link_reply  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
 ROUTES_FILE = ESTATE / "bridges" / "routes-whatsapp.json"
 
 JOB_TIMEOUT = 1800    # the live steps bubble is forgotten 30 min after it opened (bridges/progress.py)
 
 pool: asyncpg.Pool | None = None
 seen_msgids: dict[str, float] = {}       # webhook dedup (wacli retries)
+
+
+def wa_name(jid: str) -> str:
+    """An unlinked WhatsApp sender's wire name: wa-<the number's digits>."""
+    return f"wa-{''.join(c for c in str(jid).split('@')[0] if c.isdigit()) or 'unknown'}"
 
 
 def routes() -> list[dict]:
@@ -299,7 +306,7 @@ async def hook(request: Request):
         return Response(status_code=400)
 
     chat = jid_str(m.get("Chat"))
-    route = routes().chat(chat)
+    route = routes().chat(chat) or await connection(pool, "whatsapp", chat)   # the owner's routes, then an agent's connection
     if route is None:
         return {"ok": True}                       # not a surface we serve
 
@@ -326,8 +333,7 @@ async def hook(request: Request):
             ask = (rec and rec["agent"]) or route["agent"]
             changes = vote_changes(old, d.get("voters", []))
             voter_jid = jid_str(m.get("SenderJID"))
-            sender = "owner" if voter_jid in route.get("trusted_jids", []) \
-                else f"wa-{''.join(c for c in voter_jid.split('@')[0] if c.isdigit()) or 'x'}"
+            sender = await identity_of(pool, "whatsapp", voter_jid, wa_name(voter_jid), route)
             await wire_insert(pool, sender, "whatsapp", ask, f"wa:{chat}", "poll",
                               vote_body(d.get("question", "?"), changes,
                                         d.get("aggregates", {})), route=route)
@@ -343,7 +349,7 @@ async def hook(request: Request):
         sender_jid = jid_str(m.get("SenderJID"))
         await wire_insert(
             pool,
-            "owner" if sender_jid in route.get("trusted_jids", []) else "wa-x",
+            await identity_of(pool, "whatsapp", sender_jid, wa_name(sender_jid), route),
             "whatsapp", route["agent"], f"wa:{chat}", "poll",
             f'posted a poll ({msgid}): "{pc.get("Question")}" — '
             + " | ".join(pc.get("Options", [])), route=route)
@@ -360,7 +366,8 @@ async def hook(request: Request):
         emoji = (m.get("ReactionEmoji") or "").strip()
         if not emoji or (msgid and msgid in seen_msgids):
             return {"ok": True}
-        if not (m.get("FromMe") or jid_str(m.get("SenderJID")) in route.get("trusted_jids", [])):
+        rj = jid_str(m.get("SenderJID"))
+        if not (m.get("FromMe") or await identity_of(pool, "whatsapp", rj, wa_name(rj), route) == "owner"):
             return {"ok": True}
         agent, snippet = await reacted_message(pool, f"wa:{chat}", m["ReactionToID"])
         if agent is None:
@@ -397,14 +404,12 @@ async def hook(request: Request):
         seen_msgids[msgid] = now
 
     sender_jid = jid_str(m.get("SenderJID"))
-    trusted = sender_jid in route.get("trusted_jids", [])
-    if trusted:
-        sender = "owner"
-    else:
-        if not route.get("open"):                 # closed surface: trusted only
+    sender = await identity_of(pool, "whatsapp", sender_jid, wa_name(sender_jid), route)    # the one minter: a linked person's name
+    if await link_reply(pool, "whatsapp", route, sender_jid, text):    # YES to "link this number to <person>"
+        return {"ok": True}
+    if sender != "owner":
+        if not route.get("open"):                 # closed surface: the owner only
             return {"ok": True}
-        digits = "".join(c for c in sender_jid.split("@")[0] if c.isdigit())
-        sender = f"wa-{digits or 'unknown'}"
         text = f"{m.get('PushName') or sender_jid}: {text}"
 
     # INBOUND CONTEXT (carried in meta so an agent sees WHO sent it and WHAT it replied to;
@@ -653,6 +658,11 @@ async def deliver(row):
 
 
 # ---------------------------------------------------------------------- app
+# the rows this bridge delivers (its listen predicate; tests/test_bridge_door runs it on a fixture DB): the owner's,
+# a wa- person's, and one of our people on a wa: thread (a linked person, answered under their person's name)
+CLAIM = f"(to_agent='owner' OR to_agent LIKE 'wa-%' OR {address.reaches_sql('whatsapp')})"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global pool
@@ -673,7 +683,7 @@ async def lifespan(app: FastAPI):
 
     witness = PulseWitness(_read_pulse_age, _ring_owner)
     task = asyncio.create_task(listen(
-        DSN, "(to_agent='owner' OR to_agent LIKE 'wa-%')", deliver, on_step,
+        DSN, CLAIM, deliver, on_step,
         on_idle=witness.tick))
     yield
     task.cancel()

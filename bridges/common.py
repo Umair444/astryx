@@ -47,6 +47,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(REPO / "src"))   # astryx.config/paths: the ONE resolver, this bridge's own tree (plan-11324 S3a)
 from astryx import config, paths  # noqa: E402
+from astryx.core import channels  # noqa: E402  the one channel table: a link reply names its channel's thread and title
 from .routing import Routes, read_table, resolve  # noqa: E402,F401 — the one route resolver (plan-11860 E2)
 ESTATE = paths.estate(__file__)          # the org's estate: this checkout on one org, the HOME on several
 MEDIA_DIR = ESTATE / "media"
@@ -93,6 +94,66 @@ def env(key: str, default: str = "") -> str:
         except LookupError:
             return default
     return config.get(key, default, f)
+
+
+async def identity_of(pool, channel: str, account, fallback: str, route: dict | None = None) -> str:
+    """THE one minter of a sender's wire name (identity-channels P1, owner 11-15 "one identity per person"): the
+    person the (channel, account) handle is linked to, else `fallback`, the bridge's own name for an unlinked sender
+    (wa-<digits>, tg-<id>, …), so nothing changes for anyone unlinked. On a CLOSED `route` a first-seen stranger is not
+    recorded (medic 12635): only who it is matters there. The owner is the identity `owner`, whose handles
+    are the owner's own accounts: that replaced each route's trusted_* list. Schema: identity_who (schema.sql)."""
+    try:
+        return await pool.fetchval("SELECT identity_who($1, $2, $3, $4)", channel, str(account), fallback,
+                                   bool(route is None or route.get("open"))) or fallback
+    except Exception as e:  # noqa: BLE001 — loud: the owner reads as a stranger until it is fixed
+        print(f"{channel}: identity_who FAILED ({type(e).__name__}: {str(e)[:120]}); {fallback} as minted", flush=True)
+        return fallback
+
+
+async def connection(pool, channel: str, chat: str) -> dict | None:
+    """An agent's CONNECTION for this chat (connect(), the `route` table), as a route row the bridge reads like any:
+    open (the person reaches the agent), replies only (no live steps to a colleague). None: no live connection. A
+    message from the chat is activity: the connection lives on for its `idle` from now. Only where the owner's routes
+    file has no route for the chat (his routes win: see the callers)."""
+    try:
+        r = await pool.fetchrow("UPDATE route SET expires_at = now() + idle WHERE channel = $1 AND chat = $2 "
+                                "AND expires_at > now() RETURNING id, agent, purpose, person", channel, str(chat))
+    except Exception as e:  # noqa: BLE001 — loud, and no connection: the chat stays unrouted, as before
+        print(f"{channel}: connection lookup FAILED ({type(e).__name__}); unrouted", flush=True)
+        return None
+    if r is None:
+        return None
+    return {"chat": str(chat), "agent": r["agent"], "enabled": True, "open": True, "show": "replies",
+            "connection": r["id"], "purpose": r["purpose"], "person": r["person"]}
+
+
+YES = re.compile(r"^\s*(yes|y|haan|ha|ji)\s*[.!]*\s*$", re.I)
+
+
+async def link_reply(pool, channel: str, route: dict, account: str, text: str) -> bool:
+    """A connection opened to LINK this account (connect(action=link), or a member adding their number on the web): its
+    YES links the account to the person and ends the row; the asker and the person are told. True when handled (the
+    bridge stops there); anything else is an ordinary message to the connection's agent."""
+    if route.get("purpose") != "link" or not YES.match(text or ""):
+        return False
+    person, agent = route["person"], route["agent"]
+    try:
+        async with pool.acquire() as c, c.transaction():
+            asker = await c.fetchval("DELETE FROM route WHERE id = $1 RETURNING opened_by", route["connection"])
+            if person == "owner" and asker == "owner":      # the owner adding his own account (an owner_call opened it)
+                await c.fetchval("SELECT identity_own($1, $2)", channel, str(account))
+            else:                                            # anyone else: identity_link, which never reaches 'owner'
+                await c.fetchval("SELECT identity_link($1, $2, $3)", person, channel, str(account))
+            await c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES ($1,$2,NULL,'chat',$3)",
+                            "pulse", agent, f"[link] {channel} account confirmed by its holder: now linked to {person} "
+                            f"(asked by {asker}). Their messages on {channel} arrive as {person}.")
+            await c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES ($1,$2,$3,'chat',$4)",
+                            agent, person, f"{channels.BY_NAME[channel].thread}:{route['chat']}",
+                            f"Linked: this {channels.BY_NAME[channel].title} account is now part of your astryx account {person}.")
+    except Exception as e:  # noqa: BLE001 — refused (already someone else's) or failed: the agent hears it as a message
+        print(f"{channel}: link of connection {route.get('connection')} REFUSED ({str(e).splitlines()[0][:120]})", flush=True)
+        return False
+    return True
 
 
 def load_routes(path: Path) -> Routes:

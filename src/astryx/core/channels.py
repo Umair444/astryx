@@ -34,7 +34,6 @@ class Channel:
     connect: bool = True      # the owner connects it from the channel screen and `astryx connect`
     org: str = ""             # the from_org its bridge stamps ("" = its name); reserved, so no peer can pose as it
     owner_rows: bool = True   # its bridge delivers rows addressed to the owner on its threads (owner_surfaces)
-    trusted_key: str = "trusted_ids"   # a route's field naming the senders it trusts
     numbers: bool = False     # its people are phone numbers: found by number, shown as +<digits>
     steps: tuple[str, ...] = ()   # how the owner gets its token, shown on the channel screen
 
@@ -46,7 +45,7 @@ class Channel:
 CHANNELS: tuple[Channel, ...] = (
     Channel("whatsapp", "WhatsApp", person="wa", thread="wa", group=r".+@g\.us", dm=r".+@(s\.whatsapp\.net|lid)",
             secret_key="WA_WEBHOOK_SECRET", secret_ask="WhatsApp webhook secret (press Enter to generate one)",
-            trusted_key="trusted_jids", numbers=True),
+            numbers=True),
     Channel("telegram", "Telegram", person="tg", thread="tg", group=r"-\d+", dm=r"\d+",
             token_key="TG_BOT_TOKEN", token_ask="Telegram bot token (from @BotFather)",
             token_shape=r"\d{5,16}:[A-Za-z0-9_-]{30,64}",

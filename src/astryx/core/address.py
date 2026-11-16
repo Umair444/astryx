@@ -62,6 +62,18 @@ def person_sql(col: str, params: bool = True, org: str | None = None) -> str:
     return who if org is None else f"({who} AND NOT EXISTS (SELECT 1 FROM peers p WHERE p.org = {org}))"
 
 
+def reaches_sql(channel: str) -> str:
+    """SQL (no bind parameters): a row to one of our PEOPLE on `channel`'s threads. That channel's bridge delivers it
+    whatever the name's own prefix: a linked person writes and is answered under their person's name (identity-channels
+    P1: Faran's WhatsApp is cv-faran.2 on wa:), so a bridge claims by its THREAD, never by a name's prefix alone."""
+    return f"(thread LIKE '{channels.BY_NAME[channel].thread}:%' AND {person_sql('to_agent', params=False)})"
+
+
+def elsewhere_sql(channel: str) -> str:
+    """SQL: the row's thread belongs to ANOTHER channel (that bridge's reaches_sql delivers it, not this one)."""
+    return "(" + " OR ".join(f"coalesce(thread, '') LIKE '{c.thread}:%'" for c in channels.CHANNELS if c.name != channel) + ")"
+
+
 def surface_of(name: str) -> str | None:
     return next((cls for cls, rx, _, _ in SURFACES if rx.match(name)), None)
 
