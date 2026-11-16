@@ -128,7 +128,7 @@ class WhatsAppProvider(ChannelProvider):
                 number=c.get("phone") or None,
                 raw=c))
         n = _number(query)
-        if n and not any(c.number == n or c.handle.endswith(f":{n}@s.whatsapp.net") for c in out):
+        if n and not any((c.number or "").lstrip("+") == n or c.handle.endswith(f":{n}@s.whatsapp.net") for c in out):   # an @lid contact saved as "+92…" too (medic 12615)
             out.append(await self._by_number(n))
         return out
 
