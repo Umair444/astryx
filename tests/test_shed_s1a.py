@@ -95,7 +95,7 @@ def _feel(conn, relearn_after_h=None):
     if getattr(conn, "gauge_raises", False):
         raise RuntimeError("gauge unreadable")
     pct = getattr(conn, "pct", None)
-    return {"known": False} if pct is None else {"known": True, "tired": 1.2 if pct >= 85 else 0.3}
+    return {"known": False} if pct is None else {"known": True, "windows": {"h5": {"tired": 1.2 if pct >= 85 else 0.3}}}
 
 
 _energy.feel = _feel

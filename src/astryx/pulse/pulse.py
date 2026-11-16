@@ -296,20 +296,25 @@ def evaluate(t: dict, conn) -> tuple[str | None, dict, list[dict]]:
     raise ValueError(f"unknown kind {kind!r}")   # a row this can't evaluate is said, never a guard that silently can't fire
 
 
+def held_now(f: dict) -> bool | None:
+    """PURE. From the org's feeling (astryx.econ.energy.feel), is it too tired for wakes that aren't for survival? The
+    hold is a SURVIVAL BRAKE: don't spend the last of the 5-hour window on what can wait. So it reads the 5-hour window
+    alone: True when, at the usual pace, it runs out before it resets (tired >= 1). The week's forecast is a planning
+    signal (the mind, the [energy] line), never a reason to silence the org: right after a weekly reset it reads above 1
+    for days (medic 12383). None when unknown (no reading, a stale one): unknown delivers."""
+    w = (f.get("windows") or {}).get("h5") if f.get("known") else None
+    return None if w is None else w["tired"] >= 1.0
+
+
 def pressure(conn) -> bool | None:
-    """Is the org too tired for wakes that aren't for survival? The ORG'S ONE FEELING (astryx.econ.energy, owner 11-15:
-    "nothing should be a switch … humans get tired"), not a gauge line of its own: True when, at the usual pace, the
-    tighter limit runs out before it resets (tired >= 1: there isn't energy for the usual work, so what can wait,
-    waits). None when the feeling is unknown: no reading, or a reading too old to say anything of now; callers treat
-    None as NOT tired (fail-open: unknown delivers). A reading taken before its window reset is a fresh window, so a
-    quiet night after a hot evening can never hold the morning's wakes (11-16: an evening's 98% held every wake for
-    nine hours past the reset). The pace is relearned here at most hourly: the pulse is the org's one clock."""
+    """The tick's one read of held_now() (fail-open: an error is unknown). A reading taken before its window reset is a
+    fresh window (energy.window), so a quiet night after a hot evening can never hold the morning's wakes (11-16: an
+    evening's 98% held every wake for nine hours past the reset). The pace is relearned here at most hourly."""
     try:
         from astryx.econ import energy
-        f = energy.feel(conn, relearn_after_h=1.0)
+        return held_now(energy.feel(conn, relearn_after_h=1.0))
     except Exception:
         return None
-    return None if not f.get("known") else f["tired"] >= 1.0
 
 
 _UNREAD = object()   # "no caller read the gauge": distinct from pressure()'s None (no gauge), which is itself a reading

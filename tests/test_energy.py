@@ -75,6 +75,18 @@ print("E5 unknown is not rested")
 arm("E5 no gauge reading: no feeling", E.window(None, None, 5, RATE, HOURLY, NOW) is None)
 arm("E5 no learned rate: no feeling", E.window(50, None, 5, None, HOURLY, NOW) is None)
 
+print("E9 the pulse's hold reads the 5-hour window only (medic 12383)")
+from astryx.pulse import pulse as P  # noqa: E402
+fresh_week = E.window(0, iso(NOW + timedelta(days=7)), 168, 1e-6, [6.7e5] * 24, NOW)        # the usual week needs ~112%
+easy_h5 = E.window(12, iso(NOW + timedelta(hours=4)), 5, RATE, HOURLY, NOW)
+arm("E9 a fresh week whose usual pace needs 112%, the 5 hours at 12%: tired by the week, and nothing held",
+    fresh_week["tired"] > 1 and P.held_now({"known": True, "windows": {"h5": easy_h5, "d7": fresh_week}}) is False, (fresh_week["tired"], easy_h5["tired"]))
+hot_h5 = E.window(95, iso(NOW.replace(hour=6) + timedelta(hours=2)), 5, RATE, HOURLY, NOW.replace(hour=6))
+arm("E9 the 5 hours at 95% with 2 h to go and a pace needing more than is left: held",
+    hot_h5["need"] > 5 and P.held_now({"known": True, "windows": {"h5": hot_h5}}) is True, hot_h5)
+arm("E9 unknown, or no 5-hour reading: nothing held (unknown delivers)",
+    P.held_now({"known": False}) is None and P.held_now({"known": True, "windows": {"d7": fresh_week}}) is None)
+
 print("E7 the line")
 f = {"known": True, "say": "rested · the week: 74% left", "fact": "the week: 74% left"}
 p = {"usual": {"a": 100_000.0}, "rate": {"d7": 5e-7}}
