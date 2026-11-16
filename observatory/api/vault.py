@@ -194,6 +194,11 @@ def _signin_start(name: str) -> dict:
                             start_new_session=True, close_fds=True)
     _os.close(slave)
     _SIGNIN["now"] = {"name": name, "proc": proc, "fd": master, "home": home, "started": _time.time()}
+    import threading
+    mine = _SIGNIN["now"]
+    t = threading.Timer(SIGNIN_MAX_S, lambda: _SIGNIN.get("now") is mine and _signin_end())   # abandoned: ended, not left
+    t.daemon = True
+    t.start()
     url = _read_until(master, _URL, 30)
     if not url:
         _signin_end()
