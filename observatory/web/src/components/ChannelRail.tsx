@@ -4,7 +4,7 @@ import { api, displayName } from '../api'
 import type { ContactMatch } from '../types'
 import { BRAND } from '../ui/brands'
 import { ChannelMark } from '../ui/glyphs'
-import { arm, DRAG_MIME, dismissToast, homeChat, patchChat, refOf, unrouteChat, useRoutes, type ChatRef, type Show } from '../ui/routes'
+import { arm, DRAG_MIME, dismissToast, homeChat, kindOf, patchChat, refOf, unrouteChat, useRoutes, type ChatRef, type Show } from '../ui/routes'
 import AgentFace from './AgentFace'
 import ChannelConnect, { useChannels, type ChannelState } from './ChannelConnect'
 
@@ -17,7 +17,6 @@ import ChannelConnect, { useChannels, type ChannelState } from './ChannelConnect
    validated, its diff in the toast, undo). Owner-only, as that write is. It replaces the floor's bottom dock and the
    Wire tab's Wiring. */
 
-const CONNECTABLE = ['whatsapp', 'telegram', 'discord']   // the channels this screen can connect (ChannelConnect's flows)
 const SHOWS: { v: Show; label: string; hint: string }[] = [
   { v: 'steps', label: 'Steps', hint: 'live steps while it works, then the reply' },
   { v: 'replies', label: 'Replies', hint: 'the reply only' },
@@ -65,7 +64,7 @@ export default function ChannelRail() {
           const title = BRAND[s.channel]?.title ?? s.channel
           // a warning (and the connect steps) only where the state is KNOWN to need a step: another bridge whose health
           // the server can't read ("unknown": no declared port) is not accused of being down; WhatsApp's unknown still warns
-          const needs = !s.fixed && s.state !== 'connected' && !(s.state === 'unknown' && !CONNECTABLE.includes(s.channel))
+          const needs = !s.fixed && s.state !== 'connected' && !(s.state === 'unknown' && !s.connect)
           if (shut) return (
             <button key={s.channel} onClick={() => { setShut(() => false); setOpen(s.channel) }} title={title} className="relative self-center my-0.5">
               <ChannelMark channel={s.channel} size={26} ring="transparent" />
@@ -126,7 +125,7 @@ export default function ChannelRail() {
                         {chats.map((c) => <ChatRow key={c.chat} c={c} />)}
                         {chats.length === 0 && <li className="text-[12px] text-ink-mute px-1 py-2">No chats routed yet. Find one below.</li>}
                       </ul>
-                      <ContactFind channel={s.channel} known={new Map(chats.map((c) => [c.chat, c.agent]))} />
+                      <ContactFind channel={s.channel} numbers={!!s.numbers} known={new Map(chats.map((c) => [c.chat, c.agent]))} />
                     </>
                   )}
                 </motion.div>
@@ -225,7 +224,7 @@ function ChatRow({ c }: { c: ChatRef }) {
   )
 }
 
-function ContactFind({ channel, known }: { channel: string; known: Map<string, string | null | undefined> }) {
+function ContactFind({ channel, numbers, known }: { channel: string; numbers: boolean; known: Map<string, string | null | undefined> }) {
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<ContactMatch[] | null>(null)
   const [busy, setBusy] = useState(false)
@@ -243,7 +242,7 @@ function ContactFind({ channel, known }: { channel: string; known: Map<string, s
   return (
     <div className="mt-2 pt-2 border-t border-line">
       <form onSubmit={(e) => { e.preventDefault(); find() }} className="flex gap-1.5">
-        <input value={q} onChange={(e) => setQ(e.currentTarget.value)} placeholder="Find a chat by name"
+        <input value={q} onChange={(e) => setQ(e.currentTarget.value)} placeholder={numbers ? 'Find a chat by name or +number' : 'Find a chat by name'}
           aria-label={`Find a ${BRAND[channel].title} chat`}
           className="flex-1 min-w-0 rounded-lg bg-deck-3/70 border border-line px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-mute outline-none focus:border-cyan/60" />
         <button disabled={busy || !q.trim()} className="rounded-lg px-3 text-[12.5px] text-ink bg-deck-3 border border-line hover:border-line-2 disabled:opacity-40">
@@ -266,7 +265,7 @@ function ContactFind({ channel, known }: { channel: string; known: Map<string, s
           {hits.filter((m) => m.registered === null && !known.has(m.native)).map((m) => (
             <li key={`unchecked-${m.native}`} className="px-2 text-[11.5px] text-ink-mute">{BRAND[channel].title} couldn't be asked whether {m.label} has an account; add it and the first message will tell.</li>
           ))}
-          {hits.filter((m) => m.registered !== false && !known.has(m.native)).map((m) => <ChatRow key={m.native} c={{ channel, chat: m.native, label: m.label, kind: m.native.endsWith('@g.us') || m.native.startsWith('-') ? 'group' : 'person', agent: null, enabled: true, show: 'steps' }} />)}
+          {hits.filter((m) => m.registered !== false && !known.has(m.native)).map((m) => <ChatRow key={m.native} c={{ channel, chat: m.native, label: m.label, kind: kindOf(channel, m.native), agent: null, enabled: true, show: 'steps' }} />)}
         </ul>
       )}
     </div>

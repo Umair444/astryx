@@ -103,25 +103,12 @@ def releasable(lbl: frozenset, aud) -> bool:
 
 # ── audience ──────────────────────────────────────────────────────────────────────────────────────────────────────
 def chat_kind(channel: str, chat: str) -> str:
-    """'dm' | 'group' | 'unknown', from the chat id's own shape. WhatsApp: a group jid ends @g.us, a person's in
-    @s.whatsapp.net or @lid. Telegram: a positive id is a user's private chat, a negative one a group or channel
-    (S0 measured the live route's getChat type 'private' with a positive id). Discord routes are channels: groups."""
-    chat = str(chat or "")
-    if channel == "whatsapp":
-        if chat.endswith("@g.us"):
-            return "group"
-        if chat.endswith("@s.whatsapp.net") or chat.endswith("@lid"):
-            return "dm"
-        return "unknown"
-    if channel == "telegram":
-        if re.fullmatch(r"-\d+", chat):
-            return "group"
-        if re.fullmatch(r"\d+", chat):
-            return "dm"
-        return "unknown"
-    if channel == "discord":
-        return "group"
-    return "unknown"
+    """'dm' | 'group' | 'unknown', from the chat id's own shape: the one channel table's rule (core/channels.py).
+    WhatsApp: a group jid ends @g.us, a person's in @s.whatsapp.net or @lid. Telegram: a positive id is a user's private
+    chat, a negative one a group or channel (S0 measured the live route's getChat type 'private' with a positive id).
+    Discord routes are channels: groups."""
+    from astryx.core.channels import chat_kind as kind
+    return kind(channel, chat)
 
 
 def audience(channel: str, route: dict, members=None):

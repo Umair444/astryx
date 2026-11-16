@@ -35,9 +35,9 @@ from pathlib import Path
 
 REPO = repo_root(__file__)
 KEEP = ("HOME", "USER", "LOGNAME", "PATH", "PGPASSFILE")
-SERVICES = ("astryx-observatory", "astryx-gateway", "astryx-whatsapp", "astryx-telegram",
-            "astryx-discord", "astryx-senses", "astryx-geoloc", "astryx-growbot",
-            "genesis-observer")
+from astryx.core import channels  # noqa: E402  every channel's bridge is a unit astryx-<name>
+SERVICES = ("astryx-observatory", "astryx-gateway", *(f"astryx-{c.name}" for c in channels.CHANNELS),
+            "astryx-senses", "astryx-geoloc", "astryx-growbot", "genesis-observer")
 DSN_FILES = (paths.estate(__file__) / ".env", Path.home() / "genesis/services/observer/.env")
 
 

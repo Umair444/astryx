@@ -523,6 +523,9 @@ export interface ChannelRoutes {
   trusted_key: 'trusted_jids' | 'trusted_ids'
   etag: string          // the file's sha256: the PUT's If-Match (plan-11860 E4)
   problems: string[]    // the one validator's verdict on the table as it stands (E2)
+  group: string         // the channel's rules (core/channels.py): a chat id that is a group (regex, whole id)
+  dm: string
+  numbers: boolean      // its people are phone numbers
 }
 
 /* PUT /api/wire/routes/<channel> — the change as the bridges will see it */

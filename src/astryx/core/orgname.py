@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import re
 
+from astryx.core import channels
+
 # Hostname-shaped and lowercase. Also, and not incidentally, this excludes newlines,
 # quotes, angle brackets and control characters — an org name that could carry those
 # could break out of a one-line render and forge a second wire header inside a body.
@@ -31,8 +33,8 @@ ORG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")
 # canvas), and the observatory's anonymous rule shows a row whose org is ANY peer —
 # whatever its status, by ruling. So a stranger introducing itself as "whatsapp" would
 # have published the owner's own channel traffic, body and all (seed, 2026-10-09, found
-# while adding canvas as a surface). A new surface adds its name here.
-RESERVED_ORGS = frozenset({"local", "whatsapp", "telegram", "discord", "canvas", "owner"})
+# while adding canvas as a surface). A new channel is reserved by its row in core/channels.py.
+RESERVED_ORGS = frozenset({"local", "owner", *(c.stamp for c in channels.CHANNELS)})   # every channel's stamp (core/channels.py)
 
 # INTERNAL is a DIFFERENT question from RESERVED, and conflating them broke a second consumer. RESERVED
 # answers "which names may a peer never claim" (the federation door; the owner's surfaces are "us" there).
