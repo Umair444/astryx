@@ -14,9 +14,8 @@ alone:
   grant/revoke(dsn, …)   through astryx.cogauth.grant/revoke, THE one writer of a row (D8), in one transaction that
                          locks the table and judges the END STATE: an org with members and no whole-org owner is
                          refused (LastOwner) on either shape; on the tree shape the table's trigger says so too
-  sender_tags(pool, uid) the wire names a uid's own messages carry, for /api/admin/activity. Today none is recorded
-                         (POST /api/messages writes 'owner'; the "tag who asked" slice is not built): the empty list
-                         means "not attributed", never zero
+  sender_tags(pool, uid) the wire names a uid's own messages carry, for /api/admin/activity: 'owner' for an owner
+                         account, else its cv-<label>.<n> handles (who-asked, 11-13)
 
 asyncpg serves the reads (the backend's pool); cogauth is sync psycopg, so a write opens its own connection to the
 org's DSN in a thread. The org's DSN is the backend's own; nothing here reaches another org.
@@ -135,10 +134,14 @@ async def revoke(dsn: str, uid: str, node: str | None = None) -> bool:
 
 
 async def sender_tags(pool, uid: str) -> list[str]:
-    """The from_agent values that are this uid's own messages. A `principals` row's handle when that table exists
-    (3f8d5d1's shape: the primary owner's is `owner`); else none: the wire does not yet record which signed-in user
-    sent a message."""
-    if not await pool.fetchval("SELECT to_regclass('principals') IS NOT NULL"):
+    """The from_agent values this uid's own messages carry (main.py's wire_handle): 'owner' for an owner account, else
+    member_handle's cv-<label>.<n> under every label it has been written with (the label is display only; the uid,
+    after the '.', decides). Empty for a sub with no uid."""
+    n, at, _ = str(uid).partition("@")
+    if not at or not n.isdigit():
         return []
-    h = await pool.fetchval("SELECT handle FROM principals WHERE uid = $1", uid)
-    return [h] if h else []
+    if await role_of(pool, uid) == "owner":
+        return ["owner"]
+    rows = await pool.fetch("SELECT DISTINCT from_agent FROM messages WHERE from_org = 'local' AND from_agent ~ $1",
+                            rf"^cv-[a-z0-9_-]*\.{int(n)}$")
+    return [r["from_agent"] for r in rows]

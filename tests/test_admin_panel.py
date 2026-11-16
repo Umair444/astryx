@@ -27,7 +27,8 @@ observatory/api/members.py is exercised on both. Dummy passwords and keys only; 
      403 (sessions are cog-wide), and an admin can't reset an owner
   M9 LINKS EXPIRE: past `expires` /auth/link and /auth/accept are 410; an invite whose inviter has since lost the role
      is refused at accept (409) and leaves no account behind and the link open
-  M10 ACTIVITY: counts only; with no attribution on the wire it says so (attributed false), never a zero
+  M10 ACTIVITY: counts only; a member's own chat messages (its who-asked handle) count as its own, another
+      account's never, and nothing written reads 0
   M11 THE EMAIL CODE AT ACCEPT (owner 11-15), on MAILF (the same cog and store, its .env naming a loopback SMTP sink):
       a NEW email accepting an invite → 202 {code: sent}, one mail to it, no account, and the link still open; a wrong
       code → 400 {field: code}, the link still open; the right one → 200, signed in with the invited role; an
@@ -549,9 +550,18 @@ def run(t, da, dbb, procs):
 
     print("\nM10 ACTIVITY")
     st, _, aj = call(F, f"/o/{oa}/api/admin/activity?uid={U['mem']}", headers=as_("owner"))
-    check("activity: 200, counts only, and with no attribution on the wire it says so (attributed false, null counts)",
-          st == 200 and aj.get("attributed") is False and aj.get("messages") is None and "body" not in json.dumps(aj),
-          f"{st} {aj}")
+    check("activity: 200, counts only, and an account that has written nothing reads 0, never a blank",
+          st == 200 and aj.get("messages") == 0 and aj.get("threads") == 0 and "body" not in json.dumps(aj), f"{st} {aj}")
+    call(F, f"/o/{oa}/api/admin/members", "PUT", {"uid": U["mem"], "role": "member"}, headers=as_("owner"))
+    _, S["mem"] = login("mem")                      # M7 signed it out everywhere
+    sent = [call(F, f"/o/{oa}/api/messages", "POST", {"to": "solo", "body": f"hello {i}", "thread": f"chat:m10-{i % 2}"},
+                 headers=as_("mem"))[0] for i in range(3)]
+    st, _, aj = call(F, f"/o/{oa}/api/admin/activity?uid={U['mem']}", headers=as_("owner"))
+    check("...a member's own messages, written through the chat as its who-asked handle, are counted as its own "
+          "(3 messages, 2 threads; 11-16: the panel said the wire could not tell them apart)",
+          sent == [200] * 3 and st == 200 and aj.get("messages") == 3 and aj.get("threads") == 2, f"{sent} {st} {aj}")
+    st, _, aj = call(F, f"/o/{oa}/api/admin/activity?uid={U['adm']}", headers=as_("owner"))
+    check("...and another account's count does not take them", st == 200 and aj.get("messages") == 0, f"{st} {aj}")
 
 
     print("\nM11 THE EMAIL CODE AT ACCEPT")

@@ -84,7 +84,7 @@ export default function AdminView() {
   const [granting, setGranting] = useState<AdminUser | null>(null)
   const [confirm, setConfirm] = useState<{ title: string; body: ReactNode; verb: string; danger?: boolean; go: () => Promise<void> } | null>(null)
   const [shown, setShown] = useState<Shown | null>(null)
-  const [activity, setActivity] = useState<{ user: AdminUser; a: Activity | null } | null>(null)
+  const [activity, setActivity] = useState<{ user: AdminUser; a: Activity | null | false } | null>(null)
 
   const load = useCallback(async () => {
     if (!org) return
@@ -163,7 +163,7 @@ export default function AdminView() {
                         onActivity={async () => {
                           setActivity({ user: u, a: null })
                           const r = await orgCall(base, 'GET', `activity?uid=${encodeURIComponent(u.uid)}`)
-                          setActivity({ user: u, a: r.ok ? r.data : { attributed: false, messages: null, threads: null, last_message: null } })
+                          setActivity({ user: u, a: r.ok ? r.data : false })
                         }}
                         onReset={() => act(async () => {
                           const r = await adminReset(org, u.uid)
@@ -273,13 +273,12 @@ export default function AdminView() {
       </Modal>
       <LinkModal shown={shown} onClose={() => setShown(null)} />
       <Modal opened={!!activity} onClose={() => setActivity(null)} title={activity ? `Activity · ${activity.user.email ?? activity.user.uid}` : ''} centered radius="lg">
-        {activity && (activity.a === null ? <p className="text-[13px] text-ink-mute">Reading…</p> : (
+        {activity && (activity.a === null ? <p className="text-[13px] text-ink-mute">Reading…</p>
+          : activity.a === false ? <p className="text-[13px] text-bad">Couldn't read this account's activity. Close and open it again.</p> : (
           <div className="grid grid-cols-3 gap-3">
-            <Fact label="Messages sent" value={activity.a.attributed ? String(activity.a.messages ?? 0) : '—'} />
-            <Fact label="Threads" value={activity.a.attributed ? String(activity.a.threads ?? 0) : '—'} />
+            <Fact label="Messages sent" value={String(activity.a.messages)} />
+            <Fact label="Threads" value={String(activity.a.threads)} />
             <Fact label="Last sign-in" value={activity.user.last_session ? `${fmtAgo(activity.user.last_session)} ago` : 'never'} />
-            {!activity.a.attributed && <p className="col-span-3 text-[12.5px] text-ink-mute leading-relaxed">
-              The wire doesn't yet record which signed-in person sent a message, so their messages aren't counted apart from the owner's.</p>}
           </div>
         ))}
       </Modal>
@@ -287,7 +286,7 @@ export default function AdminView() {
   )
 }
 
-interface Activity { attributed: boolean; messages: number | null; threads: number | null; last_message: string | null }
+interface Activity { messages: number; threads: number; last_message: string | null }
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (
