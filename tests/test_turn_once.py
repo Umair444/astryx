@@ -57,6 +57,7 @@ def main():
             prompt = f'<channel source="astryx" from="wa-923000000000" thread="wa:923000000000@s.whatsapp.net" intent="chat" msg_id="{mid}">hi</channel>'
             tp.write_text(line("user", prompt, "2026-11-16T05:00:00Z") + line("assistant", [{"type": "text", "text": "Here is the answer."}], "2026-11-16T05:00:05Z", "a1", u))
             h = {"transcript_path": str(tp), "session_id": "s1"}
+            os.environ["ASTRYX_RUN_ON"] = "DeepSeek"          # spawn's stamp: the key this session runs on
             r1 = S.handle_stop(cur, "seed", h)
             tp.write_text(tp.read_text() + line("assistant", [{"type": "text", "text": "That message needs no answer from me."}], "2026-11-16T05:00:09Z", "a2", u))
             r2 = S.handle_stop(cur, "seed", {**h, "stop_hook_active": True})
@@ -66,6 +67,9 @@ def main():
             cur.execute("SELECT body FROM messages WHERE from_agent='seed' ORDER BY id")
             sent = [b for (b,) in cur.fetchall()]
             arm("T2 the first Stop auto-delivers the forgotten reply; the continuation delivers nothing", sent == ["Here is the answer."], sent)
+            cur.execute("SELECT run_on FROM turns WHERE agent='seed'")
+            arm("T3 the turn names the key its session ran on (turns.run_on, from ASTRYX_RUN_ON)", cur.fetchone() == ("DeepSeek",))
+            os.environ.pop("ASTRYX_RUN_ON", None)
         conn.rollback()
 
 

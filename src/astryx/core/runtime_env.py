@@ -141,9 +141,33 @@ def approved_budget(org: str, reg_env=None) -> int | None:
     return _positive(row[0]) if row else None
 
 
+def key_cap(agent: str) -> str | None:
+    """Why `agent` may NOT start today, or None. An agent on a metered key (an API key, astryx.core.vault) starts only
+    while that key has spent less than its daily cap (energy.spent: turns.run_on since the org's midnight): money leaves
+    the org per token, and the cap is the owner's signature on how much (local.md Economy; medic 12364 R4). A spend
+    that can't be read refuses too: unknown spend is never under the cap."""
+    from astryx.core import vault
+    name = connection(agent).get("credential")
+    e = vault.load(paths.estate(__file__)).get(name) if name else None
+    if not e or e["kind"] != "key":
+        return None
+    try:
+        import psycopg
+        from astryx.econ import energy
+        with psycopg.connect(config.dsn(paths.estate(__file__) / ".env"), connect_timeout=5) as c:
+            used = energy.spent(c, name)
+    except Exception as x:  # noqa: BLE001 — named by type only (a DSN can ride in a message)
+        return f"{name}'s spend today can't be read ({type(x).__name__}), so it isn't started on that key"
+    cap = e.get("cap_tokens_day") or 0
+    return None if used < cap else f"{name} has spent its daily cap ({used:,.0f} of {cap:,} tokens): it starts again after midnight"
+
+
 def budget_gate(agent: str, env: dict | None = None, reg_env=None) -> str:
-    """Why THIS org may spawn `agent` (one line), or NoBudget naming why not. See the block above."""
+    """Why THIS org may spawn `agent` (one line), or NoBudget naming why not. See the block above. A key at its daily
+    cap refuses on every host (key_cap); the token budget below is a cog's."""
     from astryx import orgs
+    if (capped := key_cap(agent)):
+        raise NoBudget(capped)
     if not orgs.multi(reg_env):
         return "one org on this host: no budget gate"
     home = paths.estate(__file__)
@@ -214,8 +238,8 @@ def _pairs(agent: str, entry: dict, env: dict) -> str:
             print(f"runtime_env: agent '{agent}': key '{cred}' is not in the vault or has no value in .env — "
                   "falling back to the org's login", file=sys.stderr)
             entry = {k: v for k, v in entry.items() if k != "credential"}
-        else:
-            return "".join(f", {json.dumps(k)}: {json.dumps(v)}" for k, v in got)
+        else:   # ASTRYX_RUN_ON: the key this session runs on, so its turns are counted against it (turns.run_on)
+            return "".join(f", {json.dumps(k)}: {json.dumps(v)}" for k, v in [*got, ("ASTRYX_RUN_ON", cred)])
     base_url = entry.get("base_url")
     if not base_url:
         login = org_login(env)                   # beneath the entry: the org's own credential, by NAME from its .env

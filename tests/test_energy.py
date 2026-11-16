@@ -177,6 +177,28 @@ def main():
             arm("E11 the pulse judges b by Second, a by the org, z (no reading) as unknown, which delivers",
                 P0.held_now(fb) is P0.held_now(own) and P0.held_now(fa) is P0.held_now(org) and P0.held_now(fz) is None,
                 (P0.held_now(fb), P0.held_now(own), P0.held_now(fa), P0.held_now(org)))
+            # E12 AN API KEY'S DAY (Harness and Keys): its one window is today against its daily cap, from turns.run_on
+            from astryx.pulse import pulse as P
+            _V.save(est, {**_V.load(est), "Metered": _V.entry("Metered", "deepseek", cap=10_000)})
+            real_estate = E.paths.estate
+            E.paths.estate = lambda f=None: est
+            try:
+                def spend(tok, when="now()"):
+                    c.execute(f"INSERT INTO turns (agent, started_at, ended_at, tokens_in, tokens_out, run_on) VALUES ('m', {when}, {when}, 0, %s, 'Metered')", (tok,))
+                spend(9_999_999, "now() - interval '2 days'")      # another day's spend is not today's
+                spend(4_000)
+                k = E.feel(c, relearn_after_h=None, credential="Metered")
+                arm("E12 a key feels its day: 40% of its cap used, today's spend only, refilled at the org's midnight",
+                    k.get("known") and k["survival"] == "day" and abs(k["windows"]["day"]["used"] - 40.0) < 1e-6
+                    and E._when(k["windows"]["day"]["resets_at"]) == E.midnight(datetime.now(timezone.utc)) + timedelta(days=1), k.get("windows"))
+                arm("E12 …under its cap with no usual hours: the pulse does not hold it", P.held_now(k) is False, k.get("windows"))
+                arm("E12 a login's survival window stays its 5 hours", E.feel(c, relearn_after_h=None, credential="Second").get("survival") == "h5")
+                spend(6_500)
+                k = E.feel(c, relearn_after_h=None, credential="Metered")
+                arm("E12 at its cap: spent, and the pulse holds its agents' wakes", k["word"] == "spent" and P.held_now(k) is True, (k.get("say"), k.get("windows")))
+                arm("E12 the key's own hours are learned (turns.run_on), apart from the org's", sum((E.learn(c).get("keys") or {}).get("Metered") or [0]) > 0)
+            finally:
+                E.paths.estate = real_estate
         from astryx.pulse import pulse as P
         fr = E.feel(c, relearn_after_h=None)
         arm("E6 98% read before its 5-hour reset, the reset now past: a fresh window, and the pulse holds nothing",

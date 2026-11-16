@@ -6,7 +6,7 @@ import AddKey from './AddKey'
 import ConnectionPicker from './ConnectionPicker'
 import type { Connection, Key, State } from './model'
 import { EVERYONE, harnessOf, keyOf, orgWord, useHarness } from './model'
-import { EnergyBar, HarnessChip, Mark, quiet } from './parts'
+import { EnergyBar, HarnessChip, Mark, SpendBar, quiet } from './parts'
 
 /* HARNESS AND KEYS (owner 11-16): what the org's agents can run on, and what each one does run on.
    Harnesses are the CLIs an agent's body runs in; keys are what it signs in or pays with; a connection puts an agent
@@ -108,6 +108,7 @@ function KeyRow({ k, title, sub, p, energy, users, onRenew, onRemoved }: {
         <div className={`text-[12px] truncate ${k && !k.has_value ? 'text-warn' : 'text-ink-mute'}`}>{sub}</div>
       </div>
       {energy !== undefined && <EnergyBar e={energy} />}
+      {k?.kind === 'key' && k.has_value && <SpendBar spent={k.spent_today ?? 0} cap={k.cap_tokens_day ?? 0} />}
       <span className="flex items-center -space-x-1.5 min-w-[60px]" title={users.map(displayName).join(', ') || 'no agent on it'}>
         {users.slice(0, 5).map((a) => <AgentFace key={a} name={a} size={22} />)}
         {users.length > 5 && <span className="pl-2.5 text-[11.5px] text-ink-mute">+{users.length - 5}</span>}

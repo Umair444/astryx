@@ -47,6 +47,21 @@ export function EnergyBar({ e, compact = false }: { e: Energy | null; compact?: 
   )
 }
 
+/** An API key's day: what its agents have used against its daily cap, refilled at the org's midnight. */
+export function SpendBar({ spent, cap, compact = false }: { spent: number; cap: number; compact?: boolean }) {
+  const pct = cap > 0 ? Math.min(100, Math.round((100 * spent) / cap)) : 100
+  const tone = pct >= 85 ? 'var(--t-bad)' : pct >= 65 ? 'var(--t-warn)' : 'var(--t-good)'
+  const words = pct >= 100 ? "today's cap is used up" : `${100 - pct}% of today's cap left`
+  return (
+    <span className="inline-flex items-center gap-2 min-w-0" title={`${Math.round(spent).toLocaleString()} of ${cap.toLocaleString()} tokens today · refills at midnight`}>
+      <span className="relative h-1.5 w-16 rounded-full overflow-hidden bg-[color-mix(in_srgb,var(--t-line)_70%,transparent)]">
+        <span className="absolute inset-y-0 left-0 rounded-full transition-[width] duration-700" style={{ width: `${100 - pct}%`, background: tone }} />
+      </span>
+      <span className="text-[12px] tabular-nums text-ink-dim whitespace-nowrap">{words}{compact || pct >= 100 ? '' : ' · refills at midnight'}</span>
+    </span>
+  )
+}
+
 export const field = 'w-full rounded-lg bg-transparent border border-line px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-mute outline-none focus:border-[color-mix(in_srgb,var(--t-accent)_55%,var(--t-line))]'
 export const quiet = 'rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-ink border border-line hover:border-line-2 disabled:opacity-40'
 

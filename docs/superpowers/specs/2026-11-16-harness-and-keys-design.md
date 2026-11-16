@@ -29,9 +29,16 @@ harness's logins, or they share a format. A new provider is one catalog row; a n
 ## Rules kept
 - Values never leave .env (no response, page, step or log); the server derives the env key; one .env writer.
 - A login is proved before it is stored (the sign-in flow is kept).
-- An API key is metered spend: it can be stored and checked now. CONNECTING one stays refused until its daily cap is
-  enforced (local.md Economy; medic 12468). Next: a metering gateway, one local proxy that counts tokens per key,
-  refuses at the cap, and is where routing and fallback land.
+- An API key is metered spend (local.md Economy; medic 12364 R4/R5, 12468). Putting an agent on one is the owner's
+  confirmed act (the picker asks once, naming the cap; a `runtime` step row names the key). Its daily cap holds three
+  ways, all from one ledger, turns.run_on (spawn stamps ASTRYX_RUN_ON into the session; the Stop hook writes it):
+  - energy: a key's one window is today (the org's midnight to the next) against its cap; its need is its own agents'
+    usual hours. `survival` names it, so the pulse's hold reads a key's day as it reads a login's 5 hours;
+  - spawn: runtime_env.key_cap refuses an agent on a key that has spent its cap (an unreadable spend refuses too);
+  - the page: each key shows what's left of today's cap.
+  Stated, not hidden: a session already running finishes its turn, and answers a direct message until it stops.
+- Later: a metering gateway (one local proxy per key) is the seam for routing and fallback, and for keeping the real
+  key out of agent homes (medic R1 b). It is a producer with its own liveness watch, so it is its own build.
 - A harness without a launcher is listed as coming: its keys can be stored, not connected.
 
 ## UI (Agents tab, owner only)

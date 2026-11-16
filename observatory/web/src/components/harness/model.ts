@@ -15,7 +15,7 @@ export interface Energy { h5: number | null; h5_reset: string | null; d7: number
 export interface Key {
   name: string; provider: string; kind: 'login' | 'key'; base_url?: string; format?: string
   models?: Record<string, string>; cap_tokens_day?: number; has_value: boolean; used_by: string[]
-  fits: string[]; why_not: Record<string, string | null>; energy: Energy | null
+  fits: string[]; why_not: Record<string, string | null>; energy: Energy | null; spent_today: number | null
 }
 export interface Connection { harness?: string; credential?: string; model?: string; effort?: string }
 export interface AgentRow { name: string; own: boolean; alive: boolean; connection: Connection }

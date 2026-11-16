@@ -128,10 +128,11 @@ fi
 # THE BUDGET GATE (cog-rebuild Phase 3): an org that is not the cog's primary spawns no resident without a token budget
 # (its .env's ASTRYX_ORG_BUDGET_TOKENS, or a cog admin's approval) and a login of its own, never the host owner's
 # ambient one. Before every side effect of a real spawn; one org, or the primary, passes as before. Any answer but
-# "yes" refuses: a gate that crashed is no permission (tests/test_signup.py G-arms).
+# "yes" refuses: a gate that crashed is no permission (tests/test_signup.py G-arms). On every host, an agent on an API
+# key that has spent its daily cap waits for the org's midnight (runtime_env.key_cap).
 if [ -z "$RENDER" ]; then
   GATE=$("$PY" "$ROOT/src/astryx/core/runtime_env.py" --gate "$AGENT") || {
-    echo "spawn: $AGENT not spawned: its org has no budget to run on (runtime_env said why above)" >&2; exit 1; }
+    echo "spawn: $AGENT not spawned: no budget or key to run on now (runtime_env said why above)" >&2; exit 1; }
 fi
 SESS="ax-$AGENT"
 HOME_D="$ORGH/homes/$AGENT"

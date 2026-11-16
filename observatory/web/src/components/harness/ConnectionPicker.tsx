@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { ApiError, apiSend, displayName } from '../../api'
 import type { Connection, State } from './model'
 import { EVERYONE, harnessOf, orgWord } from './model'
-import { EnergyBar, HarnessChip, Label, Mark, field, quiet } from './parts'
+import { EnergyBar, HarnessChip, Label, Mark, SpendBar, field, quiet } from './parts'
 
 /* ONE CONNECTION, one picker: which harness the agent runs in, which key it runs on, which model. Only what fits is
    offered (the server's `fits`); what fits but can't be used yet says why. Used by the Agents tab's list and by an
@@ -28,15 +28,22 @@ export default function ConnectionPicker({ s, agent, onSaved, onCancel }: {
   const key = fitting.find((k) => k.name === cred) ?? null
   const models = key ? s.providers[key.provider]?.models ?? [] : s.providers.claude?.models ?? []
 
-  async function save() {
+  const [billing, setBilling] = useState<string | null>(null)   // an API key asks once before it bills: the server's words
+
+  async function save(confirmBilling = false) {
     setBusy(true); setErr(null)
     // its own always names its harness: "its own, on the org's login" must never read as "same as everyone else" (an
     // empty connection), or it would silently follow everyone else's key
     const body: Connection = own ? { harness, credential: cred, model, effort } : {}
     try {
-      const r = await apiSend<State & { applies: string }>('PUT', `/connections/${encodeURIComponent(agent)}`, body)
+      const r = await apiSend<State & { applies: string }>('PUT', `/connections/${encodeURIComponent(agent)}`,
+        { ...body, confirm_billing: confirmBilling })
+      setBilling(null)
       onSaved(r, r.applies)
-    } catch (e) { setErr(e instanceof ApiError ? e.message : String(e)) }
+    } catch (e) {
+      if (e instanceof ApiError && e.data?.needs_billing) setBilling(e.message)
+      else setErr(e instanceof ApiError ? e.message : String(e))
+    }
     setBusy(false)
   }
 
@@ -90,6 +97,7 @@ export default function ConnectionPicker({ s, agent, onSaved, onCancel }: {
                     <span className="block text-[11.5px] text-ink-mute truncate">{why ?? s.providers[k.provider]?.name}</span>
                   </span>
                   {k.kind === 'login' && !why && <span className="hidden sm:inline-flex"><EnergyBar e={k.energy} compact /></span>}
+                  {k.kind === 'key' && !why && <span className="hidden sm:inline-flex"><SpendBar spent={k.spent_today ?? 0} cap={k.cap_tokens_day ?? 0} compact /></span>}
                 </button>
               )
             })}
@@ -114,6 +122,16 @@ export default function ConnectionPicker({ s, agent, onSaved, onCancel }: {
 
       {!own && <p className="text-[12.5px] text-ink-dim">{displayName(agent)} runs on whatever everyone else does, and follows it when that changes.</p>}
 
+      {billing && (
+        <div className="rounded-xl border border-[color-mix(in_srgb,var(--t-warn)_45%,var(--t-line))] bg-[color-mix(in_srgb,var(--t-warn)_8%,transparent)] p-3 flex flex-col gap-2" role="alert">
+          <p className="text-[12.5px] text-ink">{billing}. Once it reaches its cap, its agents aren't woken or started on it again until midnight.</p>
+          <div className="flex gap-2">
+            <button type="button" disabled={busy} onClick={() => void save(true)} className="ax-action rounded-lg px-3.5 py-1.5 text-[12.5px] disabled:opacity-40">
+              {busy ? 'Saving…' : 'Allow the spend and save'}</button>
+            <button type="button" onClick={() => setBilling(null)} className={`${quiet} border-transparent text-ink-dim`}>Not now</button>
+          </div>
+        </div>
+      )}
       {err && <div className="text-[12px] text-bad" role="alert">{err}</div>}
       <div className="flex items-center gap-2">
         <button disabled={busy} className="ax-action rounded-lg px-3.5 py-1.5 text-[12.5px] disabled:opacity-40">{busy ? 'Saving…' : 'Save'}</button>

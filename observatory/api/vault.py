@@ -11,8 +11,8 @@ docs/superpowers/specs/2026-11-16-harness-and-keys-design.md). Owner-only, every
 
 A value goes to .env under the key the server derives from the name (vault.env_key), through the one locked writer
 (config.set_env), and is never echoed, logged or stored anywhere else. What fits what is the catalog's
-(astryx.core.catalog), never decided here. An API key is metered spend: it can be stored and checked, and is connected
-once its daily cap is enforced (medic 12468; local.md Economy).
+(astryx.core.catalog), never decided here. An API key is metered spend: connecting an agent to one is the owner's
+confirmed act (confirm_billing), and its daily cap holds: runtime_env.key_cap at spawn, energy (its day) at the pulse.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ import json
 import os
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -34,6 +35,7 @@ from observatory.api import hostfile  # noqa: E402
 from astryx.core import catalog as C  # noqa: E402
 from astryx.core import runtime_env as RE  # noqa: E402
 from astryx.core import vault as V  # noqa: E402
+from astryx.econ import energy as E  # noqa: E402
 
 router = APIRouter()
 _owner = _pool = _roster = _alive = None
@@ -75,8 +77,8 @@ def _usable(e: dict, harness: dict, has_value: bool, cat: dict) -> str | None:
         return f"{harness['name']} can't use {cat[e['provider']]['name']}"
     if not has_value:
         return "it has no value yet"
-    if cat[e["provider"]]["billing"] == "metered":
-        return "an API key is connected once its daily spend cap is enforced (coming next)"
+    if cat[e["provider"]]["billing"] == "metered" and not e.get("cap_tokens_day"):
+        return "an API key needs a daily cap before an agent runs on it"
     return None
 
 
@@ -99,6 +101,16 @@ async def _energy(names: list) -> dict:
                               "d7_reset": r["seven_day_reset"], "age_s": r["age"]} for r in rows}
 
 
+async def _spent(names: list) -> dict:
+    """{key: billable tokens its agents ran on it today} (energy.spent's sum, for every key in one read)."""
+    if not names or _pool is None or _pool() is None:
+        return {}
+    rows = await _pool().fetch(f"SELECT run_on, coalesce(sum({E.BILL}), 0)::float AS t FROM turns "
+                               "WHERE run_on = ANY($1::text[]) AND started_at >= $2 GROUP BY run_on",
+                               names, E.midnight(datetime.now(timezone.utc)))
+    return {r["run_on"]: r["t"] for r in rows}
+
+
 async def _view() -> dict:
     def read():
         env, vault, rt = config.read_env(ESTATE / ".env"), V.load(ESTATE), _runtime()
@@ -106,13 +118,15 @@ async def _view() -> dict:
     env, vault, rt, cat, rows, org = await asyncio.to_thread(read)
     uses = V.used_by(rt)
     energy = await _energy([n for n, e in vault.items() if e["kind"] == "login"])
+    spend = await _spent([n for n, e in vault.items() if e["kind"] == "key"])
     keys = []
     for n, e in sorted(vault.items()):
         has = bool(env.get(V.PREFIX + V.slug(n)))
         keys.append({"name": n, **e, "has_value": has, "used_by": uses.get(n, []),
                      "fits": [h for h, r in rows.items() if C.fits(r, e["provider"], e, cat)],
                      "why_not": {h: _usable(e, r, has, cat) for h, r in rows.items() if C.fits(r, e["provider"], e, cat)},
-                     "energy": energy.get(n) if e["kind"] == "login" else None})
+                     "energy": energy.get(n) if e["kind"] == "login" else None,
+                     "spent_today": spend.get(n, 0.0) if e["kind"] == "key" else None})
     roster = sorted(_roster()) if _roster else []
     alive = _alive() if _alive else set()
     return {"harnesses": _harnesses(cat), "providers": cat, "keys": keys,
@@ -201,6 +215,7 @@ class Connection(BaseModel):
     credential: str = ""
     model: str = ""
     effort: str = ""
+    confirm_billing: bool = False      # putting an agent on an API key is the owner's signed spend (local.md Economy)
 
 
 EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
@@ -214,7 +229,7 @@ async def connection_put(agent: str, body: Connection, request: Request):
         return d
     if agent != "*" and agent not in (_roster() if _roster else set()):
         return _err("no such agent", 404)
-    c = {k: v.strip() for k, v in body.model_dump().items() if v and v.strip()}
+    c = {k: v.strip() for k, v in body.model_dump().items() if isinstance(v, str) and v.strip()}
 
     def run():
         rows, cat, vault = C.harnesses(), C.providers(), V.load(ESTATE)
@@ -228,6 +243,10 @@ async def connection_put(agent: str, body: Connection, request: Request):
             has = bool(config.read_env(ESTATE / ".env").get(V.PREFIX + V.slug(c["credential"])))
             if (why := _usable(e, rows[h], has, cat)):
                 return _err(f"{c['credential']}: {why}", 409)
+            if e["kind"] == "key" and not body.confirm_billing \
+                    and V.connection(_runtime(), agent).get("credential") != c["credential"]:
+                return JSONResponse({"error": f"{c['credential']} is billed per token, up to "
+                                     f"{e['cap_tokens_day']:,} tokens a day", "needs_billing": True}, status_code=409)
         elif not rows[h].get("launcher"):
             return _err(f"{rows[h].get('name', h)} isn't ready to run agents yet", 409)
         if c.get("model") and not C.MODEL.fullmatch(c["model"]):

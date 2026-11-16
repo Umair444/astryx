@@ -19,6 +19,9 @@ check is stubbed).
      the org's login" too (never everyone else's key); an empty
      connection removes it; a key that doesn't fit the harness, a harness with no launcher, a metered key (its cap isn't
      enforced yet), an unknown agent: refused
+  C4 an API key asks for the owner's billing confirm (needs_billing, its cap named) before an agent is put on it
+  C5 spawn stamps the session with the key it runs on (ASTRYX_RUN_ON -> turns.run_on)
+  C6 the daily cap at spawn (runtime_env.key_cap): under it starts, at it refuses, an unreadable spend refuses
   C2 login_of reads the agent's own connection, else everyone else's (the energy and the usage reading follow it)
   C3 the launch line runs the connection's model over the charter's
   A4 remove: refused while an agent (or everyone else) runs on it; then removed, its .env key gone
@@ -153,8 +156,38 @@ with tempfile.TemporaryDirectory() as td:
     arm("C1 its own, on the org's login: kept as its own, never everyone else's key", st == 200
         and V.connection(json.loads((EST / "runtime.json").read_text()), "seed") == {"harness": "claude"}
         and V.login_of(EST, "seed") == (None, None), (st, V.login_of(EST, "seed")))
+    st, b = call(API.connection_put, "lending", API.Connection(credential="DeepSeek"))
+    arm("C4 an API key asks for the owner's billing confirm first, naming its cap; nothing written",
+        st == 409 and b.get("needs_billing") and "100,000" in b["error"] and "lending" not in json.loads((EST / "runtime.json").read_text()), (st, b))
+    st, b = call(API.connection_put, "lending", API.Connection(credential="DeepSeek", confirm_billing=True))
+    arm("C4 …confirmed: connected", st == 200 and json.loads((EST / "runtime.json").read_text())["lending"] == {"credential": "DeepSeek"}, (st, b))
+    st, b = call(API.connection_put, "lending", API.Connection(credential="DeepSeek", model="deepseek-reasoner"))
+    arm("C4 …a change on the same key asks again for nothing", st == 200, (st, b))
+    frag = json.loads("{" + RE._pairs("lending", RE.connection("lending"), config.read_env(EST / ".env"))[1:] + "}")
+    arm("C5 the session is stamped with the key it runs on (ASTRYX_RUN_ON: its turns count against it)",
+        frag.get("ASTRYX_RUN_ON") == "DeepSeek" and frag.get("ANTHROPIC_AUTH_TOKEN") == DKEY, frag)
+    import psycopg
+    from astryx.econ import energy as En
+    real_connect, real_spent = psycopg.connect, En.spent
+
+    class _C:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    psycopg.connect = lambda *a, **k: _C()
+    try:
+        En.spent = lambda c, key, now=None: 99_999.0
+        arm("C6 under its cap: the agent may start", RE.key_cap("lending") is None)
+        En.spent = lambda c, key, now=None: 100_000.0
+        why = RE.key_cap("lending") or ""
+        arm("C6 at its cap: it isn't started, and the gate says so", "daily cap" in why and "midnight" in why, why)
+        def boom(c, key, now=None): raise OSError("db down")
+        En.spent = boom
+        arm("C6 a spend that can't be read refuses (unknown is never under the cap)", "can't be read" in (RE.key_cap("lending") or ""))
+        arm("C6 an agent on a login has no cap", RE.key_cap("db") is None)
+    finally:
+        psycopg.connect, En.spent = real_connect, real_spent
+    call(API.connection_put, "lending", API.Connection())
     for agent, c, why in (("db", API.Connection(harness="codex", credential="Work login"), "a harness with no launcher"),
-                          ("db", API.Connection(credential="DeepSeek"), "a metered key (its cap isn't enforced yet)"),
                           ("ghost", API.Connection(credential="Work login"), "an unknown agent"),
                           ("db", API.Connection(credential="Nope"), "a key that isn't in the vault")):
         st, b = call(API.connection_put, agent, c)

@@ -735,20 +735,21 @@ def handle_stop(cur, agent, h, strip=None):
     # never a second row double-counting it (medic 12441)
     same = cur.execute("SELECT id FROM turns WHERE agent=%s AND session_id IS NOT DISTINCT FROM %s AND started_at=%s::timestamptz "
                        "ORDER BY id DESC LIMIT 1", (agent, h.get("session_id"), started_at)).fetchone() if started_at else None
+    run_on = os.environ.get("ASTRYX_RUN_ON") or None   # the key this session runs on (spawn stamps it), NULL: the org's
     vals = (duration_ms, source, stored_prompt, input_msg_id, num_responses, num_tools, char_count,
-            tin, tout, model, stop_reason, Jsonb(payload), usnap, goal_id)
+            tin, tout, model, stop_reason, Jsonb(payload), usnap, goal_id, run_on)
     if same:                                   # updated IN PLACE: what the first Stop stamped with its id stays its
         row = cur.execute(
             """UPDATE turns SET ended_at=now(), duration_ms=%s, source=%s, input_prompt=%s, input_msg_id=%s,
                  num_responses=%s, num_tools=%s, char_count=%s, tokens_in=%s, tokens_out=%s, model=%s,
-                 stop_reason=%s, raw_payload=%s, usage_snapshot=%s, goal_id=%s
+                 stop_reason=%s, raw_payload=%s, usage_snapshot=%s, goal_id=%s, run_on=%s
                WHERE id=%s RETURNING id""", (*vals, same[0])).fetchone()
     else:
         row = cur.execute(
             """INSERT INTO turns (agent, session_id, started_at, ended_at, duration_ms, source,
                  input_prompt, input_msg_id, num_responses, num_tools, char_count,
-                 tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id)
-               VALUES (%s,%s,%s::timestamptz, now(), %s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id, run_on)
+               VALUES (%s,%s,%s::timestamptz, now(), %s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                RETURNING id""", (agent, h.get("session_id"), started_at, *vals)).fetchone()
     turn_id = row[0] if row else None
 

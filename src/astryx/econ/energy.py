@@ -87,7 +87,12 @@ def learn(c) -> dict:
                          WHERE m.thread = 'mind' AND t.started_at > now() - make_interval(days => {DAYS})""") or [None])[0]
     usual = {a: float(v) for a, v in _rows(c, f"""SELECT agent, percentile_cont(0.5) WITHIN GROUP (ORDER BY {BILL})::float
             FROM turns WHERE started_at > now() - interval '7 days' GROUP BY 1 HAVING count(*) >= 5""") if v}
-    pace = {"at": datetime.now(timezone.utc).isoformat(), "hourly": hourly, "rate": rate, "think": think or THINK, "usual": usual}
+    keys: dict = {}                      # each KEY's own hours (turns.run_on): its day is forecast from its own agents
+    for k, h, tok in _rows(c, f"""SELECT run_on, extract(hour FROM started_at AT TIME ZONE 'UTC')::int, sum({BILL})::float
+            FROM turns WHERE run_on IS NOT NULL AND started_at > now() - make_interval(days => {DAYS}) GROUP BY 1, 2"""):
+        keys.setdefault(k, [0.0] * 24)[int(h)] = float(tok or 0) / days
+    pace = {"at": datetime.now(timezone.utc).isoformat(), "hourly": hourly, "rate": rate, "think": think or THINK, "usual": usual,
+            "keys": keys}
     c.execute(f"CREATE TABLE IF NOT EXISTS {_t()} (id int PRIMARY KEY, at timestamptz NOT NULL DEFAULT now(), body jsonb NOT NULL)")
     c.execute(f"INSERT INTO {_t()} (id, body) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET at = now(), body = EXCLUDED.body",
               (json.dumps(pace),))
@@ -158,14 +163,46 @@ def word(tired: float) -> str:
     return "rested" if tired < 0.35 else "steady" if tired < 0.7 else "tiring" if tired < 1.0 else "tired"
 
 
+def midnight(now: datetime) -> datetime:
+    """The start of the org's own day (its clock, never UTC's: the session card's "today", medic 12477)."""
+    return now.astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def spent(c, key: str, now: datetime | None = None) -> float:
+    """The billable tokens agents ran on `key` today (turns.run_on, since the org's midnight)."""
+    r = _row(c, f"SELECT coalesce(sum({BILL}), 0)::float FROM turns WHERE run_on = %s AND started_at >= %s",
+             (key, midnight(now or datetime.now(timezone.utc))))
+    return float(r[0]) if r else 0.0
+
+
+def _metered(credential: str | None) -> int | None:
+    """The daily cap of a METERED key (an API key: astryx.core.vault), or None (a login, the org's own, unknown)."""
+    if not credential:
+        return None
+    from astryx.core import vault
+    e = vault.load(paths.estate(__file__)).get(credential) or {}
+    return e.get("cap_tokens_day") if e.get("kind") == "key" else None
+
+
 def feel(c, now: datetime | None = None, relearn_after_h: float | None = 1.0, credential: str | None = None) -> dict:
-    """How the org feels now: {known, tired, word, binding, windows, say, think_pct}. `relearn_after_h=None` never
-    learns (the per-prompt reader); otherwise a kept row older than that is learned again first. `credential`: how a
-    vault LOGIN feels, from its own reading (the pace is the org's: its agents' hours look like the org's day)."""
+    """How the org feels now: {known, tired, word, binding, survival, windows, say, think_pct}. `relearn_after_h=None`
+    never learns (the per-prompt reader); otherwise a kept row older than that is learned again first. `credential`:
+    how a vault KEY feels. A login, from its own reading (the pace is the org's: its agents' hours look like the org's
+    day). An API key has no limits but the daily cap it was given: its one window is today, `used` what it spent since
+    the org's midnight against that cap, its need the usual hours of its own agents. `survival` names the window whose
+    running out stops the work (a login's 5 hours, a key's day): the pulse's hold reads that one."""
     now = now or datetime.now(timezone.utc)
     p = pace(c)
     if relearn_after_h is not None and (p is None or (now - _when(p["at"])).total_seconds() > relearn_after_h * 3600):
         p = learn(c)
+    cap = _metered(credential)
+    if cap:
+        if not p:
+            return {"known": False, "say": "energy unknown: nothing learned of the org's pace yet"}
+        rate = {"day": 100.0 / cap}
+        w = window(100.0 * spent(c, credential, now) / cap, (midnight(now) + timedelta(days=1)).isoformat(), 24.0,
+                   rate["day"], (p.get("keys") or {}).get(credential) or [0.0] * 24, now)
+        return _felt({"day": w}, now, p, rate, "day")
     # a vault login's own reading (its limits are its own, owner 11-16), else the org's: current_usage
     g = _row(c, "SELECT five_hour_pct, seven_day_pct, five_hour_reset, seven_day_reset, "
                 "extract(epoch FROM now() - fetched_at)::float FROM usage_readings WHERE state = 'fresh' AND credential = %s "
@@ -182,8 +219,14 @@ def feel(c, now: datetime | None = None, relearn_after_h: float | None = 1.0, cr
             ws[key] = w
     if not ws:
         return {"known": False, "say": "energy unknown: no reading of the limits yet"}
+    return _felt(ws, now, p, p["rate"], "h5")
+
+
+def _felt(ws: dict, now: datetime, p: dict, rate: dict, survival: str) -> dict:
+    """The feeling from its windows: the tighter one binds; the fact every prompt carries; the word for people.
+    `rate`: the gauge points a token moves in each window; `survival`: the window the pulse's hold reads."""
     binding = max(ws, key=lambda k: ws[k]["tired"])
-    b, name = ws[binding], {"h5": "the 5-hour window", "d7": "the week"}[binding]
+    b, name = ws[binding], {"h5": "the 5-hour window", "d7": "the week", "day": "today's cap"}[binding]
     tired = b["tired"]
     if b["left"] <= 0:
         fact = f"{name} is used up until {_clock(b['resets_at'], now)}"
@@ -196,15 +239,17 @@ def feel(c, now: datetime | None = None, relearn_after_h: float | None = 1.0, cr
     w = "spent" if b["left"] <= 0 else word(tired)
     # `fact` is what every prompt carries: the reading with no verdict word (owner 08-21: numbers, no advice; medic
     # 12281: a word injected unread into every prompt steers the whole fleet). `say` adds the word, for people.
-    return {"known": True, "tired": tired, "word": w, "binding": binding,
+    return {"known": True, "tired": tired, "word": w, "binding": binding, "survival": survival,
             "windows": ws, "say": f"{w} · {fact}", "fact": fact, "think": p.get("think") or THINK,
-            "think_pct": {k: round((p.get("think") or THINK) * p["rate"][k], 2) for k in ws}, "learned_at": p["at"],
-            "hourly": p["hourly"], "rate": p["rate"], "usual": p.get("usual") or {}}
+            "think_pct": {k: round((p.get("think") or THINK) * rate[k], 2) for k in ws}, "learned_at": p["at"],
+            "hourly": p["hourly"], "rate": rate, "usual": p.get("usual") or {}}
 
 
 def _share(p: dict, tokens: float) -> str:
-    wk = (p.get("rate") or {}).get("d7")
-    return f", {tokens * wk:.1f}% of the week" if wk and tokens * wk >= 0.05 else ""
+    rate = p.get("rate") or {}
+    key, name = ("day", "today's cap") if "day" in rate else ("d7", "the week")   # a key's turn against its own cap
+    wk = rate.get(key)
+    return f", {tokens * wk:.1f}% of {name}" if wk and tokens * wk >= 0.05 else ""
 
 
 def mine(p: dict | None, agent: str, last_tokens) -> str:
