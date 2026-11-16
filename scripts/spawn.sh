@@ -220,8 +220,6 @@ for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' 
   \"jobs\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/jobs/server.py\"] }";;
     docpdf) EXTRA="$EXTRA,
   \"docpdf\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/docpdf/server.py\"] }";;
-    contacts) EXTRA="$EXTRA,
-  \"contacts\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/contacts/server.py\"] }";;
     channels) EXTRA="$EXTRA,
   \"channels\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/channels/server.py\"] }";;
     # browser: official @playwright/mcp (adopt-mature-OSS; the one sanctioned Node

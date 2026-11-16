@@ -13,13 +13,6 @@
   ],
   "author": "unknown"
  },
- "contacts": {
-  "command": "venv/bin/python",
-  "args": [
-   "mcp/contacts/server.py"
-  ],
-  "author": "forge"
- },
  "imagegen": {
   "command": "venv/bin/python",
   "args": [

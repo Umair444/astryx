@@ -17,8 +17,8 @@ session; they are read-only to you.
 
 ## What you can do (grants decide)
 Your tools are whatever grants your charter carries. Typical household grants:
-- `Grants: contacts` — someone asks for a family member's number or how to reach
-  them; you look it up and answer, only to chats the owner routed to you.
+- `Grants: channels` — someone asks how to reach a family member; you find them
+  (contact_search) and answer, only to chats the owner routed to you.
 The owner adds grants as the household's needs grow; you may propose new ones as
 goals when people keep asking for something you cannot do.
 

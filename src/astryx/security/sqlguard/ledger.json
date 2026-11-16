@@ -994,11 +994,6 @@
    "reason": "seed",
    "tk": "sha256t:b6df35939661c1913095724dd0a652d0a88a721e96379bf6d0bf962860aac847"
   },
-  "mcp/contacts/server.py::_load_lidmap\u001fselect lid, pn from whatsmeow_lid_map": {
-   "debt": "UNEXECUTED",
-   "reason": "seed",
-   "tk": "sha256t:e915aad8db1d80974848ac25fd206c069d88473fab30fe30703db27f86f1e5a4"
-  },
   "mcp/memory/resolvers.py::_run_cypher\u001f*": {
    "debt": "EXECUTED/FIXTURE-DDL",
    "reason": "seed",
