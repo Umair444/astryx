@@ -1350,10 +1350,11 @@ async def agent_runtime_put(name: str, edit: RuntimeEdit, request: Request):
         ent = _v.load(ESTATE).get(cred)
         if not ent:
             return Response("no such credential in the vault", status_code=400)
-        if ent["kind"] == "key" and not edit.confirm_billing:
-            return JSONResponse({"needs_billing": True, "error": f"{cred} is an API key: every token {f.stem} spends on "
-                                 f"it is billed (up to {ent.get('cap_tokens_day', 0):,} tokens a day). Confirm to connect it."},
-                                status_code=409)
+        if ent["kind"] == "key":
+            # a cap shown but not enforced is worse than none (medic 12468): an API key is connected once its daily cap
+            # stops the spending, which comes with energy per credential. Logins first
+            return JSONResponse({"error": f"{cred} is an API key, billed per token. Agents can run on a key once its "
+                                 "daily cap is enforced; until then connect them to a Claude login."}, status_code=409)
         entry["credential"] = cred
         entry.pop("base_url", None); entry.pop("token_env", None)    # a credential is the whole connection
     # a base_url with no token_env is a half-config that would fail-safe to default at spawn —

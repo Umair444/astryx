@@ -58,6 +58,7 @@ SHAPE = {"login": re.compile(r"sk-ant-oat\d{2}-[A-Za-z0-9_-]{20,}"),
          "key": re.compile(r"[A-Za-z0-9._~+/=:-]{16,512}")}        # another provider's key: one printable token
 URL = re.compile(r"https://[A-Za-z0-9.-]+(?::\d{1,5})?(?:/[A-Za-z0-9._~/-]*)?")
 TIERS = ("opus", "sonnet", "haiku")
+AUTH = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL")   # every auth input
 
 
 def path(estate: Path) -> Path:
@@ -130,6 +131,9 @@ def pairs(name: str, e: dict, env: dict) -> list[tuple[str, str]] | None:
         out = [("ANTHROPIC_BASE_URL", e["base_url"]), ("ANTHROPIC_AUTH_TOKEN", v)]
     else:
         out = [("ANTHROPIC_API_KEY", v)]
+    # ONE login live in the session (medic 12468): every OTHER way Claude Code can authenticate is set empty, so the
+    # org's token or a key in the process env can never win over the credential the agent was connected to
+    out += [(k, "") for k in AUTH if k not in {x for x, _ in out}]
     return out + [(f"ANTHROPIC_DEFAULT_{t.upper()}_MODEL", m) for t, m in sorted((e.get("models") or {}).items())]
 
 

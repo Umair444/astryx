@@ -145,7 +145,7 @@ export default function RuntimeEditor({ name, live }: { name: string; live: bool
         <div className={labelCls}>runs on</div>
         <select value={cred} onChange={(e) => { setCred(e.currentTarget.value); setBilling(null) }} className={inputCls} aria-label="the login or key it runs on">
           <option value="">the org's default</option>
-          {(creds ?? []).map((c) => <option key={c.name} value={c.name}>{c.name} · {credWord(c)}{c.has_value ? '' : ' (no value)'}</option>)}
+          {(creds ?? []).map((c) => <option key={c.name} value={c.name} disabled={c.kind === 'key'}>{c.name} · {credWord(c)}{c.kind === 'key' ? ' (once its daily cap is enforced)' : c.has_value ? '' : ' (no value)'}</option>)}
         </select>
         <div className="text-[11px] text-ink-mute mt-1">Add logins and keys under Logins and keys on the Agents page.</div>
       </div>

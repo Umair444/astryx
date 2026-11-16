@@ -8,6 +8,7 @@ credential (runtime_env). Temp estate, synthetic values only; the routes are cal
   A2 add a login: its value lands in .env under the DERIVED key and is in no response; a value of the wrong shape, a
      key with no daily cap, a login with an endpoint, a new one without a value: refused, nothing written
   A3 a second name folding to a held key: 409; a change keeps the old value unless a new one is given (a rotation)
+  R3 one login live in the session: every other auth variable set empty
   A4 remove: refused while an agent uses it; then removed, its .env key gone
 Exit 0 · 1."""
 import asyncio
@@ -69,10 +70,15 @@ with tempfile.TemporaryDirectory() as td:
     call(API.vault_put, "Anthropic API", API.Cred(kind="key", cap_tokens_day=100000, value=AKEY))
     env = config.read_env(EST / ".env")
     vault = V.load(EST)
-    p = lambda n: dict(V.pairs(n, vault[n], env))   # noqa: E731
+    p = lambda n: {k: v for k, v in V.pairs(n, vault[n], env) if v}   # noqa: E731  the non-empty ones
+    blank = lambda n: {k for k, v in V.pairs(n, vault[n], env) if not v}   # noqa: E731
     arm("R1 a login gives CLAUDE_CODE_OAUTH_TOKEN", p("Work login") == {"CLAUDE_CODE_OAUTH_TOKEN": LOGIN})
     arm("R1 an Anthropic key gives ANTHROPIC_API_KEY", p("Anthropic API") == {"ANTHROPIC_API_KEY": AKEY})
     arm("R1 a key with an endpoint gives its URL, ANTHROPIC_AUTH_TOKEN and its models", p("Gateway") == {"ANTHROPIC_BASE_URL": "https://gw.example.com/anthropic", "ANTHROPIC_AUTH_TOKEN": GKEY, "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5"}, p("Gateway"))
+    for n in ("Work login", "Anthropic API", "Gateway"):
+        auth = {k for k in V.AUTH if k in p(n) and k != "ANTHROPIC_BASE_URL"}
+        arm(f"R3 {n}: exactly one way to authenticate is non-empty, every other is set empty (medic 12468)",
+            len(auth) == 1 and set(V.AUTH) - set(p(n)) <= blank(n), (auth, blank(n)))
     RE.paths.estate = lambda f=None: EST
     frag = json.loads("{" + RE._pairs("db", {"credential": "Gateway", "models": {"opus": "my-opus"}}, env)[1:] + "}")
     arm("R1 the agent's own model choice wins over the credential's", frag.get("ANTHROPIC_DEFAULT_OPUS_MODEL") == "my-opus" and frag.get("ANTHROPIC_AUTH_TOKEN") == GKEY, frag)
