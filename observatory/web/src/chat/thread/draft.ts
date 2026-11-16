@@ -3,7 +3,7 @@
    mirror paints these behind the transparent textarea, so every mark must keep the exact glyph geometry of plain
    text: colour, background, a stroke for weight, never a font, size or padding. Pure, so tests/chat_draft_test.ts
    runs it under node.
-   - blocks(): the text cut into runs of whole LINES, each a ``` fence (open to its close, or to the end while it is
+   - blocks(): the text cut into runs of whole LINES, each a ``` or ~~~ fence (open to its close, or to the end while it is
      still being typed) or ordinary text; joined by '\n' they are the text again, so each draws as one block, line for
      line with the textarea.
    - spans(): one ordinary run cut into what it shows: a ⟦calc⟧ box, `code`, **strong**, a # heading line, text.
@@ -15,7 +15,7 @@ export const OPEN = '⟦', CLOSE = '⟧'      // a calc box's marks (calc.ts); h
 export interface Block { fence: boolean; text: string; closed?: boolean }
 export interface Span { kind: 'text' | 'calc' | 'code' | 'strong' | 'head'; text: string }
 
-const OPEN_FENCE = /^ {0,3}(`{3,})[^`]*$/
+const OPEN_FENCE = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/      // ``` or ~~~, as code.ts reads a fence (medic 12587)
 export function blocks(text: string): Block[] {
   const out: Block[] = []
   const push = (fence: boolean, line: string) => {
@@ -27,7 +27,7 @@ export function blocks(text: string): Block[] {
   for (let i = 0; i < lines.length; i++) {
     const m = OPEN_FENCE.exec(lines[i])
     if (!m) { push(false, lines[i]); continue }
-    const close = new RegExp(`^ {0,3}\`{${m[1].length},}\\s*$`)
+    const close = new RegExp(`^ {0,3}${m[1][0]}{${m[1].length},}\\s*$`)
     let j = i + 1
     while (j < lines.length && !close.test(lines[j])) j++
     out.push({ fence: true, text: lines.slice(i, Math.min(j, lines.length - 1) + 1).join('\n'), closed: j < lines.length })
