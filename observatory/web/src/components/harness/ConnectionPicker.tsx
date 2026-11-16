@@ -124,7 +124,7 @@ export default function ConnectionPicker({ s, agent, onSaved, onCancel }: {
 
       {billing && (
         <div className="rounded-xl border border-[color-mix(in_srgb,var(--t-warn)_45%,var(--t-line))] bg-[color-mix(in_srgb,var(--t-warn)_8%,transparent)] p-3 flex flex-col gap-2" role="alert">
-          <p className="text-[12.5px] text-ink">{billing}. Once it reaches its cap, its agents aren't woken or started on it again until midnight.</p>
+          <p className="text-[12.5px] text-ink">{billing}. At about its cap, its agents finish in words and aren't woken or started on it again until midnight.</p>
           <div className="flex gap-2">
             <button type="button" disabled={busy} onClick={() => void save(true)} className="ax-action rounded-lg px-3.5 py-1.5 text-[12.5px] disabled:opacity-40">
               {busy ? 'Saving…' : 'Allow the spend and save'}</button>

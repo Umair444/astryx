@@ -145,7 +145,7 @@ function Form({ s, pid, p, existing, onDone }: { s: State; pid: string; p: Provi
         </label>
 
         {metered && (
-          <label className="block"><Label hint="the most its agents may use in a day">Daily cap</Label>
+          <label className="block"><Label hint="about the most its agents may use in a day">Daily cap</Label>
             <div className="flex items-center gap-2">
               <input value={Number(cap.replace(/[^0-9]/g, '') || 0).toLocaleString()} onChange={(e) => setCap(e.currentTarget.value.replace(/[^0-9]/g, ''))} inputMode="numeric" className={`${field} !w-40 tabular-nums`} aria-label="tokens a day" />
               <span className="text-[12.5px] text-ink-dim whitespace-nowrap">tokens a day</span>
