@@ -271,7 +271,7 @@ def make_triggers(p: dict, a, dry: bool) -> None:
 
 # the shipped triggers a cog org gets (init.sh's one-org set, minus what serves only a checkout: phone_resume_sweep needs
 # ANDROID_ENABLED in the org's .env, which a new org never has; upstream_prs is the upstream REPO's own watch)
-COG_SHIMS = ("context_compact", "pr_review", "windows_idle_stop", "agent_heal", "org_backup", "influence_nightly")
+COG_SHIMS = ("context_compact", "pr_review", "windows_idle_stop", "agent_heal", "org_backup", "influence_nightly", "usage_idle")
 
 
 def _wanted(shim: str) -> bool:

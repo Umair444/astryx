@@ -155,10 +155,16 @@ def login_of(estate: Path, agent: str, env: dict | None = None) -> tuple[str | N
     except (OSError, ValueError, AttributeError):
         return None, None
     name = ent.get("credential") if isinstance(ent, dict) else None
-    e = load(estate).get(name) if name else None
-    if not e or e["kind"] != "login":
-        return None, None
-    if env is None:
+    for n, token in logins(estate, env) if name else ():
+        if n == name:
+            return n, token
+    return None, None
+
+
+def logins(estate: Path, env: dict | None = None) -> list[tuple[str, str | None]]:
+    """[(name, token)] of every vault LOGIN, its token None while it has no value."""
+    ents = {n: e for n, e in load(estate).items() if e["kind"] == "login"}
+    if ents and env is None:
         from astryx import config
         env = config.read_env(Path(estate) / ".env")
-    return name, env.get(PREFIX + slug(name)) or None
+    return [(n, (env or {}).get(PREFIX + slug(n)) or None) for n in sorted(ents)]
