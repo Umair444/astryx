@@ -38,6 +38,15 @@ FORWARD = frozenset({
 SET = ("x-forwarded-host", "x-forwarded-proto")
 
 
+def viewer_host(request, behind_front: bool) -> str:
+    """The Host the VIEWER reached us at. Behind the cog's front (it relays every org from 127.0.0.1, sending the Host
+    it was reached at as x-forwarded-host), that header, trusted only from the front itself; else the Host header.
+    Anything this host links the browser to (a canvas kit, a redirect) is built on it, never on the upstream Host the
+    relay connected to (11-16: the chat linked the canvas kit at the backend's 127.0.0.1:8190, unreachable)."""
+    front = behind_front and (request.client.host if request.client else "") == "127.0.0.1"
+    return (request.headers.get("x-forwarded-host") if front else None) or request.headers.get("host", "")
+
+
 def canvas_cookie(org: str | None) -> str:
     """The name of an org's canvas session cookie: per org in a cog (its registry name), plain on one org."""
     return f"cv_session-{org}" if org else "cv_session"

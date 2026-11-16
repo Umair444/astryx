@@ -3857,7 +3857,7 @@ async def _pipe(url: str, request: Request, owner_key: bool, down: str):
     # reached at. The scheme is uvicorn's, resolved from its pinned trusted peer. Canvas gets only its own session
     # cookie, never the observatory's owner key (it has its own session); the ear gets the key and no cookie.
     front = _COG and (request.client.host if request.client else "") == "127.0.0.1"
-    host = (request.headers.get("x-forwarded-host") if front else None) or request.headers.get("host", "")
+    host = _relay.viewer_host(request, bool(_COG))
     # cog-gaps: canvas recognizes the front's sign-in. The front's signed identity is NOT on the allowlist (D3); it is
     # passed to canvas alone, explicitly, and only when it came from the front itself and _who VERIFIED it for this
     # org (request.state.uid). Canvas verifies it again with the cog's public keys (bridges/canvas.py signed_viewer).

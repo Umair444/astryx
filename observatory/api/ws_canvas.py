@@ -27,6 +27,8 @@ import json
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from astryx.security import relay
+
 router = APIRouter()
 
 _get_pool = None
@@ -59,10 +61,9 @@ def shape(r) -> dict:
 
 def kit_url(request: Request) -> str:
     """The kit as the VIEWER reaches it: this origin's /canvas/kit/ (the observatory proxies /canvas/ to the canvas
-    service; the kit is public vendored files). The shell's CSP allows exactly this one off-document source."""
-    proto = request.url.scheme
-    host = request.headers.get("host") or request.url.netloc
-    return f"{proto}://{host}{CANVAS_PRE}/canvas/kit/"
+    service; the kit is public vendored files). The shell's CSP allows exactly this one off-document source. Its host
+    is the one the viewer reached (relay.viewer_host): behind a cog's front, never the backend's own."""
+    return f"{request.url.scheme}://{relay.viewer_host(request, bool(CANVAS_PRE)) or request.url.netloc}{CANVAS_PRE}/canvas/kit/"
 
 
 def missing(e: Exception) -> bool:

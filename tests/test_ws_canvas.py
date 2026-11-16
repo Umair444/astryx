@@ -56,16 +56,24 @@ arm("main.py mounts the router and hands it the cog prefix",
 
 # KIT
 class Req:
-    def __init__(self, host, scheme="https"):
-        self.headers = {"host": host}
+    def __init__(self, host, scheme="https", fwd=None, client="203.0.113.9"):
+        self.headers = {"host": host, **({"x-forwarded-host": fwd} if fwd else {})}
         self.url = type("U", (), {"scheme": scheme, "netloc": host})()
+        self.client = type("C", (), {"host": client})()
 
 
 M.CANVAS_PRE = ""
 arm("kit = this origin's /canvas/kit/", M.kit_url(Req("obs.example.org")) == "https://obs.example.org/canvas/kit/", M.kit_url(Req("obs.example.org")))
 M.CANVAS_PRE = "/o/acme"
 arm("kit carries the cog prefix", M.kit_url(Req("h:8090", "http")) == "http://h:8090/o/acme/canvas/kit/", M.kit_url(Req("h:8090", "http")))
+# 11-16 (owner: the lending dashboard blank in Chat -> Library, fine in canvas): behind the front, the request's Host is
+# the backend's own (127.0.0.1:8190), unreachable from the browser; the kit is the host the VIEWER reached
+via = Req("127.0.0.1:8190", fwd="obs.example.org:8090", client="127.0.0.1")
+arm("kit behind the cog's front: the host the viewer reached, never the backend's", M.kit_url(via) == "https://obs.example.org:8090/o/acme/canvas/kit/", M.kit_url(via))
+spoof = Req("h:8090", fwd="evil.example", client="203.0.113.9")
+arm("…a forwarded host from anyone but the front is ignored", M.kit_url(spoof) == "https://h:8090/o/acme/canvas/kit/", M.kit_url(spoof))
 M.CANVAS_PRE = ""
+arm("…and on one org (no front) the Host stands", M.kit_url(Req("h:8090", fwd="evil.example", client="127.0.0.1")) == "https://h:8090/canvas/kit/")
 
 # SHELL (the same pure render canvas serves)
 from bridges.canvas_shell import render  # noqa: E402
