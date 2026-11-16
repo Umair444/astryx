@@ -1373,16 +1373,23 @@ BEGIN
   RETURN p_fallback;
 END $who$;
 
--- THE ONE LINK: attach (channel, account) to the person named p_wire_name (made if new). An account linked to someone
--- ELSE is refused (an unlink comes first, never a silent move). Returns the identity id. Every linker calls this.
+-- THE ONE LINK: attach (channel, account) to the person named p_wire_name. That person must be a real ACCOUNT (an
+-- identity with a 'web' handle: someone who signed in): a link never creates a person, so no name an agent or a
+-- stranger types (owner, a member's, an agent's) can be taken by replying YES (medic 12637). An account linked to
+-- someone ELSE is refused (an unlink comes first, never a silent move). Returns the identity id. Every linker calls
+-- this; the owner's own numbers come only from identity.import_owner, the operator's one-time act.
 CREATE OR REPLACE FUNCTION identity_link(p_wire_name text, p_channel text, p_account text) RETURNS bigint
 LANGUAGE plpgsql AS $lnk$
 DECLARE
   i bigint;
   held bigint;
 BEGIN
-  INSERT INTO identity (wire_name) VALUES (p_wire_name) ON CONFLICT ON CONSTRAINT identity_wire_name_key DO NOTHING;
-  SELECT id INTO i FROM identity WHERE wire_name = p_wire_name;
+  SELECT x.id INTO i FROM identity x WHERE x.wire_name = p_wire_name AND EXISTS (
+    SELECT 1 FROM identity_handle w WHERE w.identity_id = x.id AND w.tenant = x.tenant AND w.channel = 'web');
+  IF i IS NULL THEN
+    RAISE EXCEPTION 'no signed-in account is named %: a link joins an account to a person who signed in', p_wire_name
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
   SELECT identity_id INTO held FROM identity_handle WHERE channel = p_channel AND account = p_account;
   IF held IS NOT NULL AND held <> i THEN
     RAISE EXCEPTION 'that % account is already linked to another person', p_channel USING ERRCODE = 'unique_violation';

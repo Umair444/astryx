@@ -74,6 +74,7 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
         r and r["agent"] == "lending" and r["open"] and r["show"] == "replies" and left.total_seconds() > 23 * 3600, (r, left))
 
     print("\nC2 A PERSON ON SEVERAL CHANNELS")
+    c.execute("SELECT identity_who('web', '2@cog', 'cv-faran.2')")      # Faran signed in once: an account
     identity.link(c, "cv-faran.2", "whatsapp", "923000000014@s.whatsapp.net")
     identity.link(c, "cv-faran.2", "telegram", "4242")
     c.execute("UPDATE identity SET label='Faran' WHERE wire_name='cv-faran.2'")
@@ -96,7 +97,11 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
         and c.execute("SELECT count(*) FROM route WHERE chat=%s", (KUMAIL,)).fetchone()[0] == 0)
 
     print("\nC5 LINK")
-    out = run("seed", "link", "cv-pat.5", channel="whatsapp", account="+923000000013")
+    arm("an agent can't link anyone: not to the owner, not to a member (medic 12637)",
+        "only the person" in run("lending", "link", "owner", channel="whatsapp", account="+923000000013")
+        and "only the person" in run("seed", "link", "cv-pat.5", channel="whatsapp", account="+923000000013", by="cv-y.3"))
+    c.execute("SELECT identity_who('web', '5@cog', 'cv-pat.5')")         # Pat, signed in, adds their own number
+    out = run("seed", "link", "cv-pat.5", channel="whatsapp", account="+923000000013", by="cv-pat.5")
     asked = c.execute("SELECT to_agent, thread, body FROM messages WHERE from_agent='seed' ORDER BY id DESC LIMIT 1").fetchone()
     arm("the account is asked to reply YES", "reply YES" in out and asked[1] == "wa:923000000013@s.whatsapp.net"
         and "Reply YES" in asked[2] and "cv-pat.5" in asked[2], (out, asked))

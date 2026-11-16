@@ -54,6 +54,14 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c:
         moved = True
     except ValueError:
         moved = False
+    refused = []
+    for name in ("owner", "db", "nobody-yet"):
+        try:
+            identity.link(c, name, "whatsapp", "923000000020@s.whatsapp.net")
+        except ValueError:
+            refused.append(name)
+    arm("a link never makes a person: owner, an agent's name, an unknown name are all refused (medic 12637)",
+        refused == ["owner", "db", "nobody-yet"], refused)
     arm("an account linked to one person is never moved to another silently", not moved
         and who("whatsapp", "923000000001@s.whatsapp.net", "x") == "cv-faran.2")
     with tempfile.TemporaryDirectory() as td:

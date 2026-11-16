@@ -2954,9 +2954,13 @@ async def my_channel_link(body: MyChannel, request: Request):
     def search(q, ch=""):
         return asyncio.run(registry.search_contacts(q, [ch] if ch else None))
 
+    acct = getattr(request.state, "uid", "") or ("owner-key" if who == "owner" else "")
+
     def go():
         import psycopg
         with psycopg.connect(DSN, autocommit=True) as c:
+            # the signed-in person IS an account (its 'web' handle): the one thing a link may join to (identity_link)
+            c.execute("SELECT identity_who('web', %s, %s)", (acct, who))
             return _connect.run(c, "seed", "link", who, body.channel, account=body.account.strip(), search=search,
                                 estate=ESTATE, by=who, timeout="1d")
     said = await asyncio.to_thread(go)

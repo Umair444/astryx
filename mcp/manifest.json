@@ -39,19 +39,6 @@
       ]
     },
     {
-      "server": "contacts",
-      "tools": [
-        {
-          "name": "contact_search",
-          "description": "Find people in the owner's WhatsApp contacts by name, alias, or number."
-        },
-        {
-          "name": "contact_resolve",
-          "description": "Resolve one WhatsApp jid, phone number, or privacy @lid to who it is."
-        }
-      ]
-    },
-    {
       "server": "imagegen",
       "tools": [
         {
@@ -197,5 +184,5 @@
       ]
     }
   ],
-  "total_tools": 34
+  "total_tools": 32
 }

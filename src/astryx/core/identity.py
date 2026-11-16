@@ -24,12 +24,21 @@ from astryx.core import channels
 
 def link(conn, wire_name: str, channel: str, account: str) -> int:
     """Attach (channel, account) to the person named wire_name (identity_link, schema.sql: the one linker). Returns
-    its id. An account already linked to SOMEONE ELSE is refused (ValueError): moving it is an unlink first."""
+    its id. Refused (ValueError): a name that is no signed-in account, or an account already linked to someone else."""
     import psycopg
     try:
         return conn.execute("SELECT identity_link(%s, %s, %s)", (wire_name, channel, str(account))).fetchone()[0]
-    except psycopg.errors.UniqueViolation as e:
+    except (psycopg.errors.UniqueViolation, psycopg.errors.ForeignKeyViolation) as e:
         raise ValueError(str(e).splitlines()[0]) from None
+
+
+def _own(conn, channel: str, account: str) -> None:
+    """One of the owner's own accounts → the identity `owner`. Only import_owner, the operator's act, writes this: no
+    link (an agent's, a stranger's YES) can ever make an account the owner's."""
+    conn.execute("INSERT INTO identity (wire_name) VALUES ('owner') ON CONFLICT ON CONSTRAINT identity_wire_name_key DO NOTHING")
+    conn.execute("INSERT INTO identity_handle (channel, account, identity_id) SELECT %s, %s, id FROM identity WHERE "
+                 "wire_name = 'owner' ON CONFLICT ON CONSTRAINT identity_handle_pkey DO UPDATE SET identity_id = EXCLUDED.identity_id",
+                 (channel, account))
 
 
 def import_owner(conn, estate: Path) -> int:
@@ -43,7 +52,7 @@ def import_owner(conn, estate: Path) -> int:
             continue
         for r in rows if isinstance(rows, list) else []:
             for acct in (r.get("trusted_jids") or []) + (r.get("trusted_ids") or []) if isinstance(r, dict) else []:
-                link(conn, "owner", c.name, str(acct))
+                _own(conn, c.name, str(acct))
                 n += 1
     return n
 

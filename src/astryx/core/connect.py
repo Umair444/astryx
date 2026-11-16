@@ -9,7 +9,7 @@ idle time (the connection_sweep tells the agent). The agent writes with `send` a
 
   open    who, channel?, timeout?, note   the agent picks the channel when the person is on several
   close   who                              only a connection the agent opened
-  link    who=<person's wire name>, channel, account   asks that account to reply YES; its YES links it (bridges)
+  link    the web's "Your channels" only (by = the signed-in person = who): asks that account to reply YES
   status                                   my connections and links
 
 Guards: a group is the owner's to route (refused); a chat the owner's routes file already routes stays his; one agent
@@ -103,6 +103,9 @@ def run(conn, me: str, action: str, who: str = "", channel: str = "", timeout: s
         return str(e)
 
     if action == "link":
+        if not by or who != by:         # only a person links THEIR OWN account; an agent can't link anyone (medic 12637)
+            return ("only the person can link their own account: ask them to open \"Your channels\" in the observatory "
+                    "(their account menu) and add it there")
         if not (who and channel and account):
             return "link needs who (the person's wire name, e.g. cv-faran.2), channel and account (their number or id)"
         hits = [h for h in find(conn, account, channel, search) if h.channel == channel]

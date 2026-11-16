@@ -65,8 +65,7 @@ async def connect(action: str, who: str = "", channel: str = "", timeout: str = 
                   timeout="1d" (30m/2h/1d, max 7d): ends after that long with no messages, and you are told; note=why.
                   Then write with send(to=..., thread=...) exactly as the answer says.
     action=close  who=<the person>: ends a connection you opened.
-    action=link   who=<their astryx name, e.g. cv-faran.2>, channel, account=<their number or id>: asks that account to
-                  reply YES; the YES links it, so later they write as one person on every channel.
+    action=link   people link their own accounts themselves ("Your channels" in the observatory); this says so.
     action=status your open connections and pending links.
     Groups are the owner's to route; a chat the owner already routes stays his."""
     import psycopg
