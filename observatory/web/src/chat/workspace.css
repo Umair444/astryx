@@ -406,6 +406,11 @@
 .ws-calc-mark { color: #5d6472; }
 .ws-calc-eq { color: #c3e88d; }
 .ws-calc[data-bad] { box-shadow: 0 0 0 3px #0e1014, 0 0 0 4.5px #e5484d; }   /* a box the server refused */
+/* the draft's markdown (thread/draft.ts): colour, background and stroke only, so the glyphs stay where the textarea has them */
+.ws-md-fence { background: #0e1014; color: #e6e8ec; border-radius: 6px; box-shadow: 0 0 0 4px #0e1014; }
+.ws-md-strong { -webkit-text-stroke: 0.45px currentColor; color: var(--t-fg); }
+.ws-md-head { color: var(--t-accent); }
+.ws-md-mark { color: var(--t-mute); -webkit-text-stroke: 0; }
 
 /* a team's live line: the faces overlap, each cut out of the page by a ring of the page's own colour */
 .ws-team-face { position: relative; display: inline-flex; border-radius: 9999px; box-shadow: 0 0 0 2px var(--t-bg); }

@@ -7,6 +7,7 @@ import { I } from '../icons'
 import { touchFirst } from '../shell/phone'
 import { expandPasteTokens, pasteToken } from './code'
 import { boxes, calcAt, CLOSE, latexToQalc, OPEN, openCalc, sendText, setResult, settle, splitCalc } from './calc'
+import { blocks, drawn, spans, type Span } from './draft'
 
 const PASTE_LINES = 12, PASTE_CHARS = 1500          // a paste this long folds into a token (code.ts pasteToken)
 /* this tab's pastes, by token number, kept in sessionStorage beside the drafts (a reload keeps a draft, so it must keep
@@ -253,6 +254,7 @@ export default forwardRef<ComposerHandle, {
   const dictate = () => (dict.phase === 'live' || dict.phase === 'connecting' ? stopDictation() : startDictation((t) => insert(t)))
 
   const mirror = useRef<HTMLDivElement>(null)
+  const paint = useMemo(() => drawn(text), [text])
   // A BOX IS A CELL (calc.ts settle): on every caret move the box the caret is in shows its expression, the rest show
   // "expression = answer"; an expression with no answer yet is worked out here and the boxes settle again. Leaving
   // the composer counts as leaving every box (caret -1).
@@ -371,7 +373,7 @@ export default forwardRef<ComposerHandle, {
           </div>
         )}
         <div className="relative">
-        {text.includes(OPEN) && <CalcMirror ref={mirror} text={text} hero={hero} bad={skip} />}
+        {paint && <DraftMirror ref={mirror} text={text} hero={hero} bad={skip} />}
         <textarea ref={box} value={text} rows={1} aria-label="message" data-composer spellCheck={!text.includes(OPEN)}
           onChange={(e) => {
             const opened = openCalc(e.target.value, e.target.selectionStart ?? e.target.value.length)   // "= " opens a box
@@ -384,7 +386,7 @@ export default forwardRef<ComposerHandle, {
           onBlur={() => { setPicker(false); resettle(text, -1) }}
           onPaste={(e) => { const fs = Array.from(e.clipboardData.files); if (fs.length) { e.preventDefault(); addFiles(fs) } else onPasteText(e) }}
           placeholder={hint}
-          className={`relative block w-full resize-none bg-transparent px-4 outline-none placeholder:text-ink-mute ${text.includes(OPEN) ? 'text-transparent caret-[var(--t-fg)]' : 'text-ink'} ${hero ? 'pt-4 pb-1 text-[17px] leading-[1.55]' : 'pt-3.5 pb-1 text-[15px] leading-relaxed'}`} />
+          className={`relative block w-full resize-none bg-transparent px-4 outline-none placeholder:text-ink-mute ${paint ? 'text-transparent caret-[var(--t-fg)]' : 'text-ink'} ${hero ? 'pt-4 pb-1 text-[17px] leading-[1.55]' : 'pt-3.5 pb-1 text-[15px] leading-relaxed'}`} />
         </div>
         {(live || dict.phase === 'connecting') && (
           <div className="px-4 pb-1 text-[12.5px] text-cyan flex items-center gap-2" role="status">
@@ -442,22 +444,37 @@ export default forwardRef<ComposerHandle, {
   )
 })
 
-/* THE BOXES, drawn: the composer's text again, behind the (then transparent) textarea, in its exact type and padding,
-   each ⟦…⟧ a dark box. The textarea stays the one thing you type in, so a box edits like any text. */
-const CalcMirror = forwardRef<HTMLDivElement, { text: string; hero: boolean; bad?: (expr: string) => boolean }>(function CalcMirror({ text, hero, bad }, ref) {
-  const parts: React.ReactNode[] = []
-  let i = 0
-  for (const b of boxes(text)) {
-    if (b.start > i) parts.push(text.slice(i, b.start))
-    const k = b.inner.lastIndexOf(' = ')        // the RAW characters, so the box sits exactly under the typed text
-    // a box the server refused keeps saying so (a red edge, its reason on hover is the error line), not just once
-    parts.push(<span key={b.start} className="ws-calc" data-bad={bad?.(splitCalc(b.inner).expr) || undefined}><span className="ws-calc-mark">{OPEN}</span>{k < 0 ? b.inner : <>{b.inner.slice(0, k)}<span className="ws-calc-eq">{b.inner.slice(k)}</span></>}<span className="ws-calc-mark">{CLOSE}</span></span>)
-    i = b.end + 1
+/* THE DRAFT, drawn: the composer's text again, behind the (then transparent) textarea, in its exact type and padding,
+   as the chat will show it (thread/draft.ts): a ``` fence a dark block, `code` and each ⟦…⟧ a dark box, **strong** and a
+   # heading weighted by a stroke. Each run of lines is one block, so the lines match the textarea's one for one; the
+   textarea stays the one thing you type in, so a box edits like any text. */
+const DraftMirror = forwardRef<HTMLDivElement, { text: string; hero: boolean; bad?: (expr: string) => boolean }>(function DraftMirror({ text, hero, bad }, ref) {
+  const span = (x: Span, key: number) => {
+    if (x.kind === 'text') return x.text
+    if (x.kind === 'calc') {
+      const inner = x.text.slice(1, -1), k = inner.lastIndexOf(' = ')   // the RAW characters, so the box sits exactly under the typed text
+      // a box the server refused keeps saying so (a red edge, its reason on hover is the error line), not just once
+      return <span key={key} className="ws-calc" data-bad={bad?.(splitCalc(inner).expr) || undefined}><span className="ws-calc-mark">{OPEN}</span>{k < 0 ? inner : <>{inner.slice(0, k)}<span className="ws-calc-eq">{inner.slice(k)}</span></>}<span className="ws-calc-mark">{CLOSE}</span></span>
+    }
+    if (x.kind === 'code') return <span key={key} className="ws-calc"><span className="ws-calc-mark">`</span>{x.text.slice(1, -1)}<span className="ws-calc-mark">`</span></span>
+    if (x.kind === 'strong') return <span key={key} className="ws-md-strong"><span className="ws-md-mark">**</span>{x.text.slice(2, -2)}<span className="ws-md-mark">**</span></span>
+    const h = x.text.indexOf(' ')
+    return <span key={key} className="ws-md-strong ws-md-head"><span className="ws-md-mark">{x.text.slice(0, h)}</span>{x.text.slice(h)}</span>
   }
-  parts.push(text.slice(i) + '\u200b')
+  const end = (t: string) => (t === '' || t.endsWith('\n') ? '\u200b' : '')   // a last empty line still takes its height
   return (
     <div ref={ref} aria-hidden className={`absolute inset-x-0 top-0 bottom-0 overflow-hidden pointer-events-none whitespace-pre-wrap break-words px-4 text-ink ${hero ? 'pt-4 pb-1 text-[17px] leading-[1.55]' : 'pt-3.5 pb-1 text-[15px] leading-relaxed'}`}>
-      {parts}
+      {blocks(text).map((b, i) => {
+        if (!b.fence) return <div key={i}>{spans(b.text).map(span)}{end(b.text)}</div>
+        const lines = b.text.split('\n'), closed = lines.length > 1 && /^ {0,3}`{3,}\s*$/.test(lines[lines.length - 1])
+        const body = lines.slice(1, closed ? -1 : undefined).join('\n')
+        return (
+          <div key={i} className="ws-md-fence">
+            <span className="ws-calc-mark">{lines[0]}</span>{lines.length > 1 ? '\n' : ''}{body}
+            {closed ? <>{'\n'}<span className="ws-calc-mark">{lines[lines.length - 1]}</span></> : end(b.text)}
+          </div>
+        )
+      })}
     </div>
   )
 })
