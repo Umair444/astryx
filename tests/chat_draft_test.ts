@@ -27,5 +27,6 @@ arm('"= " in prose, after a closed fence or a closed `code`, still opens a box',
   !!openCalc('x = ', 4) && !!openCalc('```\nq\n```\nx = ', 14) && !!openCalc('`a` x = ', 8) && codeAt('```\nq', 5) && !codeAt('`a` b', 5))
 arm('an unclosed fence is not drawn closed by a shorter run (medic 12585 nit)', blocks('````\n```')[0].closed === false && blocks('```\nx\n```')[0].closed === true)
 arm('a ~~~ fence is a fence too, closed by ~~~ (medic 12587)', openCalc('~~~\nb = ', 8) === null && blocks('~~~\nx\n~~~')[0].closed === true && blocks('~~~\nx\n```')[0].closed === false)
+arm('"~~~ hello ~~~" on one line is text, not a fence that never closes (owner 12593)', !blocks('~~~ hello ~~~\nnext')[0].fence && !drawn('~~~ hello ~~~') && blocks('~~~ sql\nx')[0].fence)
 console.log(fails ? `${fails} FAIL` : "ALL PASS")
 process.exit(fails ? 1 : 0)

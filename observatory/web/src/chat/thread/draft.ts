@@ -15,7 +15,9 @@ export const OPEN = '⟦', CLOSE = '⟧'      // a calc box's marks (calc.ts); h
 export interface Block { fence: boolean; text: string; closed?: boolean }
 export interface Span { kind: 'text' | 'calc' | 'code' | 'strong' | 'head'; text: string }
 
-const OPEN_FENCE = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/      // ``` or ~~~, as code.ts reads a fence (medic 12587)
+// ``` or ~~~ (medic 12587), its info with none of its own fence character: "```x```" or "~~~ hello ~~~" on one line is
+// text, never a box with no way out (owner 12593)
+const OPEN_FENCE = /^ {0,3}((`|~)\2{2,})(?!.*\2)/
 export function blocks(text: string): Block[] {
   const out: Block[] = []
   const push = (fence: boolean, line: string) => {
