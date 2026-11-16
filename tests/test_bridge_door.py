@@ -427,9 +427,11 @@ for ch, m in BR.items():
 
 # ── SELECT: each bridge's own predicate, on a fixture DB ──────────────────────────────────────────────────────────
 def predicate(ch):
+    """The bridge's own listen predicate: its CLAIM, the one string its listen() is handed."""
     tree = ast.parse(Path(BR[ch].__file__).read_text())
     call = next(n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "listen")
-    return ast.literal_eval(call.args[1])
+    assert getattr(call.args[1], "id", "") == "CLAIM", f"{ch}: listen() is not handed CLAIM"
+    return BR[ch].CLAIM
 
 
 try:

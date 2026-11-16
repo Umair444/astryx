@@ -18,9 +18,9 @@ routes through any http/socks5 proxy — either unblocks without a code change.
 Surface claim: only rows on tg: threads (or to tg-<id>). Un-threaded owner
 messages remain WhatsApp's (the home surface).
 
-Config: TG_BOT_TOKEN in .env; routes-telegram.json (trusted_ids = Telegram
-USER ids — sender-gated, never chat-gated). Unknown senders are dropped but
-logged, so bootstrapping a route is: DM the bot, read the journal, add it.
+Config: TG_BOT_TOKEN in .env; routes-telegram.json. A sender's name is its PERSON's (common.identity_of: the owner's
+own accounts are `owner`); a closed chat takes the owner only, an open one anyone as tg-<id>. Unknown chats are
+dropped but logged, so bootstrapping a route is: DM the bot, read the journal, add it.
 
 Run: uvicorn bridges.telegram:app --host 127.0.0.1 --port 8478   (repo root)
 """
@@ -54,6 +54,8 @@ API = f"{API_BASE}/bot{TOKEN}"
 FILE_API = f"{API_BASE}/file/bot{TOKEN}"
 from .common import signed  # noqa: E402  the sender label (one bot speaks for every agent), as WhatsApp's
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
+from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
+from .common import identity_of  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
 ROUTES_FILE = ESTATE / "bridges" / "routes-telegram.json"
 
 pool: asyncpg.Pool | None = None
@@ -225,7 +227,6 @@ async def on_message(msg: dict):
         print(f"telegram: no route for chat {chat} "
               f"(from {uid} @{sender.get('username')}) — dropped", flush=True)
         return
-    trusted = uid in route.get("trusted_ids", [])
     text = (msg.get("text") or msg.get("caption") or "").strip()
     for kind, name_key in (("document", "file_name"), ("photo", None),
                            ("voice", None), ("audio", "file_name"), ("video", "file_name")):
@@ -239,14 +240,12 @@ async def on_message(msg: dict):
             break
     if not text:
         return
-    if trusted:
-        who = "owner"
-    else:
+    who = await identity_of(pool, "telegram", uid, f"tg-{uid}")   # the one minter: a linked person's name
+    if who != "owner":
         if not route.get("open"):
-            print(f"telegram: untrusted sender {uid} on closed chat {chat} — dropped",
+            print(f"telegram: sender {uid} on closed chat {chat} — dropped (the owner only)",
                   flush=True)
             return
-        who = f"tg-{uid}"
         text = f"{sender.get('first_name') or uid}: {text}"
     # INBOUND CONTEXT (same shape as WhatsApp): sender identity + reply/quote, carried in meta
     # so an agent sees WHO sent it (from_agent collapses a trusted sender to 'owner') and WHAT
@@ -294,11 +293,10 @@ async def on_poll_answer(pa: dict):
     old = await update_poll_votes(pool, pid, agg, voters)
     chat = rec["chat"]                             # "tg:<chat_id>"
     route = routes().chat(chat.removeprefix("tg:"))
-    trusted = route and user.get("id") in route.get("trusted_ids", [])
     name = user.get("first_name") or str(user.get("id"))
     changes = [f'{name} → {", ".join(picked) if picked else "(retracted)"}']
     await wire_insert(
-        pool, "owner" if trusted else f"tg-{user.get('id')}", "telegram",
+        pool, await identity_of(pool, "telegram", user.get("id"), f"tg-{user.get('id')}"), "telegram",
         rec["agent"] or (route and route["agent"]) or "seed", chat, "poll",
         vote_body(rec["question"], changes, agg), route=route)
 
@@ -311,14 +309,13 @@ async def on_message_reaction(mr: dict):
     if route is None:
         return
     uid = (mr.get("user") or {}).get("id")
-    trusted = uid in route.get("trusted_ids", [])
-    if not trusted and not route.get("open"):
+    who = await identity_of(pool, "telegram", uid, f"tg-{uid}")
+    if who != "owner" and not route.get("open"):
         return
     new = mr.get("new_reaction") or []
     if not new:                                    # reaction cleared, not added
         return
     emoji = " ".join(r.get("emoji", "") for r in new if r.get("type") == "emoji") or "reacted"
-    who = "owner" if trusted else f"tg-{uid}"
     agent, snippet = await reacted_message(pool, f"tg:{chat}", mr.get("message_id"))
     await reaction_signal(pool, "telegram", f"tg:{chat}", who, emoji,
                           agent or route["agent"], snippet)
@@ -344,6 +341,14 @@ async def poll_updates():
 
 
 # ---------------------------------------------------------------------- app
+# the rows this bridge delivers (its listen predicate; tests/test_bridge_door runs it on a fixture DB)
+CLAIM = ("((to_agent='owner' OR to_agent LIKE 'tg-%') "
+         "AND (thread LIKE 'tg:%' OR to_agent LIKE 'tg-%')) "
+         f"OR {address.reaches_sql('telegram')} "   # a linked person, answered here under their person's name
+         # plan-9139 S1c: a release this bridge's route was stamped for (its thread, tier-<sender>, names none)
+         "OR (to_agent='owner' AND thread LIKE 'tier-%' AND delivery->'release'->>'channel' = 'telegram')")
+
+
 @asynccontextmanager
 async def lifespan(_):
     global pool, http
@@ -351,11 +356,7 @@ async def lifespan(_):
     http = httpx.AsyncClient(proxy=PROXY)
     t1 = asyncio.create_task(poll_updates())
     t2 = asyncio.create_task(listen(
-        DSN, "((to_agent='owner' OR to_agent LIKE 'tg-%') "
-             "AND (thread LIKE 'tg:%' OR to_agent LIKE 'tg-%')) "
-             # plan-9139 S1c: a release this bridge's route was stamped for (its thread, tier-<sender>, names none)
-             "OR (to_agent='owner' AND thread LIKE 'tier-%' AND delivery->'release'->>'channel' = 'telegram')",
-        deliver, on_step))
+        DSN, CLAIM, deliver, on_step))
     yield
     t1.cancel(); t2.cancel()
     await http.aclose()

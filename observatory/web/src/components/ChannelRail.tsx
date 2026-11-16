@@ -205,7 +205,7 @@ function ChatRow({ c }: { c: ChatRef }) {
           </label>
           <label className="flex items-center gap-2">
             <button role="switch" aria-checked={!!c.open} disabled={busy}
-              onClick={() => act(() => patchChat(c, { open: !c.open }, `${c.label}: ${c.open ? 'only its trusted senders reach the agent' : 'anyone in the chat reaches the agent'}`))}
+              onClick={() => act(() => patchChat(c, { open: !c.open }, `${c.label}: ${c.open ? 'only the owner reaches the agent' : 'anyone in the chat reaches the agent'}`))}
               className="ws-switch shrink-0" data-on={c.open || undefined} aria-label={`anyone in ${c.label} may write`}><span /></button>
             <span>Anyone in the chat can write to the agent</span>
           </label>

@@ -160,8 +160,7 @@ export async function routeChat(c: ChatRef, to: string) {
   const d = await put(c.channel, (rows) => {
     const i = rows.findIndex((r) => String(r.chat) === c.chat)
     if (i >= 0) return rows.map((r, k) => (k === i ? { ...r, agent: to, enabled: true } : r))
-    const key = state.data?.find((x) => x.channel === c.channel)?.trusted_key ?? 'trusted_ids'
-    return [...rows, { chat: c.chat, agent: to, enabled: true, open: true, show: 'steps', [key]: [],
+    return [...rows, { chat: c.chat, agent: to, enabled: true, open: true, show: 'steps',
                        note: `${c.label} -> ${to} (routed from the floor)` } as WireRoute]
   })
   const undo = prevAgent && prevAgent !== to

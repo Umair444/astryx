@@ -95,6 +95,18 @@ def env(key: str, default: str = "") -> str:
     return config.get(key, default, f)
 
 
+async def identity_of(pool, channel: str, account, fallback: str) -> str:
+    """THE one minter of a sender's wire name (identity-channels P1, owner 11-15 "one identity per person"): the
+    person the (channel, account) handle is linked to, else `fallback`, the bridge's own name for an unlinked sender
+    (wa-<digits>, tg-<id>, …), so nothing changes for anyone unlinked. The owner is the identity `owner`, whose handles
+    are the owner's own accounts: that replaced each route's trusted_* list. Schema: identity_who (schema.sql)."""
+    try:
+        return await pool.fetchval("SELECT identity_who($1, $2, $3)", channel, str(account), fallback) or fallback
+    except Exception as e:  # noqa: BLE001 — loud: the owner reads as a stranger until it is fixed
+        print(f"{channel}: identity_who FAILED ({type(e).__name__}: {str(e)[:120]}); {fallback} as minted", flush=True)
+        return fallback
+
+
 def load_routes(path: Path) -> Routes:
     """Re-read per use so routes can be edited live, no restart. The ENABLED rows, resolved by the one resolver
     (bridges/routing.py, plan-11860 E2): look a chat up with .chat(id) and a doorbell with .doorbell(agent), never a

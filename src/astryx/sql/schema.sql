@@ -1318,6 +1318,56 @@ DROP TRIGGER IF EXISTS members_last_owner ON members;
 CREATE TRIGGER members_last_owner BEFORE DELETE OR UPDATE ON members
   FOR EACH ROW EXECUTE FUNCTION members_last_owner();
 
+-- ── IDENTITY (identity-channels P1, owner 11-15: "one identity per person … make it a standard"; DESIGN.md in
+-- homes/seed/identity-channels). A PERSON is one identity row; each account they speak from (a cog web account, a
+-- WhatsApp jid, a Telegram or Discord id) is a handle. No role here: a person's powers are their web account's role
+-- (members, org_role), the one source. A handle with no identity is a stranger astryx has seen, so a later link (the
+-- person confirms from that account) finds it. Its wire name is the identity's; an unlinked handle keeps the name its
+-- bridge mints (wa-<digits>, tg-<id>, …), so no existing name changes.
+CREATE TABLE IF NOT EXISTS identity (
+  tenant    text NOT NULL DEFAULT 'astryx',
+  id        bigserial,
+  wire_name text NOT NULL,
+  label     text,
+  created   timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT identity_pkey PRIMARY KEY (tenant, id),
+  CONSTRAINT identity_wire_name_key UNIQUE (tenant, wire_name)
+);
+CREATE TABLE IF NOT EXISTS identity_handle (
+  tenant      text NOT NULL DEFAULT 'astryx',
+  channel     text NOT NULL,                 -- a channel's name (core/channels.py), or 'web': a cog account uid
+  account     text NOT NULL,                 -- the channel's own id, as it is
+  identity_id bigint,                        -- NULL: a stranger astryx has seen
+  invited_at  timestamptz,
+  seen        timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT identity_handle_pkey PRIMARY KEY (tenant, channel, account),
+  CONSTRAINT identity_handle_identity_fkey FOREIGN KEY (tenant, identity_id) REFERENCES identity (tenant, id)
+    ON DELETE SET NULL (identity_id)
+);
+-- THE ONE MINTER: the wire name a message from (channel, account) is written as. The linked identity's name, else
+-- `fallback` (the bridge's own mint, so an unlinked sender's name is what it always was). A first-seen account is
+-- recorded as a stranger's handle. A web account IS a person: its first sight makes its identity, named `fallback`.
+-- SECURITY INVOKER: the caller's org sees and writes only its own rows (RLS below).
+CREATE OR REPLACE FUNCTION identity_who(p_channel text, p_account text, p_fallback text) RETURNS text
+LANGUAGE plpgsql AS $who$
+DECLARE
+  w text;
+  i bigint;
+BEGIN
+  SELECT x.wire_name INTO w FROM identity_handle h JOIN identity x ON x.tenant = h.tenant AND x.id = h.identity_id
+   WHERE h.channel = p_channel AND h.account = p_account;
+  IF w IS NOT NULL THEN
+    RETURN w;
+  END IF;
+  IF p_channel = 'web' THEN
+    INSERT INTO identity (wire_name) VALUES (p_fallback) ON CONFLICT ON CONSTRAINT identity_wire_name_key DO NOTHING;
+    SELECT id INTO i FROM identity WHERE wire_name = p_fallback;
+  END IF;
+  INSERT INTO identity_handle (channel, account, identity_id) VALUES (p_channel, p_account, i)
+    ON CONFLICT ON CONSTRAINT identity_handle_pkey DO UPDATE SET identity_id = coalesce(identity_handle.identity_id, EXCLUDED.identity_id);
+  RETURN p_fallback;
+END $who$;
+
 -- ── ROW-LEVEL SECURITY (cog-rls slice 3, RLS.md §2). LAST-but-one: it covers every table above. ─────────────────────
 -- Every table with a `tenant` column in the core schemas (partitions included: a partition queried directly does not
 -- inherit its parent's policies, so ear_day secures each new day too) is ENABLEd and FORCEd (the owner obeys it as

@@ -16,9 +16,9 @@ collision precisely BECAUSE it's a package module run from the repo root
 
 Surface claim: only rows on dc: threads (or to dc-<id>).
 
-Config: DISCORD_BOT_TOKEN in .env; routes-discord.json (trusted_ids = Discord
-USER ids — sender-gated, never room-gated). Unknown chats/senders dropped but
-logged for easy route bootstrapping.
+Config: DISCORD_BOT_TOKEN in .env; routes-discord.json. A sender's name is its PERSON's (common.identity_of: the
+owner's own accounts are `owner`); a closed channel takes the owner only, an open one anyone as dc-<id>. Unknown
+chats dropped but logged for easy route bootstrapping.
 
 Run: uvicorn bridges.discord:app --host 127.0.0.1 --port 8479   (repo root)
 """
@@ -48,6 +48,8 @@ TOKEN = env("DISCORD_BOT_TOKEN")
 from .progress import Progress  # noqa: E402
 from .common import signed  # noqa: E402  the sender label when the BOT speaks (a webhook names the agent itself)
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
+from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
+from .common import identity_of  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
 ROUTES_FILE = ESTATE / "bridges" / "routes-discord.json"
 
 pool: asyncpg.Pool | None = None
@@ -274,7 +276,6 @@ async def on_message(msg: discord.Message):
               f"(#{getattr(msg.channel, 'name', 'DM')}, from {msg.author.id} "
               f"{msg.author.name}) — dropped", flush=True)
         return
-    trusted = msg.author.id in route.get("trusted_ids", [])
     text = (msg.content or "").strip()
     for a in msg.attachments:
         dst = media_path("dc", a.filename)
@@ -287,14 +288,12 @@ async def on_message(msg: discord.Message):
         text = f"{text}\n{got}" if text else got
     if not text:
         return
-    if trusted:
-        who = "owner"
-    else:
+    who = await identity_of(pool, "discord", msg.author.id, f"dc-{msg.author.id}")   # the one minter
+    if who != "owner":
         if not route.get("open"):
-            print(f"discord: untrusted sender {msg.author.id} on closed "
-                  f"channel {cid} — dropped", flush=True)
+            print(f"discord: sender {msg.author.id} on closed "
+                  f"channel {cid} — dropped (the owner only)", flush=True)
             return
-        who = f"dc-{msg.author.id}"
         text = f"{msg.author.display_name}: {text}"
     # INBOUND CONTEXT (same shape as WhatsApp): sender identity + reply/quote in meta, so an
     # agent sees WHO sent it (from_agent collapses a trusted sender to 'owner') and WHAT it
@@ -353,9 +352,8 @@ async def _poll_event(payload):
         return
     cid = str(payload.channel_id)
     route = routes().chat(cid)
-    trusted = route and payload.user_id in route.get("trusted_ids", [])
     await wire_insert(
-        pool, "owner" if trusted else f"dc-{payload.user_id}", "discord",
+        pool, await identity_of(pool, "discord", payload.user_id, f"dc-{payload.user_id}"), "discord",
         rec["agent"] or (route and route["agent"]) or "seed", f"dc:{cid}", "poll",
         vote_body(rec["question"], changes, agg), route=route)
 
@@ -381,10 +379,9 @@ async def on_raw_reaction_add(payload):
     route = routes().chat(cid)
     if route is None:
         return
-    trusted = payload.user_id in route.get("trusted_ids", [])
-    if not trusted and not route.get("open"):
+    who = await identity_of(pool, "discord", payload.user_id, f"dc-{payload.user_id}")
+    if who != "owner" and not route.get("open"):
         return
-    who = "owner" if trusted else f"dc-{payload.user_id}"
     # Resolve the sender and text from Discord itself: agents post under their own
     # webhook name, so it works even for messages whose id we didn't store. Fall
     # back to our records, then the channel default.
@@ -408,17 +405,21 @@ async def on_raw_reaction_add(payload):
 
 
 # ---------------------------------------------------------------------- app
+# the rows this bridge delivers (its listen predicate; tests/test_bridge_door runs it on a fixture DB)
+CLAIM = ("((to_agent='owner' OR to_agent LIKE 'dc-%') "
+         "AND (thread LIKE 'dc:%' OR to_agent LIKE 'dc-%')) "
+         f"OR {address.reaches_sql('discord')} "   # a linked person, answered here under their person's name
+         # plan-9139 S1c: a release this bridge's route was stamped for (its thread, tier-<sender>, names none)
+         "OR (to_agent='owner' AND thread LIKE 'tier-%' AND delivery->'release'->>'channel' = 'discord')")
+
+
 @asynccontextmanager
 async def lifespan(_):
     global pool
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
     t1 = asyncio.create_task(client.start(TOKEN))
     t2 = asyncio.create_task(listen(
-        DSN, "((to_agent='owner' OR to_agent LIKE 'dc-%') "
-             "AND (thread LIKE 'dc:%' OR to_agent LIKE 'dc-%')) "
-             # plan-9139 S1c: a release this bridge's route was stamped for (its thread, tier-<sender>, names none)
-             "OR (to_agent='owner' AND thread LIKE 'tier-%' AND delivery->'release'->>'channel' = 'discord')",
-        deliver, on_step))
+        DSN, CLAIM, deliver, on_step))
     yield
     t1.cancel(); t2.cancel()
     await client.close()

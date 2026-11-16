@@ -50,6 +50,7 @@ from observatory.api import members  # noqa: E402   THIS org's membership: the O
 from astryx.security.serve import serve_untrusted  # noqa: E402   the ONE server of untrusted bytes (plan-11884 G3)
 from astryx.core import canvas as cv
 from astryx.core import presence as pres
+from astryx.core import address  # elsewhere_sql: a cv- name on another channel's thread is that bridge's (identity P1)
 from .canvas_shell import render
 from .common import (ESTATE, MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target, team_of, team_stamp,
                      step_line, wire_insert)
@@ -217,7 +218,7 @@ WHERE id IN (
   SELECT id FROM messages
   WHERE status='pending' AND to_org='local' AND (
         (thread LIKE 'cv:%' AND (to_agent='owner' OR to_agent LIKE 'cv-%' OR to_agent LIKE 'canvas-%'))
-     OR to_agent LIKE 'cv-%' OR to_agent LIKE 'canvas-%')
+     OR ((to_agent LIKE 'cv-%' OR to_agent LIKE 'canvas-%') AND NOT """ + address.elsewhere_sql("canvas") + """))
   ORDER BY id FOR UPDATE SKIP LOCKED)
 RETURNING *"""
 

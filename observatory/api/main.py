@@ -2844,17 +2844,15 @@ async def growbot_proxy(path: str, request: Request):
 @app.get("/api/wire/routes")
 async def wire_routes():
     """Every channel's full route table (enabled AND disabled — the owner manages
-    both). trusted_key names the per-channel sender-trust field (jids vs numeric
-    ids) so the editor renders the right control. `etag` is the file's sha256: the PUT's If-Match (plan-11860 E4);
+    both). `etag` is the file's sha256: the PUT's If-Match (plan-11860 E4);
     `problems` is the one validator's verdict on the table as it stands (E2), so a hand edit shows here."""
     out = []
     for ch in _wire_channels():
         routes = _read_routes(ch)
         c = _channels.BY_NAME.get(ch)
-        key = c.trusted_key if c else "trusted_jids" if any("trusted_jids" in r for r in routes) else "trusted_ids"
         # the channel's own rules ride with its table (core/channels.py), so the web holds none: which chat ids are a
         # group or one person, and whether its people are phone numbers
-        out.append({"channel": ch, "routes": routes, "trusted_key": key, "etag": etag(_routes_file(ch)),
+        out.append({"channel": ch, "routes": routes, "etag": etag(_routes_file(ch)),
                     "problems": _routing.validate(routes, set(agent_meta())),
                     "group": c.group if c else ".+", "dm": c.dm if c else "", "numbers": bool(c and c.numbers)})
     return out
