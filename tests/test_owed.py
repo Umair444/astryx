@@ -7,6 +7,7 @@ one owed (owner 11-15). A fixture database (this tree's schema.sql), fixture row
   O4 a team's ask is owed by its lead only
   O5 told once per message: the second stop ends the turn; a new message is told
   O6 the reminder names who and where, never the message's words
+  O9 a federated peer's sender, whatever name its envelope gives, is owed nothing
   O8 in a GROUP, people talking among themselves owe nothing; an @mention, a reply to the agent's message, or a task does
   O7 person_sql is the one table's people (owner, wa-, tg-, dc-, cv-, fe-), and nothing else
 Exit 0 · 1 · 77 (no database)."""
@@ -82,6 +83,12 @@ def main():
         msg("wa-555", "seed", g, "about that", ago_min=0, delivery={"reply_to_body": "▸ *db*\nthe seed list for the dashboard"})
         msg("wa-666", "seed", g, "and this", ago_min=0, delivery={"reply_to_body": "seed money for the dashboard"})
         arm("O8 an @mention, a reply to its message, a task: owed; an address, another agent's label, a quote merely naming it: not", ids() == [m1, m2, m3], ids())
+        cur.execute("INSERT INTO peers (org, status) VALUES ('peer.example', 'introduced')")
+        for who in ("owner", "wa-923001112223"):
+            cur.execute("""INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, status, delivered_at)
+                           VALUES (%s, 'peer.example', 'seed', 'o9-peer', 'chat', 'answer me', 'delivered', now())""", (who,))
+        arm("O9 a federated peer's 'owner' or 'wa-<n>' (it names its own sender) is no person of ours: owed nothing (medic 12607)",
+            ids() == [m1, m2, m3], ids())
         since = None
         with tempfile.TemporaryDirectory() as dd:
             arm("O5 told once per message", O.told(dd, [b, 7]) == [b, 7] and O.told(dd, [b, 7]) == [] and O.told(dd, [b, 9]) == [9])
