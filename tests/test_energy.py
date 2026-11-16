@@ -149,6 +149,7 @@ def main():
         arm("E10 a login with no reading of its own is unknown, never the org's", E.feel(c, relearn_after_h=None, credential="Nobody").get("known") is False)
         import tempfile as _tf
         from astryx.core import vault as _V
+        from astryx.pulse import pulse as P0
         with _tf.TemporaryDirectory() as est:
             est = Path(est)
             (est / "runtime.json").write_text('{"b": {"credential": "Second"}, "z": {"credential": "Third"}}')
@@ -159,10 +160,27 @@ def main():
             arm("E10 the prompt line of an agent on a login reads that login (its own reading)", ln_b.startswith("[energy] ") and "50% left" in ln_b and not keep_b, ln_b)
             arm("E10 …a login with no reading says so, with no percentage, and hides the org's gauges (medic 12481)",
                 ln_z == "[energy] Third: no reading of this login's limits yet" and not keep_z and "%" not in ln_z, (ln_z, keep_z))
+            # E11 the pulse's reading per agent (energy.by_agent): every login read once, up front; an agent feels its own
+            calls, real = [], E.feel
+            E.feel = lambda *a, **k: (calls.append(k.get("credential")), real(*a, **k))[1]
+            try:
+                of = E.by_agent(c, est, relearn_after_h=None)
+                n0 = len(calls)
+                fb, fz, fa, fb2 = of("b"), of("z"), of("a"), of("b")
+            finally:
+                E.feel = real
+            arm("E11 by_agent: b feels Second (91%), z's login is unknown, a feels the org's",
+                fb.get("known") and fb["windows"]["h5"]["used"] == 91 and fz.get("known") is False
+                and fa.get("known") and fa["windows"]["h5"]["used"] == 0, (fb.get("windows"), fz, fa.get("windows")))
+            arm("E11 …each login read once, all of them before any question (no SQL after: the pulse asks inside its claim)",
+                sorted(calls, key=str) == sorted([None, "Second", "Third"], key=str) and len(calls) == n0, calls)
+            arm("E11 the pulse judges b by Second, a by the org, z (no reading) as unknown, which delivers",
+                P0.held_now(fb) is P0.held_now(own) and P0.held_now(fa) is P0.held_now(org) and P0.held_now(fz) is None,
+                (P0.held_now(fb), P0.held_now(own), P0.held_now(fa), P0.held_now(org)))
         from astryx.pulse import pulse as P
         fr = E.feel(c, relearn_after_h=None)
         arm("E6 98% read before its 5-hour reset, the reset now past: a fresh window, and the pulse holds nothing",
-            fr.get("known") and fr["windows"]["h5"]["used"] == 0 and P.pressure(c) is False, (fr.get("windows"), P.pressure(c)))
+            fr.get("known") and fr["windows"]["h5"]["used"] == 0 and P.pressure(c)(None) is False, (fr.get("windows"), P.pressure(c)(None)))
         turn(0, 100_000, 14)
         fl = E.feel(c, relearn_after_h=None)
         arm("E6 feel: known, the tighter window binds, a word and a sentence",

@@ -91,7 +91,7 @@ def names(ts):
 from astryx.econ import energy as _energy  # noqa: E402
 
 
-def _feel(conn, relearn_after_h=None):
+def _feel(conn, relearn_after_h=None, credential=None):
     if getattr(conn, "gauge_raises", False):
         raise RuntimeError("gauge unreadable")
     pct = getattr(conn, "pct", None)

@@ -333,7 +333,7 @@ def _show(conn, agent: str, a: dict) -> str:
              f"check: {t['check_src'] or '-'}",
              f"note: {t['note'] or '-'}",
              f"last evaluated {t['last_eval']}, last fired {t['last_fired']}, next {t['next_fire']}"]
-    if t["off_reason"] is None and t["next_fire"] <= _now() and t["kind"] == "heartbeat" and pulse.pressure(conn):
+    if t["off_reason"] is None and t["next_fire"] <= _now() and t["kind"] == "heartbeat" and pulse.pressure(conn)(t["agent"]):
         lines.append("due, waiting on quota pressure")
     if t["off_reason"] == "standdown":
         lines.append("held by the org's stand-down: seed lifts it, as SQL on off_reason='standdown'")

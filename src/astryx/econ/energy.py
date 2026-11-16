@@ -299,6 +299,28 @@ def during(c, agent: str, transcript: str, said: str | None = None) -> str:
             + (f" · {f['fact']}" if f.get("known") else ""))
 
 
+def by_agent(c, estate, relearn_after_h: float | None = 1.0):
+    """agent -> how the login it runs on feels (feel). Every login is read NOW, once (the org's own and each vault
+    login's), so the caller's later questions run no SQL: the pulse asks inside its claim's transaction, and one tick
+    must read one feeling per login (its shed and its holds agree, a4 #62398). An agent on a vault login feels that
+    login; None, or an agent on the org's login, the org's. A login that can't be read is unknown."""
+    from astryx.core import vault
+    feels = {None: feel(c, relearn_after_h=relearn_after_h)}
+    for name, e in vault.load(estate).items():
+        if e["kind"] == "login":
+            try:
+                feels[name] = feel(c, relearn_after_h=None, credential=name)
+            except Exception:
+                feels[name] = {"known": False}
+    logins: dict = {}
+
+    def of(agent: str | None) -> dict:
+        if agent not in logins:
+            logins[agent] = vault.login_of(estate, agent)[0] if agent else None
+        return feels.get(logins[agent]) or {"known": False}
+    return of
+
+
 def prompt_line(c, agent: str | None, estate) -> tuple[str, bool]:
     """(the [energy] line, keep the raw gauges) for `agent`'s next prompt. An agent on a vault LOGIN feels that login;
     with no reading of it yet the line says so and the org's gauges are NOT shown as its own (medic 12481). An agent
