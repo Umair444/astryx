@@ -7,7 +7,8 @@ reader stubbed (no network).
   T2 the first Stop auto-delivers the forgotten reply to the person who asked; the continuation's Stop delivers
      NOTHING (its last words answer the hook, not the person)
   T5 that delivery is ONE rule for every surface (address.SURFACES' persons): the web chat's owner and a signed-in
-     member get their forgotten reply as a WhatsApp sender does; an agent's message gets none
+     member get their forgotten reply as a WhatsApp sender does; an agent's message gets none, nor a federated peer's
+     'owner' or 'wa-<n>' (medic 12607)
 Exit 0 · 1 · 77 (no database)."""
 import importlib.util
 import json
@@ -76,8 +77,12 @@ def main():
         # T5 THE ONE RULE (owner 11-16: "a standard … we can't patch it by each channel"): a forgotten reply reaches any
         # PERSON (address.SURFACES), the web chat's owner and a signed-in member as WhatsApp did; an agent's message
         # opens a turn that auto-messages no one
+        cur.execute("INSERT INTO peers (org, status) VALUES ('peer.example', 'introduced')")
         for who, org, thread, owed_ in (("owner", "local", "obs:seed", True), ("cv-pat.2", "local", "chat:20261116-t5", True),
-                                        ("owner", "whatsapp", "wa:120363000000000000@g.us", True), ("db", "local", "w:t5", False)):
+                                        ("owner", "whatsapp", "wa:120363000000000000@g.us", True), ("db", "local", "w:t5", False),
+                                        # a federated peer names its own sender (gateway.py takes from_agent from its
+                                        # envelope): 'owner' or 'wa-<number>' from a peer is not ours (medic 12607)
+                                        ("owner", "peer.example", "t5-peer-owner", False), ("wa-923001112223", "peer.example", "t5-peer-wa", False)):
             cur.execute("""INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, status, delivered_at)
                            VALUES (%s, %s, 'seed', %s, 'chat', 'hi', 'delivered', now()) RETURNING id""", (who, org, thread))
             m5 = cur.fetchone()[0]
@@ -87,7 +92,7 @@ def main():
                               + line("assistant", [{"type": "text", "text": f"answer for {who}"}], "2026-11-16T06:00:04Z", f"b{m5}", u))
                 S.handle_stop(cur, "seed", {"transcript_path": str(tp), "session_id": f"t5-{m5}"})
             got = cur.execute("SELECT to_agent, thread, body FROM messages WHERE from_agent='seed' AND thread=%s", (thread,)).fetchall()
-            arm(f"T5 {who} on {org} {thread.split(':')[0]}: " + ("its forgotten reply comes back to it on its thread" if owed_ else "an agent's message auto-messages no one"),
+            arm(f"T5 {who} on {org} {thread.split(':')[0]}: " + ("its forgotten reply comes back to it on its thread" if owed_ else "auto-messages no one (an agent, or a peer's 'person')"),
                 got == ([(who, thread, f"answer for {who}")] if owed_ else []), got)
         conn.rollback()
         # T4 a turn that ends on a usage limit (StopFailure: no Stop runs) leaves one 'stopped' step in its own words,

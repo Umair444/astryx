@@ -796,16 +796,17 @@ def handle_stop(cur, agent, h, strip=None):
     # a turn going on after a Stop hook's block (stop_hook_active) delivers nothing by itself: its last words are the
     # agent's answer to the HOOK ("that message needs no answer"), not to the person (medic 12441)
     if turn_id and input_msg_id and last_text and last_text.strip() and not h.get("stop_hook_active"):
-        src = cur.execute("SELECT from_agent, from_org, thread FROM messages WHERE id=%s",
-                          (input_msg_id,)).fetchone()
-        # Fire for a PERSON's message, on ANY surface: address.SURFACES is the one table of who is a person (the owner,
-        # a WhatsApp/Telegram/Discord sender, a signed-in member, a canvas user, a frontend), the same one owed.py's
-        # reminder reads, so a new channel is one row there and inherits this (owner 11-16: "a standard … we can't
-        # patch it by each channel"; the web chat had been left out and its line said "reading your message" for
-        # good). Agent turns and pulse triggers are no person, so they can't auto-message anyone. No bubble is fine:
-        # a bridge's deliver() falls back to a fresh send. The reply goes BACK to that sender on that thread.
         from astryx.core import address
-        if src and address.surface_of(src[0]) in address.PERSONS:
+        src = cur.execute(f"SELECT from_agent, from_org, thread, {address.person_sql('from_agent', org='from_org')} "
+                          "FROM messages WHERE id=%s", (input_msg_id,)).fetchone()
+        # Fire for a message from one of OUR people, on ANY surface: address.person_sql is the one rule (SURFACES, the
+        # table of who is a person: the owner, a WhatsApp/Telegram/Discord sender, a signed-in member, a canvas user, a
+        # frontend; never a federated peer's, whatever name its envelope gives), the same one owed.py's reminder reads,
+        # so a new channel is one row there and inherits this (owner 11-16: "a standard … we can't patch it by each
+        # channel"; the web chat had been left out and its line said "reading your message" for good). Agent turns
+        # and pulse triggers are no person, so they can't auto-message anyone. No bubble is fine: a bridge's deliver()
+        # falls back to a fresh send. The reply goes BACK to that sender on that thread.
+        if src and src[3]:
             already = cur.execute(
                 "SELECT count(*) FROM messages WHERE turn_id=%s AND to_agent=%s",
                 (turn_id, src[0])).fetchone()[0]

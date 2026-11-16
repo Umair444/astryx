@@ -31,7 +31,7 @@ def owed(cur, agent: str, since) -> list[tuple]:
     rx = re.escape(agent)
     cur.execute(f"""
         SELECT m.id, m.thread, m.from_agent, left(m.body, {BODY}) FROM messages m
-         WHERE m.to_agent = %s AND {address.person_sql('m.from_agent')} AND m.status = 'delivered'
+         WHERE m.to_agent = %s AND {address.person_sql('m.from_agent', org='m.from_org')} AND m.status = 'delivered'
            AND m.intent IN ('chat', 'task')
            AND (m.intent = 'task' OR m.delivery ? 'lead' OR NOT ({GROUP}) OR m.body ~* ('(^|[^[:alnum:]_])@' || %s || '([^[:alnum:]_-]|$)')
                 OR split_part(m.delivery->>'reply_to_body', chr(10), 1) ~ ('^' || %s || '\\**' || %s || '\\**[[:space:]]*$'))

@@ -53,11 +53,14 @@ SURFACES = (
 PERSONS = ("owner", "whatsapp", "telegram", "discord", "canvas user", "frontend")
 
 
-def person_sql(col: str, params: bool = True) -> str:
+def person_sql(col: str, params: bool = True, org: str | None = None) -> str:
     """One SQL predicate: `col` names a person, from SURFACES (the one table of who is who). `params`: the statement
-    carries bind parameters, so a LIKE's % is doubled for the driver."""
+    carries bind parameters, so a LIKE's % is doubled for the driver. `org`, the row's from_org column: the person is
+    OURS, not a federated peer's (the gateway takes a peer's from_agent from its own envelope, so a peer can call itself
+    'owner' or 'wa-<any number>'; medic 12607): an org with a peers row is never one of our people."""
     out = [pred.replace("to_agent", col) for cls, _rx, _f, pred in SURFACES if cls in PERSONS]
-    return "(" + " OR ".join(o.replace("%", "%%") if params else o for o in out) + ")"
+    who = "(" + " OR ".join(o.replace("%", "%%") if params else o for o in out) + ")"
+    return who if org is None else f"({who} AND NOT EXISTS (SELECT 1 FROM peers p WHERE p.org = {org}))"
 
 
 def surface_of(name: str) -> str | None:
