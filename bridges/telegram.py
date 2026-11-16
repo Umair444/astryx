@@ -18,7 +18,7 @@ routes through any http/socks5 proxy — either unblocks without a code change.
 Surface claim: only rows on tg: threads (or to tg-<id>). Un-threaded owner
 messages remain WhatsApp's (the home surface).
 
-Config: TG_BOT_TOKEN in .env; routes-telegram.json. A sender's name is its PERSON's (common.identity_of: the owner's
+Config: TG_BOT_TOKEN in .env; its routes are rows (astryx.core.routes). A sender's name is its PERSON's (common.identity_of: the owner's
 own accounts are `owner`); a closed chat takes the owner only, an open one anyone as tg-<id>. Unknown chats are
 dropped but logged, so bootstrapping a route is: DM the bot, read the journal, add it.
 
@@ -37,7 +37,7 @@ from fastapi import FastAPI
 
 from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, Outcome, reacted_message, reaction_signal, route_target, wire_chat, describe_media, env, listen,
-                     load_routes, media_path,
+                     Book, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
                      update_poll_votes, vote_body, wire_insert,
                      door_open, door_org_ok, live_steps_ok, released)
@@ -55,8 +55,8 @@ FILE_API = f"{API_BASE}/file/bot{TOKEN}"
 from .common import signed  # noqa: E402  the sender label (one bot speaks for every agent), as WhatsApp's
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
-from .common import connection, identity_of, link_reply  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
-ROUTES_FILE = ESTATE / "bridges" / "routes-telegram.json"
+from .common import identity_of, link_reply, renew  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
+BOOK = Book("telegram")      # this bridge's routes, from the route table (common.Book)
 
 pool: asyncpg.Pool | None = None
 http: httpx.AsyncClient | None = None
@@ -64,7 +64,7 @@ JOB_TIMEOUT = 1800    # a progress job is forgotten 30 min after it opened (or a
 
 
 def routes() -> list[dict]:
-    return load_routes(ROUTES_FILE)
+    return BOOK.routes()
 
 
 async def tg(method: str, **params) -> dict:
@@ -220,13 +220,14 @@ async def fetch_file(file_id: str, name: str, kind: str = "") -> str:
 
 async def on_message(msg: dict):
     chat = str(msg.get("chat", {}).get("id", ""))
-    route = routes().chat(chat) or await connection(pool, "telegram", chat)   # the owner's routes, then an agent's connection
+    route = routes().chat(chat)                   # the owner's routes and the agents' connections: one table
     sender = msg.get("from", {}) or {}
     uid = sender.get("id")
     if route is None:
         print(f"telegram: no route for chat {chat} "
               f"(from {uid} @{sender.get('username')}) — dropped", flush=True)
         return
+    await renew(pool, route)                       # a connection lives on while someone writes
     text = (msg.get("text") or msg.get("caption") or "").strip()
     for kind, name_key in (("document", "file_name"), ("photo", None),
                            ("voice", None), ("audio", "file_name"), ("video", "file_name")):
@@ -355,11 +356,14 @@ CLAIM = ("((to_agent='owner' OR to_agent LIKE 'tg-%') "
 async def lifespan(_):
     global pool, http
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
+    await BOOK.refresh(pool)                       # the routes, before the first message
+    _book = asyncio.create_task(BOOK.follow(pool))   # then every few seconds (a rail edit lands with no restart)
     http = httpx.AsyncClient(proxy=PROXY)
     t1 = asyncio.create_task(poll_updates())
     t2 = asyncio.create_task(listen(
         DSN, CLAIM, deliver, on_step))
     yield
+    _book.cancel()
     t1.cancel(); t2.cancel()
     await http.aclose()
     await pool.close()

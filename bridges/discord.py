@@ -16,7 +16,7 @@ collision precisely BECAUSE it's a package module run from the repo root
 
 Surface claim: only rows on dc: threads (or to dc-<id>).
 
-Config: DISCORD_BOT_TOKEN in .env; routes-discord.json. A sender's name is its PERSON's (common.identity_of: the
+Config: DISCORD_BOT_TOKEN in .env; its routes are rows (astryx.core.routes). A sender's name is its PERSON's (common.identity_of: the
 owner's own accounts are `owner`); a closed channel takes the owner only, an open one anyone as dc-<id>. Unknown
 chats dropped but logged for easy route bootstrapping.
 
@@ -38,7 +38,7 @@ from fastapi import FastAPI
 
 from .embed_root import Refused, owner_only, read_checked
 from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_signal, route_target, wire_chat, describe_media, env, listen,
-                     load_routes, media_path,
+                     Book, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
                      update_poll_votes, vote_body, vote_changes, wire_insert,
                      door_open, door_org_ok, live_steps_ok, released)
@@ -50,7 +50,7 @@ from .common import signed  # noqa: E402  the sender label when the BOT speaks (
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
 from .common import identity_of  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
-ROUTES_FILE = ESTATE / "bridges" / "routes-discord.json"
+BOOK = Book("discord")      # this bridge's routes, from the route table (common.Book)
 
 pool: asyncpg.Pool | None = None
 JOB_TIMEOUT = 1800    # a progress job is forgotten 30 min after it opened (or after its last reply)
@@ -61,7 +61,7 @@ client = discord.Client(intents=intents)
 
 
 def routes() -> list[dict]:
-    return load_routes(ROUTES_FILE)
+    return BOOK.routes()
 
 
 # Per-agent identity: Discord webhooks let every message carry its own display
@@ -417,10 +417,13 @@ CLAIM = ("((to_agent='owner' OR to_agent LIKE 'dc-%') "
 async def lifespan(_):
     global pool
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
+    await BOOK.refresh(pool)                       # the routes, before the first message
+    _book = asyncio.create_task(BOOK.follow(pool))   # then every few seconds (a rail edit lands with no restart)
     t1 = asyncio.create_task(client.start(TOKEN))
     t2 = asyncio.create_task(listen(
         DSN, CLAIM, deliver, on_step))
     yield
+    _book.cancel()
     t1.cancel(); t2.cancel()
     await client.close()
     await pool.close()

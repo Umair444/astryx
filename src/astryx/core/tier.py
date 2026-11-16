@@ -32,7 +32,7 @@ from astryx.core.charter import resolve, Collision, AGENTS
 ORG_ACTUATION_GRANTS = frozenset({"compose"})   # (channels is every agent's now, spawn.sh: no grant to weigh)
 
 
-def _grants(name: str, agents_dir=AGENTS) -> set | None:
+def grants(name: str, agents_dir=AGENTS) -> set | None:
     """The agent's grant set, or None if the agent has no resolvable charter."""
     try:
         path = resolve(name, agents_dir)
@@ -50,10 +50,10 @@ def is_content_public(name: str, agents_dir=AGENTS) -> bool:
     """True iff the agent's CONTENT may be shown publicly. Fail-closed: an unknown
     agent (departed / no charter / ambiguous), or ANY grant outside the org-actuation
     allowlist, ⇒ False (private)."""
-    grants = _grants(name, agents_dir)
-    if grants is None:
+    held = grants(name, agents_dir)
+    if held is None:
         return False           # unknown agent → private
-    return grants.issubset(ORG_ACTUATION_GRANTS)
+    return held.issubset(ORG_ACTUATION_GRANTS)
 
 
 def content_public_agents(roster, agents_dir=AGENTS) -> set:
@@ -74,10 +74,10 @@ ORG_WORK_GRANTS = ORG_ACTUATION_GRANTS | frozenset({"chat-sql", "ocr", "org"})
 def is_content_org(name: str, agents_dir=AGENTS) -> bool:
     """True iff an insider of the org (a member or admin) may read the agent's CONTENT. Fail-closed: an unknown agent
     or any grant outside ORG_WORK_GRANTS ⇒ False (the owner's alone)."""
-    grants = _grants(name, agents_dir)
-    if grants is None:
+    held = grants(name, agents_dir)
+    if held is None:
         return False
-    return grants.issubset(ORG_WORK_GRANTS)
+    return held.issubset(ORG_WORK_GRANTS)
 
 
 def content_org_agents(roster, agents_dir=AGENTS) -> set:

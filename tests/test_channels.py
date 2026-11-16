@@ -11,8 +11,8 @@ can't patch it by each channel. later we will add slack and teams too").
   H3 A NEW CHANNEL IS ONE ROW: a fake `slack` row, and every reader admits it with no other edit: its people are
      addressable and persons, its stamp reserved, its group threads owe a reply only when addressed, its owner rows
      are bridged, its chats have kinds, `astryx connect` and the channel screen know it, its unit is in the census
-  H4 THE PLACES THAT CAN'T IMPORT IT, pinned: the shell scripts name every connectable channel's routes file and unit,
-     and the web's reserved names are orgname's
+  H4 THE PLACES THAT CAN'T IMPORT IT, pinned: init.sh and deploy.sh name every connectable channel's unit, and the
+     web's reserved names are orgname's
 Exit 0 · 1 · 77 (no database: H1's SQL arms are not run)."""
 import importlib
 import os
@@ -113,8 +113,8 @@ try:
     arm("its owner rows are its bridge's", "thread LIKE 'sl:%'" in owner_surfaces.OWNER_ROW_BRIDGED_SQL)
     arm("its chats have kinds", (release.chat_kind("slack", "C01AB"), release.chat_kind("slack", "D02CD"), routing.kind_of("slack", "C01AB"))
         == ("group", "dm", "group"))
-    arm("`astryx connect slack` knows its token, routes file and unit",
-        cli.CHANNELS.get("slack") == {"key": "SLACK_BOT_TOKEN", "ask": "Slack bot token", "routes": "bridges/routes-slack.json",
+    arm("`astryx connect slack` knows its token and unit (its routes are rows, made on the rail)",
+        cli.CHANNELS.get("slack") == {"key": "SLACK_BOT_TOKEN", "ask": "Slack bot token",
                                       "unit": "astryx-slack", "generate": False}, cli.CHANNELS.get("slack"))
     arm("its unit is in the DSN census", "astryx-slack" in census.SERVICES)
     main_src = (REPO / "observatory" / "api" / "main.py").read_text()
@@ -126,7 +126,7 @@ finally:
           "bridges.owner_surfaces")
 
 print("\nH4 THE PLACES THAT CAN'T IMPORT IT")
-for f in ("init.sh", "scripts/deploy.sh", "scripts/backup.sh", "devtools/privacy_gate.sh"):
+for f in ("init.sh", "scripts/deploy.sh"):
     text = (REPO / f).read_text()
     missing = [c.name for c in C.connectable() if c.name not in text]
     arm(f"{f} names every connectable channel", not missing, missing)

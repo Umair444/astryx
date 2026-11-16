@@ -65,7 +65,6 @@ done
 #                 regenerates nothing and units() faithfully emits the nothing it was told.
 #                 Includes the `backup` timer itself: a restored org silently stops backing
 #                 up, and the backup system cannot restore its own scheduler.
-#   routes-*.json channel routing (the .example.json siblings are tracked; these are not).
 #   owner/relations/PLAN.md   authored, in no repo.
 #
 # NO NEW PUSH SURFACE, verified rather than assumed: privacy_gate.sh:32-33 already declares
@@ -87,8 +86,6 @@ done
 # infra/pg/.env (10-10): the declared postgres server's compose env (its init password and settings), written
 # by hand at the infra/pg cutover; nothing regenerates it, and a restore of genesis-pg needs it.
 state_files=(local.md .env owner.md relations.md PLAN.md nucleus/runners.conf   # org-home: relative to $ORGH, the org's HOME (cd above)
-         bridges/routes-whatsapp.json bridges/routes-telegram.json
-         bridges/routes-discord.json   # org-home: relative to $ORGH, the org's HOME (cd above)
          bridges/geoloc.py infra/pg/.env)   # org-home: relative to $ORGH, the org's HOME (cd above)
 for f in "${state_files[@]}"; do
   if [ -f "$f" ]; then state_dirs="$state_dirs $f"; fi

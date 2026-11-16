@@ -12,7 +12,7 @@ import ChannelConnect, { useChannels, type ChannelState } from './ChannelConnect
 
 /* THE CHANNEL RAIL (owner 11-15: "the floor is the place for channels: on the side, vertical, scrolling, infinite
    channels; manage channels, wiring and rules from obs"; homes/seed/identity-channels/DESIGN.md "The channel rail").
-   The Floor's right edge: every channel the org has (each bridge with a routes file, then the built-ins: web chat,
+   The Floor's right edge: every channel the org has (each one connected or with routes, then the built-ins: web chat,
    canvas, the terminal), each with its state, its conversations and their rules. Per conversation: who it reaches
    (drag it onto an agent, or tap it and then the agent), whether it's on, and what it SHOWS of the work (Steps: live
    steps then the reply; Replies: the reply only). Every change is the one routes write (PUT /api/wire/routes, If-Match,
@@ -69,11 +69,8 @@ export default function ChannelRail() {
         {ch.rows === null && !shut && <div className="text-[12px] text-ink-mute px-2 py-3">Reading the channels…</div>}
         {rows.map((s) => {
           const table = data?.find((c) => c.channel === s.channel)
-          // a table that isn't keyed by chat (the frontends bridge: one row per frontend) is shown, not edited: the one
-          // write validates chat routes. Routes-as-rows gives every channel one schema (DESIGN.md, phase 2)
-          const byChat = (table?.routes ?? []).every((r) => r.chat !== undefined && r.chat !== null)
-          const chats = byChat ? (table?.routes ?? []).map((r) => refOf(r, s.channel)) : []
-          const plain = byChat ? [] : (table?.routes ?? [])
+          // every route is a row with a chat (a frontend's is its frontend id): one schema, every channel edited alike
+          const chats = (table?.routes ?? []).map((r) => refOf(r, s.channel))
           const on = chats.filter((c) => c.enabled).length
           const title = BRAND[s.channel]?.title ?? s.channel
           // a warning (and the connect steps) only where the state is KNOWN to need a step: another bridge whose health
@@ -102,7 +99,7 @@ export default function ChannelRail() {
                 <span className="flex-1 min-w-0">
                   <span className="block text-[13.5px] font-medium text-ink truncate">{title}</span>
                   <span className="block text-[11.5px] text-ink-mute truncate">
-                    {s.fixed ? s.shows : !table ? 'not connected yet' : !byChat ? `${plain.length} connected`
+                    {s.fixed ? s.shows : !table ? 'not connected yet'
                       : `${on} chat${on === 1 ? '' : 's'} on${chats.length > on ? `, ${chats.length - on} paused` : ''}`}
                   </span>
                 </span>
@@ -114,26 +111,13 @@ export default function ChannelRail() {
                   initial={reduce ? false : { height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={reduce ? undefined : { height: 0, opacity: 0 }}
                   transition={{ duration: reduce ? 0 : 0.22, ease: [0.2, 0.8, 0.2, 1] }}>
                   {needs && <ChannelConnect s={s} loaded onChanged={ch.reload} />}
-                  {!byChat && (
-                    <ul className="flex flex-col gap-1">
-                      {plain.map((r, i) => (
-                        <li key={i} className={`flex items-center gap-2 rounded-xl px-2 py-1.5 ${r.enabled === false ? 'opacity-60' : ''}`}>
-                          <span className="flex-1 min-w-0">
-                            <span className="block text-[13px] text-ink truncate">{String(r.frontend ?? r.note ?? `route ${i + 1}`)}</span>
-                            <span className="block text-[11px] text-ink-mute truncate">to {displayName(String(r.agent ?? ''))} · set in its routes file</span>
-                          </span>
-                          {r.agent && <AgentFace name={String(r.agent)} size={22} />}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {byChat && !!table?.problems.length && (
-                    // the one validator's verdict on the table as it stands (a hand edit, an old file): never shown as healthy
+                  {!!table?.problems.length && (
+                    // the one validator's verdict on the routes as they stand: never shown as healthy
                     <ul className="mb-2 rounded-xl border border-warn/40 bg-warn/10 px-2.5 py-2 text-[12px] text-ink flex flex-col gap-1" role="alert" aria-label={`${title} routing problems`}>
                       {table.problems.map((p, i) => <li key={i}>{p}</li>)}
                     </ul>
                   )}
-                  {table && byChat && (
+                  {table && (
                     <>
                       <ul className="flex flex-col gap-1">
                         {chats.map((c) => <ChatRow key={c.chat} c={c} />)}

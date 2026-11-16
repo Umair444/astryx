@@ -126,7 +126,7 @@ def plain_row(thread, to="owner", frm="seed", body="org text"):
 
 def stamped_row(channel, route, body=SENT, sender="member"):
     store = R.TierStore()
-    rel = R.release(sender, CAREER, body, [(channel, route, root / f"routes-{channel}.json")], K, store)
+    rel = R.release(sender, CAREER, body, [(channel, route, f"version-{channel}")], K, store)
     rid = next(_next)
     rel["stamp"] = R.stamp(K, rid, rel["route_key"], CAREER, rel["pointer"], rel["body_mac"])
     return {"id": rid, "from_agent": sender, "to_agent": "owner", "thread": f"tier-{sender}", "intent": "chat",
@@ -494,7 +494,7 @@ try:
                 for ch, route in (("whatsapp", WA_TIER), ("telegram", TG_TIER)):
                     with c.cursor() as cur:
                         i = R.send_row(cur, "member", CAREER, "owner", None, "chat", SENT, key=K, store=R.TierStore(),
-                                       routes=[(ch, route, root / f"routes-{ch}.json")])
+                                       routes=[(ch, route, f"version-{ch}")])
                     w = World(ch, [], pool=pool)
                     await BR[ch].deliver(await pool.fetchrow("SELECT * FROM messages WHERE id=$1", i))
                     st, d = state(i)
@@ -509,7 +509,7 @@ try:
                 for ch, route in (("whatsapp", WA_TIER), ("telegram", TG_TIER)):
                     with c.cursor() as cur:
                         i = R.send_row(cur, "member", CAREER, "owner", None, "chat", SENT, key=K, store=R.TierStore(),
-                                       routes=[(ch, route, root / f"routes-{ch}.json")])
+                                       routes=[(ch, route, f"version-{ch}")])
 
                     def boom(ch=ch):
                         raise RuntimeError(f"{ch} send text: S1C-ERR-SENTINEL {route['chat']} said no")
@@ -534,7 +534,7 @@ try:
                 for gone in (False, True):
                     with c.cursor() as cur:
                         i = R.send_row(cur, "member", CAREER, "owner", None, "chat", SENT, key=K, store=R.TierStore(),
-                                       routes=[("whatsapp", WA_TIER, root / "routes-whatsapp.json")])
+                                       routes=[("whatsapp", WA_TIER, "version-whatsapp")])
 
                     async def stub(pool_, row_, channel, routes_):
                         return DC_ORG, SENT
@@ -558,7 +558,7 @@ try:
                     if route:
                         with c.cursor() as cur:
                             i = R.send_row(cur, "member", CAREER, "owner", None, "chat", SENT, key=K,
-                                           store=R.TierStore(), routes=[(ch, route, root / f"routes-{ch}.json")])
+                                           store=R.TierStore(), routes=[(ch, route, f"version-{ch}")])
                     else:
                         i = ins(thread)
                     w = World(ch, [], pool=pool, on_send=lambda i=i: c.execute("DELETE FROM messages WHERE id=%s", (i,)))

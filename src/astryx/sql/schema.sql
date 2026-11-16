@@ -1377,7 +1377,7 @@ END $who$;
 -- identity with a 'web' handle: someone who signed in): a link never creates a person, so no name an agent or a
 -- stranger types (owner, a member's, an agent's) can be taken by replying YES (medic 12637). An account linked to
 -- someone ELSE is refused (an unlink comes first, never a silent move). Returns the identity id. Every linker calls
--- this; the owner's own numbers come only from identity.import_owner, the operator's one-time act.
+-- this; the owner's own numbers come only from identity_own (the route import, or the owner's own YES).
 CREATE OR REPLACE FUNCTION identity_link(p_wire_name text, p_channel text, p_account text) RETURNS bigint
 LANGUAGE plpgsql AS $lnk$
 DECLARE
@@ -1403,7 +1403,7 @@ BEGIN
 END $lnk$;
 
 -- THE OWNER'S OWN ACCOUNT: one of the owner's accounts → the identity 'owner'. Called only by the operator's
--- import (identity.import_owner) and by a link the OWNER opened for himself from the observatory (bridges link_reply:
+-- route import (astryx.core.routes.import_files) and by a link the OWNER opened for himself from the observatory (bridges link_reply:
 -- a purpose='link' row with person = opened_by = 'owner', which only an owner_call writes). Never identity_link.
 CREATE OR REPLACE FUNCTION identity_own(p_channel text, p_account text) RETURNS bigint
 LANGUAGE plpgsql AS $own$
@@ -1417,28 +1417,78 @@ BEGIN
   RETURN i;
 END $own$;
 
--- ROUTES AS ROWS, first the agents' own (identity-channels P2/P3, owner 11-15 "agents should have tools … a row in
--- postgres"): a CONNECTION an agent opened with connect() — one person's chat on one channel, routed to that agent until
--- it closes it or no one has written for `idle`. The owner's route files stay the owner's and win: a bridge looks a chat
--- up in its file first, then here. One agent per chat at a time (the key). purpose 'link': the person was asked to
--- reply YES from this account to link it to `person` (an identity's wire_name); their YES links it and ends the row.
--- Expired rows are closed by the connection_sweep trigger, which tells the agent on the wire.
+-- ROUTES ARE ROWS (identity-channels P2, owner 11-15 "a row in postgres" / 11-16 "routes.json and route table should be
+-- just route table … no one edits files"): EVERY route of every channel is one row; the routes-<channel>.json files
+-- are gone (imported once by astryx.core.routes.import_files). One row per (channel, chat): a chat reaches one agent.
+--   purpose 'standing'  the owner's route (the rail, or seed on his word): no expiry
+--           'open'      an agent's CONNECTION (connect): ends when no one has written for `idle` (connection_sweep)
+--           'link'      an account asked to reply YES to link it to `person` (Your channels)
+-- `rule` is the route's own settings as the bridges read them (open, show, home, tier, signed, note, a Discord webhook,
+-- a frontend's callback keys …), kept verbatim, so nothing a route said is lost. astryx.core.routes is the one
+-- reader and writer; bridges keep the last table they read, so a database blip never unroutes a chat.
 CREATE TABLE IF NOT EXISTS route (
   tenant     text NOT NULL DEFAULT 'astryx',
   id         bigserial,
   channel    text NOT NULL,
   chat       text NOT NULL,
   agent      text NOT NULL,
-  purpose    text NOT NULL DEFAULT 'open' CHECK (purpose IN ('open', 'link')),
+  purpose    text NOT NULL DEFAULT 'open',
+  rule       jsonb NOT NULL DEFAULT '{}',
   person     text,                                -- who is on the other end (a wire name), or whom a link names
-  opened_by  text NOT NULL,                       -- the agent, or the member/owner who asked for a link
+  opened_by  text NOT NULL,                       -- owner, the agent, or the person who asked for a link
   note       text,
-  idle       interval NOT NULL DEFAULT interval '1 day',
+  idle       interval,                            -- a connection's or link's quiet time; NULL for a standing route
   opened     timestamptz NOT NULL DEFAULT now(),
-  expires_at timestamptz NOT NULL DEFAULT now() + interval '1 day',
+  expires_at timestamptz,                         -- NULL: standing, never expires
   CONSTRAINT route_pkey PRIMARY KEY (tenant, id),
   CONSTRAINT route_chat_key UNIQUE (tenant, channel, chat)
 );
+ALTER TABLE route ADD COLUMN IF NOT EXISTS rule jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE route ALTER COLUMN idle DROP NOT NULL;
+ALTER TABLE route ALTER COLUMN idle DROP DEFAULT;
+ALTER TABLE route ALTER COLUMN expires_at DROP NOT NULL;
+ALTER TABLE route ALTER COLUMN expires_at DROP DEFAULT;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'route'::regclass AND conname = 'route_purpose_check'
+                 AND pg_get_constraintdef(oid) LIKE '%standing%') THEN
+    ALTER TABLE route DROP CONSTRAINT IF EXISTS route_purpose_check;
+    ALTER TABLE route ADD CONSTRAINT route_purpose_check CHECK (purpose IN ('standing', 'open', 'link'));
+  END IF;
+END $$;
+
+-- THE VERSION of a channel's owner routes: the rail's If-Match and the release door's audit sha (a2 G2). Over what a
+-- route says (chat, agent, rule) in row order, so any change to any of them is a new version.
+CREATE OR REPLACE FUNCTION route_version(p_channel text) RETURNS text LANGUAGE sql STABLE AS $ver$
+  SELECT md5(coalesce(jsonb_agg(jsonb_build_object('chat', chat, 'agent', agent, 'rule', rule) ORDER BY id)::text, '[]'))
+    FROM route WHERE channel = p_channel AND purpose = 'standing'
+$ver$;
+-- THE ONE WRITE of the owner's routes (the rail's PUT, and seed's connect route on his word): a channel's standing
+-- routes replaced as one act, refused (serialization_failure) when p_if_match is not the version now. Each element of
+-- p_rows is a route as the bridges read it ({chat, agent, …its rule}). An agent's connection on a chat the owner now
+-- routes ends, and that agent is told (his routes win). Returns the new version.
+CREATE OR REPLACE FUNCTION route_put(p_channel text, p_rows jsonb, p_if_match text, p_by text) RETURNS text
+LANGUAGE plpgsql AS $put$
+DECLARE
+  r jsonb;
+  gone record;
+BEGIN
+  LOCK TABLE route IN SHARE ROW EXCLUSIVE MODE;
+  IF route_version(p_channel) IS DISTINCT FROM p_if_match THEN
+    RAISE EXCEPTION 'the routes changed since they were read' USING ERRCODE = 'serialization_failure';
+  END IF;
+  DELETE FROM route WHERE channel = p_channel AND purpose = 'standing';
+  FOR r IN SELECT * FROM jsonb_array_elements(p_rows) LOOP
+    FOR gone IN DELETE FROM route WHERE channel = p_channel AND chat = r->>'chat' RETURNING agent, person LOOP
+      INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES ('owner', gone.agent, NULL, 'chat',
+        format('[connect] your connection to %s on %s ended: the owner routed that chat.', gone.person, p_channel));
+    END LOOP;
+    INSERT INTO route (channel, chat, agent, purpose, rule, opened_by, note)
+    VALUES (p_channel, r->>'chat', r->>'agent', 'standing',
+            r - ARRAY['chat', 'agent', 'id', 'purpose', 'person', 'connection', 'opened_by', 'expires_at'], p_by, r->>'note');
+  END LOOP;
+  RETURN route_version(p_channel);
+END $put$;
 
 -- ── ROW-LEVEL SECURITY (cog-rls slice 3, RLS.md §2). LAST-but-one: it covers every table above. ─────────────────────
 -- Every table with a `tenant` column in the core schemas (partitions included: a partition queried directly does not

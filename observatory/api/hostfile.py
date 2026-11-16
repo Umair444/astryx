@@ -1,6 +1,5 @@
-"""The observatory's ONE writer for host files (plan-11860 E3): charters, runtime.json, routes-<channel>.json, the
-SQL library. Every in-place write in observatory/api goes through atomic_write, so a reader never sees a torn file (a
-bridge re-reads its routes per message) and a writer that read an older version is refused, not silently last-wins.
+"""The observatory's ONE writer for host files (plan-11860 E3): charters, runtime.json, the
+SQL library. Every in-place write in observatory/api goes through atomic_write, so a reader never sees a torn file and a writer that read an older version is refused, not silently last-wins.
 
     atomic_write(path, text, if_match=None)
         temp file in the SAME directory, fsync, os.replace: the file is the old bytes or the new, never half.

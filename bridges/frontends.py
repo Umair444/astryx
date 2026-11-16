@@ -53,11 +53,11 @@ import asyncpg
 import httpx
 from fastapi import FastAPI, Request, Response
 
-from .common import (HERE, Outcome, describe_media, env, listen, load_routes,
+from .common import (HERE, Outcome, describe_media, env, listen, Book,
                      media_path, split_files)
 
 DSN = env("ASTRYX_DSN")
-ROUTES_FILE = HERE / "routes-frontends.json"
+BOOK = Book("frontends")      # this bridge's routes, from the route table (common.Book)
 
 DEFAULT_MAX_MB = 32            # inbound body ceiling if a route sets none
 DEFAULT_RATE = 240            # requests/hour per frontend if a route sets none
@@ -77,7 +77,7 @@ _seen_idem: dict[str, tuple[float, int]] = {}     # idempotency_key -> (ts, requ
 
 
 def routes() -> list[dict]:
-    return load_routes(ROUTES_FILE)
+    return BOOK.routes()
 
 
 def _route(frontend: str) -> dict | None:
@@ -131,6 +131,8 @@ async def _save_attachment(frontend: str, att: dict) -> str:
 async def lifespan(_: FastAPI):
     global pool, http
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
+    await BOOK.refresh(pool)                       # the routes, before the first message
+    _book = asyncio.create_task(BOOK.follow(pool))   # then every few seconds (a rail edit lands with no restart)
     http = httpx.AsyncClient(timeout=CB_TIMEOUT)
     # Outbound claim: THIS surface's rows only. An agent replying on an fe: thread is
     # addressed to the fe-<frontend> identity; both conditions keep us off other bridges'
@@ -138,6 +140,7 @@ async def lifespan(_: FastAPI):
     task = asyncio.create_task(listen(
         DSN, "(to_agent LIKE 'fe-%' AND thread LIKE 'fe:%')", deliver, _noop_step))
     yield
+    _book.cancel()
     task.cancel()
     await http.aclose()
     await pool.close()

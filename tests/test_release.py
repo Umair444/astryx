@@ -183,8 +183,7 @@ check("the default store is under the repo's tier/, outside every home (a1 BC-1)
 print("release:")
 with tempfile.TemporaryDirectory() as td:
     store = R.TierStore(Path(td) / "store")
-    rfile = Path(td) / "routes.json"
-    rfile.write_text(json.dumps([DM]))
+    rfile = "version-7f3a"                 # the channel's route_version when read
     other_dm = {**DM, "agent": "someone-else", "chat": "102@s.whatsapp.net"}
     routes = [("whatsapp", DM, rfile), ("whatsapp", other_dm, rfile), ("whatsapp", GROUP, rfile)]
     out = R.release("canopus-career", lbl, SENT, routes, KEY, store)
@@ -198,7 +197,7 @@ with tempfile.TemporaryDirectory() as td:
           "101" not in f"{out['channel']}|{out['label']}|{out['bytes']}")
     check("the audit fields are there: bytes, keyed body MAC, route-file sha, label",
           out["bytes"] == len(SENT) and out["body_mac"] == R.body_mac(KEY, SENT)
-          and out["route_sha"] == hashlib.sha256(rfile.read_bytes()).hexdigest() and out["label"] == "career")
+          and out["route_sha"] == rfile and out["label"] == "career")
     check("a sender with no owner-only route of its own → Refused (another agent's DM is never borrowed)",
           refused(R.release, "gemini-family", lbl, SENT, routes, KEY, store, live) is not None)
     check("two owner-only routes for one sender → Refused (the door never guesses)",

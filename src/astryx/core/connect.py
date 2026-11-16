@@ -11,8 +11,11 @@ idle time (the connection_sweep tells the agent). The agent writes with `send` a
   close   who                              only a connection the agent opened
   link    the web's "Your channels" only (by = the signed-in person = who): asks that account to reply YES
   status                                   my connections and links
+  route   who=<a chat or person>, channel?, to=<agent>   the OWNER's standing route, set on his word: only an agent
+          whose charter grants `org` (seed); a group is fine here. It is the rail's own write (routes.put)
+  unroute who                              the owner's route to that chat removed (same grant)
 
-Guards: a group is the owner's to route (refused); a chat the owner's routes file already routes stays his; one agent
+Guards: a group is the owner's to route (refused); a chat the owner routes (a standing row) stays his; one agent
 per chat at a time; at most CAP open per agent; the idle time is at most MAX_IDLE.
 """
 from __future__ import annotations
@@ -20,9 +23,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import timedelta
-from pathlib import Path
 
-from astryx.core import channels
+from astryx.core import channels, routes
 
 CAP = 10
 MAX_IDLE = timedelta(days=7)
@@ -71,15 +73,8 @@ def find(conn, who: str, channel: str, search) -> list[Handle]:
     return out
 
 
-def _owner_route(estate: Path, channel: str, chat: str) -> str | None:
-    """The agent the OWNER's routes file sends this chat to, if any (his routes win)."""
-    from bridges.routing import read_table, resolve
-    r = resolve(read_table(estate / "bridges" / f"routes-{channel}.json")).chat(chat)
-    return r["agent"] if r else None
-
-
 def run(conn, me: str, action: str, who: str = "", channel: str = "", timeout: str = "1d", note: str = "",
-        account: str = "", *, search, estate: Path, by: str | None = None) -> str:
+        account: str = "", *, search, by: str | None = None, to: str = "", pool=None) -> str:
     """One connect call by agent `me`. `by`: who asked, when it is not the agent (a person adding their own account on
     the web asks through seed): the link's lapse is told to them."""
     action = (action or "").strip().lower()
@@ -93,8 +88,10 @@ def run(conn, me: str, action: str, who: str = "", channel: str = "", timeout: s
         gone = conn.execute("DELETE FROM route WHERE agent = %s AND (person = %s OR person ILIKE %s OR chat = %s) "
                             "RETURNING channel, person", (me, who, f"%{who}%", who)).fetchall()
         return "\n".join(f"closed: {p} on {channels.BY_NAME[c].title}" for c, p in gone) or f"no connection of yours matches {who!r}"
+    if action in ("route", "unroute"):
+        return _route(conn, me, action, who, channel, to, note, search)
     if action not in ("open", "link"):
-        return "action is open, close, link or status"
+        return "action is open, close, link, status, route or unroute"
     if channel and channel not in channels.BY_NAME:
         return f"channel {channel!r}: one of {', '.join(channels.BY_NAME)}"
     try:
@@ -110,7 +107,7 @@ def run(conn, me: str, action: str, who: str = "", channel: str = "", timeout: s
             return "link needs who (the person's wire name, e.g. cv-faran.2), channel and account (their number or id)"
         hits = [h for h in find(conn, account, channel, search) if h.channel == channel]
         chat = hits[0].chat if hits else account      # a +number is the provider's to resolve (its search)
-        return _open(conn, me, Handle(channel, chat, person_name(channel, chat), account), "link", idle, note, estate,
+        return _open(conn, me, Handle(channel, chat, person_name(channel, chat), account), "link", idle, note,
                      person=who, by=by, prompt=f"Reply YES to link this {channels.BY_NAME[channel].title} account to the astryx "
                                         f"account {who}. (Asked by {by or me}; nothing happens if you don't.)")
     hits = find(conn, who, channel, search)
@@ -124,14 +121,14 @@ def run(conn, me: str, action: str, who: str = "", channel: str = "", timeout: s
     if len(hits) > 1 and not channel:
         return f"{hits[0].label} is on {', '.join(channels.BY_NAME[h.channel].title for h in hits)}: connect again with " \
                f"channel=<one of {', '.join(h.channel for h in hits)}>"
-    return _open(conn, me, hits[0], "open", idle, note, estate)
+    return _open(conn, me, hits[0], "open", idle, note)
 
 
-def _open(conn, me, h: Handle, purpose, idle, note, estate, person=None, prompt=None, by=None) -> str:
+def _open(conn, me, h: Handle, purpose, idle, note, person=None, prompt=None, by=None) -> str:
     title = channels.BY_NAME[h.channel].title
     if channels.chat_kind(h.channel, h.chat) == "group":
         return f"that is a {title} group: groups are the owner's to route; ask him"
-    owned = _owner_route(estate, h.channel, h.chat)
+    owned = routes.standing_route(conn, h.channel, h.chat)
     if owned:
         return f"the owner routes that chat to {owned}: write there (send to {owned} on it), or ask him"
     held = conn.execute("SELECT agent, expires_at FROM route WHERE channel = %s AND chat = %s AND expires_at > now()",
@@ -144,7 +141,8 @@ def _open(conn, me, h: Handle, purpose, idle, note, estate, person=None, prompt=
         "INSERT INTO route (channel, chat, agent, purpose, person, opened_by, note, idle, expires_at) "
         "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now() + %s) ON CONFLICT ON CONSTRAINT route_chat_key DO UPDATE SET "
         "agent = EXCLUDED.agent, purpose = EXCLUDED.purpose, person = EXCLUDED.person, opened_by = EXCLUDED.opened_by, "
-        "note = EXCLUDED.note, idle = EXCLUDED.idle, opened = now(), expires_at = EXCLUDED.expires_at",
+        "note = EXCLUDED.note, idle = EXCLUDED.idle, opened = now(), expires_at = EXCLUDED.expires_at "
+        "WHERE route.purpose <> 'standing'",                     # the owner's route is never overwritten
         (h.channel, h.chat, me, purpose, person or h.person, by or me, note or None, idle, idle))
     thread = f"{channels.BY_NAME[h.channel].thread}:{h.chat}"
     if prompt:
@@ -154,3 +152,57 @@ def _open(conn, me, h: Handle, purpose, idle, note, estate, person=None, prompt=
     return (f"connected to {h.label} on {title} for {idle} of quiet (each message renews it). Write with "
             f"send(to={h.person!r}, thread={thread!r}); their replies come to you on that thread. "
             f"connect action=close who={h.person!r} ends it")
+
+
+def _owner_asked(conn, me: str) -> bool:
+    """The turn this call runs in was opened by the OWNER alone (medic 12649: the code decides, never the prompt). The
+    step hook writes this very tool call's step before the tool runs, with the turn's opening messages (meta.turn_msgs);
+    every one must be the owner's own (address.person_sql's rule, so a peer's 'owner' is not him). Unknown: refused."""
+    from astryx.core import address
+    r = conn.execute("SELECT meta->'turn_msgs' FROM steps WHERE agent = %s AND kind = 'tool' "
+                     "AND left(content, 23) = 'mcp__channels__connect:' AND ts > now() - interval '60 seconds' "
+                     "ORDER BY id DESC LIMIT 1", (me,)).fetchone()     # THIS call's, never an older one (medic 12652)
+    ids = [int(x) for x in (r[0] or [])] if r else []
+    if not ids:
+        return False
+    n = conn.execute(f"SELECT count(*) FROM messages m WHERE m.id = ANY(%s) AND m.from_agent = 'owner' AND "
+                     f"{address.person_sql('m.from_agent', org='m.from_org')}", (ids,)).fetchone()[0]
+    return n == len(ids)
+
+
+def _route(conn, me, action, who, channel, to, note, search) -> str:
+    """The owner's STANDING route, set by the org's own agent on his word (an agent granted `org`: seed). One write
+    path with the rail (route_put): the channel's owner routes, read with their version, replaced in one act."""
+    from astryx.core import tier
+    if "org" not in (tier.grants(me) or set()):
+        return "only the org's own agent (granted org: seed) sets the owner's routes; ask seed, or use the Channels rail"
+    if not _owner_asked(conn, me):
+        return "only on the owner's own message: ask him to do it, or to change it in the Channels rail"
+    if action == "route" and not to:
+        return "route needs to=<the agent the chat should reach>"
+    hits = find(conn, who, channel, search)
+    chats = {(h.channel, h.chat): h for h in hits}
+    if len(chats) != 1:
+        return (f"no chat called {who!r}" if not chats else "several chats match; say which:\n" +
+                "\n".join(f"{h.label} · {channels.BY_NAME[h.channel].title}" for h in chats.values()))
+    h = next(iter(chats.values()))
+    now = routes.standing_sync(conn, h.channel)
+    keep = [r for r in now if str(r["chat"]) != h.chat]
+    if action == "route":
+        old = next((r for r in now if str(r["chat"]) == h.chat), {})
+        theirs = [r for r in keep if r.get("agent") == to and r.get("enabled")]
+        if len(theirs) == 1 and not theirs[0].get("home"):      # its one route was its doorbell: it stays so
+            theirs[0]["home"] = True
+        keep.append({**old, "chat": h.chat, "agent": to, "enabled": True, "open": old.get("open", True),
+                     "show": old.get("show", "steps"), "note": note or old.get("note") or f"{h.label} -> {to} (by {me})"})
+    elif len(keep) == len(now):
+        return f"the owner has no route to {h.label}"
+    from bridges.routing import validate
+    problems = validate(keep)
+    if problems:
+        return "refused: " + problems[0]
+    routes.put_sync(conn, h.channel, keep, routes.version_sync(conn, h.channel), by=me)
+    opened = action == "route" and not old
+    return (f"{h.label} on {channels.BY_NAME[h.channel].title} now reaches {to}"
+            + (" (open to everyone in it; the owner can close it in the Channels rail)" if opened else "") if action == "route"
+            else f"{h.label} on {channels.BY_NAME[h.channel].title} is no longer routed")

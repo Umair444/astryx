@@ -4,17 +4,15 @@ On the fixture database (this tree's schema.sql):
   I1 THE ONE MINTER identity_who: an unlinked sender keeps its bridge's name and is recorded as a stranger's handle;
      the owner's own account answers `owner`; a linked account answers its person's name; a web account's first sight
      is its person
-  I2 link(): attaches an account, never moves one silently between people; import_owner turns every account a route
-     TRUSTED into a handle of `owner`, once (a second run changes nothing)
+  I2 link(): attaches an account, never moves one silently between people, never makes a person (owner, an agent's
+     name, an unknown name); the owner's accounts come from the route import (tests/test_routes.py)
   I3 A LINKED PERSON IS ANSWERED WHERE THEY WROTE: a reply to cv-faran.2 on a wa: thread is WhatsApp's to deliver, not
      the canvas bridge's; a cv- row on cv: or with no thread stays canvas's; an agent-to-agent row on a wa: thread is
      no bridge's
   I4 the bridges mint only through identity_of and read no trusted_* list any more
 Exit 0 · 1 · 77 (no database)."""
-import json
 import re
 import sys
-import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -64,18 +62,6 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c:
         refused == ["owner", "db", "nobody-yet"], refused)
     arm("an account linked to one person is never moved to another silently", not moved
         and who("whatsapp", "923000000001@s.whatsapp.net", "x") == "cv-faran.2")
-    with tempfile.TemporaryDirectory() as td:
-        (Path(td) / "bridges").mkdir()
-        (Path(td) / "bridges" / "routes-whatsapp.json").write_text(json.dumps(
-            [{"chat": "1@g.us", "agent": "seed", "enabled": True, "trusted_jids": ["923000000009@s.whatsapp.net"]}]))
-        (Path(td) / "bridges" / "routes-telegram.json").write_text(json.dumps(
-            [{"chat": "55", "agent": "seed", "enabled": True, "trusted_ids": [4242]}]))
-        n1 = identity.import_owner(c, Path(td))
-        n2 = identity.import_owner(c, Path(td))
-    arm("import_owner: every trusted account is the owner's", n1 == 2 and who("whatsapp", "923000000009@s.whatsapp.net", "wa-x") == "owner"
-        and who("telegram", "4242", "tg-4242") == "owner", n1)
-    arm("…once: a second run changes nothing", n2 == 2 and c.execute("SELECT count(*) FROM identity WHERE wire_name='owner'").fetchone()[0] == 1)
-
     print("\nI3 ANSWERED WHERE THEY WROTE")
     wa = f"(to_agent='owner' OR to_agent LIKE 'wa-%' OR {address.reaches_sql('whatsapp')})"
     import importlib

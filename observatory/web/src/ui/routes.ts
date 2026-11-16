@@ -130,7 +130,7 @@ export function diffWords(d: RouteDiff, label: (chat: string) => string): string
 async function put(channel: string, mutate: (rows: WireRoute[]) => WireRoute[]): Promise<RouteDiff> {
   await loadRoutes(true)              // the table as it is NOW, and its etag
   const table = state.data?.find((x) => x.channel === channel)
-  if (!table) throw new Error(`No ${channel} routes file yet. Connect ${channel} first.`)
+  if (!table) throw new Error(`${channel} isn't connected yet. Connect it first.`)
   try {
     const r = await apiSend<{ diff: RouteDiff }>('PUT', `/wire/routes/${encodeURIComponent(channel)}`,
       { routes: mutate(table.routes) }, { 'if-match': table.etag })
