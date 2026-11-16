@@ -79,7 +79,9 @@ def main():
         m2 = msg("wa-222", "seed", g, "and the week?", ago_min=0, delivery={"reply_to_body": "▸ *seed*\nLoans: 189K"})
         m3 = msg("wa-333", "seed", g, "do this", intent="task", ago_min=0)
         msg("wa-444", "seed", g, "email me@seedling.com", ago_min=0)
-        arm("O8 an @mention, a reply to its message, a task: owed; an address that merely contains its name: not", ids() == [m1, m2, m3], ids())
+        msg("wa-555", "seed", g, "about that", ago_min=0, delivery={"reply_to_body": "▸ *db*\nthe seed list for the dashboard"})
+        msg("wa-666", "seed", g, "and this", ago_min=0, delivery={"reply_to_body": "seed money for the dashboard"})
+        arm("O8 an @mention, a reply to its message, a task: owed; an address, another agent's label, a quote merely naming it: not", ids() == [m1, m2, m3], ids())
         since = None
         with tempfile.TemporaryDirectory() as dd:
             arm("O5 told once per message", O.told(dd, [b, 7]) == [b, 7] and O.told(dd, [b, 7]) == [] and O.told(dd, [b, 9]) == [9])

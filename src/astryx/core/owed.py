@@ -11,9 +11,12 @@ once per message and decides; hooks/step.py) and the chat's line ("finished with
 """
 from __future__ import annotations
 
+import re
+
 from astryx.core import address
 
 BODY = 160
+SIGN = "\u25b8 "        # bridges/common.SIGN: the label line every shared-identity channel signs an agent's message with
 # a GROUP conversation: a WhatsApp group, a Telegram group (a negative chat id), a Discord channel. There, people talk
 # among themselves, and a message is owed only when it ADDRESSES the agent (medic 12441): an @mention of its name, a
 # reply to one of its messages (their quoted first line is its label), a task, or a team ask it leads
@@ -22,18 +25,21 @@ GROUP = "m.thread LIKE 'wa:%%@g.us' OR m.thread LIKE 'tg:-%%' OR m.thread LIKE '
 
 def owed(cur, agent: str, since) -> list[tuple]:
     """(id, thread, from_agent, body excerpt) of each owed reply of `agent`, among messages delivered after `since`
-    (a timestamp; None = the last day), oldest first."""
+    (a timestamp; None = the last day), oldest first. The name goes into a regex QUOTED (a '.' or '-' in it is
+    itself), and a reply is the agent's only when the quoted message's first line is its LABEL (bridges/common.signed:
+    SIGN, the name, a channel's bold), never the name anywhere in it ("dashboard" is not db's)."""
+    rx = re.escape(agent)
     cur.execute(f"""
         SELECT m.id, m.thread, m.from_agent, left(m.body, {BODY}) FROM messages m
          WHERE m.to_agent = %s AND {address.person_sql('m.from_agent')} AND m.status = 'delivered'
            AND m.intent IN ('chat', 'task')
            AND (m.intent = 'task' OR m.delivery ? 'lead' OR NOT ({GROUP}) OR m.body ~* ('(^|[^[:alnum:]_])@' || %s || '([^[:alnum:]_-]|$)')
-                OR split_part(m.delivery->>'reply_to_body', chr(10), 1) ILIKE '%%' || %s || '%%')
+                OR split_part(m.delivery->>'reply_to_body', chr(10), 1) ~ ('^' || %s || '\\**' || %s || '\\**[[:space:]]*$'))
            AND m.delivered_at > coalesce(%s, now() - interval '1 day')
            AND coalesce(m.delivery->>'lead', %s) = %s
            AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.from_agent = %s AND r.thread IS NOT DISTINCT FROM m.thread
                                                        AND r.id > m.id)
-         ORDER BY m.id""", (agent, agent, agent, since, agent, agent, agent))
+         ORDER BY m.id""", (agent, rx, re.escape(SIGN), rx, since, agent, agent, agent))
     return cur.fetchall()
 
 
