@@ -11,10 +11,13 @@ Pure arms on the arithmetic, then a fixture database (this tree's schema.sql; fi
   E5 UNKNOWN IS NOT RESTED: no gauge or no learned rate gives no feeling
   E6 LEARNED FROM THE ORG'S OWN HISTORY: the hourly profile leaves self-started thinking out; the rate is gauge points per token
   E10 a vault login's limits are its own reading; the org's feeling never reads it
+  E12 an API key feels its day against its daily cap (turns.run_on); at the cap the pulse holds its agents
+  E13 the brake mid-turn: today plus the open turn at the cap denies the next tool; past 80%, one note a day
   E7 the per-prompt line states the reading with no verdict word, and an agent's own heavier-than-usual turn, as facts
   E8 ONE NOTICE PER DOUBLING PER TURN: parallel calls, a tail that slides back and climbs again, a new turn (medic 12281)
 Exit 0 · 1 · 77 (no database).
 """
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -196,7 +199,26 @@ def main():
                 spend(6_500)
                 k = E.feel(c, relearn_after_h=None, credential="Metered")
                 arm("E12 at its cap: spent, and the pulse holds its agents' wakes", k["word"] == "spent" and P.held_now(k) is True, (k.get("say"), k.get("windows")))
+                (est / "runtime.json").write_text('{"b": {"credential": "Second"}, "z": {"credential": "Third"}, "m": {"credential": "Metered"}}')
+                of = E.by_agent(c, est, relearn_after_h=None)
+                arm("E12 the pulse's per-agent reading (by_agent): an agent on the capped key is held; one on a login is not",
+                    P.held_now(of("m")) is True and P.held_now(of("b")) is P.held_now(own), (of("m").get("say"), of("b").get("say")))
                 arm("E12 the key's own hours are learned (turns.run_on), apart from the org's", sum((E.learn(c).get("keys") or {}).get("Metered") or [0]) > 0)
+                # E13 THE BRAKE MID-TURN (medic 12506): turns land at Stop, so the open turn counts too
+                _V.save(est, {**_V.load(est), "Brake": _V.entry("Brake", "deepseek", cap=100), "Near": _V.entry("Near", "deepseek", cap=100)})
+                c.execute("INSERT INTO turns (agent, started_at, ended_at, tokens_in, tokens_out, run_on) VALUES ('m', now(), now(), 0, 80, 'Brake'), ('m', now(), now(), 0, 50, 'Near')")
+                tr = est / "t.jsonl"
+                tr.write_text(json.dumps({"type": "user", "message": {"content": "go"}}) + "\n"
+                              + json.dumps({"type": "assistant", "message": {"id": "m1", "usage": {"input_tokens": 30}}}) + "\n")
+                deny, _n = E.capped(c, "Brake", str(tr))
+                arm("E13 cap 100, closed 80, this turn 30: the next tool is denied, finish in words", "daily cap is reached" in deny and "no more tools" in deny, deny)
+                arm("E13 the same day without this turn (80 of 100): allowed", E.capped(c, "Brake", None)[0] == "")
+                said = est / "cap.said"
+                said.mkdir()
+                deny, note = E.capped(c, "Near", str(tr), str(said))
+                arm("E13 at 80% of its cap: allowed, with one note", deny == "" and "80% of today's cap" in note, (deny, note))
+                arm("E13 …said once a day", E.capped(c, "Near", str(tr), str(said)) == ("", ""))
+                arm("E13 a login, or the org's own, has no brake", E.capped(c, "Second", str(tr)) == ("", "") and E.capped(c, None, str(tr)) == ("", ""))
             finally:
                 E.paths.estate = real_estate
         from astryx.pulse import pulse as P

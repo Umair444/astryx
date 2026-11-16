@@ -175,16 +175,17 @@ def spent(c, key: str, now: datetime | None = None) -> float:
     return float(r[0]) if r else 0.0
 
 
-def _metered(credential: str | None) -> int | None:
+def _metered(credential: str | None, estate=None) -> int | None:
     """The daily cap of a METERED key (an API key: astryx.core.vault), or None (a login, the org's own, unknown)."""
     if not credential:
         return None
     from astryx.core import vault
-    e = vault.load(paths.estate(__file__)).get(credential) or {}
+    e = vault.load(estate or paths.estate(__file__)).get(credential) or {}
     return e.get("cap_tokens_day") if e.get("kind") == "key" else None
 
 
-def feel(c, now: datetime | None = None, relearn_after_h: float | None = 1.0, credential: str | None = None) -> dict:
+def feel(c, now: datetime | None = None, relearn_after_h: float | None = 1.0, credential: str | None = None,
+         estate=None) -> dict:
     """How the org feels now: {known, tired, word, binding, survival, windows, say, think_pct}. `relearn_after_h=None`
     never learns (the per-prompt reader); otherwise a kept row older than that is learned again first. `credential`:
     how a vault KEY feels. A login, from its own reading (the pace is the org's: its agents' hours look like the org's
@@ -195,7 +196,7 @@ def feel(c, now: datetime | None = None, relearn_after_h: float | None = 1.0, cr
     p = pace(c)
     if relearn_after_h is not None and (p is None or (now - _when(p["at"])).total_seconds() > relearn_after_h * 3600):
         p = learn(c)
-    cap = _metered(credential)
+    cap = _metered(credential, estate)
     if cap:
         if not p:
             return {"known": False, "say": "energy unknown: nothing learned of the org's pace yet"}
@@ -345,25 +346,48 @@ def during(c, agent: str, transcript: str, said: str | None = None) -> str:
 
 
 def by_agent(c, estate, relearn_after_h: float | None = 1.0):
-    """agent -> how the login it runs on feels (feel). Every login is read NOW, once (the org's own and each vault
-    login's), so the caller's later questions run no SQL: the pulse asks inside its claim's transaction, and one tick
-    must read one feeling per login (its shed and its holds agree, a4 #62398). An agent on a vault login feels that
-    login; None, or an agent on the org's login, the org's. A login that can't be read is unknown."""
+    """agent -> how the key it runs on feels (feel). Every key is read NOW, once (the org's own login and each vault
+    key: a login's limits, an API key's day against its cap), so the caller's later questions run no SQL: the pulse
+    asks inside its claim's transaction, and one tick must read one feeling per key (its shed and its holds agree, a4
+    #62398). An agent on a vault key feels that key; None, or an agent on the org's login, the org's. A key that can't
+    be read is unknown."""
     from astryx.core import vault
     feels = {None: feel(c, relearn_after_h=relearn_after_h)}
-    for name, e in vault.load(estate).items():
-        if e["kind"] == "login":
-            try:
-                feels[name] = feel(c, relearn_after_h=None, credential=name)
-            except Exception:
-                feels[name] = {"known": False}
-    logins: dict = {}
+    for name in vault.load(estate):
+        try:
+            feels[name] = feel(c, relearn_after_h=None, credential=name, estate=estate)
+        except Exception:
+            feels[name] = {"known": False}
+    keys: dict = {}
 
     def of(agent: str | None) -> dict:
-        if agent not in logins:
-            logins[agent] = vault.login_of(estate, agent)[0] if agent else None
-        return feels.get(logins[agent]) or {"known": False}
+        if agent not in keys:
+            keys[agent] = vault.key_of(estate, agent)[0] if agent else None
+        return feels.get(keys[agent]) or {"known": False}
     return of
+
+
+NEAR = 0.8                    # the share of a key's cap at which its session is told, once a day
+
+
+def capped(c, key: str | None, transcript: str | None, said: str | None = None) -> tuple[str, str]:
+    """(deny, note) for a session running on `key` (ASTRYX_RUN_ON), mid-turn (medic 12506). Turns land at Stop, so a
+    long open turn on a metered key could run past its cap: today's closed turns (spent) plus this turn so far (effort,
+    a lower bound: output is left out) at the cap DENY the next tool call, so the agent finishes in words; past NEAR
+    of it, one NOTE a day (claim on `said`, keyed by the date). ("", "") for a login, the org's own, or under NEAR."""
+    cap = _metered(key)
+    if not cap:
+        return "", ""
+    used = spent(c, key)
+    try:
+        used += effort(transcript)[0] if transcript else 0.0
+    except OSError:
+        pass
+    if used >= cap:
+        return f"{key}'s daily cap is reached ({used:,.0f} of {cap:,} tokens): finish in words, no more tools", ""
+    if used >= NEAR * cap and (said is None or claim(said, int(midnight(datetime.now(timezone.utc)).strftime("%Y%m%d")))):
+        return "", f"[energy] {key} has used {100 * used / cap:.0f}% of today's cap ({cap:,} tokens); it refills at midnight"
+    return "", ""
 
 
 def prompt_line(c, agent: str | None, estate) -> tuple[str, bool]:

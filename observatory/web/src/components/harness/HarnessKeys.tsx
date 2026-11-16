@@ -75,6 +75,12 @@ export default function HarnessKeys() {
   )
 }
 
+/* how many agents run on everyone else's connection (none of their own) */
+function followers(s: State): string {
+  const n = s.agents.filter((a) => !a.own).length
+  return n === 1 ? '1 agent follows it' : `${n} agents follow it`
+}
+
 /* who runs on a key (null: the org's login): an agent of its own, and everyone else's agents when the default is it */
 function usersOf(s: State, cred: string | null): string[] {
   const dflt = (s.default.credential || null) === cred
@@ -150,9 +156,11 @@ function ConnRow({ s, agent, c, stale, open, onToggle, onSaved }: {
             <span className="whitespace-nowrap">{harnessOf(s, c).name}</span><span className="text-ink-mute">·</span>
             <Mark p={k ? s.providers[k.provider] : s.providers.claude} size={16} />
             <span className="truncate">{k ? k.name : orgWord(s)}</span>
+            {agent !== EVERYONE && !k && <span className="shrink-0 text-[11px] text-ink-mute rounded-full border border-line px-1.5" title="Its own: it stays on the org's login when everyone else moves">pinned</span>}
             {c.model && <><span className="text-ink-mute">·</span><span className="font-mono text-[12px] shrink-0">{c.model}</span></>}
           </span>
         </span>
+        {agent === EVERYONE && <span className="hidden sm:inline shrink-0 text-[12px] text-ink-mute">{followers(s)}</span>}
         <span className="shrink-0 text-[12px] text-ink-mute">{open ? 'Close' : 'Change'}</span>
       </button>
       {open && (

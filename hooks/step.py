@@ -854,6 +854,21 @@ def main():
         if ev == "PreToolUse":
             tool = h.get("tool_name", "?")
             ti = h.get("tool_input") or {}
+            # A KEY'S DAILY CAP, MID-TURN (medic 12506): a session on a metered key (spawn's ASTRYX_RUN_ON) whose day,
+            # this turn included, has reached its cap runs no more tools; it finishes in words. A spend that can't be
+            # read is never under the cap
+            key, cap_denied = os.environ.get("ASTRYX_RUN_ON"), ""
+            if key and not denied:
+                try:
+                    from astryx.econ import energy as _energy
+                    cap_denied = _energy.capped(conn, key, h.get("transcript_path"))[0]
+                except Exception:  # noqa: BLE001
+                    cap_denied = f"{key}'s spend today can't be read: finish in words, no more tools"
+                if cap_denied:
+                    denied = cap_denied
+                    print(json.dumps({"hookSpecificOutput": {
+                        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                        "permissionDecisionReason": cap_denied}}), flush=True)
             # NEVER the raw command: steps are public and memory's nightly drain feeds them
             # into RAG, and a command's arguments are where a secret lands (an inlined DSN, a
             # PGPASSWORD=… prefix). A description-less Bash call shows WHAT ran (its registry
@@ -866,8 +881,8 @@ def main():
             if strip:                          # S1d: a description, a path, a target are the session's text
                 detail = f"[{MARK}]"
             if denied:
-                detail = f"DENIED, {'child spawn' if strip and denied.startswith('a ' + MARK) else 'secret holder'}: " \
-                         f"{brief(detail, 200)}"
+                why = "daily cap" if cap_denied else "child spawn" if strip and denied.startswith('a ' + MARK) else "secret holder"
+                detail = f"DENIED, {why}: {brief(detail, 200)}"
             msgs, sub = scope(h, agent)
             if tool in ("Agent", "Task"):                      # a helper is being launched from this scope
                 launch_open(agent, h.get("tool_use_id"), msgs)
@@ -907,6 +922,9 @@ def main():
                 try:
                     from astryx.econ import energy as _energy
                     said = _energy.during(conn, agent, h["transcript_path"], _subs_dir(agent, "effort"))
+                    key = os.environ.get("ASTRYX_RUN_ON")   # …and a key nearing its daily cap, once a day
+                    near = _energy.capped(conn, key, h["transcript_path"], _subs_dir(agent, "cap"))[1] if key else ""
+                    said = " · ".join(x for x in (said, near) if x)
                     if said:
                         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
                                                                  "additionalContext": said}}), flush=True)

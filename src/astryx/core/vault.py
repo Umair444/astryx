@@ -178,16 +178,25 @@ def logins(estate: Path, env: dict | None = None) -> list[tuple[str, str | None]
     return [(n, (env or {}).get(PREFIX + slug(n)) or None) for n in sorted(ents)]
 
 
-def login_of(estate: Path, agent: str, env: dict | None = None) -> tuple[str | None, str | None]:
-    """(name, token) of the vault LOGIN `agent` runs on (runtime.json, its own entry or everyone else's '*' -> the
-    vault -> .env), or (None, None): the org's own login. The one place this question is answered: the Stop hook
-    measures that login's limits with its token, the prompt line and the mind read how that login feels by its name."""
+def key_of(estate: Path, agent: str, env: dict | None = None, kind: str | None = None) -> tuple[str | None, str | None]:
+    """(name, value) of the vault KEY `agent` runs on (runtime.json, its own entry or everyone else's '*' -> the vault
+    -> .env; the value None while it has none), or (None, None): the org's own login. `kind` narrows it (login | key).
+    The one place this question is answered: the pulse feels that key (energy.by_agent), the Stop hook measures a
+    login's limits with its token, the prompt line and the mind read how it feels by its name."""
     try:
         rt = json.loads((Path(estate) / "runtime.json").read_text())
     except (OSError, ValueError):
         return None, None
     name = connection(rt, agent).get("credential")
-    for n, token in logins(estate, env) if name else ():
-        if n == name:
-            return n, token
-    return None, None
+    e = load(estate).get(name) if name else None
+    if not e or (kind and e["kind"] != kind):
+        return None, None
+    if env is None:
+        from astryx import config
+        env = config.read_env(Path(estate) / ".env")
+    return name, env.get(PREFIX + slug(name)) or None
+
+
+def login_of(estate: Path, agent: str, env: dict | None = None) -> tuple[str | None, str | None]:
+    """(name, token) of the vault LOGIN `agent` runs on, or (None, None): key_of narrowed to logins."""
+    return key_of(estate, agent, env, "login")
