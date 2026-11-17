@@ -324,6 +324,14 @@ def run(t, da, dbb, procs):
     check("/api/admin/nodes: the org, the group and its agents from A's agents/ tree",
           nodes == {"": "org", "grp": "group", "grp/scout": "agent", "solo": "agent"}, f"{st} {nodes}")
 
+    st, _, pj = call(F, f"/auth/people?org={oa}", headers=as_("mem"))
+    names = sorted(x["name"] for x in pj.get("people", [])) if st == 200 else pj
+    want = sorted(users[w].partition("@")[0] for w in ("adm", "cross"))
+    check("/auth/people?org=A for a member: A's members table but owners and the caller, named by their local part only "
+          "(owner 11-17: who a project can be shared with)", st == 200 and names == want
+          and all("@" not in x["name"] for x in pj.get("people", [])), f"{st} {names} want {want}")
+    check("...and an org the caller isn't in answers nothing (404)", call(F, "/auth/people?org=nowhere", headers=as_("mem"))[0] == 404)
+
     print("\nM2 A MEMBER GETS 403")
     probes = {
         "GET /auth/admin/users": call(F, f"/auth/admin/users?org={oa}", headers=as_("mem"))[0],

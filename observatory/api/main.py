@@ -595,26 +595,6 @@ def agent_nodes() -> dict[str, str]:
     return out
 
 
-_WEB_SEEN: set[str] = set()
-
-
-async def _known(request: Request) -> None:
-    """A signed-in member is a person astryx knows: their account is the 'web' handle of their identity (identity
-    P1), written once per process on their first request. It is what a project is shared with (/api/chat/people) and
-    what a link joins to (identity_link). Before 11-17 only a member who linked a channel had one, so the people a
-    project could be shared with read empty."""
-    uid, me = getattr(request.state, "uid", None), getattr(request.state, "me", None)
-    if not uid or not me or me == "owner" or uid in _WEB_SEEN or pool is None:
-        return
-    try:
-        await pool.execute("SELECT identity_who('web', $1, $2)", uid, me)
-        await pool.execute("UPDATE identity SET label = $2 WHERE wire_name = $1 AND coalesce(label, '') = ''",
-                           me, getattr(request.state, "label", "") or None)
-        _WEB_SEEN.add(uid)
-    except (asyncpg.PostgresError, OSError) as e:      # the next request tries again; nothing else waits on it
-        print(f"observatory: a member's web identity wasn't recorded: {type(e).__name__}", file=sys.stderr)
-
-
 async def _access(request: Request) -> tuple[set | None, dict]:
     """(the agents this viewer reaches: None = all, the features they hold: {feature: daily minutes or None}). The
     owner: all and all. A signed-in member: their memberships' subtree and members.caps. Anyone else: none. A read that
@@ -639,7 +619,6 @@ async def privacy_gate(request: Request, call_next):
     p = request.url.path
     request.state.reach, request.state.caps = await _access(request) if p.startswith("/api/") else (set(), {})
     request.state.me = wire_handle(request)
-    await _known(request)
     m = "GET" if request.method == "HEAD" else request.method
     if (p.startswith("/api/") and (m, p) not in PUBLIC and not (m == "GET" and _PUBLIC_AVATAR.match(p))
             and not is_owner(request) and not (member_may(m, p) and insider(request))
