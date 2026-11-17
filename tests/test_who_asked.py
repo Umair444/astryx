@@ -161,8 +161,12 @@ def main(tmp: Path, url: str):
         arm("R1 /api/thread/read: the member marks her replies", rr.status_code == 200 and rr.json().get("marked") == [to_alice, to_alice2], rr.text[:200])
         arm("R1 /api/thread/read: the owner never marks a member's reply", ro.status_code == 200 and ro.json().get("marked") == [], ro.text[:200])
         c.execute("UPDATE messages SET status='pending', delivered_at=NULL, delivery=NULL WHERE id = ANY(%s)", ([to_alice, to_alice2],))
+        on_wa = c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "    # a linked person
+                          "('seed', %s, 'wa:1@g.us', 'chat', 'reply on whatsapp') RETURNING id", (ALICE,)).fetchone()[0]
         claimed = [x[0] for x in c.execute(canvas_claim_sql()).fetchall()]
-        st = dict(c.execute("SELECT id, status FROM messages WHERE id = ANY(%s)", ([to_alice, to_owner],)).fetchall())
+        st = dict(c.execute("SELECT id, status FROM messages WHERE id = ANY(%s)", ([to_alice, to_owner, on_wa],)).fetchall())
+    arm("R1 ...and never a member's reply on another channel's thread: that bridge's (address.elsewhere_sql)",
+        on_wa not in claimed and st.get(on_wa) == "pending", (claimed, st))
     arm("R1 canvas.py's CLAIM delivers the reply to the member's handle on her chat: thread",
         to_alice in claimed and st.get(to_alice) == "delivered", (claimed, st))
     arm("R1 ...and leaves the agent->owner reply on a chat: thread alone (owner unchanged)",
