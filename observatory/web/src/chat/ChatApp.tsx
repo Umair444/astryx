@@ -8,7 +8,7 @@ import './presence.css'
 import './phone.css'
 import { api, apiPost, displayName } from '../api'
 import { fillsTurn, mergeMsgs, useStore } from '../store'
-import { humanName, isHuman, seesEveryone, talks, type Msg, type Step, type WireEvent } from '../types'
+import { can, humanName, isHuman, reaches, seesEveryone, talks, type Msg, type Step, type WireEvent } from '../types'
 import { canvasBase } from '../cog'
 import { nowLine } from '../ui/life'
 import { startDictation } from './dictate'
@@ -99,9 +99,9 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   // (iteration 14: that re-rendered the whole open thread once per step)
   const nameKey = roster.map((a) => a.agent).sort().join(',')
   const names = useMemo(() => {
-    const all = nameKey ? nameKey.split(',') : []
+    const all = (nameKey ? nameKey.split(',') : []).filter((a) => reaches(who, a))   // a member's own agents (11-17)
     return [...all.filter((a) => a === 'seed'), ...all.filter((a) => a !== 'seed')]
-  }, [nameKey])
+  }, [nameKey, who])
   const status = useMemo(() => {
     const out: Record<string, Status> = {}
     for (const n of names) out[n] = statusOf(roster.find((r) => r.agent === n), presence[n], now)
@@ -339,6 +339,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const lanes = activeProject && !current ? activeProject.agents : inChat
   // Talk: with the agent this box writes to, on this conversation (a new one from the home or a project page)
   const openTalk = (agent?: string) => {
+    if (!can(who, 'dictate')) { setNote('Voice is not on for you: an admin can turn it on.'); return }
     const a = agent ?? recipients[0]
     if (!a) { setNote('Mention an agent with @ first: Talk speaks with one agent.'); return }
     setTalk({ agent: a, thread: current || newThread() })
@@ -673,7 +674,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     <Composer ref={composer} hero={hero} roster={names} inChat={recipients} skills={cmds.skills} tools={cmds.tools}
       commands={commands} onSend={onSendOrCommand} draftKey={view === 'thread' ? current : thread ?? ''}
       placeholder={placeholder ?? (hero ? 'Ask the team anything. @mention who should take it; seed routes the rest.' : undefined)}
-      lastMine={() => stripEmbeds([...rows].reverse().find((m) => m.from === me)?.body ?? '')} onTalk={openTalk}
+      lastMine={() => stripEmbeds([...rows].reverse().find((m) => m.from === me)?.body ?? '')} onTalk={can(who, 'dictate') ? openTalk : undefined} dictation={can(who, 'dictate')}
       onSwitch={(a) => void switchTo(a)} roles={roles} />
   )
   const list = (phone: boolean) => (

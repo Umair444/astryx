@@ -43,20 +43,32 @@ def cap_minutes() -> float:
         return 60.0
 
 
-async def minutes_today(pool) -> float:
+async def minutes_today(pool, user: str | None = None) -> float:
+    """Today's voice minutes: the whole org's, or one ledger user's (a person's feature: see who())."""
     s = await pool.fetchval(
         f"SELECT coalesce(sum(greatest(seconds, CASE WHEN reported THEN 0 ELSE {FLOOR_SECONDS} END)), 0) "
-        f"FROM canvas_voice_usage WHERE minted_at >= date_trunc('day', now())")
+        f"FROM canvas_voice_usage WHERE minted_at >= date_trunc('day', now())"
+        + (" AND user_name = $1" if user else ""), *([user] if user else []))
     return round(float(s) / 60.0, 2)
 
 
-async def unavailable(pool) -> str:
-    """Why a new session can't start right now, or '' when it can."""
+def who(handle: str | None, feature: str) -> str:
+    """The ledger's user for one person's use of one feature (owner 11-17: each member's minutes are their own)."""
+    return f"{handle or 'owner'}/{feature}"
+
+
+async def unavailable(pool, user: str | None = None, limit: float | None = None) -> str:
+    """Why a new session can't start right now, or '' when it can. The org's cap always holds; a person's own daily
+    `limit` (their feature's minutes in the Admin panel) holds on top of it."""
     if not env("OPENAI_API_KEY"):
         return "no OpenAI key configured"
     used, cap = await minutes_today(pool), cap_minutes()
     if used >= cap:
         return f"today's voice cap is spent ({used:.0f} of {cap:.0f} minutes)"
+    if user and limit is not None:
+        mine = await minutes_today(pool, user)
+        if mine >= limit:
+            return f"your voice minutes for today are spent ({mine:.0f} of {limit:.0f})"
     return ""
 
 

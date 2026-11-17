@@ -53,7 +53,7 @@ def tier_arms(tmp: Path):
     from astryx.core import tier
     d = tmp / "agents"
     d.mkdir()
-    cases = {"est": "chat-sql, ocr", "hub": "org", "pub": "compose, channels", "mail": "gmail", "cal": "calendar",
+    cases = {"est": "chat-sql, ocr", "hub": "org", "pub": "compose", "mail": "gmail", "cal": "calendar",
              "grow": "growbot", "mix": "chat-sql, gmail"}
     for name, grants in cases.items():
         (d / f"{name}.md").write_text(f"# {name}\n\nGrants: {grants}\n")
@@ -80,7 +80,7 @@ def main(tmp: Path, url: str):
     from observatory.api import chat, workspace as W
 
     grants = {"db": {"chat-sql"}, "medic": {"compose"}, "butler": {"gmail"}, "seed": {"org"}}
-    tier._grants = lambda name, agents_dir=None: grants.get(name)       # the tiers are the real functions over these
+    tier.grants = lambda name, agents_dir=None: grants.get(name)        # the tiers are the real functions over these
     names = ("db", "medic", "butler", "seed")
     obs.agent_meta = lambda: {a: {"group_path": [], "rank": None, "model_pin": None} for a in names}
     from astryx.core import charter as CH
@@ -122,7 +122,7 @@ def main(tmp: Path, url: str):
     class R:                                       # a request as sees() reads it: headers, query, the gate's state
         def __init__(self, headers=None, role=None):
             self.headers, self.query_params = headers or {}, {}
-            self.state = type("S", (), {"role": role, "uid": "7@fxcog" if role else ""})()
+            self.state = type("S", (), {"role": role, "uid": "7@fxcog" if role else "", "reach": None})()   # a whole-org member
             self.cookies = {}
     so = obs.sees(R(O))
     sm = obs.sees(R(role="member"))

@@ -27,7 +27,7 @@ export async function refreshStatus(): Promise<CallStatus> {
     status = { checked: true, available: s.available, reason: s.reason, minutes: s.minutes_today, cap: s.cap }
   } catch (e) {
     const code = String(e).match(/: (\d+)$/)?.[1]
-    status = { checked: true, available: false, reason: code === '403' ? 'voice is for the owner only' : 'the observatory is not answering', minutes: 0, cap: status.cap }
+    status = { checked: true, available: false, reason: code === '403' ? 'the Call is not on for you' : 'the observatory is not answering', minutes: 0, cap: status.cap }
   }
   tell()
   return status

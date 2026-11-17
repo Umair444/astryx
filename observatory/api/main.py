@@ -313,7 +313,28 @@ def sees(request: Request):
     from astryx.core.tier import is_content_org, is_content_public
     if is_owner(request):
         return lambda agent: True
-    return is_content_org if insider(request) else is_content_public
+    if not insider(request):
+        return is_content_public
+    scope = reaches(request)
+    return lambda agent: scope(agent) and is_content_org(agent)
+
+
+def reaches(request: Request):
+    """THE one answer to "may this viewer reach this agent" (message it, see it in their lists, read its work): a
+    predicate on an agent name. A member granted on part of the agents/ tree reaches that subtree only (owner 11-17);
+    a whole-org member, an admin of the whole org and the owner reach every agent. privacy_gate reads the scope once
+    per request (request.state.reach: None = every agent, else the names); a viewer read before that reaches none."""
+    if is_owner(request):
+        return lambda agent: True
+    scope = getattr(request.state, "reach", set())
+    return (lambda agent: True) if scope is None else (lambda agent: agent in scope)
+
+
+def hidden(request: Request) -> list[str]:
+    """The agents this viewer may NOT reach ([] for the owner and a whole-org member): a message to or from one of them
+    is not theirs to read either (owner 11-17: "they see and message nothing else")."""
+    reach = reaches(request)
+    return [a for a in agent_nodes() if not reach(a)]
 
 
 def wire_handle(request: Request) -> str | None:
@@ -447,7 +468,7 @@ from observatory.api import pilot_voice as _pilot_voice  # noqa: E402
 from observatory.api.hostfile import atomic_write  # noqa: E402 — the ONE host-file writer (plan-11860 E3)
 import hashlib  # noqa: E402
 from bridges import routing as _routing  # noqa: E402 — the ONE route resolver/validator (plan-11860 E2)
-_pilot_voice.bind(lambda: pool)
+_pilot_voice.bind(lambda: pool, me=lambda r: wire_handle(r), reaches=lambda r: reaches(r))
 app.include_router(_pilot_voice.router)
 
 # plan-11884: /chat's server half (uploads, the side panel's file read, projects, dictation); owner-only by omission
@@ -469,7 +490,8 @@ app.include_router(_vaultapi.router)
 # omission from PUBLIC, like /api/chat
 from observatory.api import workspace as _ws  # noqa: E402
 _ws.bind(lambda: pool, ESTATE, roster=lambda: set(agent_meta()), charter=lambda n: _charter_path(n), owner=lambda r: owner_call(r),
-         me=lambda r: wire_handle(r), sees=lambda r: sees(r))
+         me=lambda r: wire_handle(r), sees=lambda r: sees(r), reaches=lambda r: reaches(r),
+         scoped=lambda r: bool(hidden(r)))
 app.include_router(_ws.router)
 
 # feat/chat-workspace: the artifact store (a git repo under data/workspace: versions, restore, annotations) and a
@@ -525,8 +547,13 @@ _WIRE_WRITE = re.compile(r"^/api/(messages|ws/agents/[^/]+/interrupt|federation/
 # per agent, so the personal tier stays the owner's.
 MEMBER = {("POST", "/api/messages"), ("POST", "/api/thread/read"), ("POST", "/api/chat/upload"),
           ("PUT", "/api/ws/threads/meta"), ("PUT", "/api/chat/projects"),
-          ("POST", "/api/chat/dictate/session"), ("POST", "/api/chat/dictate/usage"), ("POST", "/api/chat/calc"),
+          ("POST", "/api/chat/calc"),
           ("POST", "/api/me/channels")}   # a person links THEIR OWN account (identity-channels P3)
+# What a person reaches only when they hold the feature (members.caps: their role's default, as the Admin panel set it
+# for them; owner 11-17 "an admin can assign a voice chat to a member"). The owner holds every feature.
+FEATURE_PATHS = {"dictate": {("POST", "/api/chat/dictate/session"), ("POST", "/api/chat/dictate/usage")},
+                 "call": {("GET", "/api/pilot/voice/status"), ("POST", "/api/pilot/voice/session"),
+                          ("POST", "/api/pilot/voice/usage")}}
 MEMBER_GET = ("/api/ws/threads", "/api/ws/thread-titles", "/api/ws/search", "/api/ws/handoffs", "/api/ws/agents",
               "/api/ws/briefing", "/api/ws/media", "/api/ws/artifacts", "/api/chat/", "/api/presence",
               "/api/steps", "/api/pulse", "/api/me/channels")
@@ -551,13 +578,52 @@ async def member_file(request: Request) -> bool:
     return bool(await pool.fetchval("SELECT 1 FROM messages WHERE strpos(body, $1) > 0 LIMIT 1", f"[[file:{path}]]"))
 
 
+
+_NODES: tuple[float, dict] = (0.0, {})
+
+
+def agent_nodes() -> dict[str, str]:
+    """Every agent's path in the agents/ tree ('lending/scout'), by name: what a membership's node scopes (schema.sql
+    member_role). Read from the tree, kept 15 s."""
+    global _NODES
+    if time.monotonic() - _NODES[0] < 15:
+        return _NODES[1]
+    from astryx.core import charter
+    root, out = ESTATE / "agents", {}
+    if root.is_dir():
+        for f in charter.charter_files(root):
+            out.setdefault(f.stem, "/".join([*charter.group_path(f, root), f.stem]))
+    _NODES = (time.monotonic(), out)
+    return out
+
+
+async def _access(request: Request) -> tuple[set | None, dict]:
+    """(the agents this viewer reaches: None = all, the features they hold: {feature: daily minutes or None}). The
+    owner: all and all. A signed-in member: their memberships' subtree and members.caps. Anyone else: none. A read that
+    fails reaches nothing (closed): a scoped member never widens on a database blip."""
+    if is_owner(request):
+        return None, await _members.caps(pool, None, "owner")
+    uid, role = getattr(request.state, "uid", None), getattr(request.state, "role", None)
+    if not uid or role is None or pool is None:
+        return set(), {}
+    try:
+        nodes = agent_nodes()
+        got = await _members.reach(pool, uid, list(nodes.values()))
+        reach = None if got is None else {n for n, node in nodes.items() if node in got}
+        return reach, await _members.caps(pool, uid, role)
+    except (asyncpg.PostgresError, OSError) as e:
+        print(f"observatory: a member's access reads as none: {type(e).__name__}", file=sys.stderr)
+        return set(), {}
+
 @app.middleware("http")
 async def privacy_gate(request: Request, call_next):
     request.state.uid, request.state.role = await _who(request)
     p = request.url.path
+    request.state.reach, request.state.caps = await _access(request) if p.startswith("/api/") else (set(), {})
     m = "GET" if request.method == "HEAD" else request.method
     if (p.startswith("/api/") and (m, p) not in PUBLIC and not (m == "GET" and _PUBLIC_AVATAR.match(p))
             and not is_owner(request) and not (member_may(m, p) and insider(request))
+            and not (insider(request) and any((m, p) in FEATURE_PATHS[f] for f in request.state.caps))
             and not (m == "GET" and p in MEMBER_FILE and insider(request) and await member_file(request))
             and not (request.state.role == "admin" and (m, p) in _admin.ADMIN_ROUTES)):
         return Response(status_code=403)
@@ -766,6 +832,8 @@ async def messages(request: Request, limit: int = 100, before_id: int | None = N
         peers = list(await peer_orgs())
         args.append(peers)
         cond.append(anonymous_can_see_sql(f"${len(args)}"))
+    elif off := hidden(request):                        # a member given part of the tree reads that part's wire
+        args.append(off); cond.append(f"NOT (from_agent = ANY(${len(args)}) OR to_agent = ANY(${len(args)}))")
     if before_id:
         args.append(before_id); cond.append(f"id < ${len(args)}")
     if after_id is not None:
@@ -1867,10 +1935,14 @@ async def auth_role(request: Request):
 async def whoami(request: Request):
     """owner (as ever) + who the viewer is on the wire (cog-who): role here (None for the key door or the public face)
     and handle (the from_agent their messages carry: 'owner', cv-<label>.<uid>, or None)."""
+    reach = getattr(request.state, "reach", set())
     return {"owner": owner_call(request),
             "vega": _charter_path("vega") is not None,
             "role": "owner" if owner_call(request) else getattr(request.state, "role", None),
-            "handle": wire_handle(request)}
+            "handle": wire_handle(request),
+            # what this person may use and reach (owner 11-17): the UI shows only these, the gate refuses the rest
+            "caps": getattr(request.state, "caps", {}),
+            "reach": None if reach is None else sorted(reach)}
 
 
 @app.post("/api/messages")
@@ -1885,6 +1957,11 @@ async def owner_send(m: OwnerMsg, request: Request):
     meta = asker_meta(request)
     team = [t.strip().lower() for t in (m.team or []) if t and t.strip()]
     team = list(dict.fromkeys(team)) if m.to.strip().lower() in team else []
+    reach = reaches(request)
+    out = [n for n in [m.to.strip().lower(), *team] if not reach(n)]
+    if out:                                    # a member scoped to part of the tree writes to that part only (11-17)
+        return JSONResponse({"error": f"you can't message {', '.join(out)}: it is outside the agents you were given"},
+                            status_code=403)
     stamp = {"team": team, "lead": team[0]} if len(team) > 1 else {}
     if stamp:
         meta = {**(meta or {}), **stamp}
@@ -3675,9 +3752,12 @@ def _jsonb(v):
     return v
 
 
-def insider_sees_event(data: dict, see) -> bool:
+def insider_sees_event(data: dict, see, off=()) -> bool:
     """An insider's live feed: every event, short of an agent sees() keeps the owner's (the personal tier). Its steps
-    and presence carry its name; messages, dags and resyncs are the wire's, which insiders read whole."""
+    and presence carry its name; messages, dags and resyncs are the wire's, which insiders read whole, short of a
+    message to or from an agent outside a scoped member's part of the tree (`off`, main.hidden)."""
+    if data.get("type") == "message":
+        return data.get("from") not in off and data.get("to") not in off
     return data.get("type") not in ("step", "presence") or see(data.get("agent") or "")
 
 
@@ -3688,13 +3768,13 @@ async def events(request: Request):
     # agents' insides: the owner's, and an insider's per sees().
     owner = (bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY) or _signed_owner(request)
     inside = owner or insider(request)                  # a member sees the org's stream too (cog-who: no walls inside)
-    see = sees(request)
+    see, off = sees(request), set(hidden(request))
 
     async def visible(data: dict) -> bool:
         if owner:
             return True
         if inside:
-            return insider_sees_event(data, see)
+            return insider_sees_event(data, see, off)
         if data.get("type") == "resync":
             return True               # carries nothing: "the tap was down, catch up" (listen_task)
         # Same ONE rule as /api/messages — see anonymous_can_see(). This site previously

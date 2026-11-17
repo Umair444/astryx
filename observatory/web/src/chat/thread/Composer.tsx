@@ -78,9 +78,10 @@ export default forwardRef<ComposerHandle, {
   placeholder?: string
   draftKey?: string           // the conversation the draft belongs to: each keeps its own (iteration 11)
   onTalk?: (agent: string) => void   // iteration 13: Talk, canvas's voice mode, with the agent this box writes to
+  dictation?: boolean                 // owner 11-17: the mic shows only for a person who holds the dictate feature
   onSwitch?: (agents: string[]) => void   // hand the chat to these agents (the "To" faces' picker, /switch)
   roles?: Record<string, string>
-}>(function Composer({ roster, inChat, skills, tools, commands, lastMine, onSend, hero = false, placeholder, draftKey = '', onTalk, onSwitch, roles = {} }, ref) {
+}>(function Composer({ roster, inChat, skills, tools, commands, lastMine, onSend, hero = false, placeholder, draftKey = '', onTalk, onSwitch, roles = {}, dictation = true }, ref) {
   const [text, setText] = useState(() => draftOf(draftKey))
   const [files, setFiles] = useState<Uploaded[]>(() => FILES.get(draftKey) ?? [])
   // A DRAFT PER CONVERSATION: the box used to keep its words across a switch, so a line written to finance sat ready
@@ -311,7 +312,7 @@ export default forwardRef<ComposerHandle, {
     // send button, as in WhatsApp. A hardware keyboard (a desktop, a tablet with keys) sends on Enter.
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !touchFirst()) { e.preventDefault(); send(); return }
     if (e.key === 'ArrowUp' && !text) { const l = lastMine(); if (l) { e.preventDefault(); setText(l) } return }
-    if (e.key === '.' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); dictate() }
+    if (e.key === '.' && (e.metaKey || e.ctrlKey) && dictation) { e.preventDefault(); dictate() }
   }
 
   const live = dict.phase === 'live'
@@ -397,7 +398,7 @@ export default forwardRef<ComposerHandle, {
         <div className="flex items-center gap-0.5 px-2 pb-2 pt-1 max-sm:px-1 max-sm:pb-1">
           <input ref={fileIn} type="file" multiple hidden onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = '' }} />
           <button className="ws-icon" onClick={() => fileIn.current?.click()} title="Attach files (or paste, or drop)" aria-label="attach files">{I.clip()}</button>
-          <button className="ws-icon" onClick={dictate} title="Dictate (⌘.)" aria-pressed={live} aria-label="dictate">{live ? <span className="w-2.5 h-2.5 rounded-sm bg-bad animate-pulse" /> : I.mic()}</button>
+          {dictation && <button className="ws-icon" onClick={dictate} title="Dictate (⌘.)" aria-pressed={live} aria-label="dictate">{live ? <span className="w-2.5 h-2.5 rounded-sm bg-bad animate-pulse" /> : I.mic()}</button>}
           {onTalk && to.length > 0 && (
             <button className="ws-icon ws-talk-open" onClick={() => onTalk(to[0])} title={`Talk with ${displayName(to[0])}: a voice conversation (⌘⇧.)`} aria-label={`talk with ${displayName(to[0])}`}>{I.wave()}</button>
           )}

@@ -62,7 +62,7 @@ OVERRIDE = {   # (table, column) -> value, where a CHECK or a FK decides
     ("hands_leases", "step_cap"): 1, ("hands_leases", "wall_cap_s"): 1, ("hearings", "span_start"): 0,
     ("hearings", "span_end"): 1, ("members", "role"): "viewer", ("signals", "priority"): 1,
     ("influence_edge", "dst"): "other", ("library.lexeme_df", "ndoc"): 1, ("library.passage", "len"): 0,
-    ("library.stats", "n"): 0, ("library.stats", "avgdl"): 0,
+    ("library.stats", "n"): 0, ("library.stats", "avgdl"): 0, ("member_feature", "feature"): "call",
 }
 FIRST = ["canvases", "goals", "turns", "dag_runs"]          # referenced by the others
 
@@ -74,7 +74,7 @@ def value(table, col, typ, k, refs):
         return refs["canvases"]
     if col == "goal_id":
         return refs["goals"]                      # goal ids are a GLOBAL serial: an org names its own
-    if table == "members" and col == "uid":
+    if table in ("members", "member_feature") and col == "uid":
         return f"leak_{k}@x"
     if typ in ("text", "character varying", "name"):
         return f"leak_{k}"

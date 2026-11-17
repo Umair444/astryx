@@ -143,8 +143,9 @@ def main(tmp: Path, url: str):
     arm("S2 a member's renamed chat is named by her title (the list's derivation, not a raw label)",
         tt.get("chat:20990101-a") == "Alice's", tt)
     arm("T1 a viewer is 403", rv.status_code == 403, rv.status_code)
-    arm("T1 dictation's routes pass the member gate", obs.member_may("POST", "/api/chat/dictate/session")
-        and obs.member_may("POST", "/api/chat/dictate/usage"))
+    arm("T1 dictation's routes are the dictate feature's, which a member holds by default (owner 11-17)",
+        obs.FEATURE_PATHS["dictate"] == {("POST", "/api/chat/dictate/session"), ("POST", "/api/chat/dictate/usage")}
+        and "member" in obs._members.FEATURES["dictate"])
 
     # ── T2 projects ────────────────────────────────────────────────────────────────────────────────────────────
     print("T a member's own projects")

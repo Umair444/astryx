@@ -66,13 +66,26 @@ SWITCHES_MAX = 50                                   # a thread keeps its newest 
 
 _me = lambda request: "owner"                      # noqa: E731 — main.wire_handle: the viewer's wire handle (cog-who)
 _sees = lambda request: (lambda agent: False)      # noqa: E731 — main.sees; unbound = no agent's insides
+_reaches = lambda request: (lambda agent: False)   # noqa: E731 — main.reaches; unbound = no agent (closed)
+_scoped = lambda request: True                     # noqa: E731 — given part of the tree only: no "everyone" view (closed)
 
 
-def bind(get_pool, estate: Path, roster=None, charter=None, owner=None, me=None, sees=None) -> None:
+def _everyone(request, scope: str) -> bool:
+    """?scope=everyone (every human's conversations, a view): not for a member given part of the tree, whose view is
+    their own conversations and their part's wire (owner 11-17)."""
+    return scope == "everyone" and not _scoped(request)
+
+
+def bind(get_pool, estate: Path, roster=None, charter=None, owner=None, me=None, sees=None, reaches=None,
+         scoped=None) -> None:
     """The host app hands over its pool getter, its estate, its roster, its charter resolver, its owner check, the
-    viewer's wire handle and its insides predicate (read at call time)."""
-    global _get_pool, ESTATE, _roster, _charter, _owner, _me, _sees
+    viewer's wire handle, its insides predicate and its reach predicate (read at call time)."""
+    global _get_pool, ESTATE, _roster, _charter, _owner, _me, _sees, _reaches, _scoped
     _get_pool, ESTATE = get_pool, Path(estate)
+    if reaches is not None:
+        _reaches = reaches
+    if scoped is not None:
+        _scoped = scoped
     if me is not None:
         _me = me
     if sees is not None:
@@ -406,7 +419,7 @@ def canvas_user(me: str) -> str:
 async def ws_threads(request: Request, scope: str = "mine"):
     """?scope=mine (default): the viewer's own conversations; ?scope=everyone: every human's (a view, not a wall)."""
     pool = _pool(request)
-    me, everyone = _me(request) or "owner", scope == "everyone"
+    me, everyone = _me(request) or "owner", _everyone(request, scope)
     aggs = [{**dict(r), "last_ts": r["last_ts"].isoformat() if r["last_ts"] else None}
             for r in await pool.fetch(THREADS_SQL, me, everyone)]
     canvas: dict[str, dict] = {}
@@ -475,7 +488,8 @@ async def ws_meta(body: Meta, request: Request):
 @router.get("/api/ws/agents")
 async def ws_agents(request: Request):
     """The empty state's team cards: role from the charter, and each agent's newest message to the owner (30 days)."""
-    names = sorted(_roster())
+    reach = _reaches(request)
+    names = sorted(n for n in _roster() if reach(n))   # only the agents this viewer may reach (owner 11-17)
     last = {r["from_agent"]: r for r in await _pool(request).fetch(       # the viewer's (cog-gaps): her last word from each
         "SELECT DISTINCT ON (from_agent) from_agent, ts, thread, left(body, 400) AS body FROM messages "
         "WHERE to_agent = $1 AND ts > now() - interval '30 days' AND status IS DISTINCT FROM 'retracted' "
@@ -1024,7 +1038,7 @@ async def ws_search(request: Request, q: str = "", limit: int = SEARCH_LIMIT, sc
         return {"q": q, "results": []}
     limit = max(1, min(int(limit), SEARCH_LIMIT_MAX))
     pool = _pool(request)
-    me, everyone = _me(request) or "owner", scope == "everyone"
+    me, everyone = _me(request) or "owner", _everyone(request, scope)
     try:
         rows = [dict(r) for r in await pool.fetch(SEARCH_SQL, args[0], args[1], limit * SEARCH_SCAN, me, everyone,
                                                   timeout=SEARCH_TIMEOUT)]
@@ -1110,7 +1124,8 @@ async def ws_thread_titles(request: Request, ids: str = ""):
         except Exception:                           # noqa: BLE001 — an estate without canvas
             canvas = {}
     # every human's conversation (cog-gaps): a member's "Also worked in" names her chats and the owner's alike
-    rows = build_rows(aggs, read_meta(), [], set(_roster()), canvas, me=_me(request) or "owner", everyone=True)
+    rows = build_rows(aggs, read_meta(), [], set(_roster()), canvas, me=_me(request) or "owner",
+                      everyone=_everyone(request, "everyone"))
     named = {r["thread"] for r in rows}
     firsts = {r["thread"]: r["body"] for r in await pool.fetch(FIRST_SQL, [t for t in want if t not in named])} \
         if any(t not in named for t in want) else {}
@@ -1362,7 +1377,7 @@ def _store_view() -> tuple[dict, dict]:
 async def ws_briefing(request: Request, since: str = "", scope: str = "mine"):
     """?since=<iso> (default 12 h ago, at most 48 h back): {since, until, clamped, totals, agents, news}. The viewer's
     own (cog-gaps): what the agents said TO HER; ?scope=everyone: to any human of the org (a view, not a wall)."""
-    me, everyone = _me(request), scope == "everyone"
+    me, everyone = _me(request), _everyone(request, scope)
     if not me:                                      # the gate admits only the org's humans; this is the second lock
         return JSONResponse({"error": "members only"}, status_code=403)
     from datetime import datetime, timezone

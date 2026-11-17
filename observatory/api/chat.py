@@ -43,7 +43,6 @@ router = APIRouter()
 
 MAX_UPLOAD = 20 * 1024 * 1024                      # 20 MiB: a phone photo, a PDF, a short clip
 TRANSCRIBE = V.env("CHAT_DICTATE_MODEL", V.env("CANVAS_VOICE_TRANSCRIBE", "gpt-4o-mini-transcribe"))
-USER = "observatory-chat"
 _mints: list[float] = []
 
 _get_pool = None
@@ -457,12 +456,19 @@ def _pool(request: Request):
     return _get_pool() if _get_pool else request.app.state.pool
 
 
+def _dictator(request: Request) -> tuple[str, float | None]:
+    """(the ledger user for this person's dictation, their own daily minutes or None): each person's minutes are theirs
+    (owner 11-17), inside the org's one cap."""
+    return V.who(_me(request), "dictate"), (getattr(request.state, "caps", {}) or {}).get("dictate")
+
+
 @router.post("/api/chat/dictate/session")
 async def dictate(request: Request):
     pool = _pool(request)
-    why = await V.unavailable(pool)
+    user, limit = _dictator(request)
+    why = await V.unavailable(pool, user, limit)
     if why:
-        return JSONResponse({"error": why}, status_code=429 if "cap" in why else 503)
+        return JSONResponse({"error": why}, status_code=429 if ("cap" in why or "spent" in why) else 503)
     now = time.time()
     _mints[:] = [t for t in _mints if now - t < 3600]
     if len(_mints) >= 30:
@@ -483,7 +489,7 @@ async def dictate(request: Request):
     if code != 200 or not out.get("value"):
         return JSONResponse({"error": f"the speech service refused the session ({code})"}, status_code=502)
     _mints.append(now)
-    usage_id = await V.record(pool, USER, TRANSCRIBE)
+    usage_id = await V.record(pool, user, TRANSCRIBE)
     return {"value": out["value"], "usage_id": usage_id, "model": TRANSCRIBE, "calls_url": V.CALLS_URL,
             "minutes_today": await V.minutes_today(pool), "cap": V.cap_minutes()}
 
@@ -495,4 +501,4 @@ class Usage(BaseModel):
 
 @router.post("/api/chat/dictate/usage")
 async def dictate_usage(body: Usage, request: Request):
-    return await V.report(_pool(request), body.id, USER, body.seconds)
+    return await V.report(_pool(request), body.id, _dictator(request)[0], body.seconds)
