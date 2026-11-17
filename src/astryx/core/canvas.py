@@ -105,6 +105,37 @@ def body_of(html: str) -> tuple[str, list[str]]:
     return html, notes
 
 
+# WHO SEES A CANVAS (owner 11-17, msg 12979: "multiple members should be able to work on canvas"): the owner, its maker
+# (user_name) and whom it is shared with (shared_with: a member by ACCOUNT, the members table's uid, as a project is
+# shared; an invitee by name). A person is known here by their KEYS: their canvas name, and a member's account too.
+# The ONE rule, in SQL ({owner}: a bool param, {keys}: text[]) and on a row; the canvas bridge, the observatory's
+# canvas routes and its chat scope all ask it.
+def sees_sql(owner: str, keys: str) -> str:
+    return f"({owner} OR user_name = ANY({keys}::text[]) OR shared_with && {keys}::text[])"
+
+
+def sees(row, keys, owner: bool = False) -> bool:
+    k = set(keys)
+    return owner or row["user_name"] in k or bool(k & set(row["shared_with"] or ()))
+
+
+def is_account(name: str) -> bool:
+    """A members-table account (<n>@<cog>), as opposed to an invitee's name: a share by account is a member's."""
+    n, at, cog = name.partition("@")
+    return bool(at and cog and n.isdigit())
+
+
+def share_set(wanted, current, members) -> tuple[list[str], set[str], set[str]]:
+    """A share's new shared_with: (users, the invitees it ADDS, the accounts it adds that are no member). A member is
+    shared with by account and must be in the members table; one no longer a member drops out (never locks a save,
+    as projects). The caller refuses an add of a non-member, and an invitee add unless the owner's, past the gate."""
+    users = sorted({u.strip() if is_account(u.strip()) else u.strip().lower() for u in wanted if u and u.strip()})
+    held, added = set(members), set(users) - set(current or ())
+    accounts, guests = [u for u in users if is_account(u)], [u for u in users if not is_account(u)]
+    return sorted([u for u in accounts if u in held] + guests), {u for u in added if not is_account(u)}, \
+        {u for u in added if is_account(u)} - held
+
+
 def may_write(canvas_agent: str, who: str, crew=()) -> bool:
     """The canvas's agent, its summoned crew, and the org's standing writers."""
     return who == canvas_agent or who in crew or who in WRITERS

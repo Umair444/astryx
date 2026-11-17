@@ -39,6 +39,8 @@ export interface Canvas {
   title: string
   agent: string
   user: string
+  yours?: boolean                  // its maker or the owner: crew, share, roll back, archive (server-set)
+  works?: boolean                  // a member it is shared with too: they direct its agent (server-set)
   tier: 'org' | 'personal'
   shared_with: string[]
   crew?: string[]

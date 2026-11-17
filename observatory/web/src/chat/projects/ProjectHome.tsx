@@ -116,7 +116,7 @@ export default function ProjectHome({ p, threads, names, status, roles, composer
           <Files items={arts ?? []} loading={arts === null} activeId={activeId} busy={busy}
             onOpen={(it) => onOpenFile(it.id!, it)} onUpload={(f) => void uploadFiles(f)} onPick={() => setPicking(true)}
             onRemove={(id) => void edit((x) => ({ ...x, files: x.files.filter((f) => f !== id) }))} />
-          <Sharing p={p} onChange={(shared) => void edit((x) => ({ ...x, shared }))} />
+          <Sharing shared={p.shared} yours={p.yours} byMember={!!p.by} onChange={(shared) => void edit((x) => ({ ...x, shared }))} />
         </motion.aside>
 
         <motion.section {...rise(0.18)} className="min-w-0 @4xl:col-start-1 @4xl:row-start-2" aria-label="conversations in this project">

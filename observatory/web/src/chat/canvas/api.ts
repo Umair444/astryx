@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { api } from '../../api'
+import { api, apiSend } from '../../api'
 import { canvasBase } from '../../cog'
 
-/* CANVASES in the workspace (iteration 13): the live pages agents paint (bridges/canvas.py), READ-ONLY here. The data
-   comes from the observatory's own owner-only routes (observatory/api/ws_canvas.py), which read canvas's tables and
-   serve a version through canvas's own shell; nothing here writes. Changing a canvas, rolling it back, sharing it: the
-   "Open in canvas" link. */
+/* CANVASES in the workspace (iteration 13): the live pages agents paint (bridges/canvas.py). The data comes from the
+   observatory's own routes (observatory/api/ws_canvas.py: the canvases canvas's rule gives the viewer), which read
+   canvas's tables and serve a version through canvas's own shell. The one write here is sharing with members;
+   changing a canvas or rolling it back: the "Open in canvas" link. */
 
 export interface CanvasRow {
   id: number
@@ -17,6 +17,8 @@ export interface CanvasRow {
   brief: string | null
   updated_at: string | null
   thread: string                   // cv:canvas-<id>: the canvas's own conversation
+  shared: string[]                 // the members it is shared with, by account
+  yours: boolean                   // its maker, or the owner: theirs to share
 }
 export interface CanvasVersion { version: number; author: string; note: string | null; ts: string | null }
 export interface CanvasMeta extends CanvasRow { versions: CanvasVersion[] }
@@ -26,6 +28,8 @@ export const loadCanvasMeta = (id: number) => api<CanvasMeta>(`/ws/canvases/${id
 export const renderCanvas = (id: number, v: number | null) =>
   api<{ version: number; html: string | null }>(`/ws/canvases/${id}/render${v ? `?v=${v}` : ''}`)
 export const canvasData = (id: number) => api<Record<string, unknown>>(`/ws/canvases/${id}/data`)
+export const shareCanvas = (id: number, shared: string[]) =>
+  apiSend<{ id: number; shared: string[] }>('POST', `/ws/canvases/${id}/share`, { shared })
 
 /* the canvas a conversation is about: canvas names its own thread cv:canvas-<id> */
 export function canvasIdOf(thread: string | null | undefined): number | null {

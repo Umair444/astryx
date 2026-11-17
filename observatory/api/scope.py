@@ -10,7 +10,8 @@ make asks THIS module, in its POSITIVE form, and a message passes both arms:
          history to every scoped member (medic 12822).
   OWN    it is not on a person's own chat (PERSONAL: a normal chat, a canvas chat), or that chat is open to them: they
          are a party of it (they wrote or were written to on it: workspace.party's rule), or it belongs to a project
-         they see (workspace.project_visible). A desk (obs:<agent>) is shared: whoever opens the agent reads it.
+         they see (workspace.project_visible), or it is the conversation of a canvas they see (cv.sees: its maker and
+         whom it is shared with, owner 11-17 12979). A desk (obs:<agent>) is shared: whoever opens the agent reads it.
 The owner and the agents themselves (no member role) are unscoped.
 
   of(request)              None (unscoped) or (reach | None, me)
@@ -62,6 +63,13 @@ async def load(pool, request) -> set[str]:
         out |= {t for p in _ws._projects(_ws.account(request)) for t in (p.get("threads") or []) if isinstance(t, str)}
     except Exception:                               # noqa: BLE001 — closed, as the docstring says
         out = set()
+    from astryx.core import canvas as _cv
+    from observatory.api import ws_canvas as _wc
+    try:
+        out |= {_wc.thread_of(r["id"]) for r in await pool.fetch(
+            f"SELECT id FROM canvases WHERE {_cv.sees_sql('$1', '$2')}", *_wc.keys(request))}
+    except Exception:                               # noqa: BLE001 — no canvas tables (or a blip): no canvas opens
+        pass
     request.state.open = out
     return out
 
