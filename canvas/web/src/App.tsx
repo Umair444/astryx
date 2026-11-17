@@ -24,7 +24,9 @@ function parse(hash: string): Route {
 /* a chat lives in the workspace (owner 11-17): an old canvas link to one (#/chat/<thread>, #/new) goes there */
 function chatLink(hash: string): string | null {
   const [a, b] = hash.replace(/^#\/?/, '').split('/')
-  return a === 'chat' && b ? workspaceHref(`/chat/${decodeURIComponent(b)}`) : a === 'new' ? workspaceHref() : null
+  if (a === 'new') return workspaceHref()
+  if (a !== 'chat' || !b) return null
+  try { return workspaceHref(`/chat/${decodeURIComponent(b)}`) } catch { return workspaceHref() }   // a malformed escape
 }
 
 export default function App() {
