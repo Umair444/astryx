@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion } from 'motion/react'
-import { post } from './api'
-import { go } from './nav'
+import { post, signedOut } from './api'
+import { go, workspaceHref } from './nav'
 import { useStore } from './store'
 import type { Route } from './types'
 import { Avatar, I, ago } from './ui'
@@ -17,6 +17,7 @@ export function Sidebar({ route, onVoice }: { route: Route; onVoice: () => void 
 
   async function logout() {
     await post('/logout').catch(() => {})
+    signedOut()
     location.reload()
   }
 
@@ -24,6 +25,8 @@ export function Sidebar({ route, onVoice }: { route: Route; onVoice: () => void 
   return (
     <aside className="w-[284px] h-full flex flex-col glass border-y-0 border-l-0">
       <div className="px-5 pt-5 pb-4 flex items-center gap-3">
+        <a href={workspaceHref()} title="Back to the workspace" aria-label="back to the workspace"
+          className="-ml-1.5 p-1.5 rounded-lg text-fg-dim hover:text-fg hover:bg-fg/[.06] transition">{I.home()}</a>
         <button onClick={() => go('/')} className="flex items-center gap-2.5 group">
           <div className="w-8 h-8 rounded-[11px] sig ring-sig group-hover:scale-105 transition" />
           <span className="font-serif text-[26px] leading-none tracking-tight">canvas</span>

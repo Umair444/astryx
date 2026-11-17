@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
-import { del, get, post } from './api'
-import { go } from './nav'
+import { del, get, peopleHere, post } from './api'
+import { go, workspaceHref } from './nav'
 import { getState, loadPresence, loadThread, onCanvas, refreshLists, useStore } from './store'
 import { canvasVars, type Theme } from './themes'
 import type { Canvas, Presence } from './types'
@@ -259,11 +259,12 @@ export function CanvasView({ id }: { id: number }) {
                 </AnimatePresence>
               </div>
             )}
-            {me.owner && c?.tier === 'org' && <IconBtn title="Share" onClick={() => setShare(true)}>{I.share()}</IconBtn>}
+            {owns && c?.tier === 'org' && <IconBtn title="Share" onClick={() => setShare(true)}>{I.share()}</IconBtn>}
             <span className="hidden sm:contents">
               <IconBtn title="Full screen" onClick={() => stage.current?.requestFullscreen?.()}>{I.expand()}</IconBtn>
               {owns && <IconBtn title="Archive" onClick={archive}>{I.archive()}</IconBtn>}
             </span>
+            <IconBtn title="Open its conversation in the workspace" onClick={() => { location.href = workspaceHref(`/chat/cv:canvas-${id}`) }}>{I.chat()}</IconBtn>
             <IconBtn title="Conversation" onClick={() => setSide(s => !s)} on={side}>{I.side()}</IconBtn>
           </div>
         </header>
@@ -518,26 +519,46 @@ function IconBtn({ children, onClick, title, on }: { children: React.ReactNode; 
   return <button title={title} onClick={onClick} className={`p-2 rounded-lg transition ${on ? 'bg-fg/[.08] text-fg' : 'text-fg-dim hover:text-fg hover:bg-fg/[.06]'}`}>{children}</button>
 }
 
+/* WHO SEES IT (owner 11-17, 12979): the org's MEMBERS, by account (the members table, named as the org knows them: the
+   front's /auth/people, the projects' picker), and, the owner's alone, invitees by name. The server judges the list
+   (cv.share_set); sel starts from shared_with, so whatever this dialog doesn't show is kept. */
 function ShareDialog({ c, onClose }: { c: Canvas; onClose: () => void }) {
+  const me = useStore(s => s.me)!
   const [users, setUsers] = useState<{ name: string; revoked: boolean }[]>([])
+  const [people, setPeople] = useState<{ uid: string; name: string }[] | null>(null)
   const [sel, setSel] = useState<string[]>(c.shared_with)
   const [err, setErr] = useState('')
-  useEffect(() => { get<{ name: string; revoked: boolean }[]>('/users').then(u => setUsers(u.filter(x => !x.revoked))).catch(() => {}) }, [])
+  useEffect(() => { if (me.owner) get<{ name: string; revoked: boolean }[]>('/users').then(u => setUsers(u.filter(x => !x.revoked))).catch(() => {}) }, [me.owner])
+  useEffect(() => { peopleHere().then(setPeople) }, [])
+  const pick = (k: string, on: boolean) => setSel(s => on ? [...s, k] : s.filter(x => x !== k))
   return createPortal(
     <motion.div className="fixed inset-0 z-50 grid place-items-center p-4 bg-black/50 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
       onMouseDown={e => e.target === e.currentTarget && onClose()}>
       <div className="w-full max-w-sm solid rounded-3xl p-6 shadow-2xl">
         <h2 className="font-serif text-3xl tracking-tight mb-1">Share</h2>
-        <p className="text-sm text-fg-dim mb-4">Invitees you pick can watch “{c.title}” live.</p>
-        {users.length === 0 && <p className="text-sm text-fg-mute">No invitees yet — add people first.</p>}
-        <div className="space-y-1">
-          {users.map(u => (
-            <label key={u.name} className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-fg/[.04] cursor-pointer">
-              <input type="checkbox" checked={sel.includes(u.name)} onChange={e => setSel(s => e.target.checked ? [...s, u.name] : s.filter(x => x !== u.name))} />
-              <Avatar name={`cv-${u.name}`} size={24} /> {u.name}
-            </label>
-          ))}
-        </div>
+        <p className="text-sm text-fg-dim mb-4">Members you pick work on “{c.title}” with you: they see it and ask its agent.{me.owner ? ' Invitees can watch it.' : ''}</p>
+        <div className="text-[11px] uppercase tracking-[.12em] text-fg-mute px-3 mb-1">Members</div>
+        {people === null ? <p className="px-3 text-sm text-fg-mute">Loading…</p>
+          : people.length === 0 ? <p className="px-3 text-sm text-fg-mute">Sign in to astryx to share with members.</p>
+          : <div className="space-y-1 max-h-[40vh] overflow-y-auto">
+            {people.filter(p => p.uid !== c.user).map(p => (
+              <label key={p.uid} className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-fg/[.04] cursor-pointer">
+                <input type="checkbox" checked={sel.includes(p.uid)} onChange={e => pick(p.uid, e.target.checked)} />
+                <Avatar name={`cv-${p.name}`} size={24} /> {p.name}
+              </label>
+            ))}
+          </div>}
+        {me.owner && users.length > 0 && <>
+          <div className="text-[11px] uppercase tracking-[.12em] text-fg-mute px-3 mt-3 mb-1">Invitees</div>
+          <div className="space-y-1">
+            {users.map(u => (
+              <label key={u.name} className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-fg/[.04] cursor-pointer">
+                <input type="checkbox" checked={sel.includes(u.name)} onChange={e => pick(u.name, e.target.checked)} />
+                <Avatar name={`cv-${u.name}`} size={24} /> {u.name}
+              </label>
+            ))}
+          </div>
+        </>}
         {err && <p className="text-bad text-sm mt-3">{err}</p>}
         <button onClick={async () => { try { await post(`/canvases/${c.id}/share`, { users: sel }); onClose() } catch (e) { setErr(e instanceof Error ? e.message : 'refused') } }}
           className="w-full mt-5 sig rounded-2xl py-2.5 font-medium">Save</button>
