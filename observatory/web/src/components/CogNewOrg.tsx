@@ -14,7 +14,7 @@ import AgentFace from './AgentFace'
 
 export const NEW_ORG_KEY = /^[a-z][a-z0-9-]{1,30}$/
 const FED_NAME = /^[a-z0-9][a-z0-9._-]{0,79}$/                  // core/orgname.py ORG_RE
-const RESERVED = new Set(['local', 'owner', 'whatsapp', 'telegram', 'discord', 'canvas', 'sms', 'frontend'])   // = orgname.RESERVED_ORGS (tests/test_channels.py pins it)
+const RESERVED = new Set(['local', 'owner', 'whatsapp', 'telegram', 'discord', 'canvas', 'sms', 'email', 'frontend'])   // = orgname.RESERVED_ORGS (tests/test_channels.py pins it)
 const THREAD = 'cog-new-org-'
 const READ_MS = 30_000
 

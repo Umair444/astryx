@@ -84,18 +84,6 @@
     "author": "seed",
     "who": "grant"
   },
-  "mail": {
-    "command": "venv/bin/python",
-    "args": [
-      "mcp/mail/server.py"
-    ],
-    "author": "unknown",
-    "who": "grant",
-    "grants": [
-      "mail",
-      "gmail"
-    ]
-  },
   "compose": {
     "command": "venv/bin/python",
     "args": [

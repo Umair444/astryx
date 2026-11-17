@@ -296,9 +296,8 @@ asyncio.run(B.deliver(capped[0]))
 check("past SMS_DAILY_CAP: refused with the cap named, nothing sent",
       capped[0]["status"] == "refused" and "cap" in capped[0]["delivery"]["door_refused"] and not sends,
       capped[0]["delivery"])
-check("the claim takes sms threads and sms people, nothing of another channel's",
-      "thread LIKE 'sms:%'" in B.CLAIM and "to_agent LIKE 'sms-%'" in B.CLAIM and "wa:" not in B.CLAIM.split("OR (thread")[0],
-      B.CLAIM)
+check("the claim takes sms threads and sms people (which rows exactly: test_email_channel's C arm, on real SQL)",
+      "thread LIKE 'sms:%'" in B.CLAIM and "to_agent LIKE 'sms-%'" in B.CLAIM, B.CLAIM)
 
 print("C the cap's own SQL, on the fixture DB (medic 13091 R2):")
 try:

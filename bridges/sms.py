@@ -32,8 +32,9 @@ BOOK = Book("sms")
 pool: asyncpg.Pool | None = None
 
 # the rows this bridge delivers: its listen predicate
-CLAIM = ("((to_agent='owner' OR to_agent LIKE 'sms-%') AND (thread LIKE 'sms:%' OR to_agent LIKE 'sms-%')) "
-         f"OR {address.reaches_sql('sms')}")
+# a person on an sms: thread, or an sms- name on no other channel's thread (that thread's bridge delivers it: one
+# claimant per row)
+CLAIM = f"({address.reaches_sql('sms')} OR (to_agent LIKE 'sms-%' AND NOT {address.elsewhere_sql('sms')}))"
 
 # what THIS bridge delivered today (PKT): every send's receipt names its handle sms:<number>, whatever the row's thread
 # (CLAIM also takes sms-<n> on any thread; medic 13091 R2); a door refusal is status 'refused'

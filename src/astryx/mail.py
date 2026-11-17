@@ -15,6 +15,7 @@ The values are read at use, never at import. Callers pass the env they mean (con
 from __future__ import annotations
 
 import imaplib
+import mimetypes
 import smtplib
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
@@ -52,16 +53,26 @@ def _login(env: dict) -> tuple[str, str] | None:
     return ((env.get("MAIL_USER") or env["MAIL_FROM"]), pw) if pw else None
 
 
-def send(env: dict, to: str, subject: str, body: str, cc: str = "", bcc: str = "", one: bool = False) -> EmailMessage:
+def send(env: dict, to: str, subject: str, body: str, cc: str = "", bcc: str = "", one: bool = False, *,
+         sender: str = "", files: tuple = (), reply_to_id: str = "") -> EmailMessage:
     """Send a plain-text mail from MAIL_FROM. to/cc/bcc take comma-separated addresses; bcc never reaches a header.
-    one=True: `to` is exactly one address and the mail goes to it alone (a code, a link: never a list)."""
+    one=True: `to` is exactly one address and the mail goes to it alone (a code, a link, a channel's chat: never a
+    list). sender: the display name on From ("seed" → "seed <MAIL_FROM>"). files: (filename, bytes) attachments.
+    reply_to_id: the Message-ID this one answers (In-Reply-To / References), so a mail client keeps one conversation.
+    Every header goes through EmailMessage's default policy, which refuses a CR or LF in a header value."""
     host, port = _server(env, "MAIL_SMTP", 25)
     msg = EmailMessage()
-    msg["From"], msg["To"], msg["Subject"] = env["MAIL_FROM"], to, subject
+    msg["From"] = f"{sender} <{env['MAIL_FROM']}>" if sender else env["MAIL_FROM"]
+    msg["To"], msg["Subject"] = to, subject
     msg["Date"], msg["Message-ID"] = formatdate(localtime=True), make_msgid(domain=env["MAIL_FROM"].rpartition("@")[2])
+    if reply_to_id:
+        msg["In-Reply-To"], msg["References"] = reply_to_id, reply_to_id
     if cc:
         msg["Cc"] = cc
     msg.set_content(body)
+    for name, data in files:
+        kind = (mimetypes.guess_type(name)[0] or "application/octet-stream").split("/", 1)
+        msg.add_attachment(data, maintype=kind[0], subtype=kind[1], filename=name)
     rcpt = [a.strip() for a in ",".join((to, cc, bcc)).split(",") if a.strip()]
     if not rcpt:
         raise ValueError("no recipient")
