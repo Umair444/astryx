@@ -101,6 +101,9 @@ def _at(value: str) -> tuple[datetime, str]:
     return at, f"{at.minute} {at.hour} {at.day} {at.month} *"        # only for readers of schedule; tick never reads it
 
 
+AT_PIN = re.compile(r"\d+ \d+ \d+ \d+ \*")      # the schedule _at writes: a row made by at, not by a cron
+
+
 def _probe(conn, sql: str) -> tuple[list, list, bool, list]:
     """Read a query the way the pulse will, twice: names, rows, over cap, and the columns that changed between reads."""
     try:
@@ -242,9 +245,11 @@ def _set(conn, agent: str, a: dict) -> str:
     after = keep("after", "after_for", _dur)
     if a.get("once") is not None:
         once = bool(a["once"])
-    elif at or (kind == "heartbeat" and a.get("schedule")):
-        once = bool(at)              # a time wake's clock says it: at is one moment, a schedule repeats (an at's `once` never
-    else:                            # rides onto a schedule: insurance 12803, it fired at once and turned itself off)
+    elif at:
+        once = True
+    elif kind == "heartbeat" and a.get("schedule") and row and AT_PIN.fullmatch(row["schedule"] or ""):
+        once = False                 # an at's one-shot never rides onto a schedule (insurance 12803: it fired at once and
+    else:                            # turned itself off); a once someone set on a schedule stays, as a PATCH keeps it
         once = (row["once"] if row else False)
     if once and renag is not None and a.get("renag") in (None, ""):
         renag = None

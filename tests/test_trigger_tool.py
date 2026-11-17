@@ -477,6 +477,9 @@ def tick_rules(c):
     t = row("ra")
     check("A12 a fired row set again with its own schedule is on, as the reply's next fire says",
           t["enabled"] and t["off_reason"] is None and t["once"] is False, (t, r))
+    set_ok(c, name="rb", schedule="0 9 * * *", once=True)
+    set_ok(c, name="rb", schedule="0 10 * * *")
+    check("A13 a once set on a schedule stays when the time moves (set is a PATCH; medic 12807)", row("rb")["once"] is True, row("rb"))
     t = dict(_due_row(c, "dl"))
     c.execute("UPDATE triggers SET enabled=false WHERE name='dl'")        # an old trigger_rm: enabled only
     pulse.process(c, [t], tool._now(), hot=False)
