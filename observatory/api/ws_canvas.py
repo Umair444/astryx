@@ -21,7 +21,7 @@ WHO SEES A CANVAS is canvas's own rule (astryx.core.canvas.sees: the owner, its 
 here with the viewer's keys (owner 11-17, msg 12979: "multiple members should be able to work on canvas"): a member
 reaches these routes (main.MEMBER_GET, MEMBER) and sees only the canvases that rule gives them. Sharing with members
 by account is the one write here, beside canvas's own share (which also shares with invitees, the owner's alone);
-both go through cv.share_set. The workspace has no invitees.
+both go through cv.share_set (members only).
 """
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def keys(request: Request) -> tuple[bool, list[str]]:
 def shape(r, ks: tuple[bool, list[str]] = (True, [])) -> dict:
     return {"id": r["id"], "title": r["title"], "agent": r["agent"], "user": r["user_name"], "tier": r["tier"],
             "version": r["ver"], "brief": r["brief"], "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
-            "thread": thread_of(r["id"]), "shared": [u for u in (r["shared_with"] or ()) if cv.is_account(u)],
+            "thread": thread_of(r["id"]), "shared": list(r["shared_with"] or ()),
             "yours": ks[0] or r["user_name"] in ks[1]}
 
 
@@ -157,8 +157,7 @@ class Share(BaseModel):
 
 @router.post("/api/ws/canvases/{cid}/share")
 async def ws_canvas_share(cid: int, body: Share, request: Request):
-    """Its maker or the owner shares a canvas with members, by account (cv.share_set: the members table's; one no longer
-    a member drops out). Its invitees stay as canvas set them: they are shared from canvas, by the owner."""
+    """Its maker or the owner shares a canvas with the org's members (cv.share_set, the one rule)."""
     from observatory.api import members
     ks = keys(request)
     c = await _one(request, cid)
@@ -167,12 +166,8 @@ async def ws_canvas_share(cid: int, body: Share, request: Request):
     if not (ks[0] or c["user_name"] in ks[1]):
         return JSONResponse({"error": "only the canvas's maker or the owner shares it"}, status_code=403)
     pool = _pool(request)
-    guests = [u for u in (c["shared_with"] or ()) if not cv.is_account(u)]
-    users, _, strangers = cv.share_set([u for u in body.shared if cv.is_account(u)] + guests, c["shared_with"],
-                                       [r["uid"] for r in await members.rows(pool)])
-    if strangers:
-        return JSONResponse({"error": "share with this org's members only"}, status_code=400)
-    if users != guests and c["tier"] == "personal":
-        return JSONResponse({"error": "a personal-tier canvas is never shared"}, status_code=400)
+    users, why = cv.share_set(body.shared, c["shared_with"], [r["uid"] for r in await members.rows(pool)], c["tier"])
+    if why:
+        return JSONResponse({"error": why}, status_code=400)
     await pool.execute("UPDATE canvases SET shared_with=$2 WHERE id=$1", cid, users)
-    return {"id": cid, "shared": [u for u in users if cv.is_account(u)]}
+    return {"id": cid, "shared": users}

@@ -34,7 +34,6 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import psycopg
@@ -106,8 +105,8 @@ def body_of(html: str) -> tuple[str, list[str]]:
 
 
 # WHO SEES A CANVAS (owner 11-17, msg 12979: "multiple members should be able to work on canvas"): the owner, its maker
-# (user_name) and whom it is shared with (shared_with: a member by ACCOUNT, the members table's uid, as a project is
-# shared; an invitee by name). A person is known here by their KEYS: their canvas name, and a member's account too.
+# (user_name) and the members it is shared with (shared_with: by ACCOUNT, the members table's uid, as a project is
+# shared). A person is known here by their KEYS: their canvas name, and a member's account too.
 # The ONE rule, in SQL ({owner}: a bool param, {keys}: text[]) and on a row; the canvas bridge, the observatory's
 # canvas routes and its chat scope all ask it.
 def sees_sql(owner: str, keys: str) -> str:
@@ -119,21 +118,17 @@ def sees(row, keys, owner: bool = False) -> bool:
     return owner or row["user_name"] in k or bool(k & set(row["shared_with"] or ()))
 
 
-def is_account(name: str) -> bool:
-    """A members-table account (<n>@<cog>), as opposed to an invitee's name: a share by account is a member's."""
-    n, at, cog = name.partition("@")
-    return bool(at and cog and n.isdigit())
-
-
-def share_set(wanted, current, members) -> tuple[list[str], set[str], set[str]]:
-    """A share's new shared_with: (users, the invitees it ADDS, the accounts it adds that are no member). A member is
-    shared with by account and must be in the members table; one no longer a member drops out (never locks a save,
-    as projects). The caller refuses an add of a non-member, and an invitee add unless the owner's, past the gate."""
-    users = sorted({u.strip() if is_account(u.strip()) else u.strip().lower() for u in wanted if u and u.strip()})
-    held, added = set(members), set(users) - set(current or ())
-    accounts, guests = [u for u in users if is_account(u)], [u for u in users if not is_account(u)]
-    return sorted([u for u in accounts if u in held] + guests), {u for u in added if not is_account(u)}, \
-        {u for u in added if is_account(u)} - held
+def share_set(wanted, current, members, tier: str) -> tuple[list[str], str]:
+    """THE share rule, for every writer (the canvas bridge, the observatory): (the new shared_with, why it is refused
+    or ""). A canvas is shared with the org's MEMBERS, by account (the members table, as a project); an outsider never
+    (medic 13016: nothing checks what an agent paints next, so the one outsider wall stays shut). A personal-tier
+    canvas is shared with no one. A member removed from the org drops out (never locks a save, as projects)."""
+    want = {u.strip() for u in wanted if u and u.strip()}
+    held = set(members)
+    if want - set(current or ()) - held:
+        return [], "share with this org's members only"
+    users = sorted(want & held)
+    return (users, "a personal-tier canvas is never shared") if users and tier == "personal" else (users, "")
 
 
 def may_write(canvas_agent: str, who: str, crew=()) -> bool:
@@ -416,115 +411,6 @@ def preview(cid: int, page: str, outdir: str | None = None, overrides=(), load=N
 
 
 # ---------------------------------------------------------------------------- CLI
-# ------------------------------------------------------- the privacy gates (share + view)
-# Content leaves the org through TWO doors, and both are gated by the SAME verdict: steward's
-# pii_canvas sweep (triggers/steward/pii_sweep.py), one writer, one reader, a row in postgres.
-#   SHARE (share_blockers): a canvas is not shared while any of its content is unscanned or flagged.
-#   VIEW  (view_blockers / data_blockers): a NON-OWNER viewer is served only content the sweep has
-#         CLEARED — a version or data value newer than the last scan, or carrying an open finding, is
-#         withheld. a3 #35598: gating share alone was false prevention, because publishing to an
-#         ALREADY-shared canvas reaches the guest at once (on_canvas pushes, canvas_render serves any
-#         version via ?v=N); the view gate closes that door at the moment of reading.
-# FAIL-CLOSED on every unknown: no sweep row, or no completed scan. Pins are steward's, by location.
-# The open-finding filter keys on `cid`, which ONLY pii_canvas writes (wire findings carry none), and
-# on `src`, whose canvas spellings are "canvas:<cid>:v<ver>" and "canvas:<cid>:data:<masked key>".
-_VERDICT_SQL = (
-    "SELECT t.state->>'checked_at' AS checked_at, "
-    "  coalesce((SELECT array_agg(o.value->>'src') "
-    "            FROM jsonb_each(coalesce(t.state->'open', '{}'::jsonb)) o "
-    "            WHERE (o.value->>'cid')::bigint = %(cid)s), '{}') AS srcs "
-    "FROM triggers t WHERE t.agent = 'steward' AND t.name = 'pii_canvas'")
-
-
-def _verdict(conn, cid: int):
-    """(reasons, checked_at, srcs): reasons non-empty when no verdict exists at all."""
-    row = conn.execute(_VERDICT_SQL, {"cid": cid}).fetchone()
-    if row is None:
-        return ["the privacy sweep (steward/pii_canvas) is not registered — nothing has read this canvas"], None, set()
-    checked_at, srcs = row
-    if not checked_at:
-        return ["the privacy sweep has not completed a scan yet"], None, set()
-    return [], datetime.fromisoformat(checked_at), set(srcs or ())
-
-
-def share_blockers(conn, cid: int) -> list[str]:
-    """Why canvas `cid` may NOT be shared right now; [] means it may. Shapes only, never a value."""
-    out, checked, srcs = _verdict(conn, cid)
-    if out:
-        return out
-    newest = conn.execute(
-        "SELECT greatest((SELECT max(ts) FROM canvas_versions WHERE canvas_id = %(cid)s), "
-        "                (SELECT max(updated_at) FROM canvas_data WHERE canvas_id = %(cid)s), "
-        "                (SELECT created_at FROM canvases WHERE id = %(cid)s))",
-        {"cid": cid}).fetchone()[0]
-    if newest is not None and newest > checked:
-        out.append("this canvas changed after the last privacy scan — retry within 5 minutes")
-    if srcs:
-        # NOT "republish": every version stays readable to a viewer via /render?v=N
-        # (bridges/canvas.py:canvas_render), so a clean new version leaves the old one exposed
-        out.append(f"{len(srcs)} possible owner-PII finding(s) on this canvas, in a version or live "
-                   "value a viewer can still read (any version renders via ?v=N, so republishing "
-                   "does not clear it) — ask steward to rule it benign, or remove that version")
-    return out
-
-
-def view_blockers(conn, cid: int, ver: int) -> list[str]:
-    """Why a NON-OWNER may not see version `ver` of canvas `cid`; [] means they may."""
-    out, checked, srcs = _verdict(conn, cid)
-    if out:
-        return out
-    ts = conn.execute("SELECT ts FROM canvas_versions WHERE canvas_id = %s AND version = %s",
-                      (cid, ver)).fetchone()
-    if ts is not None and ts[0] > checked:
-        out.append("pending privacy scan — this version is newer than the last scan (at most 5 minutes)")
-    if f"canvas:{cid}:v{ver}" in srcs:
-        out.append("withheld — this version carries a possible owner-PII finding awaiting a ruling")
-    return out
-
-
-def meta_view(conn, cid: int) -> dict:
-    """What a NON-OWNER may see of canvas `cid`'s agent-written METADATA (a3 #36233, C2): the title and
-    brief, and each version's publish note. {"meta": [reasons] (non-empty = mask title+brief),
-    "notes": {version: [reasons]} (only the versions whose note must be masked)}. Title and brief are
-    written only at create (there is no retitle path), so their freshness is canvases.created_at; a
-    note is immutable with its version, so its freshness is that version's ts. TRIP: a retitle path
-    must bump a metadata timestamp, or this would serve an unscanned new title; tests/test_pii_canvas.py
-    fails on any tracked UPDATE of title/brief. A direct DB UPDATE is DETECTION-grade only: the next
-    sweep (≤5 min) flags it, and until then the new title is served."""
-    out, checked, srcs = _verdict(conn, cid)
-    vers = conn.execute("SELECT version, ts FROM canvas_versions WHERE canvas_id = %s", (cid,)).fetchall()
-    if out:                                            # no verdict at all: mask everything, fail closed
-        return {"meta": out, "notes": {v: out for v, _ in vers}}
-    meta = []
-    created = conn.execute("SELECT created_at FROM canvases WHERE id = %s", (cid,)).fetchone()
-    if created is not None and created[0] > checked:
-        meta.append("pending privacy scan")
-    if f"canvas:{cid}:meta" in srcs:
-        meta.append("withheld — a possible owner-PII finding awaiting a ruling")
-    notes = {}
-    for v, ts in vers:
-        why = (["pending privacy scan"] if ts > checked else []) + \
-              (["withheld — flagged"] if f"canvas:{cid}:v{v}:note" in srcs else [])
-        if why:
-            notes[v] = why
-    return {"meta": meta, "notes": notes}
-
-
-def data_blockers(conn, cid: int) -> list[str]:
-    """Why a NON-OWNER may not read canvas `cid`'s live data; [] means they may. All-or-nothing:
-    a page reading half its data is a broken page, and a withheld key is as private as a value."""
-    out, checked, srcs = _verdict(conn, cid)
-    if out:
-        return out
-    newest = conn.execute("SELECT max(updated_at) FROM canvas_data WHERE canvas_id = %s",
-                          (cid,)).fetchone()[0]
-    if newest is not None and newest > checked:
-        out.append("pending privacy scan — live data changed after the last scan (at most 5 minutes)")
-    if any(s.startswith(f"canvas:{cid}:data:") for s in srcs):
-        out.append("withheld — a live value carries a possible owner-PII finding awaiting a ruling")
-    return out
-
-
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="canvas.py", description="astryx canvas — agents' write path")
     sub = p.add_subparsers(dest="cmd", required=True)
