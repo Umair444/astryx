@@ -109,6 +109,8 @@ def check(to: str, agents_dir: Path = charter.AGENTS) -> tuple[bool, str]:
     if not name:
         return False, "empty recipient"
     roster = charter.roster(agents_dir)
+    if surface_of(name) in PERSONS:
+        return True, "person"                               # a channel's person: its bridge delivers it and writes a receipt
     if name in roster or surface_of(name):
         return True, "ok"
     hint = suggest(name, roster)

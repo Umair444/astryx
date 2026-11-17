@@ -303,11 +303,10 @@ async function handleTool(name, a, signal) {
     const { checkAddress } = await import('./address.mjs')
     // judge the EXACT values the INSERT writes below (a3 #38028 A1, parity): toAgent for a local row; for
     // any other toOrg the pair as written, so an empty or spaced org is refused too (a3 #38032)
-    const { note } = await checkAddress(toOrg === 'local' ? toAgent : `${toAgent}@${toOrg}`)
-    // A channel surface (owner / wa-/tg-/dc-) is delivered by a bridge, which writes
+    const { note, person } = await checkAddress(toOrg === 'local' ? toAgent : `${toAgent}@${toOrg}`)
+    // A person (the owner, or a channel's person by the one channel table) is delivered by a bridge, which writes
     // the outcome back into the row (see the receipt wait below).
-    const channelBound = toOrg === 'local' &&
-      (toAgent === 'owner' || /^(wa|tg|dc)-/.test(toAgent))
+    const channelBound = toOrg === 'local' && !!person
     // A malformed [[poll:]] / [[file:]] reaches the human as raw brackets, or not at all (channel/embeds.mjs).
     // Refuse it HERE, before the INSERT, so nothing half-rendered leaves.
     if (channelBound) {

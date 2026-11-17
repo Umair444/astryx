@@ -129,7 +129,8 @@ try:
         if r:
             check("a refusal THROWS with the suggestion (the sender's isError)",
                   r["a3"].startswith("threw:") and "did you mean abstractor-3?" in r["a3"], r["a3"])
-            check("a surface resolves with no note", r["owner"] == {"ok": True, "note": ""}, str(r["owner"]))
+            check("a person resolves with no note, marked a person (a bridge delivers it)",
+                  r["owner"] == {"ok": True, "note": "", "person": True}, str(r["owner"]))
             check("'seed ' THROWS through the seam too (nothing normalizes it on the way)", r["ws"] == "threw", r["ws"])
             check("an unevaluable check ALLOWS, with a visible note (never mutes the org)",
                   r["broken"]["ok"] and "address unchecked" in r["broken"]["note"], str(r["broken"]))

@@ -50,8 +50,9 @@ OLD_PERSON = re.compile(r"^(owner|wa-[^\s@]+|tg-[^\s@]+|dc-[^\s@]+|cv-[^\s@]+|fe
 names = ["owner", f"wa-{N000}", "tg-123", "dc-9", "cv-pat.2", "fe-dash", "db", "seed", "canvas-3", "room", "pulse"]
 arm("who is a person: as before", [address.surface_of(n) in address.PERSONS for n in names] == [bool(OLD_PERSON.match(n)) for n in names],
     [(n, address.surface_of(n)) for n in names])
-arm("names no peer may take: the old six, and 'frontend' (the frontends bridge's stamp)",
-    orgname.RESERVED_ORGS == {"local", "whatsapp", "telegram", "discord", "canvas", "owner", "frontend"}, sorted(orgname.RESERVED_ORGS))
+arm("names no peer may take: the old six, 'frontend' (the frontends bridge's stamp) and 'sms' (its row, 11-18)",
+    orgname.RESERVED_ORGS == {"local", "whatsapp", "telegram", "discord", "canvas", "owner", "frontend", "sms"},
+    sorted(orgname.RESERVED_ORGS))
 
 
 def old_chat_kind(channel, chat):                # release.chat_kind as it was
