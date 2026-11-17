@@ -12,7 +12,7 @@ in line after a writer from before the land. Each reason names who sets it and w
                                            UPDATE triggers SET off_reason=NULL, off_why=NULL, enabled=true WHERE off_reason='standdown' AND <rows>
                                          Never seed/tool_ship_watch: it is the census guard, and held off it goes dark.
   retired       retire (python: a tombstone too)   set, enable; reconcile, if the tombstone is gone
-  fired         a `once` or `at` firing  a set changing the check, schedule or at
+  fired         a `once` or `at` firing  a set passing a check, schedule or at (the same one re-arms it)
   vanished      reconcile: function absent or file won't load      reconcile, when it loads
   bad_schedule  tick                     a set with a good schedule; python: reconcile, on a changed decorator
   storm         the evaluator            enable
@@ -242,8 +242,10 @@ def _set(conn, agent: str, a: dict) -> str:
     after = keep("after", "after_for", _dur)
     if a.get("once") is not None:
         once = bool(a["once"])
-    else:
-        once = (row["once"] if row else False) or bool(at)
+    elif at or (kind == "heartbeat" and a.get("schedule")):
+        once = bool(at)              # a time wake's clock says it: at is one moment, a schedule repeats (an at's `once` never
+    else:                            # rides onto a schedule: insurance 12803, it fired at once and turned itself off)
+        once = (row["once"] if row else False)
     if once and renag is not None and a.get("renag") in (None, ""):
         renag = None
     if on == "while" and renag is None and not once:
@@ -259,11 +261,12 @@ def _set(conn, agent: str, a: dict) -> str:
         count = f"cap reached, over {watch.CAP}" if over else str(len(rows))
         warn = _churn_warning(churn)
 
-    check_changed = not row or (a.get("sql") and a["sql"] != row["check_src"])
-    clock_changed = not row or at is not None or (a.get("schedule") and a["schedule"] != row["schedule"])
-    state_reset = check_changed or (row and a.get("on") and a["on"] != row["watch"])
     reason = row["off_reason"] if row else None
-    if reason == "retired" or (reason == "fired" and (check_changed or clock_changed)) \
+    rearm = reason == "fired" and bool(at or a.get("schedule") or a.get("sql"))   # its refusal says: set a new at, schedule
+    check_changed = not row or (a.get("sql") and a["sql"] != row["check_src"])     # or check, and the same one counts
+    clock_changed = not row or at is not None or (a.get("schedule") and a["schedule"] != row["schedule"]) or rearm
+    state_reset = check_changed or (row and a.get("on") and a["on"] != row["watch"])
+    if reason == "retired" or rearm \
             or (reason == "bad_schedule" and a.get("schedule")):
         reason = None
     state = {} if state_reset else (row["state"] if row else {})

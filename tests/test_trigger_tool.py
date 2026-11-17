@@ -468,6 +468,15 @@ def tick_rules(c):
     pulse.process(c, [t], tool._now(), hot=False)
     check("A8 a row another claim already fired doesn't fire twice", wakes("dl") == n, wakes("dl"))
     c.execute("UPDATE triggers SET off_reason=NULL, enabled=true WHERE name='dl'")
+    # insurance 12803: an at's one-shot never rides onto a schedule, and a fired row re-arms on the schedule it already had
+    set_ok(c, name="ra", at="2099-01-01T17:00", note="recheck")
+    set_ok(c, name="ra", schedule="0 11 * * *")
+    check("A11 an at moved onto a schedule repeats: once is off", row("ra")["once"] is False, row("ra"))
+    c.execute("UPDATE triggers SET off_reason='fired', enabled=false, once=true WHERE name='ra'")
+    r = set_ok(c, name="ra", schedule="0 11 * * *", once=False)
+    t = row("ra")
+    check("A12 a fired row set again with its own schedule is on, as the reply's next fire says",
+          t["enabled"] and t["off_reason"] is None and t["once"] is False, (t, r))
     t = dict(_due_row(c, "dl"))
     c.execute("UPDATE triggers SET enabled=false WHERE name='dl'")        # an old trigger_rm: enabled only
     pulse.process(c, [t], tool._now(), hot=False)
