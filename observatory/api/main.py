@@ -1222,9 +1222,9 @@ async def tools(request: Request):
         reg = json.loads((REPO / "mcp" / "registry.json").read_text())
     except Exception:
         reg = {}
-    servers = [{**listed.get(n, {"tools": []}), "server": n, "who": e.get("who", "grant"),
-                **({"optin": e["optin"]} if e.get("optin") else {}),
-                **({} if inside or e.get("who") == "every" else {"tools": []})} for n, e in reg.items()]
+    servers = [{**(listed.get(n, {"tools": []}) if inside or e.get("who") == "every" else {"tools": []}),   # nothing
+                "server": n, "who": e.get("who", "grant"), **({"optin": e["optin"]} if e.get("optin") else {})}  # else
+               for n, e in reg.items()]                     # of a granted server (not even a scan error) to anyone
     dags = []
     for f in sorted((REPO / "mcp" / "compose" / "dags").glob("*.json")):
         try:

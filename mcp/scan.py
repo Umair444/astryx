@@ -44,8 +44,12 @@ def org_local(spec: dict) -> bool:
     tools go to the gitignored manifest.local.json, so nothing of the org's estate travels in the tracked manifest."""
     import subprocess
     files = [a for a in [spec["command"], *spec.get("args", [])] if "/" in a and not a.startswith(("$", "/", "-", "@"))]
-    return any(subprocess.run(["git", "-C", str(REPO), "check-ignore", "-q", f], capture_output=True).returncode == 0
-               for f in files)
+    def ignored(f: str) -> bool:                      # only git's "not ignored" (rc 1) is framework; anything else is local
+        try:
+            return subprocess.run(["git", "-C", str(REPO), "check-ignore", "-q", f], capture_output=True).returncode != 1
+        except OSError:
+            return True
+    return any(ignored(f) for f in files)
 
 
 async def main():
