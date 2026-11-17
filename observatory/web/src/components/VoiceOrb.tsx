@@ -5,7 +5,7 @@ import { useTheme } from '../theme'
 import { CONFIRM_ARM_MS } from '../pilot/core'
 
 /* plan-9000 S2 SURFACE: the voice orb the ear pill expands into. Visual only: it opens no socket, spends nothing and
-   sends nothing. The wiring (VoicePilot) feeds it props, a bind for the confirm button, and onDismiss(nonce).
+   sends nothing. The call dock (call/CallDock.tsx) uses its ConfirmPrompt; fixtures/voice-orb.html renders the whole orb.
 
    THE CONFIRM decides nothing itself. Its button is handed to `bind`, which in the app is pilot/Confirm.tsx's
    bindPilotConfirm: the executor's dwell starts at that bind, and the button's NATIVE click goes to pilot.confirm,

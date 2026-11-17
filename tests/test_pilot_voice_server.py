@@ -4,7 +4,7 @@ every voice surface spends against ONE ledger and ONE cap. No real mint: the pro
 an in-memory stand-in for canvas_voice_usage, so nothing is spent and no row is written.
 
   (a) anonymous → 403 on /api/pilot/voice/{status,session,usage} (the default-deny middleware, before any handler);
-  (b) the owner mints: one ledger row, user observatory-owner, the ephemeral value returned, the real key never;
+  (b) the owner mints: one ledger row, user owner/call (voice_mint.who), the ephemeral value returned, the real key never;
   (c) one ledger: canvas_voice.minutes_today and voice_mint.minutes_today are the same count, over rows from BOTH
       surfaces; one cap: canvas_voice._cap_minutes() is voice_mint.cap_minutes();
   (d) over the cap, the observatory refuses a new session (429), counting minutes canvas spent.
@@ -118,7 +118,7 @@ r = c.post("/api/pilot/voice/session", headers=H)
 body = r.json() if r.status_code == 200 else {}
 arm("the owner mints a session (200, the ephemeral value)", r.status_code == 200 and body.get("value") == "ek_test_ephemeral", r.status_code)
 arm("the real key is never in the response", "sk-test" not in r.text)
-arm("one ledger row, user observatory-owner", len(led.rows) == 1 and led.rows[0]["user"] == "observatory-owner")
+arm("one ledger row, user owner/call", len(led.rows) == 1 and led.rows[0]["user"] == "owner/call", led.rows)
 # the catalog's actions, plus the Room's one bridge to the org: ask_agent (owner brief 10-11, observatory/api/room.py)
 arm("the minted session's tools are the catalog actions plus ask_agent", sorted(t["name"] for t in minted[0]["session"]["tools"]) ==
     sorted([a["name"] for a in __import__("json").loads((REPO / "observatory/pilot/catalog.json").read_text())["actions"]] + ["ask_agent"]))

@@ -1297,6 +1297,28 @@ LANGUAGE sql STABLE AS $$
                   (SELECT CASE WHEN bool_or(role <> 'viewer') THEN 'member' WHEN count(*) > 0 THEN 'viewer' END
                      FROM members WHERE uid = p_uid))
 $$;
+-- WHICH AGENTS a uid may reach (owner 11-17: "is it possible for a member to use only the selected agents"): of the
+-- tree paths given (each agent's path in agents/; the observatory hands its roster's), those where the uid holds any
+-- role. member_role is the one inheritance rule, so a role on a group reaches its whole subtree and '' reaches all.
+CREATE OR REPLACE FUNCTION member_reach(p_uid text, p_nodes text[]) RETURNS SETOF text
+LANGUAGE sql STABLE AS $$
+  SELECT n FROM unnest(p_nodes) n WHERE member_role(p_uid, n) IS NOT NULL
+$$;
+-- WHAT A PERSON MAY USE beyond their role's default (owner 11-17: "an admin can assign a voice chat to a member"): one
+-- row per (uid, feature) the owner or an admin set in the Admin panel; NO row = the role's default
+-- (observatory/api/members.py FEATURES), so a person nobody touched keeps exactly what they had. `minutes` is that
+-- person's own daily limit for the feature (NULL = only the org's cap); the org's cap holds either way. An owner has
+-- every feature, unlimited, and no row here can change that.
+CREATE TABLE IF NOT EXISTS member_feature (
+  tenant   text NOT NULL DEFAULT 'astryx',
+  uid      text NOT NULL CHECK (uid LIKE '%@%'),
+  feature  text NOT NULL,
+  allowed  boolean NOT NULL,
+  minutes  integer,
+  CONSTRAINT member_feature_pkey PRIMARY KEY (tenant, uid, feature),
+  CONSTRAINT member_feature_feature_check CHECK (feature IN ('dictate', 'call')),
+  CONSTRAINT member_feature_minutes_check CHECK (minutes IS NULL OR minutes BETWEEN 0 AND 1440)
+);
 -- THE LAST-OWNER GUARD, in the table so every writer meets it: while the org has any other member, its last
 -- whole-org owner can be neither removed nor demoted (nor moved off the root). Removing the LAST membership of all is
 -- allowed: an empty table is the designed bootstrap state (fails closed: only the owner key opens the org). Judged

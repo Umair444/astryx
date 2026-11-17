@@ -5,7 +5,7 @@ import { saveObsKey } from './api'
 import { LOGIN, signInHref } from './auth'
 import { canAdmin, useMe, whoLabel } from './me'
 import { StoreProvider, useStore } from './store'
-import { talks } from './types'
+import { can, talks } from './types'
 import { CogProvider, useCog } from './cog'
 import { CogChooser, CogSwitcher } from './components/CogBuilding'
 import Sidebar from './components/Sidebar'
@@ -117,7 +117,7 @@ const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'memory', label: 'Memory', icon: '⬢' },
   { key: 'growbot', label: 'GrowBot', icon: '🤖' },
   { key: 'monitor', label: 'System', icon: '❐' },
-  { key: 'admin', label: 'Admin', icon: '⚙' },
+  { key: 'admin', label: 'Admin', icon: '◈' },
 ]
 
 /* The read-only badge doubles as the discreet door: clicking it lets the
@@ -296,7 +296,7 @@ function Shell() {
     <>
       <PilotHost route={route} agentOpen={agentOpen} setAgentOpen={setAgentOpen} />
       {who.owner && <PilotConfirm />}
-      {who.owner && <CallLayer selected={talking ?? agentOpen} />}
+      {can(who, 'call') && <CallLayer selected={talking ?? agentOpen} />}
     </>
   )
   // /chat is a WORKSPACE, not a tab (plan-11884): fullscreen, its own rail, its own keys
@@ -333,7 +333,7 @@ function Shell() {
                 </span>
               </>
             )}
-            {who.owner && <CallButton />}
+            <CallButton />
             {who.owner && <EarControl view={route.tab} />}
             {Auth && <Suspense fallback={null}><Auth.Account /></Suspense>}
             <KeyBadge />

@@ -43,7 +43,6 @@ router = APIRouter()
 
 MAX_UPLOAD = 20 * 1024 * 1024                      # 20 MiB: a phone photo, a PDF, a short clip
 TRANSCRIBE = V.env("CHAT_DICTATE_MODEL", V.env("CANVAS_VOICE_TRANSCRIBE", "gpt-4o-mini-transcribe"))
-USER = "observatory-chat"
 _mints: list[float] = []
 
 _get_pool = None
@@ -384,6 +383,9 @@ async def work(request: Request, thread: str = ""):
     if not thread or len(thread) > 200:
         return JSONResponse({"error": "thread required"}, status_code=400)
     pool = _pool(request)
+    from observatory.api import scope
+    if scope.of(request) is not None and thread not in await scope.threads_ok(pool, request, [thread]):
+        return JSONResponse({"error": "that conversation is outside the agents you were given"}, status_code=403)
     turns = await pool.fetch(
         """WITH th AS (SELECT id FROM messages WHERE thread = $1),
                 ids AS (SELECT DISTINCT turn_id AS id FROM messages WHERE thread = $1 AND turn_id IS NOT NULL
@@ -457,15 +459,24 @@ def _pool(request: Request):
     return _get_pool() if _get_pool else request.app.state.pool
 
 
+def _dictator(request: Request) -> tuple[str, float | None, int]:
+    """(the ledger user for this person's dictation, their own daily minutes or None, what a session costs them at
+    once: 0 for the owner, else voice_mint.member_floor): each person's minutes are theirs, inside the org's one cap."""
+    me = _me(request)
+    limit = (getattr(request.state, "caps", {}) or {}).get("dictate")
+    return V.who(me, "dictate"), limit, 0 if me == "owner" else V.member_floor("dictate", limit)
+
+
 @router.post("/api/chat/dictate/session")
 async def dictate(request: Request):
     pool = _pool(request)
-    why = await V.unavailable(pool)
+    user, limit, charge = _dictator(request)
+    why = await V.unavailable(pool, user, limit, charge)
     if why:
-        return JSONResponse({"error": why}, status_code=429 if "cap" in why else 503)
-    now = time.time()
+        return JSONResponse({"error": why}, status_code=429 if ("cap" in why or "spent" in why) else 503)
+    now, owner = time.time(), _me(request) == "owner"
     _mints[:] = [t for t in _mints if now - t < 3600]
-    if len(_mints) >= 30:
+    if (owner and len(_mints) >= 30) or (not owner and not V.mint_allowed(user, 30)):   # a member's count is theirs
         return JSONResponse({"error": "too many dictation sessions this hour"}, status_code=429)
     cfg = {
         "expires_after": {"anchor": "created_at", "seconds": 120},
@@ -482,8 +493,9 @@ async def dictate(request: Request):
     code, out = await V.mint(cfg)
     if code != 200 or not out.get("value"):
         return JSONResponse({"error": f"the speech service refused the session ({code})"}, status_code=502)
-    _mints.append(now)
-    usage_id = await V.record(pool, USER, TRANSCRIBE)
+    if owner:
+        _mints.append(now)
+    usage_id = await V.record(pool, user, TRANSCRIBE, charge)
     return {"value": out["value"], "usage_id": usage_id, "model": TRANSCRIBE, "calls_url": V.CALLS_URL,
             "minutes_today": await V.minutes_today(pool), "cap": V.cap_minutes()}
 
@@ -495,4 +507,4 @@ class Usage(BaseModel):
 
 @router.post("/api/chat/dictate/usage")
 async def dictate_usage(body: Usage, request: Request):
-    return await V.report(_pool(request), body.id, USER, body.seconds)
+    return await V.report(_pool(request), body.id, _dictator(request)[0], body.seconds)

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Menu, Modal, Select } from '@mantine/core'
+import { Menu, Modal, NumberInput, Select, Switch } from '@mantine/core'
 import { agentColor, fmtAgo } from '../api'
 import {
   adminCancelInvite, adminInvite, adminReset, adminSignOutEverywhere, adminUsers, adminWords, cogApprove, cogReject,
@@ -34,6 +34,21 @@ const ROLE_WHAT: Record<string, string> = {
 }
 
 interface Node { node: string; kind: 'org' | 'group' | 'agent'; depth: number }
+/* owner 11-17: what a person may use. The org's /api/admin/members says each role's default and the overrides set here;
+   no override = the default, so a person nobody touched keeps what they had. An owner has everything, always. */
+type Feature = 'dictate' | 'call'
+const FEATURE_WORDS: Record<Feature, { title: string; what: string }> = {
+  dictate: { title: 'Voice typing and Talk', what: 'Speak into the chat box, or talk with an agent and hear its answers read aloud' },
+  call: { title: 'Call', what: 'A live voice call with an agent that sees the screen and can drive it. The dearest' },
+}
+interface Access { features: Record<Feature, string[]>; overrides: Record<string, Partial<Record<Feature, { allowed: boolean; minutes: number | null }>>> }
+const orgRole = (u: AdminUser) => u.role ?? (u.roles.some((r) => r.role !== 'viewer') ? 'member' : 'viewer')
+function uses(access: Access | null, u: AdminUser, f: Feature): { on: boolean; minutes: number | null; set: boolean } {
+  const role = orgRole(u)
+  if (role === 'owner') return { on: true, minutes: null, set: false }
+  const o = access?.overrides[u.uid]?.[f]
+  return o ? { on: o.allowed, minutes: o.minutes, set: true } : { on: !!access?.features[f]?.includes(role), minutes: null, set: false }
+}
 type Shown = { kind: 'link'; title: string; link: string; expires: string; note: string } | { kind: 'done'; title: string; note: string }
 
 function RolePill({ role }: { role: string | null }) {
@@ -85,11 +100,17 @@ export default function AdminView() {
   const [confirm, setConfirm] = useState<{ title: string; body: ReactNode; verb: string; danger?: boolean; go: () => Promise<void> } | null>(null)
   const [shown, setShown] = useState<Shown | null>(null)
   const [activity, setActivity] = useState<{ user: AdminUser; a: Activity | null | false } | null>(null)
+  const [access, setAccess] = useState<Access | null>(null)
+  const [featuring, setFeaturing] = useState<AdminUser | null>(null)
 
   const load = useCallback(async () => {
     if (!org) return
     const r = await adminUsers(org)
     if (r.ok) { setData(r.data); setError(null) } else setError(r.why)
+    if (r.ok && safeBase(base)) {
+      const m = await orgCall(base, 'GET', 'members')
+      if (m.ok && m.data?.features) setAccess({ features: m.data.features, overrides: m.data.overrides ?? {} })
+    }
     if (r.ok && r.data.tree && safeBase(base)) {
       const n = await orgCall(base, 'GET', 'nodes')
       if (n.ok && Array.isArray(n.data?.nodes)) setNodes(n.data.nodes)
@@ -124,6 +145,8 @@ export default function AdminView() {
   }
   const setRole = (u: AdminUser, role: string, node = '') =>
     act(() => orgCall(base, 'PUT', 'members', { uid: u.uid, role, node }))
+  const setFeature = (u: AdminUser, feature: Feature, allowed: boolean | null, minutes: number | null) =>
+    act(() => orgCall(base, 'PUT', 'features', { uid: u.uid, feature, allowed, minutes }))
   const dropRow = (u: AdminUser, node: string | null) =>
     act(() => orgCall(base, 'DELETE', 'members', node === null ? { uid: u.uid } : { uid: u.uid, node }))
 
@@ -160,6 +183,7 @@ export default function AdminView() {
               const menu = (
                       <RowMenu u={u} touch={touch} offered={offered} you={you} tree={!!data?.tree} busy={busy}
                         onRole={(r) => setRole(u, r)} onGrant={() => setGranting(u)}
+                        onFeatures={access && orgRole(u) !== 'owner' ? () => setFeaturing(u) : undefined}
                         onActivity={async () => {
                           setActivity({ user: u, a: null })
                           const r = await orgCall(base, 'GET', `activity?uid=${encodeURIComponent(u.uid)}`)
@@ -195,9 +219,22 @@ export default function AdminView() {
                   <div className="row-start-1 col-start-2 md:hidden justify-self-end">
                     {menu}
                   </div>
-                  <div className="col-span-2 md:col-span-1 flex items-center gap-2 pl-11 md:pl-0"><RolePill role={u.role} /></div>
+                  <div className="col-span-2 md:col-span-1 flex flex-wrap items-center gap-1.5 pl-11 md:pl-0">
+                    <RolePill role={u.role} />
+                    {access && orgRole(u) !== 'owner' && (['dictate', 'call'] as Feature[]).filter((f) => uses(access, u, f).on).map((f) => {
+                      const x = uses(access, u, f)
+                      return <span key={f} title={FEATURE_WORDS[f].what} className="text-[11px] text-ink-mute">
+                        {f === 'call' ? 'Call' : 'Voice'}{x.minutes != null ? ` · ${x.minutes} min/day` : ''}</span>
+                    })}
+                  </div>
                   <div className="col-span-2 md:col-span-1 flex flex-wrap gap-1.5 pl-11 md:pl-0 min-w-0">
-                    {u.role && <span className="text-[12px] text-ink-dim">Whole org</span>}
+                    {u.role && (parts.length > 0 && touch && u.role !== 'owner' ? (
+                      <span className="inline-flex items-center gap-1 h-6 pl-2 pr-1 rounded-md border border-line text-[11.5px] text-ink-dim">
+                        Whole org
+                        <button aria-label="Remove the whole-org role: keep only the parts" title="Remove the whole-org role, so they reach only the parts listed"
+                          disabled={busy} className="grid place-items-center w-4 h-4 rounded text-ink-mute hover:text-bad hover:bg-bad/10"
+                          onClick={() => dropRow(u, '')}>×</button>
+                      </span>) : <span className="text-[12px] text-ink-dim">Whole org</span>)}
                     {parts.map((p) => (
                       <span key={p.node} className="inline-flex items-center gap-1 h-6 pl-2 pr-1 rounded-md border border-line bg-deck-3/40 text-[11.5px] text-ink-dim max-w-full">
                         <span className="font-mono truncate">{p.node}</span><span className="text-ink-mute">· {roleWords(p.role)}</span>
@@ -272,6 +309,8 @@ export default function AdminView() {
         </div>
       </Modal>
       <LinkModal shown={shown} onClose={() => setShown(null)} />
+      <FeaturesModal user={featuring} access={access} onClose={() => setFeaturing(null)}
+        onSave={async (f, allowed, minutes) => { await setFeature(featuring!, f, allowed, minutes) }} />
       <Modal opened={!!activity} onClose={() => setActivity(null)} title={activity ? `Activity · ${activity.user.email ?? activity.user.uid}` : ''} centered radius="lg">
         {activity && (activity.a === null ? <p className="text-[13px] text-ink-mute">Reading…</p>
           : activity.a === false ? <p className="text-[13px] text-bad">Couldn't read this account's activity. Close and open it again.</p> : (
@@ -279,6 +318,7 @@ export default function AdminView() {
             <Fact label={activity.a.scope === 'owner' ? 'Owner messages' : 'Messages sent'} value={String(activity.a.messages)} />
             <Fact label="Threads" value={String(activity.a.threads)} />
             <Fact label="Last sign-in" value={activity.user.last_session ? `${fmtAgo(activity.user.last_session)} ago` : 'never'} />
+            {activity.a.voice_minutes_today != null && <Fact label="Voice today" value={`${activity.a.voice_minutes_today} min`} />}
             {activity.a.scope === 'owner' && <p className="col-span-3 text-[12.5px] text-ink-mute leading-relaxed">
               Every message written as the owner, from the chat, WhatsApp and Discord together, not this account alone.</p>}
           </div>
@@ -288,7 +328,58 @@ export default function AdminView() {
   )
 }
 
-interface Activity { scope: 'owner' | 'account'; messages: number; threads: number; last_message: string | null }
+interface Activity { scope: 'owner' | 'account'; messages: number; threads: number; last_message: string | null; voice_minutes_today?: number }
+
+/* What one person may use (owner 11-17: "an admin can assign a voice chat to a member"). Each feature is on or off for
+   them, with an optional daily limit; "Role's default" drops the override. The org's own daily cap holds either way. */
+function FeaturesModal({ user, access, onClose, onSave }: {
+  user: AdminUser | null; access: Access | null; onClose: () => void
+  onSave: (f: Feature, allowed: boolean | null, minutes: number | null) => Promise<void>
+}) {
+  const [mins, setMins] = useState<Record<Feature, number | ''>>({ dictate: '', call: '' })
+  useEffect(() => {
+    if (user && access) setMins({ dictate: uses(access, user, 'dictate').minutes ?? '', call: uses(access, user, 'call').minutes ?? '' })
+  }, [user, access])
+  if (!user || !access) return <Modal opened={false} onClose={onClose}>{null}</Modal>
+  const role = orgRole(user)
+  return (
+    <Modal opened={!!user} onClose={onClose} title={`What ${user.email ?? user.uid} can use`} centered radius="lg">
+      <div className="space-y-4">
+        {(['dictate', 'call'] as Feature[]).map((f) => {
+          const x = uses(access, user, f)
+          const def = access.features[f]?.includes(role)
+          const limit = mins[f] === '' ? null : Number(mins[f])
+          return (
+            <div key={f} className="rounded-xl border border-line px-3.5 py-3 space-y-2.5">
+              <div className="flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="text-[14px] text-ink">{FEATURE_WORDS[f].title}</div>
+                  <div className="text-[12px] text-ink-mute leading-snug">{FEATURE_WORDS[f].what}</div>
+                </div>
+                <Switch checked={x.on} aria-label={`${FEATURE_WORDS[f].title} for ${user.email ?? user.uid}`}
+                  onChange={(e) => onSave(f, e.currentTarget.checked, limit)} />
+              </div>
+              {x.on && (
+                <div className="flex items-end gap-2">
+                  <NumberInput className="w-44" size="xs" label="Daily minutes" placeholder="no limit of their own" min={0} max={1440}
+                    value={mins[f]} onChange={(v) => setMins((m) => ({ ...m, [f]: v === '' ? '' : Number(v) }))} />
+                  <button className="h-[30px] px-3 rounded-lg text-[12.5px] text-ink-dim hover:text-ink border border-line"
+                    disabled={limit === x.minutes} onClick={() => onSave(f, true, limit)}>Save limit</button>
+                </div>
+              )}
+              <div className="text-[11.5px] text-ink-mute">
+                {x.set ? <>Set here. A {roleWords(role).toLowerCase()} {def ? 'has it' : "doesn't have it"} by default.{' '}
+                  <button className="text-cyan-soft hover:underline" onClick={() => onSave(f, null, null)}>Back to the role's default</button></>
+                  : <>The {roleWords(role).toLowerCase()} default.</>}
+              </div>
+            </div>
+          )
+        })}
+        <p className="text-[12px] text-ink-mute leading-relaxed">Voice runs on the org's OpenAI key. The org's own daily limit holds for everyone; a person's minutes count inside it.</p>
+      </div>
+    </Modal>
+  )
+}
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (
@@ -299,9 +390,9 @@ function Fact({ label, value }: { label: string; value: string }) {
   )
 }
 
-function RowMenu({ u, touch, offered, you, tree, busy, onRole, onGrant, onActivity, onReset, onSignOut, onRemove }: {
+function RowMenu({ u, touch, offered, you, tree, busy, onRole, onGrant, onFeatures, onActivity, onReset, onSignOut, onRemove }: {
   u: AdminUser; touch: boolean; offered: string[]; you: string; tree: boolean; busy: boolean
-  onRole: (r: string) => void; onGrant: () => void; onActivity: () => void; onReset: () => void; onSignOut: () => void; onRemove: () => void
+  onRole: (r: string) => void; onGrant: () => void; onFeatures?: () => void; onActivity: () => void; onReset: () => void; onSignOut: () => void; onRemove: () => void
 }) {
   const roles = [...offered].sort((a, b) => (RANK[b] ?? 0) - (RANK[a] ?? 0))
   return (
@@ -320,6 +411,7 @@ function RowMenu({ u, touch, offered, you, tree, busy, onRole, onGrant, onActivi
             </Menu.Item>
           ))}
           {tree && <Menu.Item onClick={onGrant}>Add a role on a group or agent…</Menu.Item>}
+          {onFeatures && <Menu.Item onClick={onFeatures}>What they can use…</Menu.Item>}
           <Menu.Divider />
         </>) : <Menu.Label>{you === 'admin' ? 'Only an owner can change an owner' : ''}</Menu.Label>}
         <Menu.Item onClick={onActivity}>Activity</Menu.Item>
@@ -397,6 +489,8 @@ function GrantModal({ user, onClose, roles, nodes, onGrant }: {
       <div className="space-y-5">
         <RolePick roles={[...roles].sort((a, b) => (RANK[b] ?? 0) - (RANK[a] ?? 0))} value={role} onChange={setRole} />
         <NodeSelect nodes={parts} value={node} onChange={setNode} />
+        <p className="text-[12px] text-ink-mute leading-relaxed">With roles on parts only (no whole-org role), they reach just those
+          groups and agents: they see and message nothing else.</p>
         <div className="flex justify-end gap-2">
           <button className="px-4 py-2 rounded-xl text-[13px] text-ink-dim hover:text-ink" onClick={onClose}>Cancel</button>
           <Action disabled={!node} onClick={() => onGrant(role, node)}>Give the role</Action>

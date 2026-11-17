@@ -16,6 +16,10 @@ alone:
                          refused (LastOwner) on either shape; on the tree shape the table's trigger says so too
   sender_tags(pool, uid) the wire names a uid's own messages carry, for /api/admin/activity: 'owner' for an owner
                          account, else its cv-<label>.<n> handles (who-asked, 11-13)
+  reach(pool, uid, nodes) of the agents' tree paths given, the ones the uid may reach (schema.sql member_reach), or
+                         None for the whole org (owner 11-17: "a member … only the selected agents")
+  caps(pool, uid, role)  what the person may use: their role's FEATURES default, as the Admin panel overrode it
+                         (member_feature); {feature: minutes-or-None}. set_feature writes one override, or clears it
 
 asyncpg serves the reads (the backend's pool); cogauth is sync psycopg, so a write opens its own connection to the
 org's DSN in a thread. The org's DSN is the backend's own; nothing here reaches another org.
@@ -40,6 +44,9 @@ def member_handle(sub: str, label: str = "") -> str | None:
     slug = _SLUG.sub("-", (label or "").lower()).strip("-_")[:24].strip("-_") or "u"
     return f"cv-{slug}.{int(n)}"
 RANK = {"viewer": 0, "member": 1, "admin": 2, "owner": 3}
+# What each role may use when nobody set otherwise (a member_feature row overrides it per person). Dictation and Talk
+# were every member's before 11-17 and stay so; the Call (realtime speech-to-speech, the dearest) is given, not assumed.
+FEATURES = {"dictate": {"owner", "admin", "member"}, "call": {"owner"}}
 SHAPE_TTL = 30.0
 
 
@@ -145,3 +152,50 @@ async def sender_tags(pool, uid: str) -> list[str]:
     rows = await pool.fetch("SELECT DISTINCT from_agent FROM messages WHERE from_org = 'local' AND from_agent ~ $1",
                             rf"^cv-[a-z0-9_-]*\.{int(n)}$")
     return [r["from_agent"] for r in rows]
+
+
+async def reach(pool, uid: str, nodes: list[str]) -> set[str] | None:
+    """The tree paths among `nodes` the uid may reach, or None when it holds a whole-org row (it reaches everything,
+    even an agent added after this read). The inheritance is member_reach's, in SQL."""
+    if await pool.fetchval("SELECT EXISTS (SELECT 1 FROM members WHERE uid = $1 AND node = '')", uid):
+        return None
+    return {r[0] for r in await pool.fetch("SELECT member_reach($1, $2::text[])", uid, list(nodes))}
+
+
+async def overrides(pool, uid: str | None = None) -> dict:
+    """{uid: {feature: {allowed, minutes}}} as the Admin panel set them (one uid, or all)."""
+    got = await pool.fetch("SELECT uid, feature, allowed, minutes FROM member_feature"
+                           + (" WHERE uid = $1" if uid else ""), *([uid] if uid else []))
+    out: dict = {}
+    for r in got:
+        out.setdefault(r["uid"], {})[r["feature"]] = {"allowed": r["allowed"], "minutes": r["minutes"]}
+    return out
+
+
+async def caps(pool, uid: str | None, role: str | None) -> dict:
+    """{feature: daily minutes (None = only the org's cap)} for what this person may use. The owner: everything,
+    unlimited, whatever a row says. Anyone else: the role's default, overridden per feature by member_feature."""
+    if role == "owner":
+        return {f: None for f in FEATURES}
+    own = (await overrides(pool, uid)).get(uid, {}) if uid else {}
+    out = {}
+    for f, roles in FEATURES.items():
+        o = own.get(f)
+        if (o["allowed"] if o else role in roles):
+            out[f] = o["minutes"] if o else None
+    return out
+
+
+async def set_feature(pool, uid: str, feature: str, allowed: bool | None, minutes: int | None = None) -> None:
+    """One person's override of one feature; allowed None clears it (back to the role's default)."""
+    if feature not in FEATURES:
+        raise ValueError(f"feature is one of {', '.join(FEATURES)}")
+    if allowed is None:
+        await pool.execute("DELETE FROM member_feature WHERE uid = $1 AND feature = $2", uid, feature)
+        return
+    if minutes is not None and not 0 <= int(minutes) <= 1440:
+        raise ValueError("minutes is a daily limit, 0 to 1440")
+    await pool.execute("INSERT INTO member_feature (uid, feature, allowed, minutes) VALUES ($1, $2, $3, $4) "
+                       "ON CONFLICT ON CONSTRAINT member_feature_pkey DO UPDATE SET allowed = EXCLUDED.allowed, "
+                       "minutes = EXCLUDED.minutes", uid, feature, bool(allowed),
+                       None if minutes is None else int(minutes))

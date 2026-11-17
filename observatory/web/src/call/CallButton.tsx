@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useReducedMotion } from 'motion/react'
 import { displayName } from '../api'
+import { useStore } from '../store'
+import { can } from '../types'
 import { useVoice } from '../pilot/voice'
 import { callAgent, startCall, useCallStatus } from './state'
 import './call.css'
@@ -17,7 +19,12 @@ export const PhoneIcon = ({ className = 'w-[18px] h-[18px]' }: { className?: str
   </svg>
 )
 
-export default function CallButton({ variant = 'pill', className = '' }: { variant?: 'pill' | 'icon'; className?: string }) {
+export default function CallButton(props: { variant?: 'pill' | 'icon'; className?: string }) {
+  const { who } = useStore()
+  return can(who, 'call') ? <CallButtonFor {...props} /> : null   // owner 11-17: only a person given the Call sees it
+}
+
+function CallButtonFor({ variant = 'pill', className = '' }: { variant?: 'pill' | 'icon'; className?: string }) {
   const v = useVoice()
   const s = useCallStatus()
   const reduce = useReducedMotion()

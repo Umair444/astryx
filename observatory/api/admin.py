@@ -10,7 +10,9 @@ every write through astryx.cogauth.grant/revoke, the one writer (D8).
     PUT    /api/admin/members         {uid, node?, role}: grant (an upsert on that node)
     DELETE /api/admin/members         {uid, node?}: one node's row, or (no node) every row of the uid
     GET    /api/admin/nodes           the agents/ tree as grantable nodes: [{node, kind: group|agent, depth}]
-    GET    /api/admin/activity?uid=   {scope owner|account, messages, threads, last_message}: counts, never bodies
+    GET    /api/admin/activity?uid=   {scope owner|account, messages, threads, last_message, voice_minutes}: counts
+    PUT    /api/admin/features        {uid, feature, allowed: true|false|null, minutes?}: what one person may use
+                                      (owner 11-17); null puts them back on their role's default. Never an owner's
 
 WHO MAY: the org's owner (the owner key, or a signed-in owner) and a signed-in ADMIN. main.privacy_gate admits an
 admin to exactly ADMIN_ROUTES; each handler judges again. THE GUARDS: an admin can neither grant `owner` nor change or
@@ -36,7 +38,7 @@ router = APIRouter()
 # stdlib's names, never verb literals (sqlguard reads a bare "DELETE" as a possible query's only trace)
 _G, _PUT, _DEL = HTTPMethod.GET.value, HTTPMethod.PUT.value, HTTPMethod.DELETE.value
 ADMIN_ROUTES = {(_G, "/api/admin/members"), (_PUT, "/api/admin/members"), (_DEL, "/api/admin/members"),
-                (_G, "/api/admin/nodes"), (_G, "/api/admin/activity")}
+                (_G, "/api/admin/nodes"), (_G, "/api/admin/activity"), (_PUT, "/api/admin/features")}
 
 _get_pool = None
 _dsn = ""
@@ -84,7 +86,10 @@ async def list_members(request: Request):
     pool = _get_pool()
     s = await M.shape(pool)
     return JSONResponse({"you": you, "uid": getattr(request.state, "uid", None), "roles": s["roles"],
-                         "tree": s["tree"], "members": await M.rows(pool)}, headers={"cache-control": "no-store"})
+                         "tree": s["tree"], "members": await M.rows(pool),
+                         # what each person may use: the role defaults, and the overrides set here (owner 11-17)
+                         "features": {f: sorted(r) for f, r in M.FEATURES.items()},
+                         "overrides": await M.overrides(pool)}, headers={"cache-control": "no-store"})
 
 
 async def _judge(request: Request, uid: str, node: str | None, role: str | None):
@@ -139,6 +144,35 @@ async def delete_member(body: Revoke, request: Request):
     return JSONResponse({"ok": True, "removed": gone})
 
 
+class Feature(BaseModel):
+    uid: str
+    feature: str
+    allowed: bool | None = None
+    minutes: int | None = None
+
+
+@router.put("/api/admin/features")
+async def put_feature(body: Feature, request: Request):
+    """One person's feature, set by the owner or an admin. An owner has every feature, unlimited: no row reaches them,
+    so an admin can't touch an owner here either."""
+    bad = await _judge(request, body.uid, None, None)
+    if bad:
+        return bad
+    pool = _get_pool()
+    if any(r["role"] == "owner" for r in await M.held(pool, body.uid)):
+        return _no(403, "an owner has every feature already")
+    if body.feature not in M.FEATURES:
+        return _no(400, f"feature is one of {', '.join(M.FEATURES)}")
+    if caller_role(request) == "admin" and body.feature == "call" and body.allowed and body.minutes is None:
+        return _no(400, "an admin gives the Call with a daily limit in minutes (spend is the owner's to leave open)")
+    try:
+        await M.set_feature(pool, body.uid, body.feature, body.allowed, body.minutes)
+    except ValueError as e:
+        return _no(400, str(e))
+    return JSONResponse({"ok": True, "uid": body.uid, "feature": body.feature, "allowed": body.allowed,
+                         "minutes": body.minutes})
+
+
 @router.get("/api/admin/nodes")
 async def nodes(request: Request):
     if caller_role(request) is None:
@@ -169,6 +203,9 @@ async def activity(request: Request, uid: str = ""):
                             "WHERE from_agent = ANY($1::text[]) AND from_org = 'local'", tags)
     # 'owner' is also every trusted WhatsApp/Discord sender and the owner key (medic 12598): an owner account's count is
     # the owner channel's, all surfaces, and says so; a member's is exactly its own
+    from astryx.hearing import voice_mint as V
+    voice = sum([await V.minutes_today(pool, V.who(t, f)) for t in tags for f in M.FEATURES])   # today, every feature
     return JSONResponse({"uid": uid, "scope": "owner" if tags == ["owner"] else "account", "messages": r["n"], "threads": r["t"],
-                         "last_message": r["last"].isoformat() if r["last"] else None},
+                         "last_message": r["last"].isoformat() if r["last"] else None,
+                         "voice_minutes_today": round(float(voice), 1)},
                         headers={"cache-control": "no-store"})

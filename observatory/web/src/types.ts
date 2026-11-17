@@ -393,7 +393,14 @@ export interface WhoAmI {
   vega: boolean
   role?: string | null     // cog-who: this org's members role ('owner' for the key door too); absent on old servers
   handle?: string | null   // the viewer's wire name: 'owner', or a member's cv-<label>.<uid>
+  caps?: Record<string, number | null>   // what this person may use (owner 11-17): feature -> their daily minutes
+  reach?: string[] | null  // the agents they may reach; null = every agent
 }
+
+/* owner 11-17: what a person may use and which agents they reach, as the server resolved it (/api/whoami). The UI
+   shows only these; the server refuses the rest, so a hidden button and a 403 can't disagree. */
+export const can = (w: WhoAmI, feature: 'dictate' | 'call') => w.owner || !!w.caps && feature in w.caps
+export const reaches = (w: WhoAmI, agent: string) => w.owner || w.reach == null || w.reach.includes(agent)
 
 /* cog-who: who may use the chat workspace — the owner, or a signed-in member (no privacy within an org, owner 11-13).
    And a HUMAN party of a row: the owner, or a named web human (cv-<x>: a member or a canvas guest). The chat's 'owner'
