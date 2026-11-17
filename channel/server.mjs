@@ -100,6 +100,9 @@ const mcp = new Server(
       `\`\`\`html; an email's first line is "Subject: …"; one that holds a code block of its own opens with FOUR backticks, ` +
       `\`\`\`\`email), with your own words around it short: the chat draws it as a card the person copies (formatted), ` +
       `opens, or mails in one click. On WhatsApp/Telegram, no deliverable fence: write it plainly (code is still fenced). ` +
+      `A CANVAS (a live page) is built from ANY chat: venv/bin/python src/astryx/core/canvas.py guide, then new and ` +
+      `publish; share it on the web chat as [[canvas:<id>]] in your send body, the way a file is sent: the chat draws a ` +
+      `card that opens it beside the conversation. ` +
       `WHO ASKED: a human's from= is who asked (owner, cv-<name>.<n> a signed-in member with role="member", ` +
       `cv-<name> a canvas guest, wa-<n> a WhatsApp sender); reply to THAT from= on that thread. Owner-only acts ` +
       `(spend, the law, the personal tier, database approvals, permission verdicts) still need the owner himself. ` +

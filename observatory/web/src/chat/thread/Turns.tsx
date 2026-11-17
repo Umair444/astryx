@@ -8,6 +8,7 @@ import Prose, { HumanText } from './Prose'
 import { embeds, parts, PROJECT_BLOCK, stripEmbeds, type Turn as WTurn, type Work } from '../model'
 import { InlineFile } from './Inline'
 import { inlineParts } from './flow'
+import CanvasEmbed from '../canvas/CanvasEmbed'
 import FileChip, { type OpenRequest } from '../artifacts/FileChip'
 import LiveActivity, { type Pending, type RemindFn, type StopFn } from './LiveActivity'
 import Replay from './Replay'
@@ -318,6 +319,7 @@ function Mine({ m, to, by = null, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to:
         {!ch && <div className={long && !more ? 'max-h-[11.5em] overflow-hidden [mask-image:linear-gradient(#000_70%,transparent)]' : ''}>
           {ask ? text : flow.map((p, i) => ('embed' in p
             ? <InlineFile key={`f:${p.embed.path}`} e={p.embed} from={m.from} msg={m} onOpen={onOpenFile} />
+            : 'canvas' in p ? <CanvasEmbed key={`c:${p.canvas}:${i}`} id={p.canvas} />
             : <HumanText key={`t:${i}`} text={p.text} />))}
         </div>}
         {long && <button onClick={() => setMore((x) => !x)} className="mt-1 text-[12px] text-ink-mute hover:text-ink">{more ? 'Show less' : 'Show all'}</button>}
@@ -350,6 +352,7 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
         {turn && turn.steps.length > 0 && <WorkTrace steps={turn.steps} elsewhere={turn.elsewhere} agent={m.from} end={turn.ended_at} />}
         {flow.map((p, i) => ('embed' in p
           ? <InlineFile key={`f:${p.embed.path}`} e={p.embed} from={m.from} msg={m} onOpen={onOpenFile} />
+          : 'canvas' in p ? <CanvasEmbed key={`c:${p.canvas}:${i}`} id={p.canvas} />
           : <Prose key={`t:${i}`} text={p.text} msg={m} />))}
         {files.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} msg={m} onOpen={onOpenFile} />)}</div>}
       </div>

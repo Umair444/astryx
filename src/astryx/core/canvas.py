@@ -547,7 +547,8 @@ def main(argv=None) -> int:
             elif a.cmd == "new":
                 cid = create(conn, a.title, a.agent or (who if who != "owner" else "painter"),
                              a.user, a.brief, a.tier)
-                print(f"canvas {cid} created (thread cv:canvas-{cid}). Next: canvas.py publish {cid} page.html")
+                print(f"canvas {cid} created (thread cv:canvas-{cid}). Next: canvas.py publish {cid} page.html; then "
+                      f"share it on the web chat (a chat:/obs:/cv: thread) as [[canvas:{cid}]] (a card that opens it there)")
             elif a.cmd == "publish":
                 html = sys.stdin.read() if a.file == "-" else Path(a.file).read_text()
                 v, notes = publish(conn, parse_id(a.id), html, who, a.note)
