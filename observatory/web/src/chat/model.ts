@@ -144,8 +144,14 @@ export interface Project {
   color?: string | null; emoji?: string | null; created?: string | null; updated?: string | null; missing?: string[]
   by?: string | null; shared?: string[]   // who made it (none = the owner) and the members they shared it with (11-17)
 }
-export interface Person { handle: string; name: string }
-export const loadPeople = () => api<Person[]>('/chat/people')
+/* who a project can be shared with: the org's members, each by account (uid) and named by the cog's sign-in (its
+   email); /auth/people is the front's, asked for this org */
+export interface Person { uid: string; email: string }
+export async function loadPeople(org: string): Promise<Person[]> {
+  const r = await fetch(`/auth/people?org=${encodeURIComponent(org)}`, { credentials: 'same-origin', cache: 'no-store' })
+  if (!r.ok) return []
+  return ((await r.json())?.people ?? []) as Person[]
+}
 export interface Projects { etag: string; projects: Project[] }
 export const loadProjects = () => api<Projects>('/chat/projects')
 export async function saveProjects(etag: string, projects: Project[]): Promise<Projects> {

@@ -671,7 +671,8 @@ def _project_ok(request: Request, thread: str) -> bool:
     if not thread.startswith("project:"):
         return True
     me = _ws._me(request)
-    return bool(me) and (me == "owner" or any(p.get("id") == thread[8:] for p in _ws._projects(me)))   # no handle: none
+    return bool(me) and (me == "owner" or any(p.get("id") == thread[8:]                    # no handle: none
+                                              for p in _ws._projects(me, getattr(request.state, "uid", None))))
 
 
 async def _thread_ok(request: Request, thread: str) -> bool:
@@ -723,7 +724,7 @@ async def thread_titles(request: Request, threads: set[str]) -> dict[str, str]:
     knowledge thread named by its project. Best effort: a thread the database can't name keeps its id."""
     from observatory.api import workspace as _ws
     out: dict[str, str] = {}
-    projects = {p.get("id"): p.get("name") for p in _ws._projects(_ws._me(request) or "owner")}
+    projects = {p.get("id"): p.get("name") for p in _ws._projects(_ws._me(request) or "", getattr(request.state, "uid", None))}
     for t in threads:
         if t.startswith("project:") and projects.get(t[8:]):
             out[t] = projects[t[8:]]

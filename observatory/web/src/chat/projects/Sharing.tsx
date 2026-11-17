@@ -1,29 +1,32 @@
 import { useEffect, useRef, useState } from 'react'
 import { viewer } from '../../api'
+import { hereOrg, useMe } from '../../me'
 import { I } from '../icons'
 import { loadPeople, type Person, type Project } from '../model'
 
 /* WHO CAN SEE IT (owner 11-17: "the person who create project should be able to decide which member can see it"):
    the project's maker picks the members it is shared with; the org's owner always sees every project. Anyone else
-   who can see it only reads this card. The server decides (workspace.project_visible); this is its control. */
+   who can see it only reads this card. The server decides (workspace.project_visible); this is its control. Members
+   are shared with by account (uid), named by their sign-in email, so a renamed member keeps what was shared. */
 
 export default function Sharing({ p, onChange }: { p: Project; onChange: (shared: string[]) => void }) {
   const me = viewer()
   const maker = p.by || 'owner'
   const mine = me === maker || me === 'owner'
   const shared = p.shared ?? []
+  const org = hereOrg(useMe())?.org ?? ''
   const [people, setPeople] = useState<Person[] | null>(null)
   const [adding, setAdding] = useState(false)
   const box = useRef<HTMLDivElement>(null)
-  useEffect(() => { loadPeople().then(setPeople).catch(() => setPeople([])) }, [])
+  useEffect(() => { if (org) loadPeople(org).then(setPeople).catch(() => setPeople([])) }, [org])
   useEffect(() => {
     if (!adding) return
     const off = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setAdding(false) }
     addEventListener('mousedown', off)
     return () => removeEventListener('mousedown', off)
   }, [adding])
-  const name = (h: string) => people?.find((x) => x.handle === h)?.name ?? h.replace(/^cv-/, '').replace(/\.\d+$/, '')
-  const offer = (people ?? []).filter((x) => !shared.includes(x.handle) && x.handle !== maker)
+  const name = (u: string) => people?.find((x) => x.uid === u)?.email ?? 'a member'
+  const offer = (people ?? []).filter((x) => !shared.includes(x.uid))
 
   return (
     <section className="ws-kcard p-4" aria-label="who can see it">
@@ -37,15 +40,15 @@ export default function Sharing({ p, onChange }: { p: Project; onChange: (shared
               <div className="ws-menu absolute right-0 top-[calc(100%+4px)] z-30 w-[240px] max-h-[300px] overflow-y-auto p-1" role="menu"
                 aria-label="share with" style={{ ['--ws-pip-bg' as string]: 'var(--t-panel)' }}>
                 {offer.map((x) => (
-                  <button key={x.handle} role="menuitem" className="ws-row w-full rounded-lg px-2 py-1.5 text-left text-[13px] text-ink"
-                    onClick={() => { onChange([...shared, x.handle]); setAdding(false) }}>{x.name}</button>
+                  <button key={x.uid} role="menuitem" className="ws-row w-full rounded-lg px-2 py-1.5 text-left text-[13px] text-ink"
+                    onClick={() => { onChange([...shared, x.uid]); setAdding(false) }}>{x.email}</button>
                 ))}
               </div>
             )}
           </div>
         )}
       </div>
-      <p className="text-[12px] text-ink-mute mb-2">{maker === 'owner' ? 'You' : name(maker)} and the people below.{maker !== 'owner' ? ' The owner sees every project.' : ''}</p>
+      <p className="text-[12px] text-ink-mute mb-2">{maker === 'owner' ? 'The owner' : 'Its maker'} and the people below.{maker !== 'owner' ? ' The owner sees every project.' : ''}</p>
       {shared.length === 0
         ? <p className="text-[12.5px] text-ink-dim">{mine ? 'Not shared with anyone yet.' : 'Shared with no one else.'}</p>
         : <ul className="flex flex-wrap gap-1.5">{shared.map((h) => (

@@ -10,7 +10,6 @@ OpenAI call is made: voice_mint's key and mint are stubbed, so a session that pa
   S2 POST /api/messages: bob to db 200, to medic 403 (and as a team member 403); alice to medic 200
   S3 bob's reads: /api/steps and /api/ws/agents hold db only; alice's hold every org-work agent
   S4 bob's wire (/api/messages, the live feed) holds no message to or from an agent outside his part; no everyone view
-  P1 /api/chat/people: every member who has signed in (their web identity, recorded at sign-in), never the viewer
   F1 dictation: a member's default lets it through the gate; turned off for alice in Admin, 403
   R1 media library, ?thread= reads (media, artifacts, handoffs, work), attached files and non-charter names: bob's part only
   R2 a member's call is charged 10 min at its mint, which a 1 s report can't lower; past his limit the next is refused
@@ -157,11 +156,6 @@ def main(tmp: Path, url: str):
         [(m["from"], m.get("from_org")) for m in rows(BOB)])
     arm("R1d a message from a name that is no charter is not on bob's wire",
         not any(m["from"] == "pulse" for m in rows(BOB)), [m["from"] for m in rows(BOB)])
-
-    ppl = {x["handle"]: x["name"] for x in cl.get("/api/chat/people", headers=O).json()}
-    arm("P1 every member who signed in is someone to share with, named by their account (no channel linked)",
-        ppl.get("cv-alice.7") == "alice" and ppl.get("cv-bob.8") == "bob", ppl)
-    arm("P1 ...and a member's own list leaves them out", "cv-bob.8" not in {x["handle"] for x in cl.get("/api/chat/people", headers=BOB()).json()})
 
     print("F features")
     dic = lambda h: cl.post("/api/chat/dictate/session", headers=h()).status_code  # noqa: E731

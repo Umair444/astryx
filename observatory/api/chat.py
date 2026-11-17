@@ -225,7 +225,7 @@ class Project(BaseModel):
     created: str | None = None       # read-side: the server stamps both, a client's value is ignored
     updated: str | None = None
     by: str | None = None            # read-side: the wire handle that made it (cog-gaps), server-stamped; none = owner
-    shared: list[str] = []           # who else sees it: members' wire handles, chosen by the one who made it (11-17)
+    shared: list[str] = []           # who else sees it: members' accounts (members.uid), chosen by its maker (11-17)
     missing: list[str] = []          # D6': read-side only; never stored
 
 
@@ -255,7 +255,7 @@ def _valid(projects: list[Project]) -> str:
             return "not a project colour"
         if p.emoji is not None and (len(p.emoji) > 8 or re.search(r"[\x00-\x20A-Za-z0-9<>&\"']", p.emoji)):
             return "an emoji is one emoji"
-        if len(p.shared) > 200 or any(not MEMBER_HANDLE.fullmatch(h) for h in p.shared):
+        if len(p.shared) > 200 or any(not ACCOUNT.fullmatch(h) for h in p.shared):
             return "a project is shared with members of this org"
     return ""
 
@@ -274,7 +274,7 @@ def upgrade(p: dict) -> dict:
 # the fields a member must leave as they are on a project that is not hers (cog-gaps: her projects are hers to edit;
 # the rest of the org's are shown, never changed by her)
 PROJECT_FIELDS = ("name", "instructions", "agents", "threads", "files", "color", "emoji", "shared")
-MEMBER_HANDLE = re.compile(r"^cv-[a-z0-9_-]{1,24}\.[0-9]{1,18}$")   # members.member_handle's shape
+ACCOUNT = re.compile(r"^[0-9]{1,18}@[A-Za-z0-9_.-]{1,64}$")   # a members uid: <account>@<cog id>
 
 
 def project_owner(p: dict) -> str:
@@ -323,23 +323,23 @@ async def projects_get(request: Request):
     `missing`, so the page shows the gap instead of a project that quietly fans out to nobody. Only the projects this
     viewer sees (workspace.project_visible: its maker, whom they shared it with, the owner)."""
     from observatory.api.workspace import project_visible
-    me, live = _me(request), _roster()
+    me, live, uid = _me(request), _roster(), getattr(request.state, "uid", None)
     if not me:                                       # no wire handle: nobody's projects (medic 12845), never the owner's
         return {"etag": etag(projects_file()), "projects": []}
-    out = [{**p, "missing": [a for a in p["agents"] if a not in live]} for p in _read_projects() if project_visible(p, me)]
+    out = [{**p, "missing": [a for a in p["agents"] if a not in live]} for p in _read_projects()
+           if project_visible(p, me, uid)]
     return {"etag": etag(projects_file()), "projects": out}
 
 
 @router.get("/api/chat/people")
 async def people(request: Request):
-    """The org's members a project can be shared with: every web account that has signed in here (identity P1: a
-    web handle of an identity), as {handle, name}; never the viewer themself."""
-    me = _me(request) or "owner"
-    rows = await _pool(request).fetch(
-        "SELECT DISTINCT x.wire_name, x.label FROM identity x JOIN identity_handle h ON h.tenant = x.tenant "
-        "AND h.identity_id = x.id WHERE h.channel = 'web' AND x.wire_name LIKE 'cv-%' ORDER BY 1")
-    return [{"handle": r["wire_name"], "name": r["label"] or r["wire_name"][3:].rsplit(".", 1)[0]}
-            for r in rows if r["wire_name"] != me]
+    """Who a project can be shared with: this org's MEMBERS TABLE (every account with a role here, owners aside, who
+    see every project), never the viewer. Accounts only: their names are the cog's (the sign-in front's
+    /auth/people adds them), since the org keeps no names of its own."""
+    rows = await _pool(request).fetch("SELECT uid FROM members GROUP BY uid HAVING NOT bool_or(role = 'owner' AND node = '') "
+                                      "ORDER BY uid")
+    me = getattr(request.state, "uid", None)
+    return {"people": [r["uid"] for r in rows if r["uid"] != me]}
 
 
 @router.put("/api/chat/projects")
@@ -356,7 +356,8 @@ async def projects_put(body: list[Project], request: Request):
     old = _read_projects()
     was = {p["id"]: p for p in old}
     from observatory.api.workspace import project_visible
-    unseen = [p for p in old if not project_visible(p, me)]   # a member's list never names these: they stay as stored
+    uid = getattr(request.state, "uid", None)
+    unseen = [p for p in old if not project_visible(p, me, uid)]   # a member's list never names these: they stay as stored
     keep = []
     for p in body:
         d = p.model_dump(exclude={"missing", "brief", "created", "updated", "by"})
@@ -367,6 +368,12 @@ async def projects_put(body: list[Project], request: Request):
             d["by"] = maker
         keep.append(d)
     sent = {d["id"] for d in keep}
+    named = {h for d in keep for h in d.get("shared") or []}
+    if named:
+        held = {r["uid"] for r in await _pool(request).fetch("SELECT DISTINCT uid FROM members WHERE uid = ANY($1::text[])",
+                                                             sorted(named))}
+        if named - held:
+            return JSONResponse({"error": "a project is shared with members of this org"}, status_code=400)
     if any(p["id"] in sent for p in unseen):
         return JSONResponse({"error": "no such project"}, status_code=403)
     keep += unseen
@@ -388,8 +395,8 @@ async def projects_put(body: list[Project], request: Request):
         new = atomic_write(projects_file(), text, if_match=tag)
     except Conflict:
         return JSONResponse({"error": "projects changed since you loaded them", "etag": etag(projects_file()),
-                             "projects": [p for p in _read_projects() if project_visible(p, me)]}, status_code=409)
-    return {"etag": new, "projects": [{**p, "missing": []} for p in keep if project_visible(p, me)]}
+                             "projects": [p for p in _read_projects() if project_visible(p, me, uid)]}, status_code=409)
+    return {"etag": new, "projects": [{**p, "missing": []} for p in keep if project_visible(p, me, uid)]}
 
 
 # --------------------------------------------------------------------------------------------------------- work

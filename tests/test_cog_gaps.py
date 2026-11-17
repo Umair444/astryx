@@ -156,7 +156,7 @@ def main(tmp: Path, url: str):
     arm("T2 the owner writes a project", w.status_code == 200, (w.status_code, w.text[:200]))
     g = cl.get("/api/chat/projects", headers=A()).json()
     arm("T2 a member doesn't see a project nobody shared with her (owner 11-17)", g.get("projects") == [], g)
-    w = cl.put("/api/chat/projects", json=[{**po, "shared": [ALICE]}], headers={**O, "if-match": w.json()["etag"]})
+    w = cl.put("/api/chat/projects", json=[{**po, "shared": ["7@fxcog"]}], headers={**O, "if-match": w.json()["etag"]})
     g = cl.get("/api/chat/projects", headers=A()).json()
     arm("T2 ...once the owner shares it with her, she does", [p["id"] for p in g.get("projects", [])] == ["own"], g)
     stored = [{k: v for k, v in p.items() if k != "missing"} for p in g["projects"]]
@@ -196,11 +196,15 @@ def main(tmp: Path, url: str):
     arm("T2 her write of the list she sees keeps the project she can't see", r.status_code == 200 and stored == {"own", "mine"},
         (r.status_code, r.text[:200], stored))
     tag = r.json().get("etag", "")
-    r = cl.put("/api/chat/projects", json=[{**mine_only[0], "shared": ["not a handle"]}], headers={**A(), "if-match": tag})
-    arm("T2 a project is shared only with members' handles (400)", r.status_code == 400, (r.status_code, r.text[:200]))
-    r = cl.put("/api/chat/projects", json=[{**mine_only[0], "shared": ["cv-bob.9"]}], headers={**A(), "if-match": tag})
-    arm("T2 she shares her own with a member", r.status_code == 200 and r.json()["projects"][0]["shared"] == ["cv-bob.9"],
+    for bad in ("not an account", "5@fxcog"):            # a shape, and an account that is no member here
+        r = cl.put("/api/chat/projects", json=[{**mine_only[0], "shared": [bad]}], headers={**A(), "if-match": tag})
+        arm(f"T2 a project is shared only with this org's members ({bad}: 400)", r.status_code == 400, (r.status_code, r.text[:200]))
+    r = cl.put("/api/chat/projects", json=[{**mine_only[0], "shared": ["9@fxcog"]}], headers={**A(), "if-match": tag})
+    arm("T2 she shares her own with a member, by account", r.status_code == 200 and r.json()["projects"][0]["shared"] == ["9@fxcog"],
         (r.status_code, r.text[:200]))
+    ppl = cl.get("/api/chat/people", headers=A()).json().get("people")
+    arm("T2 who she can share with is the members table: every member but her, owners aside (they see all)",
+        ppl == ["9@fxcog"], ppl)
     os.environ["ASTRYX_WS_STORE"] = str(tmp / "store")       # a project's files: artifacts on thread project:<id>
     from observatory.api import artifacts as AR
     AR.bind(lambda: obs.pool, estate)
@@ -211,7 +215,7 @@ def main(tmp: Path, url: str):
     arm("T2 a project she can't see: its file is not in her library, and 403 by id and by content",
         aid not in lib() and by_id() == (403, 403), (lib(), by_id()))
     cur = [{k: v for k, v in p.items() if k != "missing"} for p in cl.get("/api/chat/projects", headers=O).json()["projects"]]
-    r = cl.put("/api/chat/projects", json=[{**p, "shared": [ALICE]} if p["id"] == "own" else p for p in cur],
+    r = cl.put("/api/chat/projects", json=[{**p, "shared": ["7@fxcog"]} if p["id"] == "own" else p for p in cur],
                headers={**O, "if-match": cl.get("/api/chat/projects", headers=O).json()["etag"]})
     arm("T2 ...shared with her, it is in her library and 200 by id and by content",
         r.status_code == 200 and aid in lib() and by_id() == (200, 200), (r.status_code, lib(), by_id()))
