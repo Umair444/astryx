@@ -17,7 +17,7 @@ temp tree, and every fixture agent name is one no real org uses. A broken render
 as a logged side effect, never as a session.
 
   R1 a resident renders exactly CLAUDE.md, .mcp.json and .claude/settings.json, and nothing else
-  R2 .mcp.json: {astryx, tools, hands, influence}, and with a grant spliced in {astryx, tools, hands, influence,
+  R2 .mcp.json: the registry's who=every set (astryx, tools, hands, influence, channels), and with a grant spliced in that set +
      mail} (the fixture writes `Grants: gmail`, the grant's old name, which must still mount mail), valid JSON
   R11 influence (who_should_i_ask, plan-11324, seed #58432) is the tree's mcp/influence/server.py with
       ASTRYX_AGENT = the agent written into its env (never inherited); `Grants: memory` mounts mcp/memory (ask)
@@ -53,7 +53,9 @@ SUBJECT = Path(os.environ.get("SPAWN_SRC") or REPO / "scripts" / "spawn.sh")
 STATION = REPO / "src" / "astryx" / "core" / "station.py"
 TOKEN = "tok-fixture-4227-render"
 # Every RESIDENT's core block: the wire, the door (4227 S4), hands (7862), influence (11324, seed #58432).
-RESIDENT_SET = {"astryx", "tools", "hands", "influence"}
+# every resident's servers ARE the registry's who=every (owner 11-17: one list), and they include these five
+RESIDENT_SET = {n for n, e in json.loads((REPO / "mcp" / "registry.json").read_text()).items() if e.get("who") == "every"}
+assert {"astryx", "tools", "hands", "influence", "channels"} <= RESIDENT_SET, RESIDENT_SET
 fails = []
 
 

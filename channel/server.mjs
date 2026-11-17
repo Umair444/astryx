@@ -251,6 +251,12 @@ const TOOLS = [
     },
   },
 ]
+// --list-tools: the server names its own tools and exits, before any database or session (mcp/scan.py: the Tools tab
+// lists the wire from THIS array, never from a copy; owner 11-17)
+if (process.argv.includes('--list-tools')) {
+  console.log(JSON.stringify(TOOLS.map((t) => ({ name: t.name, description: String(t.description ?? '').split('\n')[0].slice(0, 200) }))))
+  process.exit(0)
+}
 
 const TRIGGER_TOOL = homePath('src/astryx/pulse/trigger_tool.py')
 const PULSE_PY = homePath('venv/bin/python')

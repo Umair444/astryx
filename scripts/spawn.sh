@@ -187,96 +187,15 @@ mkdir -p "$HOME_D/.claude"
   fi
 } > "$HOME_D/CLAUDE.md"
 
-# grants: a charter line "Grants: mail, ..." maps to extra MCP servers in this
-# agent's world. With --strict-mcp-config the .mcp.json IS the capability list.
-EXTRA=""
-for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' '); do
-  case "$g" in
-    # chat-sql + ocr: the estate-query MCP (42 tools over the 10.50.15.226 tunnel; bootstraps its
-    # OWN venv via run.sh, so /bin/bash — NOT $ROOT/venv/python) and the OCR server. BOTH arms were
-    # dropped by the 0.1.2 merge (upstream spawn.sh carries no estate grants), silently stripping
-    # chat-sql from every data seat on its NEXT respawn — latent, since agents kept their pre-merge
-    # .mcp.json until respawned. Restored 2026-10-19 after a one-agent validation respawn (insurance)
-    # surfaced it: goal-14 follow-on — the merge dropped MORE spawn.sh customizations than the brief
-    # injection alone, and the brief-only audit missed these (feedback-post-merge-reorg-audit).
-    chat-sql) EXTRA="$EXTRA,
-  \"chat-sql\": { \"command\": \"/bin/bash\", \"args\": [\"$ROOT/mcp/chat-sql/run.sh\"] }";;
-    ocr) EXTRA="$EXTRA,
-  \"ocr\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/ocr/server.py\"] }";;
-    # mail: any SMTP/IMAP mailbox (src/astryx/mail.py); `gmail` is its old name, read as the same grant
-    mail|gmail) EXTRA="$EXTRA,
-  \"mail\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/mail/server.py\"] }";;
-    compose) EXTRA="$EXTRA,
-  \"compose\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/compose/server.py\"] }";;
-    imagegen) EXTRA="$EXTRA,
-  \"imagegen\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/imagegen/server.py\"] }";;
-    growbot) EXTRA="$EXTRA,
-  \"growbot\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/growbot/server.py\"] }";;
-    org) EXTRA="$EXTRA,
-  \"org\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/org/server.py\"] }";;
-    memory) EXTRA="$EXTRA,
-  \"memory\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/memory/server.py\"] }";;
-    jobs) EXTRA="$EXTRA,
-  \"jobs\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/jobs/server.py\"] }";;
-    docpdf) EXTRA="$EXTRA,
-  \"docpdf\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/docpdf/server.py\"] }";;
-    # browser: official @playwright/mcp (adopt-mature-OSS; the one sanctioned Node
-    # MCP). Headless, system chromium, persistent per-agent profile so logins the
-    # owner establishes survive respawns — the agent never sees a password.
-    # env = keyring reach: chromium cookies are v11-encrypted against the user's
-    # secret-service, so headless chromium must reach the session bus to decrypt
-    # them — without these two keys every owner-established login reads as logged
-    # OUT (cookie present, undecryptable). And since this file REGENERATES
-    # .mcp.json each spawn, a hand-fix in the home is clobbered on the next
-    # respawn: the fix lives here or nowhere. Derived from uid, never hardcoded.
-    browser) EXTRA="$EXTRA,
-  \"browser\": { \"command\": \"$(dirname "$NODE")/npx\", \"args\": [\"-y\", \"@playwright/mcp@latest\",
-    \"--headless\", \"--executable-path\", \"/usr/bin/chromium\",
-    \"--user-data-dir\", \"$HOME_D/.browser-profile\"],
-    \"env\": { \"XDG_RUNTIME_DIR\": \"/run/user/$(id -u)\",
-      \"DBUS_SESSION_BUS_ADDRESS\": \"unix:path=/run/user/$(id -u)/bus\" } }";;
-    *) echo "warning: unknown grant '$g' in $CHARTER" >&2;;
-  esac
-done
-
-# hands = the agent's own desktop on this machine (plan-7862, owner 2026-10-10: "it should use my
-# laptop like i can do — nothing container… we should trust these agents"). Every RESIDENT gets it,
-# like the door: residents are trusted (owner ruling), and a resident already holds Bash on this
-# machine, so its own desktop adds sight and a cursor, not reach. NOT given to STATIONED agents.
-# tools = the registry door (goal 4227 S4). Every RESIDENT gets it, not a grant: it's flat rent
-# (two tools however many the org grows), and no new capability, because a resident already
-# holds Bash and the door runs registered scripts only, never a granted MCP server. It is
-# deliberately NOT given to STATIONED agents (src/astryx/core/station.py, --tools "" fail-closed), where
-# it WOULD be a new execution capability. tests/test_spawn_wiring.py pins both halves.
-# influence = who_should_i_ask (plan-11324, seed #58432): its OWN server, every RESIDENT, like hands. Not behind the
-# memory grant (that one stays `ask` only): the asker is every resident, and the reply is ABOUT the asker, so
-# ASTRYX_AGENT is written into its env HERE, never inherited (this file is the source of truth for who asks; an
-# inherited value is whatever launched claude). STATIONED agents never reach this heredoc (the Type: stationed exit
-# above), so they never get it. tests/test_spawn_wiring.py pins both halves, and that `Grants: memory` adds memory only.
-# phone = an Android phone under the agent's hands (plan-8675), only where the org OPTED IN (ANDROID_ENABLED=1 in
-# .env; scripts/android_setup.sh installs it). Every resident then gets it, like hands. Its server is a facade over
-# a pinned upstream: it reaches 13 reviewed tools and builds the upstream's environment itself.
-PHONE=""
-if [ "$("$PY" "$ROOT/src/astryx/config.py" get ANDROID_ENABLED --file 2>/dev/null)" = 1 ]; then
-  PHONE=",
-  \"phone\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/phone/server.py\"],
-    \"env\": { \"ASTRYX_AGENT\": \"$AGENT\" } }"
-fi
-cat > "$HOME_D/.mcp.json" <<EOF
-{ "mcpServers": { "astryx": {
-    "command": "$NODE",
-    "args": ["$ROOT/channel/server.mjs"],
-    "env": { "ASTRYX_AGENT": "$AGENT", "ASTRYX_HOME": "$ORGH" }
-},
-  "tools": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/tools/server.py"] },
-  "hands": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/hands/server.py"],
-    "env": { "ASTRYX_AGENT": "$AGENT", "XDG_RUNTIME_DIR": "/run/user/$(id -u)",
-      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/$(id -u)/bus" } },
-  "influence": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/influence/server.py"],
-    "env": { "ASTRYX_AGENT": "$AGENT" } },
-  "channels": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/channels/server.py"],
-    "env": { "ASTRYX_AGENT": "$AGENT" } }$PHONE$EXTRA } }
-EOF
+# THE AGENT'S TOOL SERVERS: mcp/registry.json is the one list of them and says who gets each (every resident, a
+# charter's `Grants:` line, or an org's opt-in such as ANDROID_ENABLED=1 for phone); src/astryx/core/mcp_servers.py
+# writes this agent's .mcp.json from it (owner 11-17: the Tools tab and the agents must read the same list). With
+# --strict-mcp-config the .mcp.json IS the capability list. STATIONED agents never reach here (Type: stationed above).
+GRANTS=$(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' ' || true)
+ANDROID=$("$PY" "$ROOT/src/astryx/config.py" get ANDROID_ENABLED --file 2>/dev/null || true)
+"$PY" "$ROOT/src/astryx/core/mcp_servers.py" render --root "$ROOT" --agent "$AGENT" --home "$HOME_D" --orgh "$ORGH" \
+  --node "$NODE" --grants "$GRANTS" --optin "ANDROID_ENABLED=$ANDROID" > "$HOME_D/.mcp.json.new"
+mv "$HOME_D/.mcp.json.new" "$HOME_D/.mcp.json"
 
 # think: charter line "Think: off" zeroes extended thinking for reflex-class
 # agents whose craft is a fast small reply (growbot: a wake becomes motion in

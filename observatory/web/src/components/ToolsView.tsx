@@ -269,6 +269,9 @@ export default function ToolsView() {
                   <span className="w-8 h-8 shrink-0 rounded-xl grid place-items-center text-[15px] font-mono text-cyan"
                     style={{ background: 'color-mix(in srgb, var(--t-accent) 14%, var(--t-panel2))', boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--t-accent) 30%, transparent)' }}>ƒ</span>
                   <span className="text-[14px] font-semibold text-ink truncate">{srv.server}</span>
+                  {srv.who && <span className="shrink-0 text-[10.5px] text-ink-mute border border-line rounded-full px-1.5 py-[1px]"
+                    title={srv.who === 'every' ? 'Every agent has it' : srv.who === 'opt-in' ? `Every agent, once the org sets ${srv.optin} in its settings` : "Agents whose charter's Grants line names it"}>
+                    {srv.who === 'every' ? 'every agent' : srv.who === 'opt-in' ? 'opt-in' : 'by grant'}</span>}
                   <span className="ml-auto shrink-0 text-[11px] font-mono text-ink-mute"><Count value={srv.tools.length} /> tools ›</span>
                 </button>
                 <div className="flex flex-col gap-0.5">
