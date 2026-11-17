@@ -8,7 +8,6 @@ import { Sidebar } from './Sidebar'
 import { Home } from './Home'
 import { workspaceHref } from './nav'
 import { CanvasView } from './CanvasView'
-import { People } from './People'
 import { VoiceDock } from './VoiceDock'
 import { I } from './ui'
 import { useThemeKeys } from './ThemePicker'
@@ -17,7 +16,6 @@ function parse(hash: string): Route {
   const h = hash.replace(/^#\/?/, '')
   const [a, b] = h.split('/')
   if (a === 'canvas' && b && /^\d+$/.test(b)) return { view: 'canvas', id: Number(b) }
-  if (a === 'people') return { view: 'people' }
   return { view: 'home' }
 }
 
@@ -50,12 +48,6 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      // an invite link lands as #invite=<token>: trade it for a session, then forget it
-      const inv = location.hash.match(/invite=([A-Za-z0-9_-]+)/)
-      if (inv) {
-        try { await post('/login', { key: inv[1] }) } catch { /* shown by the login screen */ }
-        history.replaceState(null, '', location.pathname)  // the token never stays in the URL
-      }
       try {
         set({ me: await get<Me>('/me') })
       } catch (e) {
@@ -103,7 +95,6 @@ export default function App() {
           >
             {route.view === 'home' && <Home />}
             {route.view === 'canvas' && <CanvasView id={route.id} />}
-            {route.view === 'people' && <People />}
           </motion.div>
         </AnimatePresence>
       </main>

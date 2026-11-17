@@ -60,7 +60,6 @@ export function CanvasView({ id }: { id: number }) {
   const presence = useStore(s => s.presence)
   const bubble = useStore(s => s.bubble)
   const owns = !!c && (!!c.yours || me.owner)
-  const works = !!c && (!!c.works || owns)   // a member it is shared with directs its agent too
 
   const current = () => frames.current.get(shownKey.current)
   const send = (m: object, f = current()) => f?.contentWindow?.postMessage({ astryx: 1, ...m }, '*')
@@ -228,10 +227,10 @@ export function CanvasView({ id }: { id: number }) {
             <h1 className="font-medium truncate">{c?.title ?? '…'}</h1>
             {c?.tier === 'personal' && <span className="text-[10px] uppercase tracking-wider text-warn border border-warn/30 rounded-full px-2 py-0.5">personal</span>}
           </div>
-          {c && <CrewStrip crew={crew} keeper={c.agent} presence={presence} surface={surface} canSummon={works} onRemove={release}
+          {c && <CrewStrip crew={crew} keeper={c.agent} presence={presence} surface={surface} canSummon={!!c} onRemove={release}
             onSummon={a => ask(`You're joining canvas #${id} "${c.title}". Take a look and say hello to the viewer in one line; wait for a request.`, a)} />}
           <div className="ml-auto flex items-center gap-1">
-            {painted && works && (
+            {painted && (
               <button onClick={() => { setPicked(null); setPicking(p => !p) }} title="Point at something to change it (E)"
                 className={`flex items-center gap-1.5 text-[13px] px-2.5 py-1.5 rounded-lg transition ${picking ? 'sig' : 'text-fg-dim hover:text-fg hover:bg-fg/[.06]'}`}>
                 <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4l7 17 2.5-7.5L21 11z" /></svg>
@@ -314,7 +313,7 @@ export function CanvasView({ id }: { id: number }) {
             )}
           </AnimatePresence>
 
-          {painted && c && works && !picked && (
+          {painted && c && !picked && (
             <AskBar agent={c.agent} picking={picking} onPick={() => setPicking(true)} onSend={t => ask(t)} />
           )}
         </div>
@@ -331,7 +330,7 @@ export function CanvasView({ id }: { id: number }) {
               <button onClick={() => setSide(false)} className="ml-auto p-2 rounded-lg hover:bg-fg/[.06] text-fg-dim">{I.x()}</button>
             </div>
             {msgs ? <Messages thread={thread} msgs={msgs} compact /> : <div className="flex-1" />}
-            {works && <div className="p-3 shrink-0"><Composer onSend={(t, a) => ask([t, ...a].join('\n'))} placeholder={`Talk to ${c.agent} about this canvas…`} /></div>}
+            <div className="p-3 shrink-0"><Composer onSend={(t, a) => ask([t, ...a].join('\n'))} placeholder={`Talk to ${c.agent} about this canvas…`} /></div>
           </motion.aside>
         )}
       </AnimatePresence>

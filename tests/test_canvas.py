@@ -3,7 +3,7 @@
 
 A throwaway fixture DATABASE (sqlguard's one applier) so NOTIFY and every write stay off production.
 The API runs in-process (TestClient on the prefixed ASGI app, lifespan and wire tap included).
-Each arm is a property a viewer, an invitee or an agent depends on — the trust lines first.
+Each arm is a property a viewer (the owner, a member) or an agent depends on — the trust lines first.
 """
 import asyncio
 import contextlib
@@ -113,6 +113,15 @@ def api(url):
     print("api (bridges/canvas.py, in-process)")
     real_exists = b.agent_exists                   # the arms' painter: an estate may have retired its charter
     b.agent_exists = lambda n: n == "painter" or real_exists(n)
+    # "guest" is a MEMBER signed in at the cog's front, scoped to painter (test_canvas_signin proves the signing): a
+    # canvas has no invitees, and every non-owner rule below is a member's
+    real_signed = b.signed_viewer
+
+    async def signed(request):
+        if request.headers.get("x-test-member"):
+            return b.Viewer("guest.7", role="member", label="guest", account="7@fx", reach={"painter"})
+        return await real_signed(request)
+    b.signed_viewer = signed
     H = {"x-astryx": "1"}
     A = "/canvas/api"
     # ONE client (one event loop owns the pool); identities are cookie jars swapped in and out
@@ -121,6 +130,9 @@ def api(url):
 
         def who(name):
             cl.cookies.clear()
+            cl.headers.pop("x-test-member", None)
+            if name == "guest":
+                cl.headers["x-test-member"] = "1"
             for k, v in jars.get(name, {}).items():
                 cl.cookies.set(k, v, path="/canvas")
             return cl
@@ -133,16 +145,15 @@ def api(url):
         arm("owner logs in with the owner key",
             who("anon").post(f"{A}/login", json={"key": "test-owner-key"}, headers=H).status_code == 200)
         keep("owner")
-        r = who("owner").post(f"{A}/users", json={"name": "guest", "agents": ["painter"]}, headers=H).json()
-        arm("guest login with the invite token",
-            who("anon").post(f"{A}/login", json={"key": r["token"]}, headers=H).status_code == 200)
-        keep("guest")
+        arm("no invite door: an invite code is no key (401), and the invitee routes are gone",
+            who("anon").post(f"{A}/login", json={"key": "an-invite-token"}, headers=H).status_code == 401
+            and who("owner").post(f"{A}/users", json={"name": "guest"}, headers=H).status_code in (404, 405))
         me = who("guest").get(f"{A}/me").json()
-        arm("an invitee is cv-<name>, never owner", me["wire"] == "cv-guest" and me["owner"] is False, me)
-        arm("an invitee with nothing yet sees no canvases and no threads",
+        arm("a member is cv-<label>.<uid>, never owner", me["wire"] == "cv-guest.7" and me["owner"] is False, me)
+        arm("a member with nothing yet sees no canvases and no threads",
             who("guest").get(f"{A}/canvases").json() == [] and who("guest").get(f"{A}/threads").json() == [])
-        arm("an invitee sees only granted agents", [a["name"] for a in who("guest").get(f"{A}/agents").json()] == ["painter"])
-        # an invitee may name only files THEY uploaded — not the owner's, not another channel's (steward #37433)
+        arm("a member reaches only their agents", [a["name"] for a in who("guest").get(f"{A}/agents").json()] == ["painter"])
+        # a member may name only files THEY uploaded — not the owner's, not another channel's (steward #37433)
         o = who("owner")
         up = o.post(f"{A}/upload", content=b"owner notes\n", headers={**H, "x-filename": "brief.txt"}).json()
         t = o.post(f"{A}/threads", json={"agent": "painter"}, headers=H).json()["thread"]
@@ -155,22 +166,22 @@ def api(url):
         g.post(f"{A}/threads/{gt}/messages", json={"body": f"{gu['line']} [[file:{owner_file}]] [[file:{tg}]]"}, headers=H)
         gm = g.get(f"{A}/threads/{gt}/messages").json()["messages"][-1]["id"]
         mine, theirs, other = (g.get(f"{A}/file?msg={gm}&n={k}").status_code for k in (0, 1, 2))
-        arm("an invitee opens their own upload, but not the owner's upload or a Telegram photo, even by exact path",
+        arm("a member opens their own upload, but not the owner's upload or a Telegram photo, even by exact path",
             mine == 200 and theirs == 404 and other == 404, (mine, theirs, other, gu.get("path")))
         import re as _re
         arm("upload names carry a random token, never a timestamp, in the uploader's own folder",
-            "/media/cv/cv-guest/" in gu["path"] and bool(_re.search(r"/cv-[0-9a-f]{24}-mine\.txt$", gu["path"]))
+            "/media/cv/cv-guest_7/" in gu["path"] and bool(_re.search(r"/cv-[0-9a-f]{24}-mine\.txt$", gu["path"]))
             and bool(_re.search(r"/tg-[0-9a-f]{24}-photo\.jpg$", str(tg))), (gu["path"], str(tg)))
-        # an AGENT replying in a guest's thread writes text the guest steered: the guest still gets only media
+        # an AGENT replying in a member's thread writes text the member steered: the member still gets only media
         import tempfile as _tf2
         outside = Path(_tf2.mkdtemp()) / "agent-made.txt"; outside.write_text("made by an agent\n")
         env_path = ESTATE / ".env"
         with psycopg_conn(url) as c:
-            aid = c.execute("INSERT INTO messages (from_agent, to_agent, thread, body) VALUES ('painter', 'cv-guest', %s, %s) RETURNING id",
+            aid = c.execute("INSERT INTO messages (from_agent, to_agent, thread, body) VALUES ('painter', 'cv-guest.7', %s, %s) RETURNING id",
                             (gt, f"here [[file:{env_path}]] [[file:{outside}]] [[file:{tg}]]")).fetchone()[0]
             c.commit()
         g = who("guest")
-        arm("an agent's embed in a guest's thread: .env and a non-media file are refused, media is served",
+        arm("an agent's embed in a member's thread: .env and a non-media file are refused, media is served",
             [g.get(f"{A}/file?msg={aid}&n={k}").status_code for k in (0, 1, 2)] == [404, 404, 200])
         o = who("owner")
         with psycopg_conn(url) as c:
@@ -188,15 +199,14 @@ def api(url):
         arm("the owner's own message reaches all of media (theirs), still never the host",
             [o.get(f"{A}/file?msg={om}&n={k}").status_code for k in (0, 1, 2)] == [200, 200, 404])
         tg.unlink(missing_ok=True)
-        arm("an invitee cannot open a thread with an ungranted agent",
+        arm("a member cannot open a thread with an agent outside their reach",
             who("guest").post(f"{A}/threads", json={"agent": "seed"}, headers=H).status_code == 403)
         t = who("guest").post(f"{A}/threads", json={"agent": "painter"}, headers=H).json()["thread"]
         m = who("guest").post(f"{A}/threads/{t}/messages", json={"body": "@seed please do X"}, headers=H).json()
-        arm("an @mention cannot route past a grant",
-            m.get("to") == "painter" and m.get("from") == "cv-guest" and m.get("from_org") == "canvas", m)
-        arm("the owner's admin views are owner-only", who("guest").get(f"{A}/users").status_code == 403)
+        arm("an @mention cannot route past a member's reach",
+            m.get("to") == "painter" and m.get("from") == "cv-guest.7" and m.get("from_org") == "canvas", m)
         c = who("owner").post(f"{A}/canvases", json={"title": "Pulse", "brief": "b"}, headers=H).json()
-        arm("the owner's canvas is invisible to an invitee", who("guest").get(f"{A}/canvases/{c['id']}").status_code == 404)
+        arm("the owner's canvas is invisible to a member it isn't shared with", who("guest").get(f"{A}/canvases/{c['id']}").status_code == 404)
         who("owner").post(f"{A}/canvases/{c['id']}/ask", json={"text": "@seed escalate", "frame": True}, headers=H)
         who("owner").post(f"{A}/canvases/{c['id']}/data", json={"key": "x", "value": 5}, headers=H)
         # ── WHO SEES A CANVAS is one rule (cv.sees): the owner, its maker, the MEMBERS it is shared with; never an
@@ -205,14 +215,18 @@ def api(url):
             s_id = cv_lib.create(pc, "Shared", "painter", "owner")
             cv_lib.publish(pc, s_id, "<p>clean</p>", "painter", "first")
             pc.commit()
-        arm("a canvas is never shared with an invitee (400), even by the owner", who("owner").post(
-            f"{A}/canvases/{s_id}/share", json={"users": ["guest"]}, headers=H).status_code == 400)
-        arm("...so the invitee doesn't see it: not listed, page and data 404",
+        arm("a canvas is shared with members only: a name that is no member is refused (400), even by the owner",
+            who("owner").post(f"{A}/canvases/{s_id}/share", json={"users": ["guest"]}, headers=H).status_code == 400)
+        arm("...so a member it isn't shared with doesn't see it: not listed, page and data 404",
             all(c["id"] != s_id for c in who("guest").get(f"{A}/canvases").json())
             and who("guest").get(f"{A}/canvases/{s_id}/render").status_code == 404
             and who("guest").get(f"{A}/canvases/{s_id}/data").status_code == 404)
-        who("owner").post(f"{A}/users/guest/revoke", headers=H)
-        arm("a revoked invitee's live session dies", who("guest").get(f"{A}/me").status_code == 401)
+        with psycopg_conn(url) as pc:                  # a session an old invite left behind is no one
+            pc.execute("INSERT INTO canvas_sessions (token_hash, user_name) VALUES (%s, 'oldguest')", (b._h("old"),))
+            pc.commit()
+        cl.cookies.clear(); cl.headers.pop("x-test-member", None)
+        cl.cookies.set(b.COOKIE, "old", path="/canvas")
+        arm("an old invitee's session is no one (401)", cl.get(f"{A}/me").status_code == 401)
         return c["id"], t
 
 
@@ -234,13 +248,13 @@ async def rows(url, cid, guest_thread):
         ids = [await conn.fetchval(
             "INSERT INTO messages (from_agent, to_agent, thread, body) VALUES ($1,$2,$3,'r') RETURNING id", *x)
             for x in (("painter", "owner", f"cv:canvas-{cid}"), ("seed", "owner", "t-elsewhere"),
-                      ("painter", "cv-guest", None), ("seed", "owner", "wa:123@s.whatsapp.net"))]
+                      ("painter", "cv-guest.7", None), ("seed", "owner", "wa:123@s.whatsapp.net"))]
         await b.claim(conn)
         await asyncio.sleep(0.3)
         st = {r["id"]: r for r in await conn.fetch("SELECT id, status, delivery FROM messages WHERE id = ANY($1)", ids)}
         arm("an owner reply on a cv: thread is claimed + receipted",
             st[ids[0]]["status"] == "delivered" and '"canvas:owner"' in st[ids[0]]["delivery"])
-        arm("an un-threaded reply to an invitee lands in canvas", st[ids[2]]["status"] == "delivered")
+        arm("an un-threaded reply to a member lands in canvas", st[ids[2]]["status"] == "delivered")
         arm("an owner row on another surface's thread is NOT taken (t-, wa:)",
             st[ids[1]]["status"] == "pending" and st[ids[3]]["status"] == "pending")
     finally:
@@ -269,11 +283,6 @@ def coverage(url):
         arm("agent activity is read from steps", any(a["last_seen"] for a in cl.get(f"{A}/agents").json()))
         arm("list canvases", isinstance(cl.get(f"{A}/canvases").json(), list))
         arm("list threads", isinstance(cl.get(f"{A}/threads").json(), list))
-        arm("users list", isinstance(cl.get(f"{A}/users").json(), list))
-        cl.post(f"{A}/users", json={"name": "cov", "agents": []}, headers=H)
-        arm("grants on a real and a missing user", cl.post(f"{A}/users/cov/grants", json={"name": "cov", "agents": ["painter"]}, headers=H).status_code == 200
-            and cl.post(f"{A}/users/ghost/grants", json={"name": "ghost", "agents": []}, headers=H).status_code == 200)
-        cl.post(f"{A}/users/ghost/revoke", headers=H)                                # revoke: 0 rows
         empty = cl.post(f"{A}/canvases", json={"title": "Empty"}, headers=H).json()
         full = cl.post(f"{A}/canvases", json={"title": "Full"}, headers=H).json()
         arm("a missing canvas is 404 everywhere",
@@ -406,9 +415,9 @@ def coverage(url):
     async def prov():
         p = CanvasProvider()
         chats = await p.list_chats()
-        hit, miss = await p.search_contacts("cov"), await p.search_contacts("zzz")
-        r1, r2 = await p.resolve("canvas:cv-cov"), await p.resolve("canvas:cv-ghost")
-        arm("provider: chats listed, contacts found/not, resolve found/not",
+        hit, miss = await p.search_contacts("owner"), await p.search_contacts("zzz")
+        r1, r2 = await p.resolve("canvas:owner"), await p.resolve("canvas:cv-ghost")
+        arm("provider: chats listed; its contact is the owner (no invitees)",
             len(chats) > 0 and len(hit) == 1 and miss == [] and r1 is not None and r2 is None)
     _a.run(prov())
 
