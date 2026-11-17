@@ -1139,6 +1139,7 @@ run "chat workspace: who a message goes to by default" "$PY" tests/test_ws_recip
 run "chat workspace: switching a chat's agents" "$PY" tests/test_ws_switch.py
 run "chat: inline files" "$PY" tests/test_chat_inline.py
 run "chat: reply by reference" "$PY" tests/test_chat_reply.py
+run "canvas: the way home" "$PY" tests/test_canvas_nav.py
 run "chat: a signed answer's provenance footer" "$PY" tests/test_chat_provenance.py
 run "chat: tables and figures written out" "$PY" tests/test_chat_tables.py
 run "chat: code in an answer, a human's markdown, long pastes" "$PY" tests/test_chat_code.py
