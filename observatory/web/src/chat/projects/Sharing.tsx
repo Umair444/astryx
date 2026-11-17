@@ -1,16 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
 import { hereOrg, useMe } from '../../me'
 import { I } from '../icons'
-import { loadPeople, type Person, type Project } from '../model'
+import { loadPeople, type Person } from '../model'
 
-/* WHO CAN SEE IT (owner 11-17: "the person who create project should be able to decide which member can see it"):
-   the project's maker picks the members it is shared with; the org's owner always sees every project. Anyone else
-   who can see it only reads this card. The server decides (workspace.project_visible); this is its control. Members
-   are shared with by account (uid), named by their sign-in email, so a renamed member keeps what was shared. */
+/* WHO CAN SEE IT (owner 11-17: "the person who create project should be able to decide which member can see it";
+   12979: "multiple members should be able to work on canvas"): a project's or a canvas's maker picks the members it is
+   shared with; the org's owner always sees every one. Anyone else who can see it only reads this card. The server
+   decides (workspace.project_visible, canvas.sees); this is its control. Members are shared with by account (uid),
+   named by their sign-in email, so a renamed member keeps what was shared. */
 
-export default function Sharing({ p, onChange }: { p: Project; onChange: (shared: string[]) => void }) {
-  const mine = !!p.yours
-  const shared = p.shared ?? []
+export default function Sharing({ shared = [], yours, byMember, onChange }: {
+  shared?: string[]
+  yours?: boolean                  // the viewer made it, or is the owner: theirs to share (server-set)
+  byMember?: boolean               // a member made it (else the owner did)
+  onChange: (shared: string[]) => void
+}) {
+  const mine = !!yours
   const org = hereOrg(useMe())?.org ?? ''
   const [people, setPeople] = useState<Person[] | null>(null)
   const [adding, setAdding] = useState(false)
@@ -45,7 +50,7 @@ export default function Sharing({ p, onChange }: { p: Project; onChange: (shared
           </div>
         )}
       </div>
-      <p className="text-[12px] text-ink-mute mb-2">{p.by ? 'Its maker, the owner,' : 'The owner'} and the people below.</p>
+      <p className="text-[12px] text-ink-mute mb-2">{byMember ? 'Its maker, the owner,' : 'The owner'} and the people below.</p>
       {shared.length === 0
         ? <p className="text-[12.5px] text-ink-dim">{mine ? 'Not shared with anyone yet.' : 'Shared with no one else.'}</p>
         : <ul className="flex flex-wrap gap-1.5">{shared.map((h) => (

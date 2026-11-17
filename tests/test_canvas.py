@@ -111,6 +111,8 @@ def api(url):
     import bridges.canvas as b
     from astryx.core import canvas as cv_lib
     print("api (bridges/canvas.py, in-process)")
+    real_exists = b.agent_exists                   # the arms' painter: an estate may have retired its charter
+    b.agent_exists = lambda n: n == "painter" or real_exists(n)
     H = {"x-astryx": "1"}
     A = "/canvas/api"
     # ONE client (one event loop owns the pool); identities are cookie jars swapped in and out

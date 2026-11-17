@@ -549,14 +549,16 @@ FEATURE_PATHS = {"dictate": {("POST", "/api/chat/dictate/session"), ("POST", "/a
                  "call": {("GET", "/api/pilot/voice/status"), ("POST", "/api/pilot/voice/session"),
                           ("POST", "/api/pilot/voice/usage")}}
 MEMBER_GET = ("/api/ws/threads", "/api/ws/thread-titles", "/api/ws/search", "/api/ws/handoffs", "/api/ws/agents",
+              "/api/ws/canvases",              # the canvases canvas's own rule gives them (ws_canvas.keys)
               "/api/ws/briefing", "/api/ws/media", "/api/ws/artifacts", "/api/chat/", "/api/presence",
               "/api/steps", "/api/pulse", "/api/me/channels")
 _MEMBER_AGENT_GET = re.compile(r"^/api/agents/[^/]+/(profile|charter)$")
+_MEMBER_POST = re.compile(r"^/api/ws/canvases/\d+/share$")   # a canvas's maker shares it (ws_canvas: maker or owner)
 
 
 def member_may(m: str, p: str) -> bool:
-    return (m, p) in MEMBER or (m == "GET" and (p.startswith(MEMBER_GET) or bool(_MEMBER_AGENT_GET.match(p)))
-                                 and p not in MEMBER_FILE)
+    return ((m, p) in MEMBER or (m == "POST" and bool(_MEMBER_POST.match(p)))
+            or (m == "GET" and (p.startswith(MEMBER_GET) or bool(_MEMBER_AGENT_GET.match(p))) and p not in MEMBER_FILE))
 
 
 # the routes that hand out a FILE's bytes (or its rendering): a member reaches them only for an attached file

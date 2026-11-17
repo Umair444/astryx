@@ -4,7 +4,8 @@ import AgentFace from '../../components/AgentFace'
 import { I } from '../icons'
 import type { Layout } from '../artifacts/Panel'
 import { ago } from '../artifacts/versions/VersionMenu'
-import { canvasHref, loadCanvasMeta, type CanvasMeta, type CanvasVersion } from './api'
+import Sharing from '../projects/Sharing'
+import { canvasHref, loadCanvasMeta, refreshCanvases, shareCanvas, type CanvasMeta, type CanvasVersion } from './api'
 import CanvasFrame, { type FrameNote } from './CanvasFrame'
 import './canvas.css'
 
@@ -12,8 +13,8 @@ import './canvas.css'
    place — the same seam, the same full screen (⌘⇧F), Esc to leave it. Its versions are canvas's own (the agent's
    notes); an older one shows read-only and "Latest" goes back to following the live page. New versions cross-fade in
    while you watch (the meta is re-read every 20s, the live values every 15s, only while the tab is visible).
-   VIEW ONLY: asking an agent from the page, editing an element, rolling back, sharing all live in canvas; "Open in
-   canvas" takes you there, at this canvas. */
+   Who sees it: its maker shares it with members here (the projects' Sharing card; owner 11-17, 12979). Asking an agent
+   from the page, editing an element and rolling back live in canvas; "Open in canvas" takes you there. */
 
 const W_KEY = 'ws.canvas.w'
 const MIN = 480
@@ -129,6 +130,7 @@ export default function CanvasPanel({ id, layout, onClose, onThread }: {
             {meta && <span className="shrink-0 flex items-center gap-1 text-[11.5px] text-ink-mute max-sm:hidden"><AgentFace name={meta.agent} size={14} />{displayName(meta.agent)}</span>}
           </div>
           {versions.length > 0 && <Versions versions={versions} current={shown || want || latest} latest={latest} onPick={(v) => setPinned(v === latest ? null : v)} />}
+          {meta && <Share meta={meta} onShared={(shared) => { setMeta({ ...meta, shared }); refreshCanvases().catch(() => {}) }} />}
           <a className="ws-tool max-sm:!px-2" href={canvasHref(id)} target="_blank" rel="noopener" title="Open in canvas: ask for changes, edit an element, roll back, share">
             <span className="max-sm:hidden text-[12.5px]">Open in canvas</span>{I.arrow('w-3.5 h-3.5 -rotate-45')}
           </a>
@@ -154,10 +156,40 @@ export default function CanvasPanel({ id, layout, onClose, onThread }: {
           <span className="ws-cvlive" data-on={!old && visible} aria-hidden />
           <span className="truncate">{old ? 'A past version, as it was painted' : 'Live: new versions and values arrive on their own'}</span>
           {onThread && meta && <button className="ml-auto shrink-0 hover:text-ink" onClick={() => onThread(meta.thread)}>Its conversation</button>}
-          <span className={`${onThread ? '' : 'ml-auto '}shrink-0 max-sm:hidden`}>View only here</span>
+          <span className={`${onThread ? '' : 'ml-auto '}shrink-0 max-sm:hidden`}>{meta?.shared.length ? `Shared with ${meta.shared.length}` : 'View only here'}</span>
         </footer>
       </section>
     </>
+  )
+}
+
+/* who sees this canvas: the projects' Sharing card in a menu; its maker (or the owner) changes it */
+function Share({ meta, onShared }: { meta: CanvasMeta; onShared: (shared: string[]) => void }) {
+  const [open, setOpen] = useState(false)
+  const [err, setErr] = useState('')
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const off = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
+    addEventListener('mousedown', off)
+    return () => removeEventListener('mousedown', off)
+  }, [open])
+  const save = (shared: string[]) => {
+    setErr('')
+    shareCanvas(meta.id, shared).then((r) => onShared(r.shared)).catch((e) => setErr(String((e as Error).message ?? e)))
+  }
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button className="ws-tool max-sm:!px-2" onClick={() => setOpen((o) => !o)} aria-expanded={open} title="Who can see and work on this canvas">
+        {I.people('w-3.5 h-3.5')}<span className="max-sm:hidden text-[12.5px]">Share</span>
+      </button>
+      {open && (
+        <div className="ws-menu absolute right-0 top-[calc(100%+6px)] z-30 w-[300px] max-w-[calc(100vw-24px)] !p-0">
+          <Sharing shared={meta.shared} yours={meta.yours} byMember={meta.user !== 'owner'} onChange={save} />
+          {err && <p className="px-4 pb-3 -mt-2 text-[12px] text-bad">{err}</p>}
+        </div>
+      )}
+    </div>
   )
 }
 

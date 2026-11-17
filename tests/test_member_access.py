@@ -17,6 +17,8 @@ OpenAI call is made: voice_mint's key and mint are stubbed, so a session that pa
      she reads her own (an agents' handoff on it included) and a project chat shared with her; the owner reads all;
      a step of a turn opened there (linked, or still running) is not in her steps, an agent's profile, her briefing's
      `did` or /api/agents' last line (medic 12975)
+  C  canvases (owner 11-17, 12979): a member lists, renders and reads the conversation of a canvas shared with her
+     account or made by her, not another; she shares her own with members (not a non-member), not one she didn't make
   R2 a member's call is charged 10 min at its mint, which a 1 s report can't lower; past his limit the next is refused
   F2 the Call: a member's default is 403; given to bob in Admin with 25 minutes, status 200 with limit 25; a session as
      medic (outside his agents) is 403; spent minutes say so
@@ -244,6 +246,36 @@ def main(tmp: Path, url: str):
     last = lambda h: next(a_["last_content"] for a_ in cl.get("/api/agents", headers=h()).json() if a_["agent"] == "db")  # noqa: E731
     arm("P8 /api/agents: db's last line for alice is hers to read; the owner's is the newest",
         last(ALICE) == "db says hers" and "privately" in (last(lambda: O) or ""), (last(ALICE), last(lambda: O)))
+
+    print("C canvases by members (owner 11-17, 12979)")
+    with psycopg.connect(url, autocommit=True) as c:
+        ca, cb, cc = (c.execute("INSERT INTO canvases (title, agent, user_name, tier, version, shared_with) VALUES "
+                                "(%s,'db',%s,'org',1,%s) RETURNING id", (t, u, sw)).fetchone()[0]
+                      for t, u, sw in (("shared with alice", "owner", ["7@fxcog"]), ("the owner's alone", "owner", []),
+                                       ("alice's own", "alice.7", [])))
+        for cid in (ca, cb, cc):
+            c.execute("INSERT INTO canvas_versions (canvas_id, version, html, author) VALUES (%s,1,'<p>x</p>','db')", (cid,))
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+                  "('owner','db',%s,'chat','on the shared canvas'), ('owner','db',%s,'chat','on the owner''s canvas')",
+                  (f"cv:canvas-{ca}", f"cv:canvas-{cb}"))
+    ids = lambda h: sorted(x["id"] for x in cl.get("/api/ws/canvases", headers=h()).json())  # noqa: E731
+    arm("C1 alice lists the canvas shared with her and her own, not the owner's alone", ids(ALICE) == sorted([ca, cc]), ids(ALICE))
+    arm("C1 the owner lists all three", {ca, cb, cc} <= set(ids(lambda: O)), ids(lambda: O))
+    rc = lambda cid, h: cl.get(f"/api/ws/canvases/{cid}/render", headers=h()).status_code  # noqa: E731
+    arm("C1 it renders for her; the owner's alone is 404", rc(ca, ALICE) == 200 and rc(cb, ALICE) == 404, (rc(ca, ALICE), rc(cb, ALICE)))
+    th = lambda cid: [m["body"] for m in cl.get("/api/messages", params={"thread": f"cv:canvas-{cid}"}, headers=ALICE()).json()]  # noqa: E731
+    arm("C2 she reads the shared canvas's conversation, not the owner's canvas's", th(ca) == ["on the shared canvas"] and th(cb) == [],
+        (th(ca), th(cb)))
+    sh = lambda cid, shared, h: cl.post(f"/api/ws/canvases/{cid}/share", json={"shared": shared}, headers=h())  # noqa: E731
+    r = sh(ca, ["7@fxcog", "8@fxcog"], ALICE)
+    arm("C3 she can't share a canvas she didn't make (403)", r.status_code == 403, (r.status_code, r.text[:200]))
+    r = sh(cc, ["8@fxcog"], ALICE)
+    arm("C3 she shares her own with bob, by account", r.status_code == 200 and r.json()["shared"] == ["8@fxcog"], (r.status_code, r.text[:200]))
+    arm("C3 ...and bob lists it", cc in ids(BOB), ids(BOB))
+    r = sh(cc, ["8@fxcog", "99@fxcog"], ALICE)
+    arm("C3 never with a non-member (400)", r.status_code == 400, (r.status_code, r.text[:200]))
+    r = sh(cb, ["7@fxcog"], lambda: O)
+    arm("C3 the owner shares any canvas", r.status_code == 200 and cb in ids(ALICE), (r.status_code, ids(ALICE)))
 
     print("F features")
     dic = lambda h: cl.post("/api/chat/dictate/session", headers=h()).status_code  # noqa: E731
