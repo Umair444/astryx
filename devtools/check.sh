@@ -1146,6 +1146,7 @@ run "chat: rich copy (formatted for a mail client, clean words for a plain edito
 run "mind: who may be woken (liveness, target, tiredness bends and never gates, waiting, rest, one per tick); numbers masked by shape" "$PY" tests/test_mind.py
 run "energy: tiredness is need over what is left, a forecast with no threshold; learned from the org's own history" "$PY" tests/test_energy.py
 run "chat: the live line follows any human's ask" "$PY" tests/test_chat_pending.py
+run "chat: a member opens an attached file read-only (the store's import is the owner's)" "$PY" tests/test_chat_open.py
 run "chat: the client never spells the viewer as the literal 'owner'" "$PY" tests/test_chat_viewer_lint.py
 run "chat: a chat's live progress carries only the work it asked for" "$PY" tests/test_progress_scope.py
 run "chat: the calculator's server (qalc in a jail)" "$PY" tests/test_chat_calc.py

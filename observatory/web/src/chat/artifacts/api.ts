@@ -68,6 +68,10 @@ export function nameOf(path: string, label?: string): string {
 /* ------------------------------------------------------------------------------------------------- open */
 let storeUp: boolean | null = null      // learned on the first open; a later success flips it back
 const missing = (e: unknown) => { const s = (e as { status?: number }).status ?? 0; return s === 404 || s === 405 || s >= 500 || s === 0 }
+// a member may READ an attached file (/api/chat/file admits what a message they can read attached) but not IMPORT it
+// into the store's history, which is the owner's: their open is the plain file, read-only (insurance 12938: a member's
+// .xlsx answered 403 here while the PNG beside it, drawn inline through /api/chat/file, showed)
+const refused = (e: unknown) => (e as { status?: number }).status === 403
 
 /* `art:<id>` opens a STORED artifact by id (the library, a project's files): nothing is re-imported, so a file whose
    source is gone still opens with its whole history */
@@ -78,6 +82,7 @@ export async function openArtifact(path: string, thread: string, author: string,
     return { ...a, kind: a.kind === 'binary' ? kindOfName(a.name) : a.kind, source: path, store: true }
   }
   const name = nameOf(path, label)
+  const plain = (): Opened => ({ id: `file:${path}`, thread, name, kind: kindOfName(name), path_in_store: '', size: 0, head: '', versions: [], source: path, store: false })
   if (storeUp !== false) {
     try {
       const a = await apiSend<Artifact>('POST', '/ws/artifacts/open', { path, thread, author, label: name, ...(msg ? { msg_id: msg.id, msg_ts: msg.ts } : {}) })
@@ -89,12 +94,13 @@ export async function openArtifact(path: string, thread: string, author: string,
       }
       return { ...a, kind: a.kind === 'binary' ? kindOfName(a.name) : a.kind, source: path, store: true }
     } catch (e) {
+      if (refused(e)) return plain()                  // not theirs to import: this one open is read-only; the store is up
       if (!missing(e)) throw e
       storeUp = false
       setTimeout(() => { storeUp = null }, 60_000)     // the backend is being built beside this: look again soon
     }
   }
-  return { id: `file:${path}`, thread, name, kind: kindOfName(name), path_in_store: '', size: 0, head: '', versions: [], source: path, store: false }
+  return plain()
 }
 
 /* ------------------------------------------------------------------------------------------------- content */
