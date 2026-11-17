@@ -61,6 +61,9 @@ CHANNELS: tuple[Channel, ...] = (
     Channel("canvas", "Canvas", person="cv", thread="cv", group="", connect=False),
     # SMS through the org's gateway (bridges/sms.py): text out to one number (92 + ten digits), nothing comes back in
     Channel("sms", "SMS", person="sms", thread="sms", group="", dm=r"92\d{10}", connect=False, numbers=True),
+    # email through the org's mail server (bridges/email.py): one address is one chat (em:<address>, lowercase), out only
+    Channel("email", "Email", person="em", thread="em", group="", dm=r"[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+",
+            connect=False),
     # a deployed third-party frontend (bridges/frontends.py): one user's conversation with one pinned agent
     Channel("frontends", "Frontends", person="fe", thread="fe", group="", dm=r".+", connect=False, org="frontend",
             owner_rows=False),

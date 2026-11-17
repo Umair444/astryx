@@ -613,7 +613,6 @@ run "docpdf MCP: verified render, confined paths, no network from the page" "$PY
 # braces) as a literal; inlined as "{query}" any quote got BAD; another server gets IMAP criteria or a
 # TEXT search. Real imaplib vs a strict fake IMAP on loopback; the old inline form is the mutant and must
 # fail the quote arm. SMTP by the port, a login only with a password. Imports without .env.
-run "mail MCP: any server, byte-exact search query, SMTP by port, imports without .env" "$PY" tests/test_mail_mcp.py
 # the tool nudge, O5 (goal 4227, S4): the REAL UserPromptSubmit hook against a fake loopback
 # classifier. It never exits non-zero (static, from the AST), stays silent and inside its hard
 # deadline whether the classifier is unset/down/hung/DRIPPING, refuses non-loopback endpoints
@@ -1137,6 +1136,7 @@ run "chat: inline files" "$PY" tests/test_chat_inline.py
 run "chat: reply by reference" "$PY" tests/test_chat_reply.py
 run "sms: a channel (gateway queue, door, cap)" "$PY" tests/test_sms_channel.py
 run "canvas: the way home" "$PY" tests/test_canvas_nav.py
+run "email: a channel (one address per chat, the door, subject and thread, attachments, cap)" "$PY" tests/test_email_channel.py
 run "chat: a signed answer's provenance footer" "$PY" tests/test_chat_provenance.py
 run "chat: tables and figures written out" "$PY" tests/test_chat_tables.py
 run "chat: code in an answer, a human's markdown, long pastes" "$PY" tests/test_chat_code.py

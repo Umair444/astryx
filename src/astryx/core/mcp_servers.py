@@ -4,7 +4,7 @@ not inheritting it … fix it").
 
 mcp/registry.json names every MCP server an agent can hold, and each entry says who gets it:
   who: "every"     every resident (the wire, the registry door, hands, influence, channels)
-  who: "grant"     a resident whose charter's `Grants:` line names it (or one of its `grants` aliases: mail ← gmail)
+  who: "grant"     a resident whose charter's `Grants:` line names it (or one of its `grants` aliases)
   who: "opt-in"    every resident, once the org's .env sets `optin` to 1 (phone ← ANDROID_ENABLED)
 Its command, args and env may name the spawn's own values: $ROOT $AGENT $ORGH $NODE $NPX $HOME_D $UID. A relative path
 is the checkout's. spawn.sh writes each agent's .mcp.json from THIS (render), the observatory's Tools tab lists THIS
