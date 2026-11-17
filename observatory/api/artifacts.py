@@ -665,16 +665,25 @@ def _pool_of(request: Request):
     return _get_pool() if _get_pool else request.app.state.pool
 
 
+def _project_ok(request: Request, thread: str) -> bool:
+    """A project's knowledge (thread project:<id>) is for those who see the project (workspace.project_visible)."""
+    from observatory.api import workspace as _ws
+    if not thread.startswith("project:"):
+        return True
+    me = _ws._me(request) or "owner"
+    return me == "owner" or any(p.get("id") == thread[8:] for p in _ws._projects(me))
+
+
 async def _thread_ok(request: Request, thread: str) -> bool:
-    """A member given part of the agents/ tree reads only the threads whose every message is theirs (scope.py)."""
+    """A member given part of the agents/ tree reads only the threads whose every message is theirs (scope.py), and a
+    project's knowledge only when they see the project."""
     from observatory.api import scope
+    if not _project_ok(request, thread):
+        return False
     return scope.of(request) is None or thread in await scope.threads_ok(_pool_of(request), request, [thread])
 
 
 async def _aid_ok(request: Request, aid: str) -> bool:
-    from observatory.api import scope
-    if scope.of(request) is None:
-        return True
     try:
         thread = (await asyncio.to_thread(store().entry, aid))["thread"]
     except StoreError as e:                         # no such artifact: the handler's own 404 says so
@@ -704,6 +713,7 @@ async def art_list(request: Request, thread: str | None = None):
     if scope.of(request) is not None:
         ok = await scope.threads_ok(_pool_of(request), request, {a["thread"] for a in arts})
         arts = [a for a in arts if a["thread"] in ok]
+    arts = [a for a in arts if _project_ok(request, a["thread"])]
     titles = await thread_titles(request, {a["thread"] for a in arts})
     return [{**a, "title": titles.get(a["thread"]) or a["thread"]} for a in arts]
 
@@ -713,7 +723,7 @@ async def thread_titles(request: Request, threads: set[str]) -> dict[str, str]:
     knowledge thread named by its project. Best effort: a thread the database can't name keeps its id."""
     from observatory.api import workspace as _ws
     out: dict[str, str] = {}
-    projects = {p.get("id"): p.get("name") for p in _ws._projects() if isinstance(p, dict)}
+    projects = {p.get("id"): p.get("name") for p in _ws._projects(_ws._me(request) or "owner")}
     for t in threads:
         if t.startswith("project:") and projects.get(t[8:]):
             out[t] = projects[t[8:]]

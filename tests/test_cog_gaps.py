@@ -14,7 +14,9 @@ written. Dummy keys only; nothing leaves the host, no live row is read or writte
      counts every human's; the owner's is his, as before; anonymous is 403. /api/ws/agents' last word is the viewer's
   T1 THREAD TOOLS: a member renames/pins/switches a thread she is a party of (200), never another's (403); the owner
      any; dictation's routes pass the member gate
-  T2 PROJECTS: a member adds her own (server-stamped `by`, a client's `by` ignored), may not change or drop another's,
+  T2 PROJECTS: a member sees only the projects made by her or shared with her (owner 11-17); her write never drops one
+     she can't see; she shares her own with members' handles; she adds her own (server-stamped `by`, a client's `by`
+     ignored), may not change or drop another's,
      and files only her own conversations in hers; the owner's edit of hers keeps her `by`
   T3 OWNER-ONLY stays owner-only for a member: interrupt, goals, admin, federation, people, the db workbench
 Exit 0 pass · 1 fail · 77 fixture unavailable."""
@@ -153,7 +155,10 @@ def main(tmp: Path, url: str):
     w = cl.put("/api/chat/projects", json=[po], headers={**O, "if-match": ""})
     arm("T2 the owner writes a project", w.status_code == 200, (w.status_code, w.text[:200]))
     g = cl.get("/api/chat/projects", headers=A()).json()
-    arm("T2 a member reads the org's projects", [p["id"] for p in g.get("projects", [])] == ["own"], g)
+    arm("T2 a member doesn't see a project nobody shared with her (owner 11-17)", g.get("projects") == [], g)
+    w = cl.put("/api/chat/projects", json=[{**po, "shared": [ALICE]}], headers={**O, "if-match": w.json()["etag"]})
+    g = cl.get("/api/chat/projects", headers=A()).json()
+    arm("T2 ...once the owner shares it with her, she does", [p["id"] for p in g.get("projects", [])] == ["own"], g)
     stored = [{k: v for k, v in p.items() if k != "missing"} for p in g["projects"]]
     pa = {"id": "mine", "name": "Alice's", "agents": ["seed"], "threads": ["chat:20990101-a"], "by": "owner"}
     w = cl.put("/api/chat/projects", json=stored + [pa], headers={**A(), "if-match": g["etag"]})
@@ -180,6 +185,22 @@ def main(tmp: Path, url: str):
                headers={**O, "if-match": r.json().get("etag", "")})
     mine = next((p for p in r.json().get("projects", []) if p["id"] == "mine"), {}) if r.status_code == 200 else {}
     arm("T2 the owner's edit of hers keeps her `by`", mine.get("by") == ALICE and mine.get("emoji") == "🍌", (r.status_code, mine))
+    cur = [{k: v for k, v in p.items() if k != "missing"} for p in r.json().get("projects", [])]
+    r = cl.put("/api/chat/projects", json=[{**p, "shared": []} if p["id"] == "own" else p for p in cur],
+               headers={**O, "if-match": r.json().get("etag", "")})
+    g = cl.get("/api/chat/projects", headers=A()).json()
+    arm("T2 unshared, the owner's project leaves her list", [p["id"] for p in g.get("projects", [])] == ["mine"], g)
+    mine_only = [{k: v for k, v in p.items() if k != "missing"} for p in g["projects"]]
+    r = cl.put("/api/chat/projects", json=[{**mine_only[0], "name": "Alice again"}], headers={**A(), "if-match": g["etag"]})
+    stored = {p["id"] for p in chat._read_projects()}
+    arm("T2 her write of the list she sees keeps the project she can't see", r.status_code == 200 and stored == {"own", "mine"},
+        (r.status_code, r.text[:200], stored))
+    tag = r.json().get("etag", "")
+    r = cl.put("/api/chat/projects", json=[{**mine_only[0], "shared": ["not a handle"]}], headers={**A(), "if-match": tag})
+    arm("T2 a project is shared only with members' handles (400)", r.status_code == 400, (r.status_code, r.text[:200]))
+    r = cl.put("/api/chat/projects", json=[{**mine_only[0], "shared": ["cv-bob.9"]}], headers={**A(), "if-match": tag})
+    arm("T2 she shares her own with a member", r.status_code == 200 and r.json()["projects"][0]["shared"] == ["cv-bob.9"],
+        (r.status_code, r.text[:200]))
 
     # ── T3 owner-only stays owner-only ─────────────────────────────────────────────────────────────────────────
     print("T owner-only acts")
