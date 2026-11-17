@@ -88,7 +88,7 @@ OWNER_WIRE = "owner"   # the owner's wire handle on this surface; an invitee is 
 
 class Viewer:
     def __init__(self, name: str, agents: list[str] | None = None, role: str | None = None, label: str = "",
-                 account: str = ""):
+                 account: str = "", reach: set[str] | None = frozenset()):
         self.name = name                           # 'owner', an invitee name, or a cog member's <label>.<uid>
         self.owner = name == "owner"
         self.wire = OWNER_WIRE if self.owner else f"cv-{name}"
@@ -98,10 +98,13 @@ class Viewer:
         self.label = label or name                 # the human's own label (display_name on the wire)
         self.keys = [name] + ([account] if account else [])   # who they are to a canvas: cv.sees (a member: their account too)
         self.guest = not (self.owner or self.member)   # an invitee: only what the privacy gate cleared
+        self.reach = reach                         # a member's agents (members.agents_reached): None = every agent
+        self.account = account
 
     def may_reach(self, agent: str) -> bool:
-        # a cog member is an insider of the org (NO privacy within an org, owner 11-13): every agent, as on /chat
-        return self.owner or self.member or agent in self.agents
+        # a cog member reaches the agents the members table gives them (owner 11-17: "a member to use only the
+        # selected agents"), as on /chat: the ONE reach (members.agents_reached), never every agent (medic 12984)
+        return self.owner or (self.member and (self.reach is None or agent in self.reach)) or agent in self.agents
 
 
 def _h(s: str) -> str:
@@ -163,7 +166,13 @@ async def signed_viewer(request: Request) -> Viewer | None:
     if role == "owner":
         return Viewer("owner")
     h = members.member_handle(c["sub"], c["name"]) if role in members.MEMBER_ROLES else None
-    return Viewer(h[3:], role=role, label=c["name"] or h[3:], account=c["sub"]) if h else None
+    if not h:
+        return None
+    try:
+        reach = await members.agents_reached(pool, c["sub"], members.agent_nodes(ESTATE))
+    except (asyncpg.PostgresError, OSError):            # closed: a member never widens on a blip
+        reach = set()
+    return Viewer(h[3:], role=role, label=c["name"] or h[3:], account=c["sub"], reach=reach)
 
 
 def limited(key: str, n: int, window: float) -> bool:
@@ -472,7 +481,7 @@ def _alive() -> set[str]:
 async def me(request: Request):
     v = V(request)
     return {"name": v.name, "wire": v.wire, "owner": v.owner, "home": HOME_AGENT,
-            "painter": PAINTER, "agents": _roster() if v.owner or v.member else v.agents}
+            "painter": PAINTER, "agents": [a for a in _roster() if v.may_reach(a)]}
 
 
 @app.get("/api/agents")
@@ -803,7 +812,8 @@ def _cshape(c) -> dict:
 async def _shape_for(v, c) -> dict:
     """_cshape for a VIEWER: a non-owner sees the agent-written title/brief only once steward's
     pii_canvas sweep has cleared them (a3 #36233 C2). The owner sees everything."""
-    d = _cshape(c)
+    # yours: its maker or the owner (crew, share, roll back, archive); works: anyone not a guest, who directs its agent
+    d = {**_cshape(c), "yours": v.owner or c["user_name"] in v.keys, "works": not v.guest}
     if v.guest:
         mv = await sync(cv.meta_view, c["id"])
         if mv["meta"]:
@@ -838,7 +848,8 @@ async def new_canvas(body: NewCanvas, request: Request):
     if not v.owner and limited(f"newcv:{v.name}", 10, 86400):
         return deny(429, "canvas limit reached for today")
     try:
-        cid = await sync(cv.create, body.title, agent, v.name, body.brief or None, body.tier)
+        # its maker by ACCOUNT for a member (a rename keeps what they made, as projects), by name otherwise
+        cid = await sync(cv.create, body.title, agent, v.account or v.name, body.brief or None, body.tier)
     except cv.CanvasError as e:
         return deny(400, str(e))
     brief = body.brief.strip() or "(no brief — make something worth looking at from the title)"
@@ -953,6 +964,8 @@ async def canvas_ask(cid: int, body: Ask, request: Request):
     text = body.text.strip()[:4000]
     if not text:
         return deny(400, "empty")
+    if v.member and not v.may_reach(c["agent"]):    # its keeper is outside their agents: not theirs to direct
+        return deny(403, f"you don't have access to {c['agent']}")
     if body.frame:
         if limited(f"ask:{cid}", 12, 60):
             return deny(429, "this canvas is asking too often")

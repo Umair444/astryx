@@ -497,7 +497,7 @@ app.include_router(_arts.router)
 # iteration 13: the workspace's READ-ONLY window onto canvas (its canvases, versions, a version through canvas's own shell,
 # the page's live values); owner-only by omission from PUBLIC. The cog prefix is set beside CANVAS_PRE, below.
 from observatory.api import ws_canvas as _wscv  # noqa: E402
-_wscv.bind(lambda: pool)
+_wscv.bind(lambda: pool, owner=lambda r: is_owner(r))
 app.include_router(_wscv.router)
 
 # cog-rebuild Phase 4: FEDERATION (this org's identity, its peers and their traffic, introduce, trust/untrust/block);
@@ -579,22 +579,9 @@ async def member_file(request: Request) -> bool:
 
 
 
-_NODES: tuple[float, dict] = (0.0, {})
-
-
 def agent_nodes() -> dict[str, str]:
-    """Every agent's path in the agents/ tree ('lending/scout'), by name: what a membership's node scopes (schema.sql
-    member_role). Read from the tree, kept 15 s."""
-    global _NODES
-    if time.monotonic() - _NODES[0] < 15:
-        return _NODES[1]
-    from astryx.core import charter
-    root, out = ESTATE / "agents", {}
-    if root.is_dir():
-        for f in charter.charter_files(root):
-            out.setdefault(f.stem, "/".join([*charter.group_path(f, root), f.stem]))
-    _NODES = (time.monotonic(), out)
-    return out
+    """Every agent's path in the agents/ tree, by name (members.agent_nodes: the one map, the canvas bridge's too)."""
+    return _members.agent_nodes(ESTATE)
 
 
 async def _access(request: Request) -> tuple[set | None, dict]:
@@ -607,10 +594,7 @@ async def _access(request: Request) -> tuple[set | None, dict]:
     if not uid or role is None or pool is None:
         return set(), {}
     try:
-        nodes = agent_nodes()
-        got = await _members.reach(pool, uid, list(nodes.values()))
-        reach = None if got is None else {n for n, node in nodes.items() if node in got}
-        return reach, await _members.caps(pool, uid, role)
+        return await _members.agents_reached(pool, uid, agent_nodes()), await _members.caps(pool, uid, role)
     except (asyncpg.PostgresError, OSError) as e:
         print(f"observatory: a member's access reads as none: {type(e).__name__}", file=sys.stderr)
         return set(), {}

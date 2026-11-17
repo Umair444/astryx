@@ -154,6 +154,34 @@ async def sender_tags(pool, uid: str) -> list[str]:
     return [r["from_agent"] for r in rows]
 
 
+_NODES: dict[str, tuple[float, dict]] = {}
+
+
+def agent_nodes(estate) -> dict[str, str]:
+    """Every agent's path in the agents/ tree ('lending/scout'), by name: what a membership's node scopes (schema.sql
+    member_role). Read from <estate>/agents, kept 15 s. ONE map for every surface that asks a member's reach (the
+    observatory's gate, the canvas bridge)."""
+    import time
+    from pathlib import Path
+    from astryx.core import charter
+    root = Path(estate) / "agents"
+    at, got = _NODES.get(str(root), (0.0, {}))
+    if time.monotonic() - at < 15:
+        return got
+    out: dict[str, str] = {}
+    if root.is_dir():
+        for f in charter.charter_files(root):
+            out.setdefault(f.stem, "/".join([*charter.group_path(f, root), f.stem]))
+    _NODES[str(root)] = (time.monotonic(), out)
+    return out
+
+
+async def agents_reached(pool, uid: str, nodes: dict[str, str]) -> set[str] | None:
+    """The AGENTS (by name) a member reaches, from `nodes` (agent_nodes): None = every agent (a whole-org row)."""
+    got = await reach(pool, uid, list(nodes.values()))
+    return None if got is None else {n for n, node in nodes.items() if node in got}
+
+
 async def reach(pool, uid: str, nodes: list[str]) -> set[str] | None:
     """The tree paths among `nodes` the uid may reach, or None when it holds a whole-org row (it reaches everything,
     even an agent added after this read). The inheritance is member_reach's, in SQL."""

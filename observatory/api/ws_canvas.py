@@ -44,9 +44,14 @@ COLS = "id, title, agent, user_name, tier, version AS ver, brief, updated_at, sh
 LIST_SQL = f"SELECT {COLS} FROM canvases WHERE NOT archived AND {cv.sees_sql('$1', '$2')} ORDER BY updated_at DESC LIMIT 200"
 
 
-def bind(get_pool, canvas_prefix: str = "") -> None:
-    global _get_pool, CANVAS_PRE
+_owner = lambda request: False                     # noqa: E731 — the host's owner check (main.is_owner), bound
+
+
+def bind(get_pool, canvas_prefix: str = "", owner=None) -> None:
+    global _get_pool, CANVAS_PRE, _owner
     _get_pool, CANVAS_PRE = get_pool, canvas_prefix
+    if owner is not None:
+        _owner = owner
 
 
 def _pool(request: Request):
@@ -60,9 +65,8 @@ def thread_of(cid: int) -> str:
 
 def keys(request: Request) -> tuple[bool, list[str]]:
     """(the owner?, the viewer's keys to a canvas): a member's canvas name (their handle less cv-) and account. The owner
-    and the agents (no member scope) see every canvas."""
-    from observatory.api import scope
-    if scope.of(request) is None:
+    sees every canvas; anyone else, what canvas's rule gives their keys (none: nothing; medic 12984)."""
+    if _owner(request):
         return True, []
     me, uid = getattr(request.state, "me", None) or "", getattr(request.state, "uid", None) or ""
     return False, [k for k in (me[3:] if me.startswith("cv-") else "", uid) if k]

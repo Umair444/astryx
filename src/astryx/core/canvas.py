@@ -129,7 +129,7 @@ def share_set(wanted, current, members) -> tuple[list[str], set[str], set[str]]:
     """A share's new shared_with: (users, the invitees it ADDS, the accounts it adds that are no member). A member is
     shared with by account and must be in the members table; one no longer a member drops out (never locks a save,
     as projects). The caller refuses an add of a non-member, and an invitee add unless the owner's, past the gate."""
-    users = sorted({u.strip().lower() for u in wanted if u and u.strip()})
+    users = sorted({u.strip() if is_account(u.strip()) else u.strip().lower() for u in wanted if u and u.strip()})
     held, added = set(members), set(users) - set(current or ())
     accounts, guests = [u for u in users if is_account(u)], [u for u in users if not is_account(u)]
     return sorted([u for u in accounts if u in held] + guests), {u for u in added if not is_account(u)}, \
