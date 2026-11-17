@@ -7,11 +7,12 @@ cog sign-in stood up in a temp HOME (identity.make_keys), each signed identity m
 127.0.0.1. The workspace and chat modules are re-bound to a temp estate, so no projects/meta file of the checkout is
 written. Dummy keys only; nothing leaves the host, no live row is read or written.
 
-  S1 SEARCH follows the view: a member's /api/ws/search finds her own threads only by default, ?scope=everyone every
-     human's; the owner's default search is his own, as before
-  S2 THREAD TITLES name a member's chat by the list's own derivation (her first line), and the owner's alike
-  S3 THE BRIEFING is the viewer's: a member's counts and headlines are what the agents said TO HER; ?scope=everyone
-     counts every human's; the owner's is his, as before; anonymous is 403. /api/ws/agents' last word is the viewer's
+  S1 SEARCH follows the view: a member's /api/ws/search finds her own threads only, ?scope=everyone too (a normal
+     chat is its starter's: owner 11-17, msg 12970); the owner's default search is his own, as before
+  S2 THREAD TITLES name a member's chat by the list's own derivation (her first line); the owner's chat is not hers
+     to name
+  S3 THE BRIEFING is the viewer's: a member's counts and headlines are what the agents said TO HER, ?scope=everyone
+     too; the owner's is his, as before; anonymous is 403. /api/ws/agents' last word is the viewer's
   T1 THREAD TOOLS: a member renames/pins/switches a thread she is a party of (200), never another's (403); the owner
      any; dictation's routes pass the member gate
   T2 PROJECTS: a member sees only the projects made by her or shared with her (owner 11-17); her write never drops one
@@ -96,7 +97,7 @@ def main(tmp: Path, url: str):
     so = threads_of(cl.get("/api/ws/search", params={"q": "banana"}, headers=O))
     sa = cl.get("/api/ws/search", params={"q": "banana"}).status_code
     arm("S1 a member's search finds her own thread only", sm == ["chat:20990101-a"], sm)
-    arm("S1 ...?scope=everyone finds every human's", se == ["chat:20990101-a", "chat:20990101-o"], se)
+    arm("S1 ...?scope=everyone too: the owner's chat is not hers (12970)", se == ["chat:20990101-a"], se)
     arm("S1 the owner's default search is his own (as before)", so == ["chat:20990101-o"], so)
     arm("S1 anonymous is 403", sa == 403, sa)
 
@@ -104,7 +105,7 @@ def main(tmp: Path, url: str):
     print("S thread titles")
     tt = cl.get("/api/ws/thread-titles", params={"ids": "chat:20990101-a,chat:20990101-o"}, headers=A()).json().get("titles", {})
     arm("S2 a member's chat is named by her first line", tt.get("chat:20990101-a", "").lower().startswith("alice banana"), tt)
-    arm("S2 the owner's chat is named by his", tt.get("chat:20990101-o", "").lower().startswith("owner banana"), tt)
+    arm("S2 the owner's chat is not named for her (12970)", "chat:20990101-o" not in tt, tt)
 
     # ── S3 briefing + team cards ───────────────────────────────────────────────────────────────────────────────
     print("S the briefing is the viewer's")
@@ -120,7 +121,7 @@ def main(tmp: Path, url: str):
     arm("S3 a member's briefing: what seed said to HER", isinstance(bm, dict) and bm.get("to_owner") == 1
         and said(bm) and said(bm)[0].startswith("for alice"), bm)
     arm("S3 ...she is waiting on (its last line to her asks)", isinstance(bm, dict) and bool(bm.get("waiting")), bm)
-    arm("S3 ...?scope=everyone counts every human's", isinstance(be, dict) and be.get("to_owner") == 2, be)
+    arm("S3 ...?scope=everyone too: still only what was said to her (12970)", isinstance(be, dict) and be.get("to_owner") == 1, be)
     arm("S3 the owner's briefing is his (as before)", isinstance(bo, dict) and bo.get("to_owner") == 1
         and said(bo)[0].startswith("reply to owner"), bo)
     arm("S3 anonymous is 403", ba == 403, ba)

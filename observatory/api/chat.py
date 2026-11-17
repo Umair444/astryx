@@ -433,7 +433,8 @@ async def work(request: Request, thread: str = ""):
     tids = [r["id"] for r in turns]
     steps = await pool.fetch(
         "SELECT id, ts, agent, kind, left(content, 300) AS content, turn_id, meta->'turn_msgs' AS turn_msgs, meta->'sub' AS sub FROM steps "
-        "WHERE turn_id = ANY($1::bigint[]) AND kind <> ALL($2::text[]) ORDER BY id LIMIT 6000", tids, list(QUIET)) if tids else []
+        f"WHERE turn_id = ANY($1::bigint[]) AND kind <> ALL($2::text[]) AND {scope.steps_sql('$3')} ORDER BY id LIMIT 6000",
+        tids, list(QUIET), await scope.steps_open(pool, request)) if tids else []
     see = _sees(request)                           # a member reads every agent's work the owner does, short of the
     by_turn: dict[int, list] = {}                  # personal tier (main.sees, 11-15): a refused agent's turn keeps
     for st in steps:                               # its shape (when, how long), never its steps
@@ -450,8 +451,8 @@ async def work(request: Request, thread: str = ""):
         ended[a] = _iso(end)                   # its last turn's end: an ask older than this, still unanswered, was passed by
         rows = await pool.fetch(
             "SELECT id, ts, agent, kind, left(content, 300) AS content, turn_id, meta->'turn_msgs' AS turn_msgs, meta->'sub' AS sub FROM steps WHERE agent = $1 "
-            "AND turn_id IS NULL AND ($2::timestamptz IS NULL OR ts > $2) AND kind <> ALL($3::text[]) "
-            "ORDER BY id DESC LIMIT 30", a, end, list(QUIET))
+            f"AND turn_id IS NULL AND ($2::timestamptz IS NULL OR ts > $2) AND kind <> ALL($3::text[]) AND {scope.steps_sql('$4')} "
+            "ORDER BY id DESC LIMIT 30", a, end, list(QUIET), await scope.steps_open(pool, request))
         live[a] = [_step(r) for r in reversed(rows)]
         unlinked[a] = (await pool.fetchrow(
             "SELECT count(*) AS n FROM steps WHERE agent = $1 AND turn_id IS NULL AND ts <= coalesce($2, now()) "
