@@ -105,8 +105,8 @@ def body_of(html: str) -> tuple[str, list[str]]:
 
 
 # WHO SEES A CANVAS (owner 11-17, msg 12979: "multiple members should be able to work on canvas"): the owner, its maker
-# (user_name) and whom it is shared with (shared_with: a member by ACCOUNT, the members table's uid, as a project is
-# shared; an invitee by name). A person is known here by their KEYS: their canvas name, and a member's account too.
+# (user_name) and the members it is shared with (shared_with: by ACCOUNT, the members table's uid, as a project is
+# shared). A person is known here by their KEYS: their canvas name, and a member's account too.
 # The ONE rule, in SQL ({owner}: a bool param, {keys}: text[]) and on a row; the canvas bridge, the observatory's
 # canvas routes and its chat scope all ask it.
 def sees_sql(owner: str, keys: str) -> str:
@@ -118,21 +118,17 @@ def sees(row, keys, owner: bool = False) -> bool:
     return owner or row["user_name"] in k or bool(k & set(row["shared_with"] or ()))
 
 
-def is_account(name: str) -> bool:
-    """A members-table account (<n>@<cog>), as opposed to an invitee's name: a share by account is a member's."""
-    n, at, cog = name.partition("@")
-    return bool(at and cog and n.isdigit())
-
-
-def share_set(wanted, current, members) -> tuple[list[str], set[str], set[str]]:
-    """A share's new shared_with: (users, the invitees it ADDS, the accounts it adds that are no member). A member is
-    shared with by account and must be in the members table; one no longer a member drops out (never locks a save,
-    as projects). The caller refuses an add of a non-member, and an invitee add unless the owner's, past the gate."""
-    users = sorted({u.strip() if is_account(u.strip()) else u.strip().lower() for u in wanted if u and u.strip()})
-    held, added = set(members), set(users) - set(current or ())
-    accounts, guests = [u for u in users if is_account(u)], [u for u in users if not is_account(u)]
-    return sorted([u for u in accounts if u in held] + guests), {u for u in added if not is_account(u)}, \
-        {u for u in added if is_account(u)} - held
+def share_set(wanted, current, members, tier: str) -> tuple[list[str], str]:
+    """THE share rule, for every writer (the canvas bridge, the observatory): (the new shared_with, why it is refused
+    or ""). A canvas is shared with the org's MEMBERS, by account (the members table, as a project); an outsider never
+    (medic 13016: nothing checks what an agent paints next, so the one outsider wall stays shut). A personal-tier
+    canvas is shared with no one. A member removed from the org drops out (never locks a save, as projects)."""
+    want = {u.strip() for u in wanted if u and u.strip()}
+    held = set(members)
+    if want - set(current or ()) - held:
+        return [], "share with this org's members only"
+    users = sorted(want & held)
+    return (users, "a personal-tier canvas is never shared") if users and tier == "personal" else (users, "")
 
 
 def may_write(canvas_agent: str, who: str, crew=()) -> bool:

@@ -1040,20 +1040,14 @@ class Share(BaseModel):
 
 @app.post("/api/canvases/{cid}/share")
 async def canvas_share(cid: int, body: Share, request: Request):
-    """Its maker or the owner shares a canvas: with members by account (the members table, as a project), and, the
-    owner alone, with invitees by name (a guest watches what it is shared; only members direct its agent). An account
-    no longer a member drops out (a removed member never locks a save, as projects)."""
+    """Its maker or the owner shares a canvas with the org's members (cv.share_set, the one rule)."""
     v = V(request)
     c = await _canvas_for(v, cid)
     if not c or not (v.owner or c["user_name"] in v.keys):
         return deny(403 if c else 404, "only the canvas's maker or the owner shares it" if c else "no such canvas")
-    users, guests, strangers = cv.share_set(body.users, c["shared_with"], [r["uid"] for r in await members.rows(pool)])
-    if users and c["tier"] == "personal":
-        return deny(400, "a personal-tier canvas is never shared")
-    if strangers:
-        return deny(400, "share with this org's members only")
-    if guests and not v.owner:
-        return deny(403, "only the owner shares a canvas with an invitee")
+    users, why = cv.share_set(body.users, c["shared_with"], [r["uid"] for r in await members.rows(pool)], c["tier"])
+    if why:
+        return deny(400, why)
     await pool.execute("UPDATE canvases SET shared_with=$2 WHERE id=$1", cid, users)
     return {"ok": True, "shared_with": users}
 

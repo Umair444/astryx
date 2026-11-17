@@ -199,28 +199,18 @@ def api(url):
         arm("the owner's canvas is invisible to an invitee", who("guest").get(f"{A}/canvases/{c['id']}").status_code == 404)
         who("owner").post(f"{A}/canvases/{c['id']}/ask", json={"text": "@seed escalate", "frame": True}, headers=H)
         who("owner").post(f"{A}/canvases/{c['id']}/data", json={"key": "x", "value": 5}, headers=H)
-        p = who("owner").post(f"{A}/canvases", json={"title": "Mine", "tier": "personal"}, headers=H).json()
-        arm("a personal-tier canvas is never shared",
-            who("owner").post(f"{A}/canvases/{p['id']}/share", json={"users": ["guest"]}, headers=H).status_code == 400)
-        # ── WHO SEES A CANVAS is one rule (cv.sees, owner 11-17): an invitee it is shared with sees all of it ──
+        # ── WHO SEES A CANVAS is one rule (cv.sees): the owner, its maker, the MEMBERS it is shared with; never an
+        #    outsider (medic 13016: nothing checks what an agent paints next, so the outsider wall stays shut) ──
         with psycopg_conn(url) as pc:
             s_id = cv_lib.create(pc, "Shared", "painter", "owner")
             cv_lib.publish(pc, s_id, "<p>clean</p>", "painter", "first")
             pc.commit()
-        arm("the owner shares a canvas with an invitee", who("owner").post(
-            f"{A}/canvases/{s_id}/share", json={"users": ["guest"]}, headers=H).status_code == 200)
-        who("owner").post(f"{A}/canvases/{s_id}/data", json={"key": "k", "value": 1}, headers=H)
-        gs = {c["id"]: c for c in who("guest").get(f"{A}/canvases").json()}
-        arm("...the invitee lists it, under its own title", gs.get(s_id, {}).get("title") == "Shared", gs.get(s_id))
-        arm("...reads its page, its live values and its notes, as the owner does",
-            who("guest").get(f"{A}/canvases/{s_id}/render").json().get("html")
-            and who("guest").get(f"{A}/canvases/{s_id}/data").json() == {"k": 1}
-            and who("guest").get(f"{A}/canvases/{s_id}").json()["versions"][0]["note"] == "first")
-        arm("...but watches: an invitee doesn't direct its agent (403)", who("guest").post(
-            f"{A}/canvases/{s_id}/ask", json={"text": "make it blue", "frame": False}, headers=H).status_code == 403)
-        arm("narrowing the audience takes it away", who("owner").post(
-            f"{A}/canvases/{s_id}/share", json={"users": []}, headers=H).status_code == 200
-            and who("guest").get(f"{A}/canvases/{s_id}/render").status_code == 404)
+        arm("a canvas is never shared with an invitee (400), even by the owner", who("owner").post(
+            f"{A}/canvases/{s_id}/share", json={"users": ["guest"]}, headers=H).status_code == 400)
+        arm("...so the invitee doesn't see it: not listed, page and data 404",
+            all(c["id"] != s_id for c in who("guest").get(f"{A}/canvases").json())
+            and who("guest").get(f"{A}/canvases/{s_id}/render").status_code == 404
+            and who("guest").get(f"{A}/canvases/{s_id}/data").status_code == 404)
         who("owner").post(f"{A}/users/guest/revoke", headers=H)
         arm("a revoked invitee's live session dies", who("guest").get(f"{A}/me").status_code == 401)
         return c["id"], t
@@ -303,7 +293,9 @@ def coverage(url):
         arm("versions listed for painted + unpainted",
             len(cl.get(f"{A}/canvases/{full['id']}").json()["versions"]) == 1
             and cl.get(f"{A}/canvases/{empty['id']}").json()["versions"] == [])
-        arm("share an org canvas", cl.post(f"{A}/canvases/{full['id']}/share", json={"users": ["cov"]}, headers=H).json().get("shared_with") == ["cov"])
+        arm("unshare an org canvas (members only: an invitee is refused)",
+            cl.post(f"{A}/canvases/{full['id']}/share", json={"users": []}, headers=H).json().get("shared_with") == []
+            and cl.post(f"{A}/canvases/{full['id']}/share", json={"users": ["cov"]}, headers=H).status_code == 400)
         arm("archive", cl.post(f"{A}/canvases/{empty['id']}/archive", headers=H).status_code == 200
             and cl.post(f"{A}/canvases/999999/archive", headers=H).status_code == 404)
         t = cl.post(f"{A}/threads", json={"agent": "painter"}, headers=H).json()["thread"]

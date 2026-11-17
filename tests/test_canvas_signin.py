@@ -23,8 +23,8 @@ A fixture registry with a `cog` block (two orgs, so the HOME names the org), key
   C3 A MEMBER'S REACH holds on canvas (medic 12984): carl, given only group grp (db), on canvases shared with him:
      their agent list is db alone; he can't direct a keeper outside grp (seed: 403) nor summon one onto db's canvas
      (403), while he directs db's; alice, of the whole org, reaches both
-  C2 a member's own canvas: she shares it with bob, who lists it; never with a non-member (400), nor an invitee (the
-     owner's alone, 403); the owner shares with an invitee (one rule: whom it is shared with sees it)
+  C2 a member's own canvas: she shares it with bob, who lists it; never with a non-member or an invitee (400), the
+     owner's share included (medic 13016: the outsider wall); a personal-tier canvas with no one (400)
   M1 main.py: _pipe forwards the identity header only as the verified `vouched` extra (front + request.state.uid, not
      the ear), and relay.FORWARD still never names it
 Exit 0 · 1 · 77."""
@@ -125,6 +125,8 @@ with TestClient(b.root, base_url="http://testserver", client=("127.0.0.1", 50000
     out["c_stranger"] = share(B_, ["10@" + C, "99@" + C], AL)
     out["c_guest_by_member"] = share(B_, ["10@" + C, "guest"], AL)
     out["c_guest_by_owner"] = share(A_, ["7@" + C, "guest"], O_)
+    r = cl.post("/canvas/api/canvases", json={"title": "the owner's own", "agent": "seed", "tier": "personal"}, headers={**H, **O_})
+    out["c_personal"] = share(r.json().get("id", -1), ["7@" + C], O_) if r.status_code == 200 else r.status_code
     S_, D_, CA = int(sys.argv[9]), int(sys.argv[10]), tok("11@" + C, "carl")
     ask = lambda cid, h, agent=None: cl.post(f"/canvas/api/canvases/{cid}/ask", json={"text": "hi", "frame": False, **({"agent": agent} if agent else {})},
                                              headers={**H, **h}).status_code
@@ -235,8 +237,9 @@ def main():
     check("C2 she makes her own canvas", g["c_new"][0] == 200, g["c_new"])
     check("C2 ...shares it with bob, who lists it", g["c_bob"] == 200 and g["c_bob_list"], (g["c_bob"], g["c_bob_list"]))
     check("C2 ...never with a non-member (400)", g["c_stranger"] == 400, g["c_stranger"])
-    check("C2 ...nor an invitee: the owner's alone (403)", g["c_guest_by_member"] == 403, g["c_guest_by_member"])
-    check("C2 the owner shares with an invitee (200)", g["c_guest_by_owner"] == 200, g["c_guest_by_owner"])
+    check("C2 ...nor an invitee (400)", g["c_guest_by_member"] == 400, g["c_guest_by_member"])
+    check("C2 not even the owner shares with an invitee (400)", g["c_guest_by_owner"] == 400, g["c_guest_by_owner"])
+    check("C2 a personal-tier canvas is shared with no one (400)", g["c_personal"] == 400, g["c_personal"])
 
     print("C3 a member's reach")
     check("C3 carl's agents are grp's alone; alice's are all", sorted(g["r_agents"][0] or []) == ["db"]
