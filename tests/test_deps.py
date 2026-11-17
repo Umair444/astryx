@@ -144,6 +144,55 @@ def test_check_cli_rejects_an_importable_mcp_2():
                        env={**os.environ, "PYTHONPATH": str(site)}, capture_output=True, text=True, timeout=60)
     assert r.returncode == 1 and "mcp 2.3.0 does not satisfy <2" in r.stderr, (r.returncode, r.stderr)
 
+def _git_repo(files: dict) -> Path | None:
+    """_repo, made a git checkout (None when this host has no git: the arms below can't say anything)."""
+    import shutil
+    import subprocess
+    if not shutil.which("git"):
+        print("  SKIP  no git here: the gitignored-tree arms can't run")
+        return None
+    d = _repo(files)
+    subprocess.run(["git", "init", "-q", str(d)], check=True)
+    return d
+
+
+def test_gitignored_tree_is_not_scanned():
+    # An org keeps private python under an ignored dir, with its own virtualenv (medic 11-17: thousands of
+    # site-packages files read as the repo's imports; doctor ✗ while CI, which never sees them, was green).
+    d = _git_repo({".gitignore": "private/\n", "app.py": "import os\n",
+                   "private/.venv/pyvenv.cfg": "home = /usr/bin\n",
+                   "private/.venv/lib/site-packages/zz_vendored.py": "import zz_only_in_a_venv\n",
+                   "private/job.py": "import zz_org_local_driver\n"})
+    if d is None:
+        return
+    import subprocess
+    subprocess.run(["git", "-C", str(d), "add", "app.py", ".gitignore"], check=True)
+    assert deps.coverage_gaps(d, declared=set()) == []
+
+
+def test_gitignored_tree_does_not_blind_the_check():
+    # The same tree still catches an undeclared import in a TRACKED file, and an ignored file's stem doesn't pass a
+    # real dependency off as first-party. An untracked scratch file is judged once it's added (git add = CI's view).
+    d = _git_repo({".gitignore": "private/\n", "app.py": "import zz_real_dep\n", "scratch.py": "import zz_later\n",
+                   "private/.venv/lib/site-packages/zz_real_dep.py": ""})
+    if d is None:
+        return
+    import subprocess
+    subprocess.run(["git", "-C", str(d), "add", "app.py", ".gitignore"], check=True)
+    assert deps.coverage_gaps(d, declared=set()) == ["zz_real_dep"]
+    subprocess.run(["git", "-C", str(d), "add", "scratch.py"], check=True)
+    assert deps.coverage_gaps(d, declared=set()) == ["zz_later", "zz_real_dep"]
+
+
+def test_root_inside_an_ignored_dir_is_still_read():
+    # A root git tracks nothing in (a tmp dir made under an ignored path): ls-files answers rc 0 with an empty list.
+    # That must fall back to reading the dir, never pass on no files (seed 12737).
+    d = _git_repo({".gitignore": "scratch/\n", "scratch/sub/app.py": "import zz_in_ignored_root\n"})
+    if d is None:
+        return
+    assert deps.coverage_gaps(d / "scratch" / "sub", declared=set()) == ["zz_in_ignored_root"]
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
