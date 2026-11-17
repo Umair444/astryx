@@ -184,12 +184,27 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     const content = end.current?.parentElement
     if (!box || !content) return
     const pin = () => { if (following.current && !win.jumping()) box.scrollTop = box.scrollHeight }
-    const onScroll = () => { following.current = box.scrollHeight - box.scrollTop - box.clientHeight < 80 }
+    // only the READER unpins (a wheel or swipe up, a key that moves up): the app's own glide fires scroll events too,
+    // and must never unpin itself mid-way (medic 12897); any scroll that lands near the end re-pins
+    const up = () => { following.current = false }
+    const onWheel = (e: WheelEvent) => { if (e.deltaY < 0) up() }
+    const onKey = (e: KeyboardEvent) => { if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) up() }
+    const onGrab = (e: MouseEvent) => { if (e.target === box) up() }   // the scrollbar itself, taken by hand
+    const onScroll = () => { if (box.scrollHeight - box.scrollTop - box.clientHeight < 80) following.current = true }
     const ro = new ResizeObserver(pin)
     ro.observe(content)
+    box.addEventListener('wheel', onWheel, { passive: true })
+    box.addEventListener('touchmove', up, { passive: true })
+    box.addEventListener('keydown', onKey)
+    box.addEventListener('mousedown', onGrab)
     box.addEventListener('scroll', onScroll, { passive: true })
     pin()
-    return () => { ro.disconnect(); box.removeEventListener('scroll', onScroll) }
+    return () => {
+      ro.disconnect()
+      box.removeEventListener('wheel', onWheel); box.removeEventListener('touchmove', up)
+      box.removeEventListener('keydown', onKey); box.removeEventListener('scroll', onScroll)
+      box.removeEventListener('mousedown', onGrab)
+    }
   }, [loading]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {                                // a new message, or my own send: back to the end, and follow it
     if (win.jumping()) return

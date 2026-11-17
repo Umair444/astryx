@@ -112,8 +112,8 @@ export default function ConversationList({ threads, loaded, current, live, proje
         {!q && <ProjectRows projects={projects} threads={threads} active={view === 'project' ? project : null} filter={filter} onOpen={onProject} onNew={() => onNewProject?.()} onFilter={(id) => onFilter?.(id)}
           all={view === 'projects'} onAll={onProjects} open={(id) => !folded.includes(`project:${id}`) && groupBy === 'date'}
           onFold={groupBy === 'date' ? (id) => fold(`project:${id}`) : undefined} row={row} />}
-        {groups.map(([g, rows]) => {
-          const k = `${groupBy}:${g}`, shut = folded.includes(k)
+        {groups.map(([id, g, rows]) => {
+          const k = `${groupBy}:${id}`, shut = folded.includes(k)
           return (
             <section key={k} className="mb-1">
               <button className="ws-label w-full flex items-center gap-1 px-2.5 pt-3 pb-1 text-left hover:text-ink" aria-expanded={!shut} onClick={() => fold(k)}>

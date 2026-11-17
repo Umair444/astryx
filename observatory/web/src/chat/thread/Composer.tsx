@@ -58,7 +58,14 @@ interface Item { key: string; label: string; hint: string; kind: 'cmd' | 'skill'
 interface Draft { text: string; files: Uploaded[] }
 const DRAFTS = 'ws.drafts.v2'
 function drafts(): Record<string, Draft> { try { return JSON.parse(sessionStorage.getItem(DRAFTS) || '{}') as Record<string, Draft> } catch { return {} } }
-function draftOf(key: string): Draft { const d = drafts()[key]; return { text: d?.text ?? '', files: d?.files ?? [] } }
+function draftOf(key: string): Draft {
+  const d = drafts()[key]
+  if (d) return { text: d.text ?? '', files: d.files ?? [] }
+  try {                                          // a draft written before ONE draft (ws.drafts.v1: its text alone)
+    const old = (JSON.parse(sessionStorage.getItem('ws.drafts.v1') || '{}') as Record<string, string>)[key]
+    return { text: old ?? '', files: [] }
+  } catch { return { text: '', files: [] } }
+}
 function keepDraft(key: string, d: Draft) {
   try {
     const all = drafts()

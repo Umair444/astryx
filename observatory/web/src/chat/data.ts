@@ -129,20 +129,18 @@ export const GROUP_BY: { key: GroupBy; label: string }[] = [
   { key: 'date', label: 'Date' }, { key: 'project', label: 'Project' }, { key: 'person', label: 'Person' }, { key: 'agent', label: 'Agent' },
 ]
 export function groupThreads(threads: WsThread[], by: GroupBy, label: (kind: 'project' | 'person' | 'agent', key: string) => string,
-  contain = true): [string, WsThread[]][] {
+  contain = true): [string, string, WsThread[]][] {                 // [key, label, rows]: keyed by id, named for people
   const newest = (t: WsThread) => (t.last_ts ? +new Date(t.last_ts) : 0)
   const rows = [...threads].sort((a, b) => newest(b) - newest(a))
   const out = new Map<string, WsThread[]>()
   for (const t of rows) {
     if (by === 'date' && contain && t.project) continue
-    const g = by === 'date' ? groupOf(t)
-      : by === 'project' ? (t.project ? label('project', t.project) : 'No project')
-      : by === 'person' ? label('person', t.by || 'owner')
-      : (t.agents[0] ? label('agent', t.agents[0]) : 'No agent')
+    const g = by === 'date' ? groupOf(t) : by === 'project' ? t.project ?? '' : by === 'person' ? t.by || 'owner' : t.agents[0] ?? ''
     out.set(g, [...(out.get(g) ?? []), t])
   }
-  const groups = [...out.entries()]
-  return by === 'date' ? GROUPS.filter((g) => out.has(g)).map((g) => [g, out.get(g)!]) : groups
+  const name = (g: string) => by === 'date' ? g : g === '' ? (by === 'project' ? 'No project' : 'No agent') : label(by as 'project' | 'person' | 'agent', g)
+  const keys = by === 'date' ? GROUPS.filter((g) => out.has(g)) : [...out.keys()]
+  return keys.map((g) => [g, name(g), out.get(g)!])
 }
 
 export function greeting(d = new Date()): string {
