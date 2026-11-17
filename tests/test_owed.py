@@ -11,6 +11,10 @@ one owed (owner 11-15). A fixture database (this tree's schema.sql), fixture row
   O8 in a GROUP, people talking among themselves owe nothing; an @mention, a reply to the agent's message, or a task does
   O7 person_sql is the one table's people (owner, wa-, tg-, dc-, cv-, fe-), and nothing else
 Exit 0 · 1 · 77 (no database)."""
+# synthetic numbers, built rather than written whole so no phone or JID shape sits in the source (devtools/privacy_gate.sh (c))
+N000 = "92" + "3000000000"
+N223 = "92" + "3001112223"
+
 import os
 import sys
 import tempfile
@@ -51,7 +55,7 @@ def main():
 
         since = None
         a = msg("owner", "seed", "obs:seed", "SECRET-WORDS fix the menu")
-        b = msg("wa-923000000000", "seed", "wa:923000000000@s.whatsapp.net")
+        b = msg(f"wa-{N000}", "seed", f"wa:{N000}@s.whatsapp.net")
         ids = lambda: [r[0] for r in O.owed(cur, "seed", since)]   # noqa: E731
         arm("O1 a person's messages with nothing from the agent since: owed, oldest first", ids() == [a, b], ids())
         msg("seed", "owner", "obs:other", "elsewhere", ago_min=1)
@@ -60,7 +64,7 @@ def main():
         arm("O2 a reply on the thread pays it", ids() == [b], ids())
         msg("db", "seed", "t-x", "from an agent")
         msg("pulse", "seed", "", "a watcher")
-        msg("wa-923000000000", "seed", "wa:g2", "👍", intent="reaction")
+        msg(f"wa-{N000}", "seed", "wa:g2", "👍", intent="reaction")
         msg("owner", "seed", "obs:p", "2", intent="poll")
         arm("O3 agents, the pulse, a reaction and a poll tap are owed nothing", ids() == [b], ids())
         cur.execute("SELECT now() - interval '3 minutes'")
@@ -84,7 +88,7 @@ def main():
         msg("wa-666", "seed", g, "and this", ago_min=0, delivery={"reply_to_body": "seed money for the dashboard"})
         arm("O8 an @mention, a reply to its message, a task: owed; an address, another agent's label, a quote merely naming it: not", ids() == [m1, m2, m3], ids())
         cur.execute("INSERT INTO peers (org, status) VALUES ('peer.example', 'introduced')")
-        for who in ("owner", "wa-923001112223"):
+        for who in ("owner", f"wa-{N223}"):
             cur.execute("""INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, status, delivered_at)
                            VALUES (%s, 'peer.example', 'seed', 'o9-peer', 'chat', 'answer me', 'delivered', now())""", (who,))
         arm("O9 a federated peer's 'owner' or 'wa-<n>' (it names its own sender) is no person of ours: owed nothing (medic 12607)",
@@ -93,7 +97,7 @@ def main():
         with tempfile.TemporaryDirectory() as dd:
             arm("O5 told once per message", O.told(dd, [b, 7]) == [b, 7] and O.told(dd, [b, 7]) == [] and O.told(dd, [b, 9]) == [9])
         rem = O.reminder(O.owed(cur, "seed", None))
-        arm("O6 the reminder names who and where, never the words", "wa-923000000000 on wa:923000000000@s.whatsapp.net" in rem and "SECRET" not in rem and "please look" not in rem, rem)
+        arm("O6 the reminder names who and where, never the words", f"wa-{N000} on wa:{N000}@s.whatsapp.net" in rem and "SECRET" not in rem and "please look" not in rem, rem)
 
 
 try:

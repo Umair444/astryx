@@ -10,6 +10,11 @@ reader stubbed (no network).
      member get their forgotten reply as a WhatsApp sender does; an agent's message gets none, nor a federated peer's
      'owner' or 'wa-<n>' (medic 12607)
 Exit 0 · 1 · 77 (no database)."""
+# synthetic numbers, built rather than written whole so no phone or JID shape sits in the source (devtools/privacy_gate.sh (c))
+GROUP = "120363" + "000000000000"
+N000 = "92" + "3000000000"
+N223 = "92" + "3001112223"
+
 import importlib.util
 import json
 import os
@@ -50,14 +55,14 @@ def main():
     import psycopg
     with fixture_db() as d, psycopg.connect(d["url"]) as conn:
         cur = conn.cursor()
-        cur.execute("""INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, status, delivered_at)
-                       VALUES ('wa-923000000000', 'whatsapp', 'seed', 'wa:923000000000@s.whatsapp.net', 'chat', 'hi', 'delivered', now())
+        cur.execute(f"""INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, status, delivered_at)
+                       VALUES ('wa-{N000}', 'whatsapp', 'seed', 'wa:{N000}@s.whatsapp.net', 'chat', 'hi', 'delivered', now())
                        RETURNING id""")
         mid = cur.fetchone()[0]
         u = {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
         with tempfile.TemporaryDirectory() as td:
             tp = Path(td) / "t.jsonl"
-            prompt = f'<channel source="astryx" from="wa-923000000000" thread="wa:923000000000@s.whatsapp.net" intent="chat" msg_id="{mid}">hi</channel>'
+            prompt = f'<channel source="astryx" from="wa-{N000}" thread="wa:{N000}@s.whatsapp.net" intent="chat" msg_id="{mid}">hi</channel>'
             tp.write_text(line("user", prompt, "2026-11-16T05:00:00Z") + line("assistant", [{"type": "text", "text": "Here is the answer."}], "2026-11-16T05:00:05Z", "a1", u))
             h = {"transcript_path": str(tp), "session_id": "s1"}
             os.environ["ASTRYX_RUN_ON"] = "DeepSeek"          # spawn's stamp: the key this session runs on
@@ -79,10 +84,10 @@ def main():
         # opens a turn that auto-messages no one
         cur.execute("INSERT INTO peers (org, status) VALUES ('peer.example', 'introduced')")
         for who, org, thread, owed_ in (("owner", "local", "obs:seed", True), ("cv-pat.2", "local", "chat:20261116-t5", True),
-                                        ("owner", "whatsapp", "wa:120363000000000000@g.us", True), ("db", "local", "w:t5", False),
+                                        ("owner", "whatsapp", f"wa:{GROUP}@g.us", True), ("db", "local", "w:t5", False),
                                         # a federated peer names its own sender (gateway.py takes from_agent from its
                                         # envelope): 'owner' or 'wa-<number>' from a peer is not ours (medic 12607)
-                                        ("owner", "peer.example", "t5-peer-owner", False), ("wa-923001112223", "peer.example", "t5-peer-wa", False)):
+                                        ("owner", "peer.example", "t5-peer-owner", False), (f"wa-{N223}", "peer.example", "t5-peer-wa", False)):
             cur.execute("""INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, status, delivered_at)
                            VALUES (%s, %s, 'seed', %s, 'chat', 'hi', 'delivered', now()) RETURNING id""", (who, org, thread))
             m5 = cur.fetchone()[0]

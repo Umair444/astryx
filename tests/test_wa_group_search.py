@@ -9,6 +9,9 @@ floor's channel rail). No WhatsApp is touched: the provider's one effect boundar
      an unasked lookup (an older wacli: the store is the sync's) still offers it, unchecked; a known contact is not doubled;
      a national 0… form or a short code is not a number
 Exit 0 · 1."""
+# synthetic numbers, built rather than written whole so no phone or JID shape sits in the source (devtools/privacy_gate.sh (c))
+N567 = "92" + "3001234567"
+
 import asyncio
 import sys
 from pathlib import Path
@@ -65,17 +68,17 @@ def checker(answer):
     return run
 
 
-W.run_wacli = checker('[{"query":"+923001234567","phone":"923001234567","jid":"923001234567@s.whatsapp.net","registered":true,"responded":true}]')
+W.run_wacli = checker(f'[{{"query":"+{N567}","phone":"{N567}","jid":"{N567}@s.whatsapp.net","registered":true,"responded":true}}]')
 r = asyncio.run(provider().search_contacts("+92 300 1234567"))
 arm("G4 a registered number is offered as its chat, checked once with no retries",
-    [(c.handle, c.raw.get("registered")) for c in r] == [("whatsapp:923001234567@s.whatsapp.net", True)]
-    and calls[-1] == (("--json", "contacts", "check", "+923001234567"), False), ([(c.handle, c.raw) for c in r], calls))
-W.run_wacli = checker('[{"query":"+923001234567","phone":"923001234567","registered":false,"responded":true}]')
-r = asyncio.run(provider().search_contacts("923001234567"))
+    [(c.handle, c.raw.get("registered")) for c in r] == [(f"whatsapp:{N567}@s.whatsapp.net", True)]
+    and calls[-1] == (("--json", "contacts", "check", f"+{N567}"), False), ([(c.handle, c.raw) for c in r], calls))
+W.run_wacli = checker(f'[{{"query":"+{N567}","phone":"{N567}","registered":false,"responded":true}}]')
+r = asyncio.run(provider().search_contacts(N567))
 arm("G4 a confirmed no: shown (registered False), with no handle to bind a route to", [(c.handle, c.raw.get("registered")) for c in r] == [("", False)], [(c.handle, c.raw) for c in r])
 W.run_wacli = checker(RuntimeError("wacli --json contacts: store is locked"))
 r = asyncio.run(provider().search_contacts("0092 300 1234567"))
-arm("G4 not asked (the store is the sync's): still offered, unchecked", [(c.handle, c.raw.get("registered")) for c in r] == [("whatsapp:923001234567@s.whatsapp.net", None)], [(c.handle, c.raw) for c in r])
+arm("G4 not asked (the store is the sync's): still offered, unchecked", [(c.handle, c.raw.get("registered")) for c in r] == [(f"whatsapp:{N567}@s.whatsapp.net", None)], [(c.handle, c.raw) for c in r])
 n = len(calls)
 r = asyncio.run(provider().search_contacts("9"))
 arm("G4 a short code is no number (no lookup)", len(calls) == n)
@@ -84,9 +87,9 @@ p = provider()
 
 
 async def known(*args):
-    return {"data": [{"jid": "923001234567@s.whatsapp.net", "name": "Known", "phone": "923001234567"}] if args[:2] == ("contacts", "search") else []}
+    return {"data": [{"jid": f"{N567}@s.whatsapp.net", "name": "Known", "phone": f"{N567}"}] if args[:2] == ("contacts", "search") else []}
 p._wacli_json = known
-r = asyncio.run(p.search_contacts("+923001234567"))
-arm("G4 a number that is already a contact comes back once, as the contact", [c.label for c in r if "923001234567" in c.handle] == ["Known"] and len(calls) == n, [(c.label, c.handle) for c in r])
+r = asyncio.run(p.search_contacts(f"+{N567}"))
+arm("G4 a number that is already a contact comes back once, as the contact", [c.label for c in r if f"{N567}" in c.handle] == ["Known"] and len(calls) == n, [(c.label, c.handle) for c in r])
 print(f"\n{'ALL PASS' if not fails else f'FAILED ({len(fails)})'}: a WhatsApp group is findable by name")
 sys.exit(1 if fails else 0)
