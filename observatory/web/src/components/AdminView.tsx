@@ -309,7 +309,7 @@ export default function AdminView() {
         </div>
       </Modal>
       <LinkModal shown={shown} onClose={() => setShown(null)} />
-      <FeaturesModal user={featuring} access={access} onClose={() => setFeaturing(null)}
+      <FeaturesModal user={featuring} access={access} you={you} onClose={() => setFeaturing(null)}
         onSave={async (f, allowed, minutes) => { await setFeature(featuring!, f, allowed, minutes) }} />
       <Modal opened={!!activity} onClose={() => setActivity(null)} title={activity ? `Activity · ${activity.user.email ?? activity.user.uid}` : ''} centered radius="lg">
         {activity && (activity.a === null ? <p className="text-[13px] text-ink-mute">Reading…</p>
@@ -332,8 +332,8 @@ interface Activity { scope: 'owner' | 'account'; messages: number; threads: numb
 
 /* What one person may use (owner 11-17: "an admin can assign a voice chat to a member"). Each feature is on or off for
    them, with an optional daily limit; "Role's default" drops the override. The org's own daily cap holds either way. */
-function FeaturesModal({ user, access, onClose, onSave }: {
-  user: AdminUser | null; access: Access | null; onClose: () => void
+function FeaturesModal({ user, access, you, onClose, onSave }: {
+  user: AdminUser | null; access: Access | null; you: string; onClose: () => void
   onSave: (f: Feature, allowed: boolean | null, minutes: number | null) => Promise<void>
 }) {
   const [mins, setMins] = useState<Record<Feature, number | ''>>({ dictate: '', call: '' })
@@ -349,6 +349,7 @@ function FeaturesModal({ user, access, onClose, onSave }: {
           const x = uses(access, user, f)
           const def = access.features[f]?.includes(role)
           const limit = mins[f] === '' ? null : Number(mins[f])
+          const needsLimit = f === 'call' && you !== 'owner' && !x.on && limit === null   // the server's rule for an admin
           return (
             <div key={f} className="rounded-xl border border-line px-3.5 py-3 space-y-2.5">
               <div className="flex items-start gap-3">
@@ -357,14 +358,15 @@ function FeaturesModal({ user, access, onClose, onSave }: {
                   <div className="text-[12px] text-ink-mute leading-snug">{FEATURE_WORDS[f].what}</div>
                 </div>
                 <Switch checked={x.on} aria-label={`${FEATURE_WORDS[f].title} for ${user.email ?? user.uid}`}
+                  disabled={needsLimit} title={needsLimit ? 'Set daily minutes first' : undefined}
                   onChange={(e) => onSave(f, e.currentTarget.checked, limit)} />
               </div>
-              {x.on && (
+              {(x.on || f === 'call') && (
                 <div className="flex items-end gap-2">
                   <NumberInput className="w-44" size="xs" label="Daily minutes" placeholder="no limit of their own" min={0} max={1440}
                     value={mins[f]} onChange={(v) => setMins((m) => ({ ...m, [f]: v === '' ? '' : Number(v) }))} />
-                  <button className="h-[30px] px-3 rounded-lg text-[12.5px] text-ink-dim hover:text-ink border border-line"
-                    disabled={limit === x.minutes} onClick={() => onSave(f, true, limit)}>Save limit</button>
+                  {x.on && <button className="h-[30px] px-3 rounded-lg text-[12.5px] text-ink-dim hover:text-ink border border-line"
+                    disabled={limit === x.minutes} onClick={() => onSave(f, true, limit)}>Save limit</button>}
                 </div>
               )}
               <div className="text-[11.5px] text-ink-mute">
