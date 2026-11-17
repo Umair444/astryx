@@ -57,9 +57,10 @@ def who(handle: str | None, feature: str) -> str:
     return f"{handle or 'owner'}/{feature}"
 
 
-async def unavailable(pool, user: str | None = None, limit: float | None = None) -> str:
+async def unavailable(pool, user: str | None = None, limit: float | None = None, charge: int = 0) -> str:
     """Why a new session can't start right now, or '' when it can. The org's cap always holds; a person's own daily
-    `limit` (their feature's minutes in the Admin panel) holds on top of it."""
+    `limit` (their feature's minutes in the Admin panel) holds on top of it, counting the `charge` (seconds) this new
+    session would cost at once."""
     if not env("OPENAI_API_KEY"):
         return "no OpenAI key configured"
     used, cap = await minutes_today(pool), cap_minutes()
@@ -67,7 +68,7 @@ async def unavailable(pool, user: str | None = None, limit: float | None = None)
         return f"today's voice cap is spent ({used:.0f} of {cap:.0f} minutes)"
     if user and limit is not None:
         mine = await minutes_today(pool, user)
-        if mine >= limit:
+        if mine >= limit or mine + charge / 60.0 > limit + 1e-9:
             return f"your voice minutes for today are spent ({mine:.0f} of {limit:.0f})"
     return ""
 
@@ -91,9 +92,38 @@ async def mint(cfg: dict) -> tuple[int, dict]:
     return await asyncio.to_thread(go)
 
 
-async def record(pool, user: str, model: str) -> int:
+async def record(pool, user: str, model: str, seconds: int = 0) -> int:
+    """One mint on the ledger. `seconds` > 0 charges it that much at once, and report() can only raise it: what a
+    non-owner's session costs at least, whatever their own browser later reports (medic 12822)."""
     return await pool.fetchval(
-        "INSERT INTO canvas_voice_usage (user_name, model) VALUES ($1,$2) RETURNING id", user, model)
+        "INSERT INTO canvas_voice_usage (user_name, model, seconds, reported) VALUES ($1,$2,$3,$4) RETURNING id",
+        user, model, int(seconds), seconds > 0)
+
+
+def member_floor(feature: str, limit: float | None) -> int:
+    """The seconds a non-owner's session is charged at its mint (never lowered by a report): a Call
+    PILOT_MEMBER_SESSION_MIN minutes (default 10), dictation FLOOR_SECONDS; never more than the person's own limit."""
+    try:
+        base = float(env("PILOT_MEMBER_SESSION_MIN", "10")) * 60 if feature == "call" else FLOOR_SECONDS
+    except ValueError:
+        base = 600.0 if feature == "call" else FLOOR_SECONDS
+    return int(min(base, limit * 60) if limit is not None else base)
+
+
+_mints_by: dict[str, list[float]] = {}
+
+
+def mint_allowed(user: str, per_hour: int) -> bool:
+    """This person's mints in the last hour are under `per_hour` (each person their own count: a member never uses up
+    the owner's). Records the mint when it is."""
+    import time
+    now = time.time()
+    got = _mints_by.setdefault(user, [])
+    got[:] = [t for t in got if now - t < 3600]
+    if len(got) >= per_hour:
+        return False
+    got.append(now)
+    return True
 
 
 async def report(pool, usage_id: int, user: str, seconds: float) -> dict:

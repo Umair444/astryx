@@ -163,6 +163,8 @@ async def put_feature(body: Feature, request: Request):
         return _no(403, "an owner has every feature already")
     if body.feature not in M.FEATURES:
         return _no(400, f"feature is one of {', '.join(M.FEATURES)}")
+    if caller_role(request) == "admin" and body.feature == "call" and body.allowed and body.minutes is None:
+        return _no(400, "an admin gives the Call with a daily limit in minutes (spend is the owner's to leave open)")
     try:
         await M.set_feature(pool, body.uid, body.feature, body.allowed, body.minutes)
     except ValueError as e:

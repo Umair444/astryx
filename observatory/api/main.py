@@ -237,6 +237,7 @@ def anonymous_can_see(from_org, to_org, peers: frozenset) -> bool:
 # open nothing beyond the public face (recorded, shown by /auth/me; a later slice gives them a meaning).
 from astryx.security import identity as _identity  # noqa: E402
 from observatory.api import members as _members  # noqa: E402 — the members table's ONE reader/writer (its shape moves)
+from observatory.api import scope as _scope  # noqa: E402 — what a member given part of the tree may read
 _COGAUTH = orgs.cog() if _SEAT else None         # the cog's sign-in: {id, home}, or None (no `cog` block, or no front)
 _AUD = _SEAT if _COGAUTH else None               # this org's registry name: the only aud this backend accepts
 _verifiers: dict = {}
@@ -328,13 +329,6 @@ def reaches(request: Request):
         return lambda agent: True
     scope = getattr(request.state, "reach", set())
     return (lambda agent: True) if scope is None else (lambda agent: agent in scope)
-
-
-def hidden(request: Request) -> list[str]:
-    """The agents this viewer may NOT reach ([] for the owner and a whole-org member): a message to or from one of them
-    is not theirs to read either (owner 11-17: "they see and message nothing else")."""
-    reach = reaches(request)
-    return [a for a in agent_nodes() if not reach(a)]
 
 
 def wire_handle(request: Request) -> str | None:
@@ -491,7 +485,7 @@ app.include_router(_vaultapi.router)
 from observatory.api import workspace as _ws  # noqa: E402
 _ws.bind(lambda: pool, ESTATE, roster=lambda: set(agent_meta()), charter=lambda n: _charter_path(n), owner=lambda r: owner_call(r),
          me=lambda r: wire_handle(r), sees=lambda r: sees(r), reaches=lambda r: reaches(r),
-         scoped=lambda r: bool(hidden(r)))
+         scoped=lambda r: _scope.of(r) is not None)
 app.include_router(_ws.router)
 
 # feat/chat-workspace: the artifact store (a git repo under data/workspace: versions, restore, annotations) and a
@@ -575,7 +569,11 @@ async def member_file(request: Request) -> bool:
     path = request.query_params.get("path", "")
     if not path or pool is None:
         return False
-    return bool(await pool.fetchval("SELECT 1 FROM messages WHERE strpos(body, $1) > 0 LIMIT 1", f"[[file:{path}]]"))
+    s = _scope.of(request)          # a member given part of the tree: only a file a message THEY may read attached
+    if s is None:
+        return bool(await pool.fetchval("SELECT 1 FROM messages WHERE strpos(body, $1) > 0 LIMIT 1", f"[[file:{path}]]"))
+    return bool(await pool.fetchval(f"SELECT 1 FROM messages WHERE strpos(body, $1) > 0 AND {_scope.sql('$2', '$3')} "
+                                    "LIMIT 1", f"[[file:{path}]]", *s))
 
 
 
@@ -620,6 +618,7 @@ async def privacy_gate(request: Request, call_next):
     request.state.uid, request.state.role = await _who(request)
     p = request.url.path
     request.state.reach, request.state.caps = await _access(request) if p.startswith("/api/") else (set(), {})
+    request.state.me = wire_handle(request)
     m = "GET" if request.method == "HEAD" else request.method
     if (p.startswith("/api/") and (m, p) not in PUBLIC and not (m == "GET" and _PUBLIC_AVATAR.match(p))
             and not is_owner(request) and not (member_may(m, p) and insider(request))
@@ -832,8 +831,8 @@ async def messages(request: Request, limit: int = 100, before_id: int | None = N
         peers = list(await peer_orgs())
         args.append(peers)
         cond.append(anonymous_can_see_sql(f"${len(args)}"))
-    elif off := hidden(request):                        # a member given part of the tree reads that part's wire
-        args.append(off); cond.append(f"NOT (from_agent = ANY(${len(args)}) OR to_agent = ANY(${len(args)}))")
+    elif s := _scope.of(request):                       # a member given part of the tree reads that part's wire
+        args.extend(s); cond.append(_scope.sql(f"${len(args) - 1}", f"${len(args)}"))
     if before_id:
         args.append(before_id); cond.append(f"id < ${len(args)}")
     if after_id is not None:
@@ -3752,12 +3751,12 @@ def _jsonb(v):
     return v
 
 
-def insider_sees_event(data: dict, see, off=()) -> bool:
+def insider_sees_event(data: dict, see, message_ok=lambda d: True) -> bool:
     """An insider's live feed: every event, short of an agent sees() keeps the owner's (the personal tier). Its steps
-    and presence carry its name; messages, dags and resyncs are the wire's, which insiders read whole, short of a
-    message to or from an agent outside a scoped member's part of the tree (`off`, main.hidden)."""
+    and presence carry its name; messages, dags and resyncs are the wire's, which insiders read whole, short of what a
+    member given part of the tree may read (message_ok: scope.message_ok, the positive rule)."""
     if data.get("type") == "message":
-        return data.get("from") not in off and data.get("to") not in off
+        return message_ok(data)
     return data.get("type") not in ("step", "presence") or see(data.get("agent") or "")
 
 
@@ -3768,13 +3767,13 @@ async def events(request: Request):
     # agents' insides: the owner's, and an insider's per sees().
     owner = (bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY) or _signed_owner(request)
     inside = owner or insider(request)                  # a member sees the org's stream too (cog-who: no walls inside)
-    see, off = sees(request), set(hidden(request))
+    see, mine = sees(request), (lambda d: _scope.message_ok(request, d))
 
     async def visible(data: dict) -> bool:
         if owner:
             return True
         if inside:
-            return insider_sees_event(data, see, off)
+            return insider_sees_event(data, see, mine)
         if data.get("type") == "resync":
             return True               # carries nothing: "the tap was down, catch up" (listen_task)
         # Same ONE rule as /api/messages — see anonymous_can_see(). This site previously

@@ -71,8 +71,8 @@ the tool says they will answer aloud in the room, don't repeat it.
 
 Who you are: {persona}
 
-Privacy: the owner's personal matters (career, family, money, health, credentials, location) stay out of this \
-conversation; it runs on an outside service."""
+Privacy: personal matters (the owner's and anyone's: career, family, money, health, credentials, location) stay \
+out of this conversation; it runs on an outside service."""
 
 
 def _tools(owner: bool = True) -> list[dict]:
@@ -111,9 +111,15 @@ def bind(get_pool, me=None, reaches=None) -> None:
         _reaches = reaches
 
 
-def _caller(request: Request) -> tuple[str, float | None]:
-    """(the ledger user for this person's calls, their own daily minutes or None): the gate's request.state.caps."""
-    return V.who(_me(request), "call"), (getattr(request.state, "caps", {}) or {}).get("call")
+MEMBER_MINTS_PER_HOUR = 6
+
+
+def _caller(request: Request) -> tuple[str, float | None, int]:
+    """(the ledger user for this person's calls, their own daily minutes or None, what a new call costs them at once:
+    0 for the owner, else voice_mint.member_floor) from the gate's request.state.caps."""
+    me = _me(request)
+    limit = (getattr(request.state, "caps", {}) or {}).get("call")
+    return V.who(me, "call"), limit, 0 if me == "owner" else V.member_floor("call", limit)
 
 
 def _pool(request: Request):
@@ -123,8 +129,8 @@ def _pool(request: Request):
 @router.get("/api/pilot/voice/status")
 async def status(request: Request):
     pool = _pool(request)
-    user, limit = _caller(request)
-    why = await V.unavailable(pool, user, limit)
+    user, limit, charge = _caller(request)
+    why = await V.unavailable(pool, user, limit, charge)
     return {"available": not why, "reason": why, "minutes_today": await V.minutes_today(pool),
             "cap": V.cap_minutes(), "model": MODEL, "mine": await V.minutes_today(pool, user), "limit": limit}
 
@@ -177,15 +183,17 @@ async def session(request: Request, body: SessionReq | None = Body(default=None)
         return deny(400, f"no agent named {agent[:64]}")
     if not _reaches(request)(agent):           # a member calls only the agents they were given (owner 11-17)
         return deny(403, f"{agent[:64]} is outside the agents you were given")
-    user, limit = _caller(request)
+    user, limit, charge = _caller(request)
     me = _me(request)
-    why = await V.unavailable(pool, user, limit)
+    why = await V.unavailable(pool, user, limit, charge)
     if why:
         return deny(429 if ("cap" in why or "spent" in why) else 503, why)
     now = time.time()
     _mints[:] = [t for t in _mints if now - t < 3600]
-    if len(_mints) >= 20:
+    if me == "owner" and len(_mints) >= 20:
         return deny(429, "too many voice sessions this hour")
+    if me != "owner" and not V.mint_allowed(user, MEMBER_MINTS_PER_HOUR):   # each member their own count
+        return deny(429, "too many calls this hour")
     cfg = {
         "expires_after": {"anchor": "created_at", "seconds": 120},   # only has to survive the SDP exchange
         "session": {
@@ -215,8 +223,9 @@ async def session(request: Request, body: SessionReq | None = Body(default=None)
         msg = ((out.get("error") or {}).get("message") or "mint failed")[:200]
         print(f"pilot voice: mint failed {code}: {msg}", flush=True)
         return deny(502, f"OpenAI refused the session ({code})")
-    _mints.append(now)
-    usage_id = await V.record(pool, user, MODEL)
+    if me == "owner":
+        _mints.append(now)
+    usage_id = await V.record(pool, user, MODEL, charge)
     return {"value": out["value"], "expires_at": out.get("expires_at"), "model": MODEL, "usage_id": usage_id,
             "minutes_today": await V.minutes_today(pool), "cap": V.cap_minutes(), "calls_url": V.CALLS_URL, "agent": agent}
 
@@ -228,4 +237,4 @@ class Usage(BaseModel):
 
 @router.post("/api/pilot/voice/usage")
 async def usage(body: Usage, request: Request):
-    return await V.report(_pool(request), body.id, _caller(request)[0], body.seconds)
+    return await V.report(_pool(request), body.id, _caller(request)[0], body.seconds)   # monotonic: never under the charge

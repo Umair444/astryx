@@ -661,6 +661,30 @@ async def art_create(body: Create):
     return await _run(store().create, body.thread, body.name, body.text, body.author, _msg(body.msg_id, body.msg_ts))
 
 
+def _pool_of(request: Request):
+    return _get_pool() if _get_pool else request.app.state.pool
+
+
+async def _thread_ok(request: Request, thread: str) -> bool:
+    """A member given part of the agents/ tree reads only the threads whose every message is theirs (scope.py)."""
+    from observatory.api import scope
+    return scope.of(request) is None or thread in await scope.threads_ok(_pool_of(request), request, [thread])
+
+
+async def _aid_ok(request: Request, aid: str) -> bool:
+    from observatory.api import scope
+    if scope.of(request) is None:
+        return True
+    try:
+        thread = (await asyncio.to_thread(store().entry, aid))["thread"]
+    except Exception:                               # noqa: BLE001 — no such artifact: the handler's own 404 says so
+        return True
+    return await _thread_ok(request, thread)
+
+
+NOT_YOURS = JSONResponse({"error": "that conversation is outside the agents you were given"}, status_code=403)
+
+
 @router.get("/api/ws/artifacts")
 async def art_list(request: Request, thread: str | None = None):
     """?thread= -> that thread's artifacts; no thread -> THE LIBRARY: every artifact, each with its conversation's
@@ -668,10 +692,16 @@ async def art_list(request: Request, thread: str | None = None):
     if thread is not None:
         if not valid_thread(thread):
             return JSONResponse({"error": "a thread is required"}, status_code=400)
+        if not await _thread_ok(request, thread):
+            return NOT_YOURS
         return await _run(store().list, thread)
     arts = await _run(store().list_all)
     if isinstance(arts, Response):
         return arts
+    from observatory.api import scope
+    if scope.of(request) is not None:
+        ok = await scope.threads_ok(_pool_of(request), request, {a["thread"] for a in arts})
+        arts = [a for a in arts if a["thread"] in ok]
     titles = await thread_titles(request, {a["thread"] for a in arts})
     return [{**a, "title": titles.get(a["thread"]) or a["thread"]} for a in arts]
 
@@ -714,7 +744,9 @@ async def art_export(aid: str):
 
 
 @router.get("/api/ws/artifacts/{aid}")
-async def art_get(aid: str):
+async def art_get(aid: str, request: Request):
+    if not await _aid_ok(request, aid):
+        return NOT_YOURS
     return await _run(store().artifact, aid)
 
 
@@ -722,6 +754,8 @@ async def art_get(aid: str):
 async def art_content(aid: str, request: Request, rev: str | None = None):
     if "key" in request.query_params:               # like /api/chat/file: a navigation never authenticates this
         return Response(status_code=403)
+    if not await _aid_ok(request, aid):
+        return NOT_YOURS
     got = await _run(store().content, aid, rev)
     if isinstance(got, Response):
         return got
@@ -745,7 +779,9 @@ async def art_restore(aid: str, body: Restore):
 
 
 @router.get("/api/ws/artifacts/{aid}/annotations")
-async def art_annotations(aid: str):
+async def art_annotations(aid: str, request: Request):
+    if not await _aid_ok(request, aid):
+        return NOT_YOURS
     got = await _run(store().annotations, aid)
     if isinstance(got, Response):
         return got
@@ -782,7 +818,7 @@ def library_media(rows: list[dict], index: dict) -> list[dict]:
     return out
 
 
-MEDIA_ALL_SQL = ("SELECT id, ts, from_agent, thread, body FROM messages "
+MEDIA_ALL_SQL = ("SELECT id, ts, from_agent, to_agent, thread, body FROM messages "
                  "WHERE (thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%') AND body LIKE '%[[file:%' "
                  f"AND ({_ws.human_sql('from_agent')} OR {_ws.human_sql('to_agent')} OR thread LIKE 'chat:%') "
                  "ORDER BY id DESC LIMIT 2000")
@@ -790,13 +826,18 @@ MEDIA_ALL_SQL = ("SELECT id, ts, from_agent, thread, body FROM messages "
 
 @router.get("/api/ws/media")
 async def ws_media(request: Request, thread: str | None = None):
-    pool = _get_pool() if _get_pool else request.app.state.pool
+    from observatory.api import scope
+    pool = _pool_of(request)
     if thread is None:
         rows = [dict(r) for r in await pool.fetch(MEDIA_ALL_SQL)]
+        if scope.of(request) is not None:          # only a file a message the member may read attached
+            rows = [r for r in rows if scope.message_ok(request, r)]
         idx = await asyncio.to_thread(lambda: store().index() if store().ready() else {})
         return library_media(rows, idx)
     if not valid_thread(thread):
         return JSONResponse({"error": "a thread is required"}, status_code=400)
+    if not await _thread_ok(request, thread):
+        return NOT_YOURS
     rows = await pool.fetch("SELECT id, ts, from_agent, body FROM messages WHERE thread = $1 AND body LIKE '%[[file:%' "
                             "ORDER BY id LIMIT 5000", thread)
     return parse_media([dict(r) for r in rows])

@@ -117,7 +117,7 @@ const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'memory', label: 'Memory', icon: '⬢' },
   { key: 'growbot', label: 'GrowBot', icon: '🤖' },
   { key: 'monitor', label: 'System', icon: '❐' },
-  { key: 'admin', label: 'Admin', icon: '⚙' },
+  { key: 'admin', label: 'Admin', icon: '◈' },
 ]
 
 /* The read-only badge doubles as the discreet door: clicking it lets the

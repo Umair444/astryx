@@ -11,7 +11,9 @@ OpenAI call is made: voice_mint's key and mint are stubbed, so a session that pa
   S3 bob's reads: /api/steps and /api/ws/agents hold db only; alice's hold every org-work agent
   S4 bob's wire (/api/messages, the live feed) holds no message to or from an agent outside his part; no everyone view
   F1 dictation: a member's default lets it through the gate; turned off for alice in Admin, 403
-  F2 the Call: a member's default is 403; given to bob in Admin with 5 minutes, status 200 with limit 5; a session as
+  R1 media library, ?thread= reads (media, artifacts, handoffs, work), attached files and non-charter names: bob's part only
+  R2 a member's call is charged 10 min at its mint, which a 1 s report can't lower; past his limit the next is refused
+  F2 the Call: a member's default is 403; given to bob in Admin with 25 minutes, status 200 with limit 25; a session as
      medic (outside his agents) is 403; spent minutes say so
   F3 Admin: the owner and an admin set a feature; an admin can't set an owner's; a member can't set any; an unknown
      feature is 400; allowed=null clears it back to the default
@@ -120,11 +122,35 @@ def main(tmp: Path, url: str):
         [(m["from"], m["to"]) for m in mb])
     arm("S4 alice's holds alice's message to medic", any(m["to"] == "medic" for m in ma), [(m["from"], m["to"]) for m in ma])
     ev = {"type": "message", "from": "cv-alice.7", "to": "medic"}
+    class Rq:                                      # the gate's state, as the live feed's filter reads it
+        def __init__(self, reach, me):
+            self.state = type("S", (), {"reach": reach, "me": me})()
+    from observatory.api import scope
     arm("S4 the live feed: bob's filter drops a message to medic; alice's passes it",
-        not obs.insider_sees_event(ev, lambda a: True, {"medic", "seed"}) and obs.insider_sees_event(ev, lambda a: True, set()))
+        not obs.insider_sees_event(ev, lambda a: True, lambda d: scope.message_ok(Rq({"db"}, "cv-bob.8"), d))
+        and obs.insider_sees_event(ev, lambda a: True, lambda d: scope.message_ok(Rq(None, "cv-alice.7"), d)))
     ev_scope = lambda h: cl.get("/api/ws/threads", params={"scope": "everyone"}, headers=h()).json()["scope"]  # noqa: E731
     arm("S4 bob has no everyone-view; alice has", ev_scope(BOB) == "mine" and ev_scope(ALICE) == "everyone",
         (ev_scope(BOB), ev_scope(ALICE)))
+
+    print("R1 every wire read is the member's part")
+    with psycopg.connect(url, autocommit=True) as c:
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+                  "('medic','owner','chat:20990101-m','chat','[[file:/tmp/fx/medic.png]]'), "
+                  "('db','cv-bob.8','chat:20990101-b2','chat','[[file:/tmp/fx/db.png]]'), "
+                  "('pulse','owner','chat:20990101-p','chat','a note from no charter')")
+    lib = cl.get("/api/ws/media", headers=BOB()).json()
+    paths = {m["path"] for m in lib} if isinstance(lib, list) else lib
+    arm("R1a bob's media library has db's file, not medic's", "/tmp/fx/db.png" in paths and "/tmp/fx/medic.png" not in paths, paths)
+    for route in ("/api/ws/media", "/api/ws/artifacts", "/api/ws/handoffs", "/api/chat/work"):
+        code = cl.get(route, params={"thread": "chat:20990101-m"}, headers=BOB()).status_code
+        arm(f"R1b {route}?thread=<medic's> is 403 for bob", code == 403, code)
+    arm("R1b ...and alice reads medic's thread", cl.get("/api/ws/handoffs", params={"thread": "chat:20990101-m"}, headers=ALICE()).status_code == 200)
+    fcode = lambda h: cl.get("/api/chat/file", params={"path": "/tmp/fx/medic.png"}, headers=h()).status_code  # noqa: E731
+    arm("R1c /api/chat/file for medic's file: bob 403, alice past the gate", fcode(BOB) == 403 and fcode(ALICE) != 403,
+        (fcode(BOB), fcode(ALICE)))
+    arm("R1d a message from a name that is no charter is not on bob's wire",
+        not any(m["from"] == "pulse" for m in rows(BOB)), [m["from"] for m in rows(BOB)])
 
     print("F features")
     dic = lambda h: cl.post("/api/chat/dictate/session", headers=h()).status_code  # noqa: E731
@@ -137,22 +163,25 @@ def main(tmp: Path, url: str):
     arm("F1 ...and her whoami says so", cl.get("/api/whoami", headers=ALICE()).json()["caps"] == {})
     call = lambda h: cl.get("/api/pilot/voice/status", headers=h())  # noqa: E731
     arm("F2 a member's Call is 403 by default", call(BOB).status_code == 403)
-    r = put(CAROL, uid="8@fxcog", feature="call", allowed=True, minutes=5)
-    arm("F3 an admin gives bob the Call with 5 minutes", r.status_code == 200, (r.status_code, r.text))
+    r = put(CAROL, uid="8@fxcog", feature="call", allowed=True)
+    arm("F3 an admin can't give the Call without a daily limit (spend stays the owner's to leave open)", r.status_code == 400, r.text)
+    r = put(CAROL, uid="8@fxcog", feature="call", allowed=True, minutes=25)
+    arm("F3 an admin gives bob the Call with 25 minutes", r.status_code == 200, (r.status_code, r.text))
     s = call(BOB)
-    arm("F2 ...then his status answers, with his limit", s.status_code == 200 and s.json()["limit"] == 5, (s.status_code, s.text[:200]))
+    arm("F2 ...then his status answers, with his limit", s.status_code == 200 and s.json()["limit"] == 25, (s.status_code, s.text[:200]))
     sess = lambda agent: cl.post("/api/pilot/voice/session", headers=BOB(), json={"agent": agent})  # noqa: E731
     r = sess("medic")
     arm("F2 a session as medic, outside his agents, is 403", r.status_code == 403, r.text)
+    mine = lambda: s_["mine"] if (s_ := call(BOB).json()) else None  # noqa: E731
     r = sess("db")
-    arm("F2 as db it mints, recorded under bob's call", r.status_code == 200, r.text)
-    with psycopg.connect(url, autocommit=True) as c:
-        n = c.execute("SELECT count(*) FROM canvas_voice_usage WHERE user_name = 'cv-bob.8/call'").fetchone()[0]
-        c.execute("INSERT INTO canvas_voice_usage (user_name, model, seconds, reported) VALUES ('cv-bob.8/call','m',360,true)")
-    arm("F2 his mint is on his own ledger line", n == 1, n)
-    s = call(BOB).json()
-    arm("F2 spent minutes say so: 7 of his 5 (the unreported mint's floor minute + 6)", s["available"] is False
-        and "your voice minutes" in s["reason"] and s["mine"] == 7.0, s)
+    arm("F2 as db it mints, charged the member floor at once (10 min)", r.status_code == 200 and mine() == 10.0, (r.text, mine()))
+    rep = cl.post("/api/pilot/voice/usage", headers=BOB(), json={"id": r.json()["usage_id"], "seconds": 1})
+    arm("R2 his browser reporting 1 s never lowers it", rep.status_code == 200 and mine() == 10.0, (rep.text, mine()))
+    r2 = sess("db")
+    arm("R2 a second call: 20 of his 25", r2.status_code == 200 and mine() == 20.0, (r2.text, mine()))
+    r3 = sess("db")
+    arm("R2 a third would pass 25: refused, and nothing charged", r3.status_code == 429 and "your voice minutes" in r3.text
+        and mine() == 20.0, (r3.status_code, r3.text, mine()))
     arm("F3 an admin can't set an owner's", put(CAROL, uid="1@fxcog", feature="call", allowed=False).status_code == 403)
     arm("F3 a member can't set any", put(ALICE, uid="8@fxcog", feature="call", allowed=False).status_code == 403)
     arm("F3 an unknown feature is 400", put(lambda: O, uid="8@fxcog", feature="teleport", allowed=True).status_code == 400)
@@ -160,10 +189,10 @@ def main(tmp: Path, url: str):
         and dic(ALICE) == 200)
     lm = cl.get("/api/admin/members", headers=O).json()
     arm("F4 the members list carries the defaults and bob's override",
-        lm["features"]["call"] == ["owner"] and lm["overrides"].get("8@fxcog", {}).get("call") == {"allowed": True, "minutes": 5},
+        lm["features"]["call"] == ["owner"] and lm["overrides"].get("8@fxcog", {}).get("call") == {"allowed": True, "minutes": 25},
         (lm.get("features"), lm.get("overrides")))
     act = cl.get("/api/admin/activity", params={"uid": "8@fxcog"}, headers=O).json()
-    arm("F4 activity carries bob's voice minutes today", act.get("voice_minutes_today") == 7.0, act)
+    arm("F4 activity carries bob's voice minutes today", act.get("voice_minutes_today") == 20.0, act)
     cl.__exit__(None, None, None)
 
 

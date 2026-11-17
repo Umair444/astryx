@@ -547,6 +547,9 @@ def handoffs_of(rows: list[dict], roster: set[str]) -> list[dict]:
 async def ws_handoffs(request: Request, thread: str = ""):
     if not valid_thread(thread):
         return JSONResponse({"error": "not a conversation thread"}, status_code=400)
+    from observatory.api import scope
+    if scope.of(request) is not None and thread not in await scope.threads_ok(_pool(request), request, [thread]):
+        return JSONResponse({"error": "that conversation is outside the agents you were given"}, status_code=403)
     rows = [dict(r) for r in await _pool(request).fetch(HANDOFFS_SQL, thread, HANDOFF_BODY_MAX)]
     return handoffs_of(rows, set(_roster()))
 
@@ -1110,9 +1113,13 @@ def titles_of(ids: list[str], owner_rows: list[dict], firsts: dict[str, str | No
 async def ws_thread_titles(request: Request, ids: str = ""):
     """?ids=a,b,c (≤40): {titles: {id: title}} — the names the "Also worked in" tags show instead of wire ids."""
     want = title_ids(ids)
+    pool = _pool(request)
+    from observatory.api import scope
+    if want and scope.of(request) is not None:     # a member given part of the tree: only their own part's names
+        ok = await scope.threads_ok(pool, request, want)
+        want = [t for t in want if t in ok]
     if not want:
         return {"titles": {}}
-    pool = _pool(request)
     aggs = [{**dict(r), "last_ts": r["last_ts"].isoformat() if r["last_ts"] else None}
             for r in await pool.fetch(TITLES_SQL, want)]
     canvas: dict[str, dict] = {}
