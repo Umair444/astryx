@@ -324,6 +324,19 @@ async def bridge_arms():
             check(f"an unthreaded owner row from {frm!r} (thread {th!r}) lands on a DECLARED route and is marked",
                   got["status"] == "delivered" and got["delivery"].get("door") == "org-unstamped"
                   and (chat, said("whatsapp", frm, "org text")) in w.sends, repr((got, w.sends)))
+    print("whatsapp claims by THREAD (medic 13091 R1): a linked person answered here under another channel's name")
+    for to in ("cv-x.2", "fe-x"):
+        r = plain_row("wa:10101@g.us", to=to)
+        w = World("whatsapp", [r])
+        got = await w.deliver(r)
+        check(f"a row to {to} on wa:<route> is delivered on WhatsApp, not skipped as another channel's",
+              got["status"] == "delivered" and any(c == "10101@g.us" or "10101@g.us" in str(t) for c, t in w.sends),
+              repr((got["status"], w.sends)))
+    r = plain_row("", to="tg-123")
+    w = World("whatsapp", [r])
+    got = await w.deliver(r)
+    check("a row to tg-123 with no wa: thread is still left for its own bridge", got["status"] == "pending" and not w.sends,
+          repr((got["status"], w.sends)))
     print("the sender label on telegram + discord (cog-gaps, WhatsApp's signed()):")
     ROUTES["telegram"].append({"chat": "41414", "agent": "twin", "enabled": True, "signed": False})
     r = plain_row("tg:41414", frm="twin")

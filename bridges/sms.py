@@ -20,7 +20,7 @@ import asyncio
 import asyncpg
 from fastapi import FastAPI
 
-from .common import Book, Outcome, door_org_ok, door_refuse, env, listen, signed, split_files, split_polls
+from .common import Book, Outcome, door_org_ok, door_refuse, env, listen, released, signed, split_files, split_polls
 from .providers.sms import SmsProvider, number
 from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
 
@@ -35,7 +35,9 @@ pool: asyncpg.Pool | None = None
 CLAIM = ("((to_agent='owner' OR to_agent LIKE 'sms-%') AND (thread LIKE 'sms:%' OR to_agent LIKE 'sms-%')) "
          f"OR {address.reaches_sql('sms')}")
 
-SENT_TODAY = ("SELECT count(*) FROM messages WHERE thread LIKE 'sms:%' AND status='delivered' "
+# what THIS bridge delivered today (PKT): every send's receipt names its handle sms:<number>, whatever the row's thread
+# (CLAIM also takes sms-<n> on any thread; medic 13091 R2); a door refusal is status 'refused'
+SENT_TODAY = ("SELECT count(*) FROM messages WHERE status='delivered' AND delivery->>'handle' LIKE 'sms:%' "
               "AND delivered_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Karachi') AT TIME ZONE 'Asia/Karachi'")
 
 
@@ -44,6 +46,10 @@ def routes():
 
 
 async def deliver(row):
+    if released(row) is not None:                  # a tier release names its own channel; SMS takes none
+        if (released(row) or {}).get("channel") == "sms":
+            await door_refuse(pool, row, "sms", "SMS takes no tier release")
+        return
     thread, to = row["thread"] or "", row["to_agent"] or ""
     chat = thread[4:] if thread.startswith("sms:") else to[4:]
     chat = number(chat) or chat                    # sms:0300… and sms:92300… are one number, one route

@@ -505,9 +505,11 @@ async def deliver(row):
         if stamped is None:
             return
         chat = stamped[0]["chat"]
-    elif any(thread.startswith(f"{c.thread}:") or (row["to_agent"] or "").startswith(f"{c.person}-")
+    elif any(thread.startswith(f"{c.thread}:") or (not thread.startswith("wa:")
+                                                    and (row["to_agent"] or "").startswith(f"{c.person}-"))
              for c in channels.CHANNELS if c.name != "whatsapp"):
-        return                       # another bridge's surface (the one channel table)
+        return                       # another bridge's surface (the one channel table), judged by the THREAD first: a
+        #                              linked person answered here under another channel's name (cv-x.2 on wa:) is ours
     elif thread.startswith("wa:"):
         chat = thread[3:]            # the thread carries the destination
         if not _is_addressable(chat):

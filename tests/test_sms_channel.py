@@ -79,6 +79,26 @@ check("a table name that is not a plain schema.table: not configured", not r.ok 
       r.error)
 check("…and none of them reached the host", ran == [], len(ran))
 
+print("S search (the rail adds an SMS chat through it):")
+found = asyncio.run(prov.search_contacts("+92 " + TEN))
+check("a typed number is found as itself, in the routes' one form", [(c.handle, c.number) for c in found] == [(f"sms:{N}", N)],
+      found)
+from bridges.providers import registry  # noqa: E402
+from bridges.providers.base import Contact  # noqa: E402
+_real = registry.search_contacts
+
+
+async def fake_people(q, chans):
+    return [Contact("whatsapp", "whatsapp:x@s.whatsapp.net", "Ali", "+" + N),
+            Contact("whatsapp", "whatsapp:y@s.whatsapp.net", "Ali again", "0" + TEN),
+            Contact("whatsapp", "whatsapp:g@g.us", "Ali's group", None)] if chans == ["whatsapp"] else []
+registry.search_contacts = fake_people
+found = asyncio.run(prov.search_contacts("ali"))
+registry.search_contacts = _real
+check("a name: found through the channels whose people are numbers, one SMS chat per number, groups left out",
+      [(c.handle, c.label) for c in found] == [(f"sms:{N}", "Ali")], found)
+check("resolve: a handle in any form is the number", asyncio.run(prov.resolve(f"sms:0{TEN}")).handle == f"sms:{N}")
+
 print("R remote snippet:")
 TEXT = "it's \"\"\" a ''' test; DROP TABLE x --"
 
@@ -125,13 +145,15 @@ check("the SQL carries neither (no splicing)", TEXT not in ins[0] and N not in i
 check("the ETL's own alias opens the connection", ("connect", "q") in log, log[:1])
 check("the gateway's row id and status come back", json.loads(out.rsplit("SMSRESULT ", 1)[1]) == {"id": 4242, "status": "Y"},
       out)
+check("the row is marked queued the moment it commits, before the wait", out.index("SMSQUEUED 4242") < out.index("SMSRESULT"),
+      out)
 
 
 def provider_with(status):
     p = P.SmsProvider()
 
     async def run(code):
-        return f"noise\nSMSRESULT {json.dumps({'id': 4242, 'status': status})}\n"
+        return f"noise\nSMSQUEUED 4242\nSMSRESULT {json.dumps({'id': 4242, 'status': status})}\n", ""
     p._run = run
     return p
 
@@ -151,6 +173,36 @@ p = P.SmsProvider()
 p._run = broken
 r = asyncio.run(p.send(N, "hi"))
 check("a host error is reported, never raised", not r.ok and "kernel gone" in (r.error or ""), r.error)
+
+
+async def before_commit(code):
+    return "", "DatabaseError: ORA-00942"
+p._run = before_commit
+r = asyncio.run(p.send(N, "hi"))
+check("an error before the commit: a failure (nothing queued)", not r.ok and "ORA-00942" in (r.error or ""), r.error)
+
+
+async def after_commit(code):
+    return "SMSQUEUED 77\n", "DatabaseError: lost contact"
+p._run = after_commit
+r = asyncio.run(p.send(N, "hi"))
+check("an error AFTER the commit: still a send (it is in the queue; a failure would invite a second SMS)",
+      r.ok and r.message_id == "77", r)
+
+print("R3 a stalled kernel (medic 13091):")
+stall = P.SmsProvider()
+stall.BOUND, stall._kernel = 0.5, "k-stalled"
+
+
+async def never_idle(code):
+    await asyncio.Event().wait()
+stall._run = never_idle
+import time  # noqa: E402
+t0 = time.monotonic()
+r = asyncio.run(stall.send(N, "hi"))
+check("send returns within its bound, not-ok, naming the double-SMS risk",
+      time.monotonic() - t0 < 5 and not r.ok and "second SMS" in (r.error or ""), (round(time.monotonic() - t0, 1), r.error))
+check("…and the stalled kernel is dropped (the next send never queues behind it)", stall._kernel is None, stall._kernel)
 
 print("B bridge:")
 ROUTED = {"chat": N, "agent": "seed", "enabled": True}
@@ -215,6 +267,25 @@ check("past SMS_DAILY_CAP: refused with the cap named, nothing sent",
 check("the claim takes sms threads and sms people, nothing of another channel's",
       "thread LIKE 'sms:%'" in B.CLAIM and "to_agent LIKE 'sms-%'" in B.CLAIM and "wa:" not in B.CLAIM.split("OR (thread")[0],
       B.CLAIM)
+
+print("C the cap's own SQL, on the fixture DB (medic 13091 R2):")
+try:
+    import psycopg
+    from astryx.security.sqlguard.fixture import fixture_db
+    with fixture_db() as fx, psycopg.connect(fx["dsn"], autocommit=True) as c:
+        for thread, to, status, handle in ((f"sms:{N}", "owner", "delivered", f"sms:{N}"),
+                                           ("", f"sms-{N}", "delivered", f"sms:{N}"),
+                                           ("wa:1@g.us", f"sms-{N}", "delivered", f"sms:{N}"),
+                                           (f"sms:{OTHER}", "owner", "refused", "sms:door"),
+                                           ("wa:1@g.us", "owner", "delivered", "whatsapp:1@g.us")):
+            c.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body, status, "
+                      "delivered_at, delivery) VALUES ('seed','local',%s,'local',%s,'chat','m',%s,now(),%s)",
+                      (to, thread, status, json.dumps({"handle": handle})))
+        n = c.execute(B.SENT_TODAY).fetchone()[0]
+        check("every SMS this bridge delivered counts, whatever its thread; a refusal and another channel don't",
+              n == 3, n)
+except Exception as e:  # noqa: BLE001
+    print(f"  SKIP  the fixture DB: {type(e).__name__}: {e}")
 
 print(f"\n{'ALL PASS' if not fails else f'FAILED ({len(fails)})'}: sms channel")
 sys.exit(1 if fails else 0)

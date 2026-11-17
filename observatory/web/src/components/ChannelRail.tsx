@@ -244,6 +244,7 @@ function ChatRow({ c }: { c: ChatRef }) {
 }
 
 function ContactFind({ channel, numbers, known }: { channel: string; numbers: boolean; known: Map<string, string | null | undefined> }) {
+  const title = BRAND[channel]?.title ?? channel
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<ContactMatch[] | null>(null)
   const [busy, setBusy] = useState(false)
@@ -262,7 +263,7 @@ function ContactFind({ channel, numbers, known }: { channel: string; numbers: bo
     <div className="mt-2 pt-2 border-t border-line">
       <form onSubmit={(e) => { e.preventDefault(); find() }} className="flex gap-1.5">
         <input value={q} onChange={(e) => setQ(e.currentTarget.value)} placeholder={numbers ? 'Find a chat by name or +number' : 'Find a chat by name'}
-          aria-label={`Find a ${BRAND[channel].title} chat`}
+          aria-label={`Find a ${title} chat`}
           className="flex-1 min-w-0 rounded-lg bg-deck-3/70 border border-line px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-mute outline-none focus:border-cyan/60" />
         <button disabled={busy || !q.trim()} className="rounded-lg px-3 text-[12.5px] text-ink bg-deck-3 border border-line hover:border-line-2 disabled:opacity-40">
           {busy ? 'Finding…' : 'Find'}
@@ -279,10 +280,10 @@ function ContactFind({ channel, numbers, known }: { channel: string; numbers: bo
             </li>
           ))}
           {hits.filter((m) => m.registered === false).map((m) => (
-            <li key={`no-${m.native}`} className="rounded-xl px-2 py-1.5 text-[12.5px] text-ink-dim">{m.label} has no {BRAND[channel].title} account.</li>
+            <li key={`no-${m.native}`} className="rounded-xl px-2 py-1.5 text-[12.5px] text-ink-dim">{m.label} has no {title} account.</li>
           ))}
           {hits.filter((m) => m.registered === null && !known.has(m.native)).map((m) => (
-            <li key={`unchecked-${m.native}`} className="px-2 text-[11.5px] text-ink-mute">{BRAND[channel].title} couldn't be asked whether {m.label} has an account; add it and the first message will tell.</li>
+            <li key={`unchecked-${m.native}`} className="px-2 text-[11.5px] text-ink-mute">{title} couldn't be asked whether {m.label} has an account; add it and the first message will tell.</li>
           ))}
           {hits.filter((m) => m.registered !== false && !known.has(m.native)).map((m) => <ChatRow key={m.native} c={{ channel, chat: m.native, label: m.label, kind: kindOf(channel, m.native), agent: null, enabled: true, show: 'steps' }} />)}
         </ul>

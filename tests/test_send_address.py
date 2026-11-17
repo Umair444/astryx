@@ -114,6 +114,7 @@ try:
               "try { await checkAddress('seed ', o); r.ws = 'resolved' } catch (e) { r.ws = 'threw' }\n"
               "r.owner = await checkAddress('owner', o);\n"
               "r.broken = await checkAddress('a3', { py: '/nonexistent/python', addr: o.addr });\n"
+              "r.brokenOwner = await checkAddress('owner', { py: '/nonexistent/python', addr: o.addr });\n"
               "try { await checkAddress('newcomer', o); r.before = 'resolved' } catch (e) { r.before = 'threw' }\n"
               "(await import('node:fs')).writeFileSync(%s, '# newcomer\\n');\n"
               "r.after = await checkAddress('newcomer', o);\n"
@@ -134,6 +135,8 @@ try:
             check("'seed ' THROWS through the seam too (nothing normalizes it on the way)", r["ws"] == "threw", r["ws"])
             check("an unevaluable check ALLOWS, with a visible note (never mutes the org)",
                   r["broken"]["ok"] and "address unchecked" in r["broken"]["note"], str(r["broken"]))
+            check("…and keeps the owner a person there (his send still gets the embed check and the receipt wait)",
+                  r["brokenOwner"]["person"] is True and r["broken"]["person"] is False, str(r.get("brokenOwner")))
             check("a charter added mid-session: refused before, passes after, same ear",
                   r["before"] == "threw" and r["after"]["ok"], f"{r['before']} / {r['after']}")
 
