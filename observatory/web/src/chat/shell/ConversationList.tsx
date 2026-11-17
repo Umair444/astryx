@@ -83,12 +83,7 @@ export default function ConversationList({ threads, loaded, current, live, proje
       <div className="h-14 shrink-0 flex items-center gap-2 pl-4 pr-2.5">
         <span className="ws-display text-[24px] leading-none tracking-tight text-ink">Chats</span>
         <span className="ml-auto" />
-        <label className="ws-icon !w-auto px-1.5 text-[12px] text-ink-dim cursor-pointer" title="Group the list by">
-          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} aria-label="group the list by"
-            className="bg-transparent outline-none cursor-pointer">
-            {GROUP_BY.map((g) => <option key={g.key} value={g.key}>{g.label}</option>)}
-          </select>
-        </label>
+        <GroupMenu value={groupBy} onChange={setGroupBy} />
         {onScope && (
           <button className="ws-icon !w-auto px-2 text-[12px] text-ink-dim" aria-pressed={scope === 'everyone'}
             title={scope === 'everyone' ? 'Showing every member\u2019s chats; show only mine' : 'Show every member\u2019s chats'}
@@ -227,4 +222,39 @@ function useStored<T>(key: string, init: T): [T, (f: T | ((x: T) => T)) => void]
     return n
   })
   return [v, set]
+}
+
+/* the list's grouping, as the workspace's own menu (the row menu's look, not the browser's select): the current way
+   on the button, the four ways in the menu, a check on the chosen one */
+function GroupMenu({ value, onChange }: { value: GroupBy; onChange: (g: GroupBy) => void }) {
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const off = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false) }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    addEventListener('mousedown', off); addEventListener('keydown', esc)
+    return () => { removeEventListener('mousedown', off); removeEventListener('keydown', esc) }
+  }, [open])
+  const label = GROUP_BY.find((g) => g.key === value)?.label ?? 'Date'
+  return (
+    <div className="relative" ref={box}>
+      <button className="ws-icon !w-auto px-2 gap-1 !flex items-center text-[12px] text-ink-dim" aria-haspopup="menu" aria-expanded={open}
+        title="Group the list by" onClick={() => setOpen((o) => !o)}>
+        {label}<span className={`transition-transform ${open ? '-rotate-90' : 'rotate-90'}`}><Chevron open={false} /></span>
+      </button>
+      {open && (
+        <div className="ws-menu absolute right-0 top-[calc(100%+4px)] z-30 w-44 p-1" role="menu" aria-label="group the list by">
+          <div className="ws-label px-2.5 pt-1 pb-1">Group by</div>
+          {GROUP_BY.map((g) => (
+            <button key={g.key} role="menuitemradio" aria-checked={g.key === value} onClick={() => { onChange(g.key); setOpen(false) }}
+              className="ws-row w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] text-ink">
+              <span className="flex-1 text-left">{g.label}</span>
+              {g.key === value && <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 text-ink-dim" fill="none" stroke="currentColor" strokeWidth={2.4} aria-hidden><path d="M5 12l5 5 9-10" /></svg>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
