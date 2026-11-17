@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { viewer } from '../../api'
 import { hereOrg, useMe } from '../../me'
 import { I } from '../icons'
 import { loadPeople, type Person, type Project } from '../model'
@@ -10,9 +9,7 @@ import { loadPeople, type Person, type Project } from '../model'
    are shared with by account (uid), named by their sign-in email, so a renamed member keeps what was shared. */
 
 export default function Sharing({ p, onChange }: { p: Project; onChange: (shared: string[]) => void }) {
-  const me = viewer()
-  const maker = p.by || 'owner'
-  const mine = me === maker || me === 'owner'
+  const mine = !!p.yours
   const shared = p.shared ?? []
   const org = hereOrg(useMe())?.org ?? ''
   const [people, setPeople] = useState<Person[] | null>(null)
@@ -25,7 +22,7 @@ export default function Sharing({ p, onChange }: { p: Project; onChange: (shared
     addEventListener('mousedown', off)
     return () => removeEventListener('mousedown', off)
   }, [adding])
-  const name = (u: string) => people?.find((x) => x.uid === u)?.email ?? 'a member'
+  const name = (u: string) => people?.find((x) => x.uid === u)?.name ?? 'a member'
   const offer = (people ?? []).filter((x) => !shared.includes(x.uid))
 
   return (
@@ -41,14 +38,14 @@ export default function Sharing({ p, onChange }: { p: Project; onChange: (shared
                 aria-label="share with" style={{ ['--ws-pip-bg' as string]: 'var(--t-panel)' }}>
                 {offer.map((x) => (
                   <button key={x.uid} role="menuitem" className="ws-row w-full rounded-lg px-2 py-1.5 text-left text-[13px] text-ink"
-                    onClick={() => { onChange([...shared, x.uid]); setAdding(false) }}>{x.email}</button>
+                    onClick={() => { onChange([...shared, x.uid]); setAdding(false) }}>{x.name}</button>
                 ))}
               </div>
             )}
           </div>
         )}
       </div>
-      <p className="text-[12px] text-ink-mute mb-2">{maker === 'owner' ? 'The owner' : 'Its maker'} and the people below.{maker !== 'owner' ? ' The owner sees every project.' : ''}</p>
+      <p className="text-[12px] text-ink-mute mb-2">{p.by ? 'Its maker, the owner,' : 'The owner'} and the people below.</p>
       {shared.length === 0
         ? <p className="text-[12.5px] text-ink-dim">{mine ? 'Not shared with anyone yet.' : 'Shared with no one else.'}</p>
         : <ul className="flex flex-wrap gap-1.5">{shared.map((h) => (

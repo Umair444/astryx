@@ -553,7 +553,8 @@ async def admin_users(request: Request, org: str = ""):
 @app.get("/auth/people")
 async def people(request: Request, org: str = ""):
     """Who a project can be shared with (owner 11-17), for ANY member of org: the org's members table (its
-    /api/chat/people, asked as the caller), each named by its account's email here. One list: the members table."""
+    /api/chat/people, asked as the caller), each named as the org already knows them (_mint: the email's local part,
+    never the whole email). One list: the members table."""
     a = auth()
     if a is None:
         return _nope(404, b'{"error":"this cog has no sign-in"}')
@@ -573,7 +574,8 @@ async def people(request: Request, org: str = ""):
         acc = {x[0]: x[1] for x in await a.db(_accounts, [n for n in (_account_n(a, u) for u in uids) if n is not None])}
     except Exception:  # noqa: BLE001
         return _nope(503, b'{"error":"the account store is unavailable"}')
-    return _json({"people": [{"uid": u, "email": acc[_account_n(a, u)]} for u in uids if _account_n(a, u) in acc]})
+    return _json({"people": [{"uid": u, "name": str(acc[_account_n(a, u)]).partition("@")[0]}
+                             for u in uids if _account_n(a, u) in acc]})
 
 
 async def _new_link(conn, dig: bytes, kind: str, org: str, role, node: str, uid, by: int, hours: int):

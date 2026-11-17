@@ -374,20 +374,26 @@ def read_meta() -> dict:
         return {}
 
 
-def _projects(me: str = "owner", uid: str | None = None) -> list[dict]:
-    """The projects `me` (a wire handle; `uid` their account) may see: project_visible."""
+def _projects(who: str | None = "owner") -> list[dict]:
+    """The projects `who` (account(request)) may see: project_visible."""
     try:
         raw = json.loads((ESTATE / "chat" / "projects.json").read_text()).get("projects", [])
-        return [p for p in raw if isinstance(p, dict) and project_visible(p, me, uid)] if isinstance(raw, list) else []
+        return [p for p in raw if isinstance(p, dict) and project_visible(p, who)] if isinstance(raw, list) else []
     except (OSError, ValueError, AttributeError):
         return []
 
 
-def project_visible(p: dict, me: str, uid: str | None = None) -> bool:
+def account(request) -> str | None:
+    """WHO a person is, for what they own and what is shared with them: 'owner', or their account in the members table
+    (its uid, as the gate read it), never a display name. None: nobody."""
+    return "owner" if _me(request) == "owner" else (getattr(request.state, "uid", None) or None)
+
+
+def project_visible(p: dict, who: str | None) -> bool:
     """WHO SEES A PROJECT (owner 11-17: "the person who create project should be able to decide which member can see
-    it"): the one who made it (`by`; none = the owner), the members they shared it with (`shared`: their ACCOUNTS, the
-    members table's uids, so a renamed member keeps what was shared), and the org's owner, who reads the whole org."""
-    return me == "owner" or (p.get("by") or "owner") == me or (bool(uid) and uid in (p.get("shared") or []))
+    it"): its maker (`by`, their account; none = the owner), the members they shared it with (`shared`, accounts of the
+    members table), and the org's owner, who reads the whole org. One identity throughout: the account."""
+    return bool(who) and (who == "owner" or (p.get("by") or "owner") == who or who in (p.get("shared") or []))
 
 
 def _pool(request: Request):
@@ -438,8 +444,8 @@ async def ws_threads(request: Request, scope: str = "mine"):
     except Exception:                               # noqa: BLE001 — an estate without canvas lists the rest
         canvas = {}
     return {"etag": etag(meta_file()), "scope": "everyone" if everyone else "mine",
-            "threads": build_rows(aggs, read_meta(), _projects(me, getattr(request.state, "uid", None)), set(_roster()),
-                                  canvas, me=me, everyone=everyone)}
+            "threads": build_rows(aggs, read_meta(), _projects(account(request)), set(_roster()), canvas, me=me,
+                                  everyone=everyone)}
 
 
 class Meta(BaseModel):

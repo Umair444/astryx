@@ -224,7 +224,8 @@ class Project(BaseModel):
     emoji: str | None = None
     created: str | None = None       # read-side: the server stamps both, a client's value is ignored
     updated: str | None = None
-    by: str | None = None            # read-side: the wire handle that made it (cog-gaps), server-stamped; none = owner
+    by: str | None = None            # read-side: the account that made it (members uid), server-stamped; none = owner
+    yours: bool | None = None        # read-side: the viewer made it (or is the owner): theirs to share
     shared: list[str] = []           # who else sees it: members' accounts (members.uid), chosen by its maker (11-17)
     missing: list[str] = []          # D6': read-side only; never stored
 
@@ -266,7 +267,7 @@ def upgrade(p: dict) -> dict:
            "agents": list(p.get("agents") or []), "threads": list(p.get("threads") or []), "files": list(p.get("files") or []),
            "color": p.get("color"), "emoji": p.get("emoji"), "created": p.get("created"), "updated": p.get("updated"),
            "shared": list(p.get("shared") or [])}
-    if p.get("by"):                  # a member's project names her (cog-gaps); the owner's carry no key, as before
+    if p.get("by"):                  # a member's project names her ACCOUNT (11-17); the owner's carry no key, as before
         out["by"] = p["by"]
     return out
 
@@ -281,12 +282,12 @@ def project_owner(p: dict) -> str:
     return p.get("by") or "owner"
 
 
-def foreign_edit(new: list[dict], old: list[dict], me: str) -> str:
+def foreign_edit(new: list[dict], old: list[dict], who: str) -> str:
     """A member's PUT may add, change and drop only projects that are HERS: '' when it does, else the reason. Every
     stored project of another human must come back unchanged in PROJECT_FIELDS."""
     got = {p["id"]: p for p in new}
     for p in old:
-        if project_owner(p) == me:
+        if project_owner(p) == who:
             continue
         q = got.get(p["id"])
         if q is None:
@@ -322,12 +323,10 @@ async def projects_get(request: Request):
     """D6': every read is checked against the LIVE roster: an agent retired since the project was made is named in
     `missing`, so the page shows the gap instead of a project that quietly fans out to nobody. Only the projects this
     viewer sees (workspace.project_visible: its maker, whom they shared it with, the owner)."""
-    from observatory.api.workspace import project_visible
-    me, live, uid = _me(request), _roster(), getattr(request.state, "uid", None)
-    if not me:                                       # no wire handle: nobody's projects (medic 12845), never the owner's
-        return {"etag": etag(projects_file()), "projects": []}
-    out = [{**p, "missing": [a for a in p["agents"] if a not in live]} for p in _read_projects()
-           if project_visible(p, me, uid)]
+    from observatory.api.workspace import account, project_visible
+    who, live = account(request), _roster()           # nobody: no project (medic 12845), never the owner's
+    out = [{**p, "missing": [a for a in p["agents"] if a not in live], "yours": who in ("owner", project_owner(p))}
+           for p in _read_projects() if project_visible(p, who)]
     return {"etag": etag(projects_file()), "projects": out}
 
 
@@ -350,40 +349,38 @@ async def projects_put(body: list[Project], request: Request):
     why = _valid(body)
     if why:
         return JSONResponse({"error": why}, status_code=400)
-    me = _me(request)
-    if not me:
+    from observatory.api.workspace import account, project_visible
+    me, who = _me(request), account(request)
+    if not me or not who:
         return JSONResponse({"error": "who are you?"}, status_code=403)
     old = _read_projects()
     was = {p["id"]: p for p in old}
-    from observatory.api.workspace import project_visible
-    uid = getattr(request.state, "uid", None)
-    unseen = [p for p in old if not project_visible(p, me, uid)]   # a member's list never names these: they stay as stored
+    unseen = [p for p in old if not project_visible(p, who)]   # a member's list never names these: they stay as stored
+    members = {r["uid"] for r in await _pool(request).fetch("SELECT DISTINCT uid FROM members")}
     keep = []
     for p in body:
-        d = p.model_dump(exclude={"missing", "brief", "created", "updated", "by"})
+        d = p.model_dump(exclude={"missing", "brief", "created", "updated", "by", "yours"})
         d["instructions"] = p.instructions or p.brief
         d["name"] = p.name.strip()
-        maker = was[p.id].get("by") if p.id in was else (None if me == "owner" else me)
+        maker = was[p.id].get("by") if p.id in was else (None if who == "owner" else who)
         if maker:                                    # server-stamped: a client's `by` is never read
             d["by"] = maker
+        before = set((was.get(p.id) or {}).get("shared") or [])
+        if set(d["shared"]) - before - members:     # judged on what THIS write adds (medic 12883)
+            return JSONResponse({"error": "a project is shared with members of this org"}, status_code=400)
+        d["shared"] = [u for u in d["shared"] if u in members]   # a removed member drops out on the next write
         keep.append(d)
     sent = {d["id"] for d in keep}
-    named = {h for d in keep for h in d.get("shared") or []}
-    if named:
-        held = {r["uid"] for r in await _pool(request).fetch("SELECT DISTINCT uid FROM members WHERE uid = ANY($1::text[])",
-                                                             sorted(named))}
-        if named - held:
-            return JSONResponse({"error": "a project is shared with members of this org"}, status_code=400)
     if any(p["id"] in sent for p in unseen):
         return JSONResponse({"error": "no such project"}, status_code=403)
     keep += unseen
-    if me != "owner":                                # a member: her own projects only (cog-gaps)
-        why = foreign_edit(keep, old, me)
+    if who != "owner":                               # a member: her own projects only (cog-gaps)
+        why = foreign_edit(keep, old, who)
         if not why:                                  # ...and a conversation she files must be one of hers
             pool = _pool(request)
             from observatory.api.workspace import party
-            prior = {t for p in old if project_owner(p) == me for t in p["threads"]}
-            for t in {t for p in keep if project_owner(p) == me for t in p["threads"]} - prior:
+            prior = {t for p in old if project_owner(p) == who for t in p["threads"]}
+            for t in {t for p in keep if project_owner(p) == who for t in p["threads"]} - prior:
                 if not await party(pool, t, me):
                     why = "a project of yours holds only your own conversations"
                     break
@@ -395,8 +392,9 @@ async def projects_put(body: list[Project], request: Request):
         new = atomic_write(projects_file(), text, if_match=tag)
     except Conflict:
         return JSONResponse({"error": "projects changed since you loaded them", "etag": etag(projects_file()),
-                             "projects": [p for p in _read_projects() if project_visible(p, me, uid)]}, status_code=409)
-    return {"etag": new, "projects": [{**p, "missing": []} for p in keep if project_visible(p, me, uid)]}
+                             "projects": [p for p in _read_projects() if project_visible(p, who)]}, status_code=409)
+    return {"etag": new, "projects": [{**p, "missing": [], "yours": who in ("owner", project_owner(p))}
+                                      for p in keep if project_visible(p, who)]}
 
 
 # --------------------------------------------------------------------------------------------------------- work

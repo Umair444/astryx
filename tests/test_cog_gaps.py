@@ -164,7 +164,7 @@ def main(tmp: Path, url: str):
     w = cl.put("/api/chat/projects", json=stored + [pa], headers={**A(), "if-match": g["etag"]})
     got = {p["id"]: p for p in w.json().get("projects", [])} if w.status_code == 200 else {}
     arm("T2 a member adds her own project", w.status_code == 200 and "mine" in got, (w.status_code, w.text[:200]))
-    arm("T2 ...stamped by her (a client's `by` ignored)", got.get("mine", {}).get("by") == ALICE, got.get("mine"))
+    arm("T2 ...stamped by her (a client's `by` ignored)", got.get("mine", {}).get("by") == "7@fxcog", got.get("mine"))
     arm("T2 ...the owner's carries no `by`", "by" not in got.get("own", {"by": 1}), got.get("own"))
     tag = w.json().get("etag", "") if w.status_code == 200 else ""
     cur = [{k: v for k, v in p.items() if k != "missing"} for p in got.values()]
@@ -184,7 +184,7 @@ def main(tmp: Path, url: str):
     r = cl.put("/api/chat/projects", json=[{**p, "emoji": "🍌"} if p["id"] == "mine" else p for p in cur],
                headers={**O, "if-match": r.json().get("etag", "")})
     mine = next((p for p in r.json().get("projects", []) if p["id"] == "mine"), {}) if r.status_code == 200 else {}
-    arm("T2 the owner's edit of hers keeps her `by`", mine.get("by") == ALICE and mine.get("emoji") == "🍌", (r.status_code, mine))
+    arm("T2 the owner's edit of hers keeps her `by`", mine.get("by") == "7@fxcog" and mine.get("emoji") == "🍌", (r.status_code, mine))
     cur = [{k: v for k, v in p.items() if k != "missing"} for p in r.json().get("projects", [])]
     r = cl.put("/api/chat/projects", json=[{**p, "shared": []} if p["id"] == "own" else p for p in cur],
                headers={**O, "if-match": r.json().get("etag", "")})
@@ -205,6 +205,15 @@ def main(tmp: Path, url: str):
     ppl = cl.get("/api/chat/people", headers=A()).json().get("people")
     arm("T2 who she can share with is the members table: every member but her, owners aside (they see all)",
         ppl == ["9@fxcog"], ppl)
+    with psycopg.connect(url, autocommit=True) as c:
+        c.execute("DELETE FROM members WHERE uid = '9@fxcog'")           # the member hers is shared with leaves
+    g = cl.get("/api/chat/projects", headers=O).json()
+    cur = [{k: v for k, v in p.items() if k not in ("missing", "yours")} for p in g["projects"]]
+    r = cl.put("/api/chat/projects", json=[{**p, "name": "Owner's, renamed"} if p["id"] == "own" else p for p in cur],
+               headers={**O, "if-match": g["etag"]})
+    left = next((p for p in chat._read_projects() if p["id"] == "mine"), {}).get("shared")
+    arm("T2 a member removed from the org doesn't lock saves, and drops out of what was shared (medic 12883)",
+        r.status_code == 200 and left == [], (r.status_code, r.text[:200], left))
     os.environ["ASTRYX_WS_STORE"] = str(tmp / "store")       # a project's files: artifacts on thread project:<id>
     from observatory.api import artifacts as AR
     AR.bind(lambda: obs.pool, estate)

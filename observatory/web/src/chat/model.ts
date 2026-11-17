@@ -142,11 +142,12 @@ export async function upload(file: Blob, name: string): Promise<Uploaded> {
 export interface Project {
   id: string; name: string; instructions: string; agents: string[]; threads: string[]; files: string[]
   color?: string | null; emoji?: string | null; created?: string | null; updated?: string | null; missing?: string[]
-  by?: string | null; shared?: string[]   // who made it (none = the owner) and the members they shared it with (11-17)
+  by?: string | null; shared?: string[]   // the account that made it (none = the owner); the accounts it's shared with
+  yours?: boolean                         // the viewer made it, or is the owner: theirs to share (server-set)
 }
-/* who a project can be shared with: the org's members, each by account (uid) and named by the cog's sign-in (its
-   email); /auth/people is the front's, asked for this org */
-export interface Person { uid: string; email: string }
+/* who a project can be shared with: the org's members table, each by account (uid), named as the org knows them (the
+   sign-in's local part); /auth/people is the front's, asked for this org */
+export interface Person { uid: string; name: string }
 export async function loadPeople(org: string): Promise<Person[]> {
   const r = await fetch(`/auth/people?org=${encodeURIComponent(org)}`, { credentials: 'same-origin', cache: 'no-store' })
   if (!r.ok) return []
