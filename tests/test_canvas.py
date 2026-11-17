@@ -111,8 +111,13 @@ def api(url):
     import bridges.canvas as b
     from astryx.core import canvas as cv_lib
     print("api (bridges/canvas.py, in-process)")
-    real_exists = b.agent_exists                   # the arms' painter: an estate may have retired its charter
-    b.agent_exists = lambda n: n == "painter" or real_exists(n)
+    # THE ARMS' OWN AGENTS (medic 13020): painter keeps the canvases, forge is summoned. An estate may have retired
+    # either charter, and an arm that leans on the host's roster goes red there on every run and teaches everyone to
+    # ignore it; so the bridge knows them here, whatever the host holds.
+    fixture = {"painter", "forge"}
+    real_exists, real_roster = b.agent_exists, b._roster
+    b.agent_exists = lambda n: n in fixture or real_exists(n)
+    b._roster = lambda: sorted(set(real_roster()) | fixture)
     # "guest" is a MEMBER signed in at the cog's front, scoped to painter (test_canvas_signin proves the signing): a
     # canvas has no invitees, and every non-owner rule below is a member's
     real_signed = b.signed_viewer
