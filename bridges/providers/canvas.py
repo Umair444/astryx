@@ -1,7 +1,7 @@
 """Canvas provider — the org's own front door behind the channel protocol.
 
-Canvas is a surface the org HOSTS, so its contacts are the people the owner invited and its chats
-are the conversations in canvas_threads. A send is not made here: canvas delivery is a wire row
+Canvas is a surface the org HOSTS, so its contact is the owner (members are reached on the web chat by their handle,
+cv-<label>.<uid>; there are no invitees, medic 13018) and its chats are the conversations in canvas_threads. A send is not made here: canvas delivery is a wire row
 (send to `owner` / `cv-<name>` on a `cv:` thread) that bridges/canvas.py claims and pushes to the
 viewer's open tabs, so a direct provider send would bypass the claim and its receipt.
 """
@@ -24,19 +24,12 @@ class CanvasProvider(ChannelProvider):
             await conn.close()
 
     async def search_contacts(self, query: str) -> list[Contact]:
-        rows = await self._q("SELECT name FROM canvas_users WHERE NOT revoked AND name ILIKE $1 ORDER BY name",
-                             f"%{query}%")
-        out = [Contact(channel=self.NAME, handle=f"{self.NAME}:cv-{r['name']}", label=r["name"]) for r in rows]
-        if query.lower() in "owner":
-            out.insert(0, Contact(channel=self.NAME, handle=f"{self.NAME}:owner", label="owner (canvas)"))
-        return out
+        return [Contact(channel=self.NAME, handle=f"{self.NAME}:owner", label="owner (canvas)")] \
+            if query.lower() in "owner" else []
 
     async def resolve(self, handle: str) -> Contact | None:
-        who = handle.partition(":")[2]
-        if who == "owner":
-            return Contact(channel=self.NAME, handle=handle, label="owner (canvas)")
-        rows = await self._q("SELECT name FROM canvas_users WHERE name=$1 AND NOT revoked", who.removeprefix("cv-"))
-        return Contact(channel=self.NAME, handle=handle, label=rows[0]["name"]) if rows else None
+        return Contact(channel=self.NAME, handle=handle, label="owner (canvas)") \
+            if handle.partition(":")[2] == "owner" else None
 
     async def list_chats(self) -> list[Chat]:
         rows = await self._q("SELECT thread, user_name, agent, title FROM canvas_threads WHERE NOT archived "

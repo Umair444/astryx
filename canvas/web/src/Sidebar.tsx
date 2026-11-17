@@ -59,7 +59,6 @@ export function Sidebar({ route }: { route: Route }) {
           <div className="text-[11px] text-fg-mute">{me.owner ? 'full access' : `${me.agents.length} agent${me.agents.length === 1 ? '' : 's'}`}</div>
         </div>
         <ThemePicker compact />
-        {me.owner && <button title="People" onClick={() => go('/people')} className="p-2 rounded-lg hover:bg-fg/[.06] text-fg-dim">{I.people()}</button>}
         <button title="Sign out" onClick={logout} className="p-2 rounded-lg hover:bg-fg/[.06] text-fg-dim">{I.logout()}</button>
       </div>
 

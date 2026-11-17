@@ -37,7 +37,7 @@ export function Login({ onIn }: { onIn: (m: Me) => void }) {
         <p className="text-fg-dim mt-3 mb-8">The front door to your org. Talk to your agents. Watch them paint.</p>
         <input
           type="password" autoFocus value={key} onChange={e => setKey(e.target.value)}
-          placeholder="Owner key or invite code"
+          placeholder="Owner key"
           className="w-full glass rounded-2xl px-4 py-3.5 outline-none focus:border-violet/60 transition placeholder:text-fg-mute"
         />
         {err && <p className="text-bad text-sm mt-3">{err}</p>}

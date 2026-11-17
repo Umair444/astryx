@@ -14,7 +14,8 @@ updated while you watch and click), and VOICE on top. Design attacked by abstrac
 
 TRUST (one line each, the reasons live in a1 #35009):
   owner      logs in with OBS_KEY → from_agent 'owner'
-  invitee    invite token (sha256 stored) → 'cv-<name>'; reaches ONLY owner-granted agents
+  member     signed in at the cog's front (signed_viewer) → 'cv-<label>.<uid>'; reaches their agents (members.reach)
+             (no invitees: a canvas is the org's, shared with members only; owner 11-17, medic 13018)
   a canvas   anything originating inside an iframe → 'canvas-<id>' — never the viewer
   session    HttpOnly SameSite=Strict cookie; every write needs the x-astryx header (CSRF);
              no credential ever rides a URL.
@@ -83,28 +84,26 @@ hits: dict[str, list[float]] = {}                  # rate limits: key -> timesta
 
 
 # ------------------------------------------------------------------ identity
-OWNER_WIRE = "owner"   # the owner's wire handle on this surface; an invitee is cv-<name>
+OWNER_WIRE = "owner"   # the owner's wire handle on this surface; a member is cv-<label>.<uid>
 
 
 class Viewer:
-    def __init__(self, name: str, agents: list[str] | None = None, role: str | None = None, label: str = "",
-                 account: str = "", reach: set[str] | None = frozenset()):
-        self.name = name                           # 'owner', an invitee name, or a cog member's <label>.<uid>
+    def __init__(self, name: str, role: str | None = None, label: str = "", account: str = "",
+                 reach: set[str] | None = frozenset()):
+        self.name = name                           # 'owner', or a cog member's <label>.<uid>
         self.owner = name == "owner"
         self.wire = OWNER_WIRE if self.owner else f"cv-{name}"
-        self.agents = agents or []
         self.role = role                           # a signed-in cog member's role here ('member'/'admin'), else None
         self.member = role in members.MEMBER_ROLES and not self.owner
         self.label = label or name                 # the human's own label (display_name on the wire)
         self.keys = [name] + ([account] if account else [])   # who they are to a canvas: cv.sees (a member: their account too)
-        self.guest = not (self.owner or self.member)   # an invitee: only what the privacy gate cleared
         self.reach = reach                         # a member's agents (members.agents_reached): None = every agent
         self.account = account
 
     def may_reach(self, agent: str) -> bool:
         # a cog member reaches the agents the members table gives them (owner 11-17: "a member to use only the
         # selected agents"), as on /chat: the ONE reach (members.agents_reached), never every agent (medic 12984)
-        return self.owner or (self.member and (self.reach is None or agent in self.reach)) or agent in self.agents
+        return self.owner or (self.member and (self.reach is None or agent in self.reach))
 
 
 def _h(s: str) -> str:
@@ -112,20 +111,12 @@ def _h(s: str) -> str:
 
 
 async def viewer(request: Request) -> Viewer | None:
-    """The canvas's own session (its cookie: the owner's key login, an invitee's link) first; else the cog front's
-    signed identity (signed_viewer)."""
+    """The canvas's own session (its cookie: the owner's key login) first; else the cog front's signed identity
+    (signed_viewer: a member). An old invitee's session is no one."""
     tok = request.cookies.get(COOKIE)
-    row = await pool.fetchrow(
-        "SELECT s.user_name, u.agents, u.revoked FROM canvas_sessions s "
-        "LEFT JOIN canvas_users u ON u.name = s.user_name "
-        "WHERE s.token_hash=$1 AND s.expires_at > now()", _h(tok)) if tok else None
-    if row and row["user_name"] != "owner" and (row["revoked"] or row["revoked"] is None):
-        row = None
-    if not row:
-        return await signed_viewer(request)
-    if row["user_name"] != "owner":
-        await pool.execute("UPDATE canvas_users SET last_seen=now() WHERE name=$1", row["user_name"])
-    return Viewer(row["user_name"], list(row["agents"] or []))
+    own = tok and await pool.fetchval("SELECT 1 FROM canvas_sessions WHERE token_hash=$1 AND expires_at > now() "
+                                      "AND user_name = 'owner'", _h(tok))
+    return Viewer("owner") if own else await signed_viewer(request)
 
 
 # cog-gaps: a member signed in at the cog's front is HERE too, as main.py's _who reads her. The front mints a 60 s
@@ -430,11 +421,8 @@ async def login(body: Login, request: Request):
     name = None
     if OBS_KEY and secrets.compare_digest(key, OBS_KEY):
         name = "owner"
-    else:
-        row = await pool.fetchrow("SELECT name FROM canvas_users WHERE token_hash=$1 AND NOT revoked", _h(key))
-        name = row["name"] if row else None
     if not name:
-        return deny(401, "that key or invite is not valid")
+        return deny(401, "that key is not valid")
     tok = secrets.token_urlsafe(32)
     await pool.execute("INSERT INTO canvas_sessions (token_hash, user_name) VALUES ($1,$2)", _h(tok), name)
     resp = JSONResponse({"ok": True, "name": name})
@@ -550,7 +538,7 @@ class NewThread(BaseModel):
 @app.post("/api/threads")
 async def new_thread(body: NewThread, request: Request):
     v = V(request)
-    agent = (body.agent or (HOME_AGENT if v.owner or v.member else (v.agents[0] if v.agents else ""))).strip().lower()
+    agent = (body.agent or HOME_AGENT).strip().lower()
     if not agent or not agent_exists(agent):
         return deny(400, "no such agent" if agent else "you have no agents yet — ask the owner for access")
     if not v.may_reach(agent):
@@ -810,10 +798,9 @@ def _cshape(c) -> dict:
 
 
 def _shape_for(v, c) -> dict:
-    """_cshape for a VIEWER: what they may do with it. yours: its maker or the owner (crew, share, roll back, archive);
-    works: anyone not a guest, who directs its agent. Whoever sees a canvas (cv.sees) sees all of it (owner 11-17:
-    one rule; the retired sweep's per-part gates are gone)."""
-    return {**_cshape(c), "yours": v.owner or c["user_name"] in v.keys, "works": not v.guest}
+    """_cshape for a VIEWER: yours, its maker or the owner (crew, share, roll back, archive). Whoever sees a canvas
+    (cv.sees) sees all of it and directs its agent (owner 11-17: one rule)."""
+    return {**_cshape(c), "yours": v.owner or c["user_name"] in v.keys}
 
 
 @app.get("/api/canvases")
@@ -952,8 +939,6 @@ async def canvas_ask(cid: int, body: Ask, request: Request):
         await _say(v, f"cv:canvas-{cid}", c["agent"], body_text, intent="canvas",
                    who=f"canvas-{cid}", meta={"canvas": cid, "version": c["ver"]})
     else:
-        if v.guest:
-            return deny(403, "only the canvas's owner and the members it is shared with can direct its agent")
         agent = (body.agent or c["agent"]).strip().lower()
         if agent != c["agent"]:
             if not agent_exists(agent) or not v.may_reach(agent):
@@ -1059,56 +1044,6 @@ async def canvas_archive(cid: int, request: Request):
     if not c or (c["user_name"] not in v.keys and not v.owner):
         return deny(404, "no such canvas")
     await pool.execute("UPDATE canvases SET archived=true WHERE id=$1", cid)
-    return {"ok": True}
-
-
-# ----------------------------------------------------------------- invitees
-class NewUser(BaseModel):
-    name: str
-    agents: list[str] = []
-
-
-@app.get("/api/users")
-async def users(request: Request):
-    if not V(request).owner:
-        return deny()
-    rows = await pool.fetch("SELECT name, agents, created_at, last_seen, revoked FROM canvas_users ORDER BY name")
-    return [{"name": r["name"], "agents": list(r["agents"]), "revoked": r["revoked"],
-             "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None} for r in rows]
-
-
-@app.post("/api/users")
-async def invite(body: NewUser, request: Request):
-    if not V(request).owner:
-        return deny()
-    name = body.name.strip().lower()
-    if not re.fullmatch(r"[a-z][a-z0-9_-]{1,30}", name) or name == "owner":
-        return deny(400, "name: 2-31 chars, a-z 0-9 _ -, starting with a letter")
-    bad = [a for a in body.agents if not agent_exists(a)]
-    if bad:
-        return deny(400, f"no such agent: {', '.join(bad)}")
-    tok = secrets.token_urlsafe(24)
-    await pool.execute(
-        "INSERT INTO canvas_users (name, token_hash, agents) VALUES ($1,$2,$3) "
-        "ON CONFLICT (tenant, name) DO UPDATE SET token_hash=EXCLUDED.token_hash, agents=EXCLUDED.agents, revoked=false",
-        name, _h(tok), body.agents)
-    return {"name": name, "token": tok, "link": f"{public_base(request)}/#invite={tok}"}
-
-
-@app.post("/api/users/{name}/grants")
-async def grants(name: str, body: NewUser, request: Request):
-    if not V(request).owner:
-        return deny()
-    await pool.execute("UPDATE canvas_users SET agents=$2 WHERE name=$1", name, body.agents)
-    return {"ok": True}
-
-
-@app.post("/api/users/{name}/revoke")
-async def revoke(name: str, request: Request):
-    if not V(request).owner:
-        return deny()
-    await pool.execute("UPDATE canvas_users SET revoked=true WHERE name=$1", name)
-    await pool.execute("DELETE FROM canvas_sessions WHERE user_name=$1", name)
     return {"ok": True}
 
 
