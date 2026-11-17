@@ -1207,20 +1207,24 @@ async def usage():
 
 
 @app.get("/api/tools")
-async def tools():
+async def tools(request: Request):
     """The org's toolbox: EVERY tool server in mcp/registry.json (the one list, owner 11-17) with who gets it and its
     tools as mcp/scan.py last listed them (mcp/manifest.json; a server not scanned yet shows with none), and composite
     DAGs with their wiring."""
-    try:
-        listed = {s["server"]: s for s in json.loads((REPO / "mcp" / "manifest.json").read_text()).get("servers", [])}
-    except Exception:
-        listed = {}
+    listed = {}
+    for f in ("manifest.json", "manifest.local.json"):      # the framework's, and the org's own (gitignored) servers
+        try:
+            listed |= {s["server"]: s for s in json.loads((REPO / "mcp" / f).read_text()).get("servers", [])}
+        except Exception:
+            pass
+    inside = insider(request)                               # anonymous: a granted server's name and who, not its tools
     try:
         reg = json.loads((REPO / "mcp" / "registry.json").read_text())
     except Exception:
         reg = {}
     servers = [{**listed.get(n, {"tools": []}), "server": n, "who": e.get("who", "grant"),
-                **({"optin": e["optin"]} if e.get("optin") else {})} for n, e in reg.items()]
+                **({"optin": e["optin"]} if e.get("optin") else {}),
+                **({} if inside or e.get("who") == "every" else {"tools": []})} for n, e in reg.items()]
     dags = []
     for f in sorted((REPO / "mcp" / "compose" / "dags").glob("*.json")):
         try:

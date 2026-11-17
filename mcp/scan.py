@@ -39,17 +39,27 @@ async def scan_one(name: str, spec: dict) -> dict:
                               for t in tools.tools]}
 
 
+def org_local(spec: dict) -> bool:
+    """A server whose files the checkout ignores (the estate's chat-sql, ocr): THIS org's, never the framework's. Its
+    tools go to the gitignored manifest.local.json, so nothing of the org's estate travels in the tracked manifest."""
+    import subprocess
+    files = [a for a in [spec["command"], *spec.get("args", [])] if "/" in a and not a.startswith(("$", "/", "-", "@"))]
+    return any(subprocess.run(["git", "-C", str(REPO), "check-ignore", "-q", f], capture_output=True).returncode == 0
+               for f in files)
+
+
 async def main():
-    out = []
+    shared, local = [], []
     for name, spec in REGISTRY.items():
         try:
-            out.append(await scan_one(name, spec))
+            got = await scan_one(name, spec)
         except Exception as e:
-            out.append({"server": name, "who": spec.get("who", "grant"), "error": str(e)[:200], "tools": []})
-    manifest = {"servers": out,
-                "total_tools": sum(len(s["tools"]) for s in out)}
-    (REPO / "mcp" / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    print(json.dumps(manifest, indent=2))
+            got = {"server": name, "who": spec.get("who", "grant"), "error": str(e)[:200], "tools": []}
+        (local if org_local(spec) else shared).append(got)
+    for path, servers in (("manifest.json", shared), ("manifest.local.json", local)):
+        manifest = {"servers": servers, "total_tools": sum(len(s["tools"]) for s in servers)}
+        (REPO / "mcp" / path).write_text(json.dumps(manifest, indent=2) + "\n")
+        print(path, manifest["total_tools"], "tools on", len(servers), "servers")
 
 
 if __name__ == "__main__":

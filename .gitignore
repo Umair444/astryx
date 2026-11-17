@@ -81,3 +81,5 @@ creds/
 /data/
 logs/
 java/
+# the org's own tool servers' tools (mcp/scan.py: an org-local server never travels in the tracked manifest)
+mcp/manifest.local.json
