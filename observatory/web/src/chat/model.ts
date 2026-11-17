@@ -142,7 +142,10 @@ export async function upload(file: Blob, name: string): Promise<Uploaded> {
 export interface Project {
   id: string; name: string; instructions: string; agents: string[]; threads: string[]; files: string[]
   color?: string | null; emoji?: string | null; created?: string | null; updated?: string | null; missing?: string[]
+  by?: string | null; shared?: string[]   // who made it (none = the owner) and the members they shared it with (11-17)
 }
+export interface Person { handle: string; name: string }
+export const loadPeople = () => api<Person[]>('/chat/people')
 export interface Projects { etag: string; projects: Project[] }
 export const loadProjects = () => api<Projects>('/chat/projects')
 export async function saveProjects(etag: string, projects: Project[]): Promise<Projects> {

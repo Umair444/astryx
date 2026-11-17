@@ -225,6 +225,7 @@ class Project(BaseModel):
     created: str | None = None       # read-side: the server stamps both, a client's value is ignored
     updated: str | None = None
     by: str | None = None            # read-side: the wire handle that made it (cog-gaps), server-stamped; none = owner
+    shared: list[str] = []           # who else sees it: members' wire handles, chosen by the one who made it (11-17)
     missing: list[str] = []          # D6': read-side only; never stored
 
 
@@ -254,6 +255,8 @@ def _valid(projects: list[Project]) -> str:
             return "not a project colour"
         if p.emoji is not None and (len(p.emoji) > 8 or re.search(r"[\x00-\x20A-Za-z0-9<>&\"']", p.emoji)):
             return "an emoji is one emoji"
+        if len(p.shared) > 200 or any(not MEMBER_HANDLE.fullmatch(h) for h in p.shared):
+            return "a project is shared with members of this org"
     return ""
 
 
@@ -261,7 +264,8 @@ def upgrade(p: dict) -> dict:
     """A stored project as the current shape: `brief` read as `instructions`, the new fields defaulted."""
     out = {"id": p.get("id"), "name": p.get("name"), "instructions": p.get("instructions") or p.get("brief") or "",
            "agents": list(p.get("agents") or []), "threads": list(p.get("threads") or []), "files": list(p.get("files") or []),
-           "color": p.get("color"), "emoji": p.get("emoji"), "created": p.get("created"), "updated": p.get("updated")}
+           "color": p.get("color"), "emoji": p.get("emoji"), "created": p.get("created"), "updated": p.get("updated"),
+           "shared": list(p.get("shared") or [])}
     if p.get("by"):                  # a member's project names her (cog-gaps); the owner's carry no key, as before
         out["by"] = p["by"]
     return out
@@ -269,7 +273,8 @@ def upgrade(p: dict) -> dict:
 
 # the fields a member must leave as they are on a project that is not hers (cog-gaps: her projects are hers to edit;
 # the rest of the org's are shown, never changed by her)
-PROJECT_FIELDS = ("name", "instructions", "agents", "threads", "files", "color", "emoji")
+PROJECT_FIELDS = ("name", "instructions", "agents", "threads", "files", "color", "emoji", "shared")
+MEMBER_HANDLE = re.compile(r"^cv-[a-z0-9_-]{1,24}\.[0-9]{1,18}$")   # members.member_handle's shape
 
 
 def project_owner(p: dict) -> str:
@@ -313,12 +318,28 @@ def _read_projects() -> list[dict]:
 
 
 @router.get("/api/chat/projects")
-async def projects_get():
+async def projects_get(request: Request):
     """D6': every read is checked against the LIVE roster: an agent retired since the project was made is named in
-    `missing`, so the page shows the gap instead of a project that quietly fans out to nobody."""
-    live = _roster()
-    out = [{**p, "missing": [a for a in p["agents"] if a not in live]} for p in _read_projects()]
+    `missing`, so the page shows the gap instead of a project that quietly fans out to nobody. Only the projects this
+    viewer sees (workspace.project_visible: its maker, whom they shared it with, the owner)."""
+    from observatory.api.workspace import project_visible
+    me, live = _me(request), _roster()
+    if not me:                                       # no wire handle: nobody's projects (medic 12845), never the owner's
+        return {"etag": etag(projects_file()), "projects": []}
+    out = [{**p, "missing": [a for a in p["agents"] if a not in live]} for p in _read_projects() if project_visible(p, me)]
     return {"etag": etag(projects_file()), "projects": out}
+
+
+@router.get("/api/chat/people")
+async def people(request: Request):
+    """The org's members a project can be shared with: every web account that has signed in here (identity P1: a
+    web handle of an identity), as {handle, name}; never the viewer themself."""
+    me = _me(request) or "owner"
+    rows = await _pool(request).fetch(
+        "SELECT DISTINCT x.wire_name, x.label FROM identity x JOIN identity_handle h ON h.tenant = x.tenant "
+        "AND h.identity_id = x.id WHERE h.channel = 'web' AND x.wire_name LIKE 'cv-%' ORDER BY 1")
+    return [{"handle": r["wire_name"], "name": r["label"] or r["wire_name"][3:].rsplit(".", 1)[0]}
+            for r in rows if r["wire_name"] != me]
 
 
 @router.put("/api/chat/projects")
@@ -329,9 +350,13 @@ async def projects_put(body: list[Project], request: Request):
     why = _valid(body)
     if why:
         return JSONResponse({"error": why}, status_code=400)
-    me = _me(request) or "owner"
+    me = _me(request)
+    if not me:
+        return JSONResponse({"error": "who are you?"}, status_code=403)
     old = _read_projects()
     was = {p["id"]: p for p in old}
+    from observatory.api.workspace import project_visible
+    unseen = [p for p in old if not project_visible(p, me)]   # a member's list never names these: they stay as stored
     keep = []
     for p in body:
         d = p.model_dump(exclude={"missing", "brief", "created", "updated", "by"})
@@ -341,6 +366,10 @@ async def projects_put(body: list[Project], request: Request):
         if maker:                                    # server-stamped: a client's `by` is never read
             d["by"] = maker
         keep.append(d)
+    sent = {d["id"] for d in keep}
+    if any(p["id"] in sent for p in unseen):
+        return JSONResponse({"error": "no such project"}, status_code=403)
+    keep += unseen
     if me != "owner":                                # a member: her own projects only (cog-gaps)
         why = foreign_edit(keep, old, me)
         if not why:                                  # ...and a conversation she files must be one of hers
@@ -359,8 +388,8 @@ async def projects_put(body: list[Project], request: Request):
         new = atomic_write(projects_file(), text, if_match=tag)
     except Conflict:
         return JSONResponse({"error": "projects changed since you loaded them", "etag": etag(projects_file()),
-                             "projects": _read_projects()}, status_code=409)
-    return {"etag": new, "projects": [{**p, "missing": []} for p in keep]}
+                             "projects": [p for p in _read_projects() if project_visible(p, me)]}, status_code=409)
+    return {"etag": new, "projects": [{**p, "missing": []} for p in keep if project_visible(p, me)]}
 
 
 # --------------------------------------------------------------------------------------------------------- work
