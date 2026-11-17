@@ -174,14 +174,47 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     try { await onOlder() } finally { setFetching(false) }
     win.earlier()                                  // the page just loaded sits above the window: open it, holding the place
   }
-  // the FIRST landing on a conversation is instant (iteration 16: a smooth scroll aimed at an end that kept moving as
-  // its tables and images laid out stopped short of the latest message); a new message after that glides
-  const landed = useRef(false)
+  // FOLLOW THE END (owner 11-17: a long chat opened short of its end, a short one at it): the view is pinned to the end
+  // while the reader is there, and STAYS pinned as the content below keeps laying out (cards, tables, images, a
+  // collapsed "worked" line), however long that takes: a ResizeObserver re-pins on every growth. Scrolling up by hand
+  // unpins; reaching the end again re-pins. A jump to a message (win.jumping) never pins. One rule for every thread.
+  const following = useRef(true)
   useEffect(() => {
+    const box = end.current?.parentElement?.parentElement
+    const content = end.current?.parentElement
+    if (!box || !content) return
+    const pin = () => { if (following.current && !win.jumping()) box.scrollTop = box.scrollHeight }
+    // only the READER unpins (a wheel or swipe up, a key that moves up): the app's own glide fires scroll events too,
+    // and must never unpin itself mid-way (medic 12897); any scroll that lands near the end re-pins
+    const up = () => { following.current = false }
+    const onWheel = (e: WheelEvent) => { if (e.deltaY < 0) up() }
+    const onKey = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLElement && e.target.closest('input, textarea, [contenteditable="true"]')
+      if (!typing && ['ArrowUp', 'PageUp', 'Home'].includes(e.key)) up()
+    }
+    const onGrab = (e: MouseEvent) => { if (e.target === box) up() }   // the scrollbar itself, taken by hand
+    const onScroll = () => { if (box.scrollHeight - box.scrollTop - box.clientHeight < 80) following.current = true }
+    const ro = new ResizeObserver(pin)
+    ro.observe(content)
+    box.addEventListener('wheel', onWheel, { passive: true })
+    box.addEventListener('touchmove', up, { passive: true })
+    box.addEventListener('keydown', onKey)
+    box.addEventListener('mousedown', onGrab)
+    box.addEventListener('scroll', onScroll, { passive: true })
+    pin()
+    return () => {
+      ro.disconnect()
+      box.removeEventListener('wheel', onWheel); box.removeEventListener('touchmove', up)
+      box.removeEventListener('keydown', onKey); box.removeEventListener('scroll', onScroll)
+      box.removeEventListener('mousedown', onGrab)
+    }
+  }, [loading]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (focus) following.current = false }, [focus?.n])   // a jump to a message is the reader's: stay there
+  useEffect(() => {                                // a new message, or my own send: back to the end, and follow it
     if (win.jumping()) return
-    end.current?.scrollIntoView({ block: 'end', behavior: reduce || !landed.current ? 'auto' : 'smooth' })
-    if (!loading && end.current) landed.current = true
-  }, [last, pending.length, reduce, loading, lastSwitch]) // eslint-disable-line react-hooks/exhaustive-deps
+    following.current = true
+    end.current?.scrollIntoView({ block: 'end', behavior: reduce ? 'auto' : 'smooth' })
+  }, [last, pending.length, reduce, lastSwitch]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return (
     <div className="mx-auto w-full max-w-[720px] px-6 pt-10 flex flex-col gap-5" aria-busy>

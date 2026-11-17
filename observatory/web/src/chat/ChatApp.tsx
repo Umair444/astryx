@@ -886,12 +886,14 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       )}
 
       {/* ── the workforce ────────────────────────────────────────────────────────────────── */}
+      {/* ONE RULE for the side panels (owner 11-17): the workforce, the media drawer and the canvas belong to a
+          conversation, so each shows only while one is open (`current`) and comes back with it */}
       <AnimatePresence initial={false}>
-        {workforce && (
+        {workforce && current && (
           <motion.aside key="workforce" className="ws-chrome w-[380px] shrink-0 border-l border-line max-lg:hidden"
             initial={reduce ? false : { opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={reduce ? undefined : { opacity: 0, x: 24 }}
             transition={{ type: 'spring', visualDuration: 0.22, bounce: 0 }}>
-            <Workforce agents={lanes} steps={laneSteps} unlinked={current ? work?.unlinked ?? {} : {}} title={activeProject && !current ? `${activeProject.name}: the workforce` : 'The workforce'} />
+            <Workforce agents={lanes} steps={laneSteps} unlinked={current ? work?.unlinked ?? {} : {}} title="The workforce" />
           </motion.aside>
         )}
       </AnimatePresence>

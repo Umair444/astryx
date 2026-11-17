@@ -1,4 +1,6 @@
+import type { ReactNode } from 'react'
 import type { WsThread } from '../data'
+import { Chevron } from '../shell/ConversationList'
 import type { Project } from '../model'
 import { I } from '../icons'
 import { ProjectMark } from './parts'
@@ -24,12 +26,16 @@ export function Nav({ view, onLibrary }: { view: View; onLibrary: () => void }) 
   )
 }
 
-export function ProjectRows({ projects, threads, active, filter, all, onOpen, onNew, onFilter, onAll }: {
+export function ProjectRows({ projects, threads, active, filter, all, onOpen, onNew, onFilter, onAll, open, onFold, row }: {
   projects: Project[]; threads: WsThread[]; active: string | null; filter: string | null
   all?: boolean                    // the projects page is open
   onOpen: (id: string) => void; onNew: () => void; onFilter: (id: string | null) => void; onAll?: () => void
+  open?: (id: string) => boolean   // a project CONTAINS its conversations (owner 11-17): unfolded, they list under it
+  onFold?: (id: string) => void    // absent: the list is grouped another way, and a project is just its row
+  row?: (t: WsThread) => ReactNode // the list's own row, so a contained conversation is the same row as anywhere
 }) {
   const known = new Set(threads.map((t) => t.thread))
+  const byThread = new Map(threads.map((t) => [t.thread, t]))
   return (
     <section className="mb-1" aria-label="projects">
       <div className="group/h flex items-center gap-1 px-2.5 pt-2 pb-1">
@@ -41,8 +47,16 @@ export function ProjectRows({ projects, threads, active, filter, all, onOpen, on
       {projects.map((p) => {
         const n = p.threads.filter((t) => known.has(t)).length
         const on = filter === p.id
+        const inside = p.threads.map((t) => byThread.get(t)).filter((t): t is WsThread => !!t)
+          .sort((a, b) => (b.last_ts ?? '').localeCompare(a.last_ts ?? ''))
+        const unfolded = !!onFold && !!open?.(p.id) && inside.length > 0
         return (
-          <div key={p.id} className="group relative">
+          <div key={p.id}>
+          <div className="group relative">
+            {onFold && inside.length > 0 && (
+              <button onClick={() => onFold(p.id)} aria-expanded={unfolded} aria-label={`${unfolded ? 'fold' : 'unfold'} ${p.name}`}
+                className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-3 grid place-items-center text-ink-mute hover:text-ink"><Chevron open={unfolded} /></button>
+            )}
             <button onClick={() => onOpen(p.id)} aria-current={active === p.id}
               className="ws-row w-full flex items-center gap-2.5 rounded-[10px] pl-2.5 pr-9 py-[6px] text-left">
               <ProjectMark p={p} size={24} />
@@ -52,6 +66,8 @@ export function ProjectRows({ projects, threads, active, filter, all, onOpen, on
             <button onClick={() => onFilter(on ? null : p.id)} aria-pressed={on}
               title={on ? 'Show every conversation' : 'Show only its conversations below'} aria-label={on ? 'show every conversation' : `show only ${p.name}'s conversations`}
               className={`absolute right-1.5 top-1/2 -translate-y-1/2 ws-icon !w-7 !h-7 ${on ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'}`}><Funnel /></button>
+          </div>
+          {unfolded && row && <div className="pl-4">{inside.map(row)}</div>}
           </div>
         )
       })}
