@@ -54,18 +54,22 @@ export function embeds(body: string): Embed[] { return [...body.matchAll(FILE_EM
 /* an annotation ask's [[ann:<id>]] marker (artifacts/annotate/ask.ts) is the margin's, never the reader's */
 /* a project chat's first message opens with the project's context block (projects/context.ts): the agents', hidden here */
 export const PROJECT_BLOCK = /^\[project: [^\]\n]{1,80}\]\n(?:[\s\S]*?\n\[\/project\]\n?|[\s\S]*$)/
-export function stripEmbeds(body: string): string { return body.replace(FILE_EMBED, '').replace(/\s*\[\[ann:[\w.-]{1,80}\]\]/g, '').trimStart().replace(PROJECT_BLOCK, '').replace(/^\[chat with [^\]]*\]\n/, '').trim() }
+/* a CANVAS shared in a message (owner 11-17: "an agent can show in chat that it is built and share it … like they send
+   a pdf"): [[canvas:<id>]] (or canvas-<id>, cv:canvas-<id>), drawn as a card that opens the canvas beside the chat */
+export const CANVAS_EMBED = /\[\[canvas:(?:cv:)?(?:canvas-)?(\d{1,9})\]\]/g
+const ANY_EMBED = new RegExp(`${FILE_EMBED.source}|${CANVAS_EMBED.source}`, 'g')
+export function stripEmbeds(body: string): string { return body.replace(FILE_EMBED, '').replace(CANVAS_EMBED, '').replace(/\s*\[\[ann:[\w.-]{1,80}\]\]/g, '').trimStart().replace(PROJECT_BLOCK, '').replace(/^\[chat with [^\]]*\]\n/, '').trim() }
 /* a body as it READS: its text runs and its [[file:]] embeds in place (thread/Inline.tsx draws a file where it was
    embedded), cleaned exactly as stripEmbeds cleans: with no embed, the one text run IS stripEmbeds(body) */
-export type Part = { text: string } | { embed: Embed }
+export type Part = { text: string } | { embed: Embed } | { canvas: number }
 export function parts(body: string): Part[] {
   const clean = body.replace(/\s*\[\[ann:[\w.-]{1,80}\]\]/g, '').trimStart().replace(PROJECT_BLOCK, '').replace(/^\[chat with [^\]]*\]\n/, '')
   const out: Part[] = []
   let at = 0
   const run = (s: string) => { const t = s.trim(); if (t) out.push({ text: t }) }
-  for (const m of clean.matchAll(FILE_EMBED)) {
+  for (const m of clean.matchAll(ANY_EMBED)) {
     run(clean.slice(at, m.index))
-    out.push({ embed: { path: m[1].trim(), label: m[2] } })
+    out.push(m[3] ? { canvas: Number(m[3]) } : { embed: { path: m[1].trim(), label: m[2] } })
     at = m.index! + m[0].length
   }
   run(clean.slice(at))

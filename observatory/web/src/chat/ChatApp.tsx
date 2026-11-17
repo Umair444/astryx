@@ -63,6 +63,7 @@ const ProjectsIndex = lazy(() => import('./projects/ProjectsIndex'))
 const CanvasPanel = lazy(() => import('./canvas/CanvasPanel'))
 const TalkMode = lazy(() => import('./talk/TalkMode'))
 import { canvasIdOf, useCanvases } from './canvas/api'
+import { OPEN_CANVAS } from './canvas/CanvasEmbed'
 import { interruptAgent, loadHandoffs, useTabTitle, useUnread, type Handoff } from './live'
 import TerminalPeek, { type TermRun } from './thread/TerminalPeek'
 import SessionCard, { type SessionAsk } from './thread/SessionCard'
@@ -700,6 +701,11 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     if (toThread && t && threads.some((x) => x.thread === t) && t !== current) { canvasNext.current = id; go(t) } else setCanvasOpen(id)
   }
   const files = media ?? []
+  useEffect(() => {                                 // a canvas card in a message (canvas/CanvasCard) opens it right here
+    const on = (e: Event) => openCanvas((e as CustomEvent<number>).detail, false)
+    addEventListener(OPEN_CANVAS, on)
+    return () => removeEventListener(OPEN_CANVAS, on)
+  })
   // the drawer docks beside the panel where there is room for rail + chat + panel + drawer; narrower it floats
   const docked = winW >= 1320
   // the list steps aside for the panel below 1440, and for panel + docked drawer below 1720 (⌘\ hides it any time)
