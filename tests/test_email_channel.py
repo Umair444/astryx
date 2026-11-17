@@ -201,7 +201,7 @@ check("past EMAIL_DAILY_CAP: refused with the cap named, nothing mailed",
 check("the claim takes em: threads and em- names (to refuse them); which rows exactly is the C arm's, on real SQL",
       "thread LIKE 'em:%'" in B.CLAIM and "to_agent LIKE 'em-%'" in B.CLAIM, B.CLAIM)
 named = [row(10, "", "hi"), row(11, "sms:923000000000", "hi")]
-named[0]["to_agent"] = named[1]["to_agent"] = "em-person"
+named[0]["to_agent"] = named[1]["to_agent"] = "em-" + TO.replace("@", ".at.")   # the ROUTED address, encoded (medic 13178)
 n2 = len(SMTP.mails)
 world(named)
 for r_ in named:
