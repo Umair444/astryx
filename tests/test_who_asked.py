@@ -18,8 +18,8 @@ temp HOME (identity.make_keys), every signed identity minted by identity.mint wi
      agent->cv-<x>.<n> row on the chat: thread, and leaves the agent->owner reply on a chat: thread alone (as ever);
      /api/thread/read by the member marks only rows to HER handle, the owner's only his.
   R3 /api/chat/file for a member passes the gate only for a path some message ATTACHED ([[file:…]]); a viewer never.
-  R2 the member reads the wire as the owner does (no privacy within an org): GET /api/messages?thread= returns the
-     owner-only thread unfiltered for her, and filtered (nothing) for an anonymous caller.
+  R2 a person's normal chat is theirs (owner 11-17, msg 12970): GET /api/messages?thread= on the owner's chat returns
+     nothing to a member, all of it to the owner, and nothing to an anonymous caller.
   V1 THE VIEW: /api/ws/threads defaults to the viewer's own conversations (member: hers; owner: his), and
      ?scope=everyone lists every human's, each row naming who opened it (`by`).
   N1 THE NOTIFICATION (channel/asker.mjs, executed by node): a member's row -> role "member"; the owner's row -> none
@@ -201,7 +201,9 @@ def main(tmp: Path, url: str):
     arm("R3 ...and a viewer is 403 even for the attached one", fv == 403, fv)
     gm = cl.get("/api/messages", params={"thread": "chat:20990101-owner"}, headers=as_("7@fxcog", "alice")).json()
     ga = anon.get("/api/messages", params={"thread": "chat:20990101-owner"}).json()
-    arm("R2 a member reads the owner's thread unfiltered", sorted(m["body"] for m in gm) == ["owner signed", "owner via key", "reply to owner"], gm)
+    go = cl.get("/api/messages", params={"thread": "chat:20990101-owner"}, headers={"x-obs-key": KEY}).json()
+    arm("R2 a member doesn't read the owner's chat (12970)", gm == [], gm)
+    arm("R2 ...the owner reads it all", sorted(m["body"] for m in go) == ["owner signed", "owner via key", "reply to owner"], go)
     arm("R2 anonymous still gets the public rule (nothing local)", ga == [], ga)
 
     # ── V1 the view ────────────────────────────────────────────────────────────────────────────────────────────

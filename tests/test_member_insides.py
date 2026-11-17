@@ -103,7 +103,7 @@ def main(tmp: Path, url: str):
             c.execute("INSERT INTO presence (agent, surface, state) VALUES (%s,'thread:chat:x','working')", (a,))
         c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
                   "('cv-alice.7','db','chat:20990101-d','chat','alice asks db'), "
-                  "('owner','butler','chat:20990101-b','chat','owner asks butler')")
+                  "('owner','butler','obs:butler','chat','owner asks butler')")
         bid = c.execute("SELECT id FROM messages WHERE to_agent='butler'").fetchone()[0]
         tid = c.execute("INSERT INTO turns (agent, session_id, started_at, ended_at, input_msg_id) VALUES "
                         "('butler','s1', now() - interval '2 min', now() - interval '1 min', %s) RETURNING id",
@@ -169,10 +169,10 @@ def main(tmp: Path, url: str):
     wd = cl.get("/api/chat/work", params={"thread": "chat:20990101-d"}, headers=A())
     arm("M7 a member reads db's live lane on its thread", wd.status_code == 200
         and any("run_query" in s["content"] for s in wd.json()["live"].get("db", [])), (wd.status_code, wd.text[:300]))
-    wb = cl.get("/api/chat/work", params={"thread": "chat:20990101-b"}, headers=A()).json()
-    arm("M7 ...on butler's thread: no butler lane, and its turn carries no steps (its shape stays)",
+    wb = cl.get("/api/chat/work", params={"thread": "obs:butler"}, headers=A()).json()
+    arm("M7 ...on butler's desk (shared, so hers to read): no butler lane, and its turn carries no steps (its shape stays)",
         "butler" not in wb["live"] and [t["steps"] for t in wb["turns"] if t["agent"] == "butler"] == [[]], wb)
-    wo = cl.get("/api/chat/work", params={"thread": "chat:20990101-b"}, headers=O).json()
+    wo = cl.get("/api/chat/work", params={"thread": "obs:butler"}, headers=O).json()
     arm("M7 ...the owner reads butler's turn in full", [len(t["steps"]) for t in wo["turns"] if t["agent"] == "butler"] == [1], wo)
 
     print("M profile and charter")

@@ -12,6 +12,9 @@ OpenAI call is made: voice_mint's key and mint are stubbed, so a session that pa
   S4 bob's wire (/api/messages, the live feed) holds no message to or from an agent outside his part; no everyone view
   F1 dictation: a member's default lets it through the gate; turned off for alice in Admin, 403
   R1 media library, ?thread= reads (media, artifacts, handoffs, work), attached files and non-charter names: bob's part only
+  P  people's own chats (owner 11-17, msg 12970): alice, of the whole org, reads none of the owner's normal or canvas
+     chats (wire, library, files, ?thread= reads, titles, the steps of a turn woken there, the live feed), nor carol's;
+     she reads her own (an agents' handoff on it included) and a project chat shared with her; the owner reads all
   R2 a member's call is charged 10 min at its mint, which a 1 s report can't lower; past his limit the next is refused
   F2 the Call: a member's default is 403; given to bob in Admin with 25 minutes, status 200 with limit 25; a session as
      medic (outside his agents) is 403; spent minutes say so
@@ -123,29 +126,30 @@ def main(tmp: Path, url: str):
     arm("S4 alice's holds alice's message to medic", any(m["to"] == "medic" for m in ma), [(m["from"], m["to"]) for m in ma])
     ev = {"type": "message", "from": "cv-alice.7", "to": "medic"}
     class Rq:                                      # the gate's state, as the live feed's filter reads it
-        def __init__(self, reach, me):
-            self.state = type("S", (), {"reach": reach, "me": me})()
+        def __init__(self, reach, me, role="member"):
+            self.state = type("S", (), {"reach": reach, "me": me, "role": role})()
     from observatory.api import scope
     arm("S4 the live feed: bob's filter drops a message to medic; alice's passes it",
         not obs.insider_sees_event(ev, lambda a: True, lambda d: scope.message_ok(Rq({"db"}, "cv-bob.8"), d))
         and obs.insider_sees_event(ev, lambda a: True, lambda d: scope.message_ok(Rq(None, "cv-alice.7"), d)))
     ev_scope = lambda h: cl.get("/api/ws/threads", params={"scope": "everyone"}, headers=h()).json()["scope"]  # noqa: E731
-    arm("S4 bob has no everyone-view; alice has", ev_scope(BOB) == "mine" and ev_scope(ALICE) == "everyone",
-        (ev_scope(BOB), ev_scope(ALICE)))
+    arm("S4 no member has the everyone-view (bob, alice, carol the admin); the owner has",
+        [ev_scope(h) for h in (BOB, ALICE, CAROL, lambda: O)] == ["mine", "mine", "mine", "everyone"],
+        [ev_scope(h) for h in (BOB, ALICE, CAROL, lambda: O)])
 
     print("R1 every wire read is the member's part")
     with psycopg.connect(url, autocommit=True) as c:
         c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
-                  "('medic','owner','chat:20990101-m','chat','[[file:/tmp/fx/medic.png]]'), "
+                  "('medic','owner','obs:medic','chat','[[file:/tmp/fx/medic.png]]'), "
                   "('db','cv-bob.8','chat:20990101-b2','chat','[[file:/tmp/fx/db.png]]'), "
                   "('pulse','owner','chat:20990101-p','chat','a note from no charter')")
     lib = cl.get("/api/ws/media", headers=BOB()).json()
     paths = {m["path"] for m in lib} if isinstance(lib, list) else lib
     arm("R1a bob's media library has db's file, not medic's", "/tmp/fx/db.png" in paths and "/tmp/fx/medic.png" not in paths, paths)
     for route in ("/api/ws/media", "/api/ws/artifacts", "/api/ws/handoffs", "/api/chat/work"):
-        code = cl.get(route, params={"thread": "chat:20990101-m"}, headers=BOB()).status_code
+        code = cl.get(route, params={"thread": "obs:medic"}, headers=BOB()).status_code
         arm(f"R1b {route}?thread=<medic's> is 403 for bob", code == 403, code)
-    arm("R1b ...and alice reads medic's thread", cl.get("/api/ws/handoffs", params={"thread": "chat:20990101-m"}, headers=ALICE()).status_code == 200)
+    arm("R1b ...and alice reads medic's thread", cl.get("/api/ws/handoffs", params={"thread": "obs:medic"}, headers=ALICE()).status_code == 200)
     fcode = lambda h: cl.get("/api/chat/file", params={"path": "/tmp/fx/medic.png"}, headers=h()).status_code  # noqa: E731
     arm("R1c /api/chat/file for medic's file: bob 403, alice past the gate", fcode(BOB) == 403 and fcode(ALICE) != 403,
         (fcode(BOB), fcode(ALICE)))
@@ -156,6 +160,61 @@ def main(tmp: Path, url: str):
         [(m["from"], m.get("from_org")) for m in rows(BOB)])
     arm("R1d a message from a name that is no charter is not on bob's wire",
         not any(m["from"] == "pulse" for m in rows(BOB)), [m["from"] for m in rows(BOB)])
+
+    print("P people's own chats")
+    import json as _json
+    (estate / "chat").mkdir(exist_ok=True)
+    (estate / "chat" / "projects.json").write_text(_json.dumps({"projects": [
+        {"id": "pa", "name": "shared with alice", "shared": ["7@fxcog"], "threads": ["chat:20990101-pa"]},
+        {"id": "pb", "name": "the owner's alone", "threads": ["chat:20990101-pb"]}]}))
+    with psycopg.connect(url, autocommit=True) as c:
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+                  "('owner','medic','chat:20990101-o','chat','the owner alone [[file:/tmp/fx/own.png]]'), "
+                  "('medic','owner','chat:20990101-o','chat','to the owner'), "
+                  "('medic','db','chat:20990101-o','chat','a handoff on the owner''s chat'), "
+                  "('owner','seed','cv:20990101-c','chat','the owner on canvas [[file:/tmp/fx/cv.png]]'), "
+                  "('cv-carol.9','seed','chat:20990101-k','chat','carol alone'), "
+                  "('medic','db','chat:20990101-s','chat','a handoff on alice''s chat'), "
+                  "('owner','db','chat:20990101-pa','chat','a project chat shared with alice'), "
+                  "('owner','db','chat:20990101-pb','chat','a project chat not shared')")
+        mid = c.execute("SELECT id FROM messages WHERE thread = 'chat:20990101-o' ORDER BY id LIMIT 1").fetchone()[0]
+        tid = c.execute("INSERT INTO turns (agent, input_msg_id) VALUES ('medic', %s) RETURNING id", (mid,)).fetchone()[0]
+        c.execute("INSERT INTO steps (agent, kind, content, turn_id) VALUES ('medic','tool','reading the owner''s chat',%s)", (tid,))
+    theirs = ("chat:20990101-o", "cv:20990101-c", "chat:20990101-k", "chat:20990101-pb")
+    wire = lambda h: {(m["thread"], m["body"][:20]) for m in cl.get("/api/messages", params={"limit": 500}, headers=h()).json()}  # noqa: E731
+    wa_, wo_ = {t for t, _ in wire(ALICE)}, {t for t, _ in wire(lambda: O)}
+    arm("P1 alice's wire holds none of the owner's chats, canvas chats, carol's, or an unshared project's",
+        not wa_ & set(theirs), sorted(wa_ & set(theirs)))
+    arm("P1 ...nor when she asks for one by id", all(cl.get("/api/messages", params={"thread": t}, headers=ALICE()).json() == []
+                                                     for t in theirs))
+    arm("P1 the owner's wire holds them all", set(theirs) <= wo_, sorted(set(theirs) - wo_))
+    arm("P2 alice reads her own chat, the agents' handoff on it included",
+        ("chat:20990101-s", "a handoff on alice's") in wire(ALICE), sorted(wire(ALICE)))
+    arm("P3 alice reads the project chat shared with her", "chat:20990101-pa" in wa_, sorted(wa_))
+    lib = {m["path"] for m in cl.get("/api/ws/media", headers=ALICE()).json()}
+    arm("P4 alice's library has neither the owner's chat file nor his canvas file",
+        not {"/tmp/fx/own.png", "/tmp/fx/cv.png"} & lib, sorted(lib))
+    arm("P4 the owner's library has both", {"/tmp/fx/own.png", "/tmp/fx/cv.png"} <= {m["path"] for m in cl.get("/api/ws/media", headers=O).json()})
+    fc = cl.get("/api/chat/file", params={"path": "/tmp/fx/own.png"}, headers=ALICE()).status_code
+    arm("P4 /api/chat/file for the owner's chat file is 403 for alice", fc == 403, fc)
+    for route in ("/api/ws/media", "/api/ws/artifacts", "/api/ws/handoffs", "/api/chat/work"):
+        code = cl.get(route, params={"thread": "chat:20990101-o"}, headers=ALICE()).status_code
+        arm(f"P5 {route}?thread=<the owner's chat> is 403 for alice", code == 403, code)
+    tt = cl.get("/api/ws/thread-titles", params={"ids": "chat:20990101-o,cv:20990101-c,chat:20990101-s"}, headers=ALICE()).json()["titles"]
+    arm("P5 thread-titles names her chat, not the owner's", "chat:20990101-o" not in tt and "cv:20990101-c" not in tt, tt)
+    sa = [s_["content"] for s_ in cl.get("/api/steps", headers=ALICE()).json()]
+    so = [s_["content"] for s_ in cl.get("/api/steps", headers=O).json()]
+    arm("P6 a step of a turn woken on the owner's chat is not in alice's steps; it is in the owner's",
+        "reading the owner's chat" not in sa and "reading the owner's chat" in so and "Bash: medic at work" in sa, sa)
+    feed = Rq(None, "cv-alice.7")
+    fe = lambda f_, t_, th: obs.insider_sees_event({"type": "message", "from": f_, "to": t_, "thread": th}, lambda a: True,  # noqa: E731
+                                                  lambda d: scope.message_ok(feed, d))
+    arm("P7 the live feed: alice's filter drops the owner's chat and a handoff on it",
+        not fe("owner", "medic", "chat:20990101-n") and not fe("medic", "db", "chat:20990101-n"))
+    arm("P7 ...a chat she starts while watching passes, and so does the agents' handoff on it after",
+        fe("cv-alice.7", "medic", "chat:20990101-a") and fe("medic", "db", "chat:20990101-a"))
+    arm("P7 ...a desk is shared", fe("owner", "medic", "obs:medic"))
+    arm("P7 the owner's feed is unscoped", scope.message_ok(Rq(None, "owner", role=None), {"from": "owner", "to": "medic", "thread": "chat:x"}))
 
     print("F features")
     dic = lambda h: cl.post("/api/chat/dictate/session", headers=h()).status_code  # noqa: E731

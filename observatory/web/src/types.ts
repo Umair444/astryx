@@ -408,7 +408,8 @@ export const reaches = (w: WhoAmI, agent: string) => w.owner || w.reach == null 
    And a HUMAN party of a row: the owner, or a named web human (cv-<x>: a member or a canvas guest). The chat's 'owner'
    comparisons mean "the human side", so they use this. */
 export const talks = (w: WhoAmI) => w.owner || w.role === 'member' || w.role === 'admin'
-export const seesEveryone = (w: WhoAmI) => w.owner || w.role === 'admin'
+// every person's chats: the owner's view alone (owner 11-17, msg 12970: a normal chat is its starter's; scope.py)
+export const seesEveryone = (w: WhoAmI) => w.owner
 export const isHuman = (n: string | null | undefined): boolean => !!n && (n === 'owner' || n.startsWith('cv-'))
 /* cog-gaps: a human's words sit on the RIGHT only when they are the viewer's own (from === her handle); another
    human's (the owner's in a member's view, a member's in the owner's) sit on the LEFT under their name. The name is

@@ -569,11 +569,11 @@ async def member_file(request: Request) -> bool:
     path = request.query_params.get("path", "")
     if not path or pool is None:
         return False
-    s = _scope.of(request)          # a member given part of the tree: only a file a message THEY may read attached
-    if s is None:
+    if _scope.of(request) is None:  # else a member: only a file a message THEY may read attached
         return bool(await pool.fetchval("SELECT 1 FROM messages WHERE strpos(body, $1) > 0 LIMIT 1", f"[[file:{path}]]"))
-    return bool(await pool.fetchval(f"SELECT 1 FROM messages WHERE strpos(body, $1) > 0 AND {_scope.sql('$2', '$3')} "
-                                    "LIMIT 1", f"[[file:{path}]]", *s))
+    await _scope.load(pool, request)
+    return bool(await pool.fetchval(f"SELECT 1 FROM messages WHERE strpos(body, $1) > 0 AND {_scope.sql('$2', '$3', '$4')} "
+                                    "LIMIT 1", f"[[file:{path}]]", *_scope.args(request)))
 
 
 
@@ -831,8 +831,9 @@ async def messages(request: Request, limit: int = 100, before_id: int | None = N
         peers = list(await peer_orgs())
         args.append(peers)
         cond.append(anonymous_can_see_sql(f"${len(args)}"))
-    elif s := _scope.of(request):                       # a member given part of the tree reads that part's wire
-        args.extend(s); cond.append(_scope.sql(f"${len(args) - 1}", f"${len(args)}"))
+    elif _scope.of(request) is not None:                # a member reads their part's wire, and of people's chats theirs
+        await _scope.load(pool, request)
+        args.extend(_scope.args(request)); cond.append(_scope.sql(f"${len(args) - 2}", f"${len(args) - 1}", f"${len(args)}"))
     if before_id:
         args.append(before_id); cond.append(f"id < ${len(args)}")
     if after_id is not None:
@@ -878,6 +879,10 @@ async def steps(request: Request, agent: str | None = None, kind: str | None = N
         see = sees(request)
         ok = sorted(a for a in agent_meta().keys() if see(a))
         args.append(ok); cond.append(f"agent = ANY(${len(args)})")
+        if _scope.of(request) is not None:         # a turn woken on a person's chat is that chat's: theirs, or not shown
+            args.append(sorted(await _scope.load(pool, request)))
+            cond.append("NOT EXISTS (SELECT 1 FROM turns t JOIN messages m ON m.id = t.input_msg_id WHERE t.id = steps.turn_id "
+                        f"AND {_scope.PERSONAL_SQL.replace('thread', 'm.thread')} AND NOT m.thread = ANY(${len(args)}::text[]))")
     if agent:
         args.append(agent); cond.append(f"agent = ${len(args)}")
     if kind:
@@ -3773,6 +3778,8 @@ async def events(request: Request):
     owner = (bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY) or _signed_owner(request)
     inside = owner or insider(request)                  # a member sees the org's stream too (cog-who: no walls inside)
     see, mine = sees(request), (lambda d: _scope.message_ok(request, d))
+    if inside and not owner and _scope.of(request) is not None:
+        await _scope.load(pool, request)              # the people's chats open to this member, held for the connection
 
     async def visible(data: dict) -> bool:
         if owner:

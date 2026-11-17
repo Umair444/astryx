@@ -673,13 +673,20 @@ def _project_ok(request: Request, thread: str) -> bool:
     return any(p.get("id") == thread[8:] for p in _ws._projects(_ws.account(request)))   # nobody: none
 
 
-async def _thread_ok(request: Request, thread: str) -> bool:
-    """A member given part of the agents/ tree reads only the threads whose every message is theirs (scope.py), and a
-    project's knowledge only when they see the project."""
+async def _threads_ok(request: Request, threads) -> set[str]:
+    """The threads this viewer reads: a project's knowledge (project:<id>, no wire of its own) when they see the
+    project; any other, scope.py's rule (a member: the threads whose every message is theirs to read)."""
     from observatory.api import scope
-    if not _project_ok(request, thread):
-        return False
-    return scope.of(request) is None or thread in await scope.threads_ok(_pool_of(request), request, [thread])
+    want = {t for t in threads if t}
+    proj = {t for t in want if t.startswith("project:") and _project_ok(request, t)}
+    rest = {t for t in want if not t.startswith("project:")}
+    if rest and scope.of(request) is not None:
+        rest = await scope.threads_ok(_pool_of(request), request, rest)
+    return proj | rest
+
+
+async def _thread_ok(request: Request, thread: str) -> bool:
+    return thread in await _threads_ok(request, [thread])
 
 
 async def _aid_ok(request: Request, aid: str) -> bool:
@@ -708,11 +715,8 @@ async def art_list(request: Request, thread: str | None = None):
     arts = await _run(store().list_all)
     if isinstance(arts, Response):
         return arts
-    from observatory.api import scope
-    if scope.of(request) is not None:
-        ok = await scope.threads_ok(_pool_of(request), request, {a["thread"] for a in arts})
-        arts = [a for a in arts if a["thread"] in ok]
-    arts = [a for a in arts if _project_ok(request, a["thread"])]
+    ok = await _threads_ok(request, {a["thread"] for a in arts})
+    arts = [a for a in arts if a["thread"] in ok]
     titles = await thread_titles(request, {a["thread"] for a in arts})
     return [{**a, "title": titles.get(a["thread"]) or a["thread"]} for a in arts]
 
@@ -842,6 +846,7 @@ async def ws_media(request: Request, thread: str | None = None):
     if thread is None:
         rows = [dict(r) for r in await pool.fetch(MEDIA_ALL_SQL)]
         if scope.of(request) is not None:          # only a file a message the member may read attached
+            await scope.load(pool, request)
             rows = [r for r in rows if scope.message_ok(request, r)]
         idx = await asyncio.to_thread(lambda: store().index() if store().ready() else {})
         return library_media(rows, idx)
