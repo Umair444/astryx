@@ -3,13 +3,19 @@
    and the accent for "a newer version". Every value is a theme token, so dark mode is designed, not inverted. */
 
 /* ── a chip that carries a newer version: "v3 · updated" + What changed, one joined control ─────────────────────── */
-.ws-chip-wrap.is-updated > .ws-chip { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.ws-chip-wrap > .ws-chip { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .ws-chip-ver { color: var(--t-accent); font-weight: 500; }
 .ws-chip-diff { display: inline-flex; align-items: center; gap: 6px; padding: 0 11px 0 10px; font-size: 12px; font-weight: 500;
-  color: var(--t-accent); border: 1px solid var(--t-line); border-left: 0; border-radius: 0 12px 12px 0; white-space: nowrap;
+  color: var(--t-accent); border: 1px solid var(--t-line); border-left: 0; white-space: nowrap;
   background: color-mix(in srgb, var(--t-accent) 5%, color-mix(in srgb, var(--t-panel) 80%, transparent)); transition: background .12s, border-color .12s; }
 .ws-chip-diff:hover { background: color-mix(in srgb, var(--t-accent) 11%, var(--t-panel)); border-color: var(--t-line2); }
-.ws-chip-diff:focus-visible, .ws-turn-acts button:focus-visible, .ws-pick:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent); outline-offset: 1px; }
+/* the chip's last segment: download */
+.ws-chip-dl { display: grid; place-items: center; width: 34px; color: var(--t-dim); border: 1px solid var(--t-line); border-left: 0;
+  border-radius: 0 12px 12px 0; background: color-mix(in srgb, var(--t-panel) 80%, transparent); transition: background .12s, color .12s, border-color .12s; }
+.ws-chip-dl:hover { color: var(--t-fg); background: var(--t-panel); border-color: var(--t-line2); }
+.ws-chip-dl:disabled { opacity: .45; }
+.ws-chip-dl.is-failed { color: var(--t-bad); }
+.ws-chip-dl:focus-visible, .ws-chip-diff:focus-visible, .ws-turn-acts button:focus-visible, .ws-pick:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent); outline-offset: 1px; }
 @media (max-width: 480px) { .ws-chip-diff span { display: none; } .ws-chip-diff { padding: 0 10px; } }
 
 /* ── a turn's actions: a small floating toolbar on hover (agents), inline beside the time (the owner) ─────────────── */
