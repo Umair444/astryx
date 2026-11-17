@@ -23,7 +23,10 @@ def of(request) -> tuple[list[str], str] | None:
 
 
 def sql(r: str, m: str) -> str:
-    return f"(from_agent = ANY({r}::text[]) OR to_agent = ANY({r}::text[]) OR from_agent = {m} OR to_agent = {m})"
+    """An agent arm counts only for THIS org's agent: a peer names its own envelope (gateway.py), so a peer calling
+    itself after an agent here is not that agent (medic 12831)."""
+    return (f"((from_agent = ANY({r}::text[]) AND coalesce(from_org, 'local') = 'local') OR "
+            f"(to_agent = ANY({r}::text[]) AND coalesce(to_org, 'local') = 'local') OR from_agent = {m} OR to_agent = {m})")
 
 
 def message_ok(request, d: dict) -> bool:
@@ -32,7 +35,8 @@ def message_ok(request, d: dict) -> bool:
         return True
     reach, me = s
     f, t = d.get("from", d.get("from_agent")), d.get("to", d.get("to_agent"))
-    return f in reach or t in reach or (bool(me) and me in (f, t))
+    here = lambda k: (d.get(k) or "local") == "local"   # noqa: E731 — this org's agent, never a peer's namesake
+    return (f in reach and here("from_org")) or (t in reach and here("to_org")) or (bool(me) and me in (f, t))
 
 
 async def threads_ok(pool, request, threads) -> set[str]:

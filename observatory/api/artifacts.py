@@ -677,8 +677,10 @@ async def _aid_ok(request: Request, aid: str) -> bool:
         return True
     try:
         thread = (await asyncio.to_thread(store().entry, aid))["thread"]
-    except Exception:                               # noqa: BLE001 — no such artifact: the handler's own 404 says so
-        return True
+    except StoreError as e:                         # no such artifact: the handler's own 404 says so
+        return e.status == 404
+    except Exception:                               # noqa: BLE001 — anything else: closed (medic 12831)
+        return False
     return await _thread_ok(request, thread)
 
 
@@ -818,7 +820,7 @@ def library_media(rows: list[dict], index: dict) -> list[dict]:
     return out
 
 
-MEDIA_ALL_SQL = ("SELECT id, ts, from_agent, to_agent, thread, body FROM messages "
+MEDIA_ALL_SQL = ("SELECT id, ts, from_agent, from_org, to_agent, to_org, thread, body FROM messages "
                  "WHERE (thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%') AND body LIKE '%[[file:%' "
                  f"AND ({_ws.human_sql('from_agent')} OR {_ws.human_sql('to_agent')} OR thread LIKE 'chat:%') "
                  "ORDER BY id DESC LIMIT 2000")

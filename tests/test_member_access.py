@@ -149,6 +149,11 @@ def main(tmp: Path, url: str):
     fcode = lambda h: cl.get("/api/chat/file", params={"path": "/tmp/fx/medic.png"}, headers=h()).status_code  # noqa: E731
     arm("R1c /api/chat/file for medic's file: bob 403, alice past the gate", fcode(BOB) == 403 and fcode(ALICE) != 403,
         (fcode(BOB), fcode(ALICE)))
+    with psycopg.connect(url, autocommit=True) as c:
+        c.execute("INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body) VALUES "
+                  "('db','peer.example','seed','chat:20990101-pe','chat','a peer named db')")
+    arm("R1e a peer that names itself db is not bob's db", not any(m.get("from_org") == "peer.example" for m in rows(BOB)),
+        [(m["from"], m.get("from_org")) for m in rows(BOB)])
     arm("R1d a message from a name that is no charter is not on bob's wire",
         not any(m["from"] == "pulse" for m in rows(BOB)), [m["from"] for m in rows(BOB)])
 
