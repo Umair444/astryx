@@ -323,7 +323,9 @@ async def projects_get(request: Request):
     `missing`, so the page shows the gap instead of a project that quietly fans out to nobody. Only the projects this
     viewer sees (workspace.project_visible: its maker, whom they shared it with, the owner)."""
     from observatory.api.workspace import project_visible
-    me, live = _me(request) or "owner", _roster()
+    me, live = _me(request), _roster()
+    if not me:                                       # no wire handle: nobody's projects (medic 12845), never the owner's
+        return {"etag": etag(projects_file()), "projects": []}
     out = [{**p, "missing": [a for a in p["agents"] if a not in live]} for p in _read_projects() if project_visible(p, me)]
     return {"etag": etag(projects_file()), "projects": out}
 
@@ -348,7 +350,9 @@ async def projects_put(body: list[Project], request: Request):
     why = _valid(body)
     if why:
         return JSONResponse({"error": why}, status_code=400)
-    me = _me(request) or "owner"
+    me = _me(request)
+    if not me:
+        return JSONResponse({"error": "who are you?"}, status_code=403)
     old = _read_projects()
     was = {p["id"]: p for p in old}
     from observatory.api.workspace import project_visible

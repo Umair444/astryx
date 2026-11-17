@@ -201,6 +201,20 @@ def main(tmp: Path, url: str):
     r = cl.put("/api/chat/projects", json=[{**mine_only[0], "shared": ["cv-bob.9"]}], headers={**A(), "if-match": tag})
     arm("T2 she shares her own with a member", r.status_code == 200 and r.json()["projects"][0]["shared"] == ["cv-bob.9"],
         (r.status_code, r.text[:200]))
+    os.environ["ASTRYX_WS_STORE"] = str(tmp / "store")       # a project's files: artifacts on thread project:<id>
+    from observatory.api import artifacts as AR
+    AR.bind(lambda: obs.pool, estate)
+    aid = AR.store().create("project:own", "plan.md", "the owner's plan", "owner")["id"]
+    lib = lambda: [a["id"] for a in cl.get("/api/ws/artifacts", headers=A()).json()]  # noqa: E731
+    by_id = lambda: (cl.get(f"/api/ws/artifacts/{aid}", headers=A()).status_code,     # noqa: E731
+                     cl.get(f"/api/ws/artifacts/{aid}/content", headers=A()).status_code)
+    arm("T2 a project she can't see: its file is not in her library, and 403 by id and by content",
+        aid not in lib() and by_id() == (403, 403), (lib(), by_id()))
+    cur = [{k: v for k, v in p.items() if k != "missing"} for p in cl.get("/api/chat/projects", headers=O).json()["projects"]]
+    r = cl.put("/api/chat/projects", json=[{**p, "shared": [ALICE]} if p["id"] == "own" else p for p in cur],
+               headers={**O, "if-match": cl.get("/api/chat/projects", headers=O).json()["etag"]})
+    arm("T2 ...shared with her, it is in her library and 200 by id and by content",
+        r.status_code == 200 and aid in lib() and by_id() == (200, 200), (r.status_code, lib(), by_id()))
 
     # ── T3 owner-only stays owner-only ─────────────────────────────────────────────────────────────────────────
     print("T owner-only acts")

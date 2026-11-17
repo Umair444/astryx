@@ -670,8 +670,8 @@ def _project_ok(request: Request, thread: str) -> bool:
     from observatory.api import workspace as _ws
     if not thread.startswith("project:"):
         return True
-    me = _ws._me(request) or "owner"
-    return me == "owner" or any(p.get("id") == thread[8:] for p in _ws._projects(me))
+    me = _ws._me(request)
+    return bool(me) and (me == "owner" or any(p.get("id") == thread[8:] for p in _ws._projects(me)))   # no handle: none
 
 
 async def _thread_ok(request: Request, thread: str) -> bool:
