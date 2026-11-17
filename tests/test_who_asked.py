@@ -56,10 +56,14 @@ def arm(name, ok, detail=""):
 
 
 def canvas_claim_sql() -> str:
-    """bridges/canvas.py's CLAIM, read from the file (importing the bridge would start it)."""
-    src = (REPO / "bridges" / "canvas.py").read_text()
-    m = re.search(r'^CLAIM = """(.*?)"""', src, re.S | re.M)
-    return m.group(1)
+    """bridges/canvas.py's CLAIM, read from the file (importing the bridge would start it): the assignment's own
+    expression, evaluated with the one module it names (address.elsewhere_sql, identity P1)."""
+    import ast
+    from astryx.core import address
+    tree = ast.parse((REPO / "bridges" / "canvas.py").read_text())
+    node = next(n.value for n in tree.body if isinstance(n, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == "CLAIM" for t in n.targets))
+    return eval(compile(ast.Expression(node), "canvas.py", "eval"), {"address": address})
 
 
 def main(tmp: Path, url: str):
