@@ -1,58 +1,52 @@
 {
   "servers": [
     {
-      "server": "compose",
+      "server": "astryx",
+      "who": "every",
+      "error": "Expecting value: line 1 column 1 (char 0)",
+      "tools": []
+    },
+    {
+      "server": "tools",
+      "who": "every",
       "tools": [
         {
-          "name": "dag_list",
-          "description": "List the org's composite DAGs (name, description, args, node count)."
+          "name": "find",
+          "description": "Search the org's tool registry BEFORE writing a script or doing by hand what a tool may"
         },
         {
-          "name": "dag_describe",
-          "description": "Full definition of one DAG: nodes, wiring, returns."
-        },
-        {
-          "name": "dag_run",
-          "description": "Run a composite DAG by name. Independent nodes run in parallel;"
+          "name": "run",
+          "description": "Run a registered script by its registry id (e.g. script:nucleus/smoke.sh) with an argv"
         }
       ]
     },
     {
-      "server": "mail",
+      "server": "hands",
+      "who": "every",
       "tools": [
         {
-          "name": "mail_search",
-          "description": "Search the inbox. On Gmail, Gmail's own syntax (from:, subject:, newer_than:2d, is:unread, has:attachment);"
+          "name": "look",
+          "description": "See a screen (\u2264960 wide; its pixels are your coordinates). screen: \"laptop\" | \"background\""
         },
         {
-          "name": "mail_recent",
-          "description": "The newest inbox messages: id, from, subject, date, unread."
-        },
-        {
-          "name": "mail_read",
-          "description": "One full message by id (from mail_search/mail_recent): headers + plain body."
-        },
-        {
-          "name": "mail_send",
-          "description": "Send a plain-text email from the org's address. OUTWARD ACT: unless your charter says otherwise, sign the body"
+          "name": "act",
+          "description": "Do one thing. screen (required): \"laptop\" | \"background\". x,y = look() pixels. Text reply;"
         }
       ]
     },
     {
-      "server": "imagegen",
+      "server": "influence",
+      "who": "every",
       "tools": [
         {
-          "name": "generate",
-          "description": "Generate image(s) from a prompt via OpenAI. `models`: optional list of model ids \u2014"
-        },
-        {
-          "name": "list_models",
-          "description": "Image-capable model ids currently visible to the org's OpenAI key (live query)."
+          "name": "who_should_i_ask",
+          "description": "WHO SHOULD I ASK (plan-11324 S2), ADVISORY: the top-k agents by the influence graph's ROUTING view, personalized"
         }
       ]
     },
     {
       "server": "channels",
+      "who": "every",
       "tools": [
         {
           "name": "contact_search",
@@ -73,7 +67,88 @@
       ]
     },
     {
+      "server": "phone",
+      "who": "opt-in",
+      "tools": [
+        {
+          "name": "look",
+          "description": "See the phone. device = its name (required). text=True returns the on-screen elements with their"
+        },
+        {
+          "name": "act",
+          "description": "Do one thing on a phone. device (required except for phones). x,y = look() coordinates."
+        }
+      ]
+    },
+    {
+      "server": "chat-sql",
+      "who": "grant",
+      "error": "unhandled errors in a TaskGroup (1 sub-exception)",
+      "tools": []
+    },
+    {
+      "server": "ocr",
+      "who": "grant",
+      "error": "unhandled errors in a TaskGroup (1 sub-exception)",
+      "tools": []
+    },
+    {
+      "server": "mail",
+      "who": "grant",
+      "tools": [
+        {
+          "name": "mail_search",
+          "description": "Search the inbox. On Gmail, Gmail's own syntax (from:, subject:, newer_than:2d, is:unread, has:attachment);"
+        },
+        {
+          "name": "mail_recent",
+          "description": "The newest inbox messages: id, from, subject, date, unread."
+        },
+        {
+          "name": "mail_read",
+          "description": "One full message by id (from mail_search/mail_recent): headers + plain body."
+        },
+        {
+          "name": "mail_send",
+          "description": "Send a plain-text email from the org's address. OUTWARD ACT: unless your charter says otherwise, sign the body"
+        }
+      ]
+    },
+    {
+      "server": "compose",
+      "who": "grant",
+      "tools": [
+        {
+          "name": "dag_list",
+          "description": "List the org's composite DAGs (name, description, args, node count)."
+        },
+        {
+          "name": "dag_describe",
+          "description": "Full definition of one DAG: nodes, wiring, returns."
+        },
+        {
+          "name": "dag_run",
+          "description": "Run a composite DAG by name. Independent nodes run in parallel;"
+        }
+      ]
+    },
+    {
+      "server": "imagegen",
+      "who": "grant",
+      "tools": [
+        {
+          "name": "generate",
+          "description": "Generate image(s) from a prompt via OpenAI. `models`: optional list of model ids \u2014"
+        },
+        {
+          "name": "list_models",
+          "description": "Image-capable model ids currently visible to the org's OpenAI key (live query)."
+        }
+      ]
+    },
+    {
       "server": "growbot",
+      "who": "grant",
       "tools": [
         {
           "name": "body_act",
@@ -99,6 +174,7 @@
     },
     {
       "server": "org",
+      "who": "grant",
       "tools": [
         {
           "name": "propose_goal",
@@ -128,6 +204,7 @@
     },
     {
       "server": "memory",
+      "who": "grant",
       "tools": [
         {
           "name": "ask",
@@ -136,20 +213,8 @@
       ]
     },
     {
-      "server": "tools",
-      "tools": [
-        {
-          "name": "find",
-          "description": "Search the org's tool registry BEFORE writing a script or doing by hand what a tool may"
-        },
-        {
-          "name": "run",
-          "description": "Run a registered script by its registry id (e.g. script:nucleus/smoke.sh) with an argv"
-        }
-      ]
-    },
-    {
       "server": "jobs",
+      "who": "grant",
       "tools": [
         {
           "name": "ats_job",
@@ -167,6 +232,7 @@
     },
     {
       "server": "docpdf",
+      "who": "grant",
       "tools": [
         {
           "name": "html_to_pdf",
@@ -175,14 +241,111 @@
       ]
     },
     {
-      "server": "influence",
+      "server": "browser",
+      "who": "grant",
       "tools": [
         {
-          "name": "who_should_i_ask",
-          "description": "WHO SHOULD I ASK (plan-11324 S2), ADVISORY: the top-k agents by the influence graph's ROUTING view, personalized"
+          "name": "browser_close",
+          "description": "Close the page"
+        },
+        {
+          "name": "browser_resize",
+          "description": "Resize the browser window"
+        },
+        {
+          "name": "browser_console_messages",
+          "description": "Returns all console messages"
+        },
+        {
+          "name": "browser_handle_dialog",
+          "description": "Handle a dialog"
+        },
+        {
+          "name": "browser_emulate_media",
+          "description": "Emulate CSS media features for the page, for example switch between the light and dark color scheme. Omitted parameters are left unchanged; null clears an override."
+        },
+        {
+          "name": "browser_evaluate",
+          "description": "Evaluate JavaScript expression on page or element"
+        },
+        {
+          "name": "browser_file_upload",
+          "description": "Upload one or multiple files"
+        },
+        {
+          "name": "browser_drop",
+          "description": "Drop files or MIME-typed data onto an element, as if dragged from outside the page. At least one of \"paths\" or \"data\" must be provided."
+        },
+        {
+          "name": "browser_find",
+          "description": "Search the accessibility snapshot of the current page for text or a regular expression. Returns matching snapshot nodes with a few lines of surrounding context (like search snippets), each shown under"
+        },
+        {
+          "name": "browser_fill_form",
+          "description": "Fill multiple form fields"
+        },
+        {
+          "name": "browser_press_key",
+          "description": "Press a key on the keyboard"
+        },
+        {
+          "name": "browser_type",
+          "description": "Type text into editable element"
+        },
+        {
+          "name": "browser_navigate",
+          "description": "Navigate to a URL"
+        },
+        {
+          "name": "browser_navigate_back",
+          "description": "Go back to the previous page in the history"
+        },
+        {
+          "name": "browser_network_requests",
+          "description": "Returns a numbered list of network requests since loading the page. Use browser_network_request with the number to get full details."
+        },
+        {
+          "name": "browser_network_request",
+          "description": "Returns full details (headers and body) of a single network request, or a single part if `part` is set. Use the number from browser_network_requests."
+        },
+        {
+          "name": "browser_run_code_unsafe",
+          "description": "Run a Playwright code snippet. Unsafe: executes arbitrary JavaScript in the Playwright server process and is RCE-equivalent."
+        },
+        {
+          "name": "browser_take_screenshot",
+          "description": "Take a screenshot of the current page. Use browser_snapshot for actions by default. With the vision capability enabled, use screenshot coordinates with the coordinate-based mouse tools for elements no"
+        },
+        {
+          "name": "browser_snapshot",
+          "description": "Capture accessibility snapshot of the current page, this is better than screenshot"
+        },
+        {
+          "name": "browser_click",
+          "description": "Perform click on a web page"
+        },
+        {
+          "name": "browser_drag",
+          "description": "Perform drag and drop between two elements"
+        },
+        {
+          "name": "browser_hover",
+          "description": "Hover over element on page"
+        },
+        {
+          "name": "browser_select_option",
+          "description": "Select an option in a dropdown"
+        },
+        {
+          "name": "browser_tabs",
+          "description": "List, create, close, or select a browser tab."
+        },
+        {
+          "name": "browser_wait_for",
+          "description": "Wait for text to appear or disappear or a specified time to pass. When both text and textGone are provided, waits for the first one to happen"
         }
       ]
     }
   ],
-  "total_tools": 32
+  "total_tools": 61
 }

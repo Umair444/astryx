@@ -42,9 +42,10 @@ from mcp.server.fastmcp import FastMCP
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 DAGS = HERE / "dags"
-REGISTRY = json.loads((REPO / "mcp" / "registry.json").read_text())
 sys.path.insert(0, str(REPO / "src"))   # astryx.config: the ONE DSN resolver (plan-11324 S3a); src/ holds no mcp/
 from astryx import config, paths  # noqa: E402
+from astryx.core import mcp_servers  # noqa: E402  (the one list of tool servers, and how each is launched)
+REGISTRY = mcp_servers.load()
 _ENV = paths.estate(__file__) / ".env"
 try:
     DSN = config.dsn(_ENV, env_first=False)      # the file only, as before
@@ -87,11 +88,8 @@ async def session(server: str) -> ClientSession:
         raise ValueError(f"unknown server '{server}' (not in mcp/registry.json)")
     if _stack is None:
         _stack = AsyncExitStack()
-    spec = REGISTRY[server]
-    params = StdioServerParameters(
-        command=str(REPO / spec["command"]),
-        args=[str(REPO / a) if not a.startswith("-") else a for a in spec["args"]],
-        env={**os.environ, **spec.get("env", {})})
+    run = mcp_servers.launch(server, REGISTRY[server])          # as spawn launches it: the one registry's rule
+    params = StdioServerParameters(command=run["command"], args=run["args"], env={**os.environ, **run.get("env", {})})
     read, write = await _stack.enter_async_context(stdio_client(params))
     s = await _stack.enter_async_context(ClientSession(read, write))
     await s.initialize()

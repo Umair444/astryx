@@ -1208,18 +1208,19 @@ async def usage():
 
 @app.get("/api/tools")
 async def tools():
-    """The org's toolbox: wire tools, registry servers (from mcp/manifest.json,
-    regenerate with mcp/scan.py), and composite DAGs with their wiring."""
-    servers = [{"server": "astryx (the wire)", "tools": [
-        {"name": "send", "description": "Send a message on the wire (every agent holds this)."},
-        {"name": "subscribe", "description": "Watch another agent's milestones and errors."},
-        {"name": "query_steps", "description": "Read any agent's step history."}]}]
-    manifest = REPO / "mcp" / "manifest.json"
-    if manifest.is_file():
-        try:
-            servers += json.loads(manifest.read_text()).get("servers", [])
-        except Exception:
-            pass
+    """The org's toolbox: EVERY tool server in mcp/registry.json (the one list, owner 11-17) with who gets it and its
+    tools as mcp/scan.py last listed them (mcp/manifest.json; a server not scanned yet shows with none), and composite
+    DAGs with their wiring."""
+    try:
+        listed = {s["server"]: s for s in json.loads((REPO / "mcp" / "manifest.json").read_text()).get("servers", [])}
+    except Exception:
+        listed = {}
+    try:
+        reg = json.loads((REPO / "mcp" / "registry.json").read_text())
+    except Exception:
+        reg = {}
+    servers = [{**listed.get(n, {"tools": []}), "server": n, "who": e.get("who", "grant"),
+                **({"optin": e["optin"]} if e.get("optin") else {})} for n, e in reg.items()]
     dags = []
     for f in sorted((REPO / "mcp" / "compose" / "dags").glob("*.json")):
         try:
@@ -1474,7 +1475,7 @@ def unit_state(unit: str) -> dict:
 # ---------------------------------------------------------------- tools: details (owner, via the gate)
 # A tool's arguments and full docstring come from its server's SOURCE (mcp/<srv>/server.py, the file
 # mcp/registry.json launches), read with ast — never imported, so a broken server can't break this.
-_WIRE_SERVER = "astryx (the wire)"
+_WIRE_SERVER = "astryx"   # the wire: mcp/registry.json names it like every server
 _WIRE_TOOLS = {"send": "to, body, intent?, thread?", "subscribe": "agent, filter?", "query_steps": "agent?, limit?"}
 
 

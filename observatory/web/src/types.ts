@@ -292,6 +292,8 @@ export interface ToolInfo {
 }
 
 export interface ToolServer {
+  who?: 'every' | 'grant' | 'opt-in'   // who gets it (mcp/registry.json, the one list): every agent, by grant, or opt-in
+  optin?: string                         // the .env switch an opt-in server waits on
   server: string
   tools: ToolInfo[]
 }

@@ -59,7 +59,7 @@ LEDGER_V = 2
 # than run by an agent, and tier/ is private. None of those is a tool.
 TOOL_ROOTS = ("nucleus/", "src/astryx/", "scripts/", "devtools/", "skills/", "mcp/")
 SCRIPT_SUFFIXES = (".py", ".sh", ".mjs", ".js")
-# The core wire is not in registry.json (it's the channel server spawn.sh wires in), but its
+# The core wire is in registry.json (who=every, since 11-17) like every server, and its
 # tools are the org's most-called ones. tools is the registry door.
 CORE_SERVERS = ("astryx", "tools")
 WRITE_TOOLS = ("Write",)
