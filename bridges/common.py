@@ -669,20 +669,32 @@ async def step_line(pool, step_id: int, kind: str, *, agent: str, label: str = "
     hook stamps meta.turn_msgs, the msg_ids that opened the step's turn (hooks/step.py turn_msgs); a step whose turn was
     opened on another thread (a member's web ask, seed's task, another group) is the agent's work for someone else and
     never lands here (medic 12159). A step with no stamp has no known scope: nothing, never everything."""
+    return (await scoped_line(pool, step_id, kind, agent=agent, label=label, thread=thread))[1]
+
+
+async def scoped_line(pool, step_id: int, kind: str, *, agent: str, label: str = "",
+                      thread: str | None = None) -> tuple[str | None, str | None]:
+    """(role, line): step_line's line and what the step is to `thread` (_role: 'serves', 'many', 'acked', 'waiting';
+    'serves' for an unscoped caller). A progress job uses the role: a chat already answered gets no content-free line."""
     if kind not in MARK or not agent:
-        return None
+        return None, None
     row = await pool.fetchrow("SELECT content, meta FROM steps WHERE id=$1 AND agent=$2",
                               step_id, agent)
     if not row:
-        return None
-    if thread is not None and not await _serves(pool, row["meta"], thread):
-        return None
+        return None, None
+    role = "serves"
+    if thread is not None:
+        role, n, since = await _role(pool, row["meta"], thread)
+        if role is None:
+            return None, None
+        if role != "serves":                       # another chat's work: said without its content (DESIGN, 11-18)
+            return role, _elsewhere(role, n, since)
     content = "writing a reply" if kind == "response" else row["content"]
     prefix = f"{label} · " if label else ""
     sub = _sub_of(row["meta"])
     if sub:                                        # a helper the agent launched (hooks/step.py scope): say whose step
         prefix += f"↳ {sub} · "
-    return f"{MARK[kind]} {prefix}{content[:140]}"
+    return role, f"{MARK[kind]} {prefix}{content[:140]}"
 
 
 def _sub_of(meta) -> str:
@@ -697,17 +709,53 @@ def _sub_of(meta) -> str:
         return ""
 
 
-async def _serves(pool, meta, thread: str) -> bool:
-    """Was the step's turn opened by a message on `thread`? (meta.turn_msgs; see step_line)"""
+def _meta(meta) -> dict:
     try:
         m = json.loads(meta) if isinstance(meta, str) else (meta or {})
-        ids = [int(x) for x in (m.get("turn_msgs") or [])][:20]
+        return m if isinstance(m, dict) else {}
     except Exception:
-        return False
-    if not ids:
-        return False
-    return bool(await pool.fetchval("SELECT 1 FROM messages WHERE id = ANY($1::bigint[]) AND thread = $2 LIMIT 1",
-                                    ids, thread))
+        return {}
+
+
+def _ids(m: dict, key: str) -> list[int]:
+    try:
+        return [int(x) for x in (m.get(key) or [])][:20]
+    except Exception:
+        return []
+
+
+async def _role(pool, meta, thread: str) -> tuple[str | None, int, int]:
+    """What a step is to `thread`'s chat (hooks/step.py stamps the scope): 'serves' (its request is being worked on),
+    'many' (the agent's work can't be told apart), 'acked' / 'waiting' (it waits behind another request), or None.
+    Returns (role, the number of chats in `many`, since). One lookup: the threads of every id the step names."""
+    m = _meta(meta)
+    keys = ("turn_msgs", "many", "acked", "waiting")
+    ids = {k: _ids(m, k) for k in keys}
+    every = sorted({i for v in ids.values() for i in v})
+    if not every:
+        return None, 0, 0
+    th = {r["id"]: r["thread"] for r in await pool.fetch("SELECT id, thread FROM messages WHERE id = ANY($1::bigint[])",
+                                                          every)}
+    since = int(m.get("since") or 0)
+    for k, role in zip(keys, ("serves", "many", "acked", "waiting")):
+        if any(th.get(i) == thread for i in ids[k]):
+            return role, len({th.get(i) for i in ids["many"]} - {None}), since
+    return None, 0, 0
+
+
+async def _serves(pool, meta, thread: str) -> bool:
+    """Was the step's turn opened by a message on `thread`? (meta.turn_msgs; see step_line)"""
+    return (await _role(pool, meta, thread))[0] == "serves"
+
+
+def _elsewhere(role: str, n: int, since: int) -> str:
+    """The content-free line for a chat whose request is not the one being worked on."""
+    if role == "many":
+        return f"◌ working on {max(n, 2)} requests (yours included)"
+    if role == "acked":
+        return "◌ on it: starting after the current task"
+    mins = int((time.time() - since) // 60) if since else 0
+    return "◌ queued: finishing another request first; yours is next" + (f" (busy {mins} min so far)" if mins >= 2 else "")
 
 
 # -------------------------------------------------------------------- doorbell

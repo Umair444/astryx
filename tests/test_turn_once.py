@@ -34,6 +34,7 @@ S = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(S)
 S.usage_snapshot = lambda cur, agent=None: None
 S._label = lambda agent: (None, None)
+S.TURN_CACHE = str(Path(tempfile.mkdtemp(prefix="turnonce.")) / "turn-{agent}.json")   # never the live agent's scope cache
 S.cleaner = lambda: ((lambda o: o), True)          # no secrets in this fixture: a clean clone has no .env (medic 12455)
 fails = []
 
@@ -105,6 +106,11 @@ def main():
         import io
         with tempfile.TemporaryDirectory() as td:
             tp = Path(td) / "t.jsonl"
+            # the turn's own opening message, real and committed: the hook reads on its own connection, and a tag's id
+            # counts only as a real message to this agent on the tag's thread (medic 13157 R3)
+            mid = cur.execute("""INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, status, delivered_at)
+                                 VALUES ('owner', 'local', 'seed', 'obs:seed', 'chat', 'hi', 'delivered', now()) RETURNING id""").fetchone()[0]
+            conn.commit()
             tp.write_text(line("user", f'<channel source="astryx" from="owner" thread="obs:seed" intent="chat" msg_id="{mid}">hi</channel>', "2026-11-16T09:50:00Z"))
             ev = {"hook_event_name": "StopFailure", "error": "rate_limit", "transcript_path": str(tp), "session_id": "s2",
                   "last_assistant_message": "You've hit your session limit · resets 2:50pm (Asia/Karachi)"}

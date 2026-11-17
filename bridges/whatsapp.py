@@ -66,7 +66,6 @@ from astryx.core import address, channels  # noqa: E402  reaches_sql: a linked p
 from .common import identity_of, link_reply, renew  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
 BOOK = Book("whatsapp")      # this bridge's routes, from the route table (common.Book)
 
-JOB_TIMEOUT = 1800    # the live steps bubble is forgotten 30 min after it opened (bridges/progress.py)
 
 pool: asyncpg.Pool | None = None
 seen_msgids: dict[str, float] = {}       # webhook dedup (wacli retries)
@@ -466,7 +465,9 @@ async def _finish(agent: str, chat: str, ph, steps: int):
 
 
 # the live steps bubble: one lifecycle for every channel (bridges/progress.py); WhatsApp's four acts
-progress = Progress(lambda: pool, post=_post, edit=_edit, finish=_finish, typing=typing, timeout=JOB_TIMEOUT)
+# WhatsApp edits a message only for 15 min, and its "finished" line stays, so a reopened job edits it back
+progress = Progress(lambda: pool, post=_post, edit=_edit, finish=_finish, typing=typing,
+                    edit_window=15 * 60, finish_keeps=True)
 on_step = progress.on_step
 
 

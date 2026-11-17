@@ -53,7 +53,6 @@ from .common import identity_of  # noqa: E402  the one minter of a sender's wire
 BOOK = Book("discord")      # this bridge's routes, from the route table (common.Book)
 
 pool: asyncpg.Pool | None = None
-JOB_TIMEOUT = 1800    # a progress job is forgotten 30 min after it opened (or after its last reply)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -260,7 +259,7 @@ async def _typing(cid: str):
 
 
 # the live steps bubble: one lifecycle for every channel (bridges/progress.py); Discord's four acts
-progress = Progress(lambda: pool, post=_post, edit=_edit, finish=_finish, typing=_typing, timeout=JOB_TIMEOUT)
+progress = Progress(lambda: pool, post=_post, edit=_edit, finish=_finish, typing=_typing)
 on_step = progress.on_step
 
 

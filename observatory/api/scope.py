@@ -90,9 +90,11 @@ def sql(r: str, m: str, o: str) -> str:
 def steps_sql(o: str, s: str = "steps") -> str:
     """The ONE rule for a step's content, for every steps reader: /api/steps, an agent's profile, the briefing, the
     chat's work pane (medic 12975). A step's turn opened on its messages: meta.turn_msgs, written with the step while
-    the turn runs, and its turn's input once the turn is linked. $o NULL: unscoped."""
-    msgs = (f"ARRAY(SELECT x::bigint FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof({s}.meta->'turn_msgs') = "
-            f"'array' THEN {s}.meta->'turn_msgs' END) x WHERE x ~ '^[0-9]{{1,18}}$')")
+    the turn runs, and its turn's input once the turn is linked; a step whose work served several chats at once
+    (meta.many, hooks/step.py) is theirs too. $o NULL: unscoped."""
+    arr = lambda k: f"COALESCE(CASE WHEN jsonb_typeof({s}.meta->'{k}') = 'array' THEN {s}.meta->'{k}' END, '[]'::jsonb)"  # noqa: E731
+    msgs = (f"ARRAY(SELECT x::bigint FROM jsonb_array_elements_text({arr('turn_msgs')} || {arr('many')}) x "
+            f"WHERE x ~ '^[0-9]{{1,18}}$')")
     return (f"({o}::text[] IS NULL OR NOT EXISTS (SELECT 1 FROM messages m WHERE (m.id = ANY({msgs}) OR m.id = "
             f"(SELECT t.input_msg_id FROM turns t WHERE t.id = {s}.turn_id)) "
             f"AND {personal_sql('m.thread')} AND NOT m.thread = ANY({o}::text[])))")
