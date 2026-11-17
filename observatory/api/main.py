@@ -1963,6 +1963,16 @@ async def owner_send(m: OwnerMsg, request: Request):
         return JSONResponse({"error": f"you can't message {', '.join(out)}: it is outside the agents you were given"},
                             status_code=403)
     stamp = {"team": team, "lead": team[0]} if len(team) > 1 else {}
+    if (rl := _ws.REPLY_LINE.match(m.body.strip())):
+        # A REPLY names a message (owner 11-17): only one the SENDER may read, by its own author, is a reference; the
+        # agent reads the stamp, never the line (medic 12990: the line alone would make it a deputy past the wall)
+        got = await pool.fetchrow("SELECT id, from_agent, from_org, to_agent, to_org, thread FROM messages "
+                                  f"WHERE id = $1 AND {NOT_RETRACTED_SQL}", int(rl.group(1)))
+        if _scope.of(request) is not None and got:
+            await _scope.load(pool, request)
+        if not got or got["from_agent"] != rl.group(2) or not _scope.message_ok(request, dict(got)):
+            return JSONResponse({"error": "you can reply only to a message you can read"}, status_code=400)
+        stamp["reply_to"] = got["id"]
     if stamp:
         meta = {**(meta or {}), **stamp}
     if meta is None:                           # the owner: the very row it always was

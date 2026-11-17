@@ -247,6 +247,24 @@ def main(tmp: Path, url: str):
     arm("P8 /api/agents: db's last line for alice is hers to read; the owner's is the newest",
         last(ALICE) == "db says hers" and "privately" in (last(lambda: O) or ""), (last(ALICE), last(lambda: O)))
 
+    print("R3 a reply names only a message the sender may read (medic 12990)")
+    with psycopg.connect(url, autocommit=True) as c:
+        own = c.execute("SELECT id FROM messages WHERE thread = 'chat:20990101-o' AND from_agent = 'medic' ORDER BY id LIMIT 1").fetchone()[0]
+        hers = c.execute("SELECT id FROM messages WHERE thread = 'chat:20990101-s' AND from_agent = 'db' ORDER BY id LIMIT 1").fetchone()[0]
+    rp = lambda h, mid, frm="medic", th="chat:20990101-s", to="db": cl.post("/api/messages", headers=h(), json={  # noqa: E731
+        "to": to, "thread": th, "body": f"[reply #{mid} {frm}] “x”\nwhat did this say?"})
+    r = rp(ALICE, own)
+    arm("R3a alice can't reply to a message on the owner's chat (400): no agent reads it for her", r.status_code == 400, (r.status_code, r.text[:200]))
+    r = rp(ALICE, hers, "db")
+    arm("R3b her reply to a message in her own chat goes, stamped reply_to", r.status_code == 200, (r.status_code, r.text[:200]))
+    with psycopg.connect(url, autocommit=True) as c:
+        st = c.execute("SELECT delivery->'reply_to' FROM messages WHERE body LIKE %s ORDER BY id DESC LIMIT 1", (f"[reply #{hers} db]%",)).fetchone()
+    arm("R3b ...the stamp is the id", st is not None and st[0] == hers, st)
+    r = rp(ALICE, hers, "medic")
+    arm("R3 a reference naming the wrong author is refused (400)", r.status_code == 400, r.status_code)
+    r = rp(lambda: O, own, th="chat:20990101-o", to="medic")
+    arm("R3c the owner replies to any message: 200", r.status_code == 200, (r.status_code, r.text[:200]))
+
     print("C canvases by members (owner 11-17, 12979)")
     with psycopg.connect(url, autocommit=True) as c:
         ca, cb, cc = (c.execute("INSERT INTO canvases (title, agent, user_name, tier, version, shared_with) VALUES "

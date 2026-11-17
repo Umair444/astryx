@@ -119,7 +119,10 @@ _TEAM = re.compile(r"^\[chat with [^\]\n]*\]\n?")                  # model.bodyF
 # short before the close (a 400-char preview) loses the whole block
 _PROJECT = re.compile(r"^\[project: [^\]\n]{1,80}\]\n(?:[\s\S]*?\n\[/project\]\n?|[\s\S]*$)")
 _CANVAS = re.compile(r"^\[canvas #\d+[^\]\n]*\]\s*")               # the canvas shell's context prefix
-_REPLY = re.compile(r"^\[reply #\d{1,12} [\w.@-]{1,80}\] “.*”(?:\n|$)\s*")   # the message it answers (chat/model.ts replyLine)
+# the message a reply answers (chat/model.ts replyLine): main.owner_send verifies the id is the sender's to read and
+# stamps it (delivery.reply_to); the agent trusts only that stamp (channel/reply.mjs)
+REPLY_LINE = re.compile(r"^\[reply #(\d{1,12}) ([\w.@-]{1,80})\] “(.*)”(?:\n|$)")
+_REPLY = re.compile(REPLY_LINE.pattern + r"\s*")
 _BRIEF = re.compile(r'^NEW CANVAS #\d+\s*\W\s*"([^"]{1,80})"')     # the canvas bridge's first message to a painter
 # "send my changes" (web/src/chat/artifacts/versions/changes.ts, the one place the format lives):
 # "[changes to <name>: v2 (db) → v4 (owner)]\n<note>\n\n```diff\n…\n```\n(N more diff lines not shown: …)\n[[file:…]]"
