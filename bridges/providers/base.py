@@ -63,13 +63,15 @@ class Poll:
 class SendResult:
     """The complete outcome of a send — the observation the agent reasons from.
     `rendered` is what the recipient actually sees; `error` is populated iff the
-    send failed. A send never raises for a delivery problem: it reports one."""
+    send failed; `note` says what a send that went could not carry (it never fails
+    the send). A send never raises for a delivery problem: it reports one."""
     channel: str
     ok: bool
     handle: str                       # where it actually landed, channel-qualified
     message_id: str | None = None
     rendered: str = ""
     error: str | None = None
+    note: str | None = None
 
 
 class ChannelProvider(ABC):
