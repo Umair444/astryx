@@ -62,7 +62,7 @@ DATA_CTR = env("WA_DATA_CTR", "/data")    # same dir as the wacli process sees i
 WA_DOCKER = WA_CLI[2] if WA_CLI[:2] == ["docker", "exec"] else ""
 from .common import signed as _signed  # noqa: E402  the sender label, one rule for every shared-identity channel
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
-from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
+from astryx.core import address, channels  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
 from .common import identity_of, link_reply, renew  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
 BOOK = Book("whatsapp")      # this bridge's routes, from the route table (common.Book)
 
@@ -505,8 +505,11 @@ async def deliver(row):
         if stamped is None:
             return
         chat = stamped[0]["chat"]
-    elif thread[:3] in ("tg:", "dc:") or (row["to_agent"] or "")[:3] in ("tg-", "dc-"):
-        return                       # another bridge's surface (telegram/discord)
+    elif any(thread.startswith(f"{c.thread}:") or (not thread.startswith("wa:")
+                                                    and (row["to_agent"] or "").startswith(f"{c.person}-"))
+             for c in channels.CHANNELS if c.name != "whatsapp"):
+        return                       # another bridge's surface (the one channel table), judged by the THREAD first: a
+        #                              linked person answered here under another channel's name (cv-x.2 on wa:) is ours
     elif thread.startswith("wa:"):
         chat = thread[3:]            # the thread carries the destination
         if not _is_addressable(chat):

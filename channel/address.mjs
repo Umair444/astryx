@@ -15,9 +15,10 @@ export function checkAddress(to, { py = PY, addr = ADDR } = {}) {
   return new Promise((resolve, reject) => {
     execFile(py, [addr, String(to)], { timeout: 10_000 }, (err, stdout, stderr) => {
       const out = (stdout || '').trim()
-      if (!err) return resolve({ ok: true, note: '' })
+      if (!err) return resolve({ ok: true, note: '', person: out === 'person' })
       if (err.code === 2 && out) return reject(new Error(out))
-      resolve({ ok: true, note: ` · address unchecked (${(stderr || err.message).trim().slice(-120)})` })
+      // unchecked: the channel table is out of reach, so only the one person every org has is known as one (medic 13091)
+      resolve({ ok: true, note: ` · address unchecked (${(stderr || err.message).trim().slice(-120)})`, person: to === 'owner' })
     })
   })
 }

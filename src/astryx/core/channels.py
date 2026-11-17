@@ -59,6 +59,8 @@ CHANNELS: tuple[Channel, ...] = (
                    "Paste the token below. You get a link to add the bot to your server.")),
     # the web's own: a named person on a canvas page (cv-<name>, threads cv:<id>); no chat is a group
     Channel("canvas", "Canvas", person="cv", thread="cv", group="", connect=False),
+    # SMS through the org's gateway (bridges/sms.py): text out to one number (92 + ten digits), nothing comes back in
+    Channel("sms", "SMS", person="sms", thread="sms", group="", dm=r"92\d{10}", connect=False, numbers=True),
     # a deployed third-party frontend (bridges/frontends.py): one user's conversation with one pinned agent
     Channel("frontends", "Frontends", person="fe", thread="fe", group="", dm=r".+", connect=False, org="frontend",
             owner_rows=False),

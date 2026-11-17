@@ -87,6 +87,8 @@ fi
 start_svc gateway     8845 "$ROOT/bridges"         "$ROOT/venv/bin/uvicorn gateway:app --host 0.0.0.0 --port 8845 $GRACE"
 start_svc frontends   8998 "$ROOT"                 "$ROOT/venv/bin/uvicorn bridges.frontends:app --host 0.0.0.0 --port 8998 $GRACE"
 start_svc canvas      8091 "$ROOT"                 "$ROOT/venv/bin/uvicorn bridges.canvas:root --host 127.0.0.1 --port 8091 $GRACE"
+# SMS (bridges/sms.py): only where the org has configured a gateway (SMS_JUPYTER in .env)
+grep -q '^SMS_JUPYTER=.' .env && start_svc sms 8479 "$ROOT" "$ROOT/venv/bin/uvicorn bridges.sms:app --host 127.0.0.1 --port 8479 $GRACE"
 
 # --- 3. the pulse loop — EXACTLY ONE (one-clock ruling) ---
 # No systemd timer here, so the clock is a shell loop: pulse.py is one-shot, the loop
