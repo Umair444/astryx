@@ -56,9 +56,10 @@ export default function FileChip({ path, label, from, active, onOpen, msg }: {
   const name = nameOf(path, label)
   const kind = kindOfName(name)
   const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState('')     // a dead click says why (fetchFile's words)
   const save = async () => {
-    setBusy(true)
-    try { download(await (await fetchFile(path)).blob(), name) } catch { /* opening it says why */ } finally { setBusy(false) }
+    setBusy(true); setFailed('')
+    try { download(await (await fetchFile(path)).blob(), name) } catch (e) { setFailed((e as Error).message) } finally { setBusy(false) }
   }
   const tag = ver ? [ver.n ? `v${ver.n}` : '', ver.updated ? 'updated' : ''].filter(Boolean).join(' · ') : ''
   return (
@@ -80,7 +81,7 @@ export default function FileChip({ path, label, from, active, onOpen, msg }: {
           <span>What changed</span>
         </button>
       )}
-      <button className="ws-chip-dl" onClick={() => void save()} disabled={busy} title={`Download ${name}`} aria-label={`Download ${name}`}>{I.down('w-[15px] h-[15px]')}</button>
+      <button className={`ws-chip-dl ${failed ? 'is-failed' : ''}`} onClick={() => void save()} disabled={busy} title={failed || `Download ${name}`} aria-label={failed || `Download ${name}`}>{I.down('w-[15px] h-[15px]')}</button>
     </span>
   )
 }

@@ -14,6 +14,7 @@
   border-radius: 0 12px 12px 0; background: color-mix(in srgb, var(--t-panel) 80%, transparent); transition: background .12s, color .12s, border-color .12s; }
 .ws-chip-dl:hover { color: var(--t-fg); background: var(--t-panel); border-color: var(--t-line2); }
 .ws-chip-dl:disabled { opacity: .45; }
+.ws-chip-dl.is-failed { color: var(--t-bad); }
 .ws-chip-dl:focus-visible, .ws-chip-diff:focus-visible, .ws-turn-acts button:focus-visible, .ws-pick:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent); outline-offset: 1px; }
 @media (max-width: 480px) { .ws-chip-diff span { display: none; } .ws-chip-diff { padding: 0 10px; } }
 
