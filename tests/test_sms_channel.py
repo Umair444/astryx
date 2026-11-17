@@ -86,7 +86,7 @@ check("typography maps to its plain twin, accents fall off, newlines stay; an em
       repr(P.plain("\u25b8 seed\nCaf\u00e9 \u2013 \u201cok\u201d \u2026 \u2192 x\U0001F600")))
 for given, want in (("Rs \u0661\u0662\u0663 million", "Rs 123 million"), ("PKR \u06f5\u06f0\u06f0 bn", "PKR 500 bn"),
                     ("\u2264 5 \u2265 3, 10\u00b0C, \u20ac5, \u00a35", "<= 5 >= 3, 10 degC, EUR5, GBP5"),
-                    ("Tab\there\u00a0and\rthere", "Tab here and there")):
+                    ("Tab\there\u00a0and\rthere", "Tab here and there"), ("\u00bd off", "1/2 off")):
     check(f"a figure never changes or goes silently (medic 13103): {want!r}", P.plain(given) == (want, ""), P.plain(given))
 seen = []
 

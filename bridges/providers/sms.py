@@ -74,7 +74,7 @@ print("SMSRESULT " + json.dumps({"id": rid, "status": status}))
 def plain(text: str) -> tuple[str, str]:
     """(`text` as the gateway carries it: printable ASCII and newlines, what could not be carried at all)."""
     out, lost = [], []
-    for c in unicodedata.normalize("NFKD", text.translate(PLAIN)):
+    for c in unicodedata.normalize("NFKD", text.translate(PLAIN)).replace("\u2044", "/"):   # ½ -> 1⁄2 -> 1/2
         if c == "\n" or " " <= c <= "~":
             out.append(c)
         elif unicodedata.category(c) == "Mn":     # an accent, decomposed off its letter
