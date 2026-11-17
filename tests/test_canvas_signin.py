@@ -112,6 +112,8 @@ with TestClient(b.root, base_url="http://testserver", client=("127.0.0.1", 50000
     out["c_before"] = [lst(AL), cl.get(f"/canvas/api/canvases/{A_}/render", headers=AL).status_code]
     out["c_share"] = share(A_, ["7@" + C], O_)
     out["c_after"] = [lst(AL), cl.get(f"/canvas/api/canvases/{A_}/render", headers=AL).json()]
+    r = cl.get(f"/canvas/api/canvases/{A_}/data", headers=AL)
+    out["c_data"] = [r.status_code, r.json(), r.headers.get("x-astryx-withheld")]
     out["c_ask"] = cl.post(f"/canvas/api/canvases/{A_}/ask", json={"text": "make it blue", "frame": False},
                            headers={**H, **AL}).status_code
     out["c_notmaker"] = share(A_, ["7@" + C, "10@" + C], AL)
@@ -173,6 +175,7 @@ def main():
             cva = c.execute("INSERT INTO canvases (title, agent, user_name, tier, version) VALUES "
                             "('the owner''s board','seed','owner','org',1) RETURNING id").fetchone()[0]
             c.execute("INSERT INTO canvas_versions (canvas_id, version, html, author) VALUES (%s,1,'<p>board</p>','seed')", (cva,))
+            c.execute("INSERT INTO canvas_data (canvas_id, key, value, updated_by) VALUES (%s,'revenue','10280.5','seed')", (cva,))
             try:                                   # 'admin' where the members CHECK admits it (cog-rls slice 1)
                 c.execute("INSERT INTO members (uid, role) VALUES (%s,'admin')", (f"8@{COG}",))
                 admin = True
@@ -225,6 +228,8 @@ def main():
     lst_, rnd = g["c_after"]
     check("C1 ...she lists it, and it renders for her (a member is no guest of the privacy gate)",
           g["c_share_id"] in lst_ and rnd.get("html") and not rnd.get("withheld"), (lst_, rnd.get("withheld")))
+    check("C1 ...its live values reach her too, not withheld (owner 13010: \"template but not data\")",
+          g["c_data"][0] == 200 and g["c_data"][1] == {"revenue": 10280.5} and not g["c_data"][2], g["c_data"])
     check("C1 ...she directs its agent", g["c_ask"] == 200, g["c_ask"])
     check("C1 ...she can't re-share a canvas she didn't make (403)", g["c_notmaker"] == 403, g["c_notmaker"])
     check("C2 she makes her own canvas", g["c_new"][0] == 200, g["c_new"])

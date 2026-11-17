@@ -904,8 +904,9 @@ async def canvas_data(cid: int, request: Request, key: str | None = None):
     viewer = V(request)
     if not await _canvas_for(viewer, cid):
         return deny(404, "no such canvas")
-    if not viewer.owner:
-        # the same view gate, for live values: all-or-nothing, the page simply reads no data
+    if viewer.guest:
+        # the same view gate, for live values (an invitee only; a member is no guest, as the render): all-or-nothing,
+        # the page simply reads no data
         blocked = await sync(cv.data_blockers, cid)
         if blocked:
             body = {"key": key, "value": None} if key is not None else {}
