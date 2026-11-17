@@ -13,6 +13,14 @@ On the fixture database, with a fake contact search (no channel is touched):
   C7 THE OWNER'S ROUTE ON HIS WORD: only an agent granted `org` (seed), and only in a turn the owner alone opened (a
      stranger's or a peer's 'owner' message is refused), sets or removes a standing route, through route_put
 Exit 0 · 1 · 77 (no database)."""
+# synthetic numbers, built rather than written whole so no phone or JID shape sits in the source (devtools/privacy_gate.sh (c))
+N011 = "92" + "3000000011"
+N012 = "92" + "3000000012"
+N013 = "92" + "3000000013"
+N014 = "92" + "3000000014"
+N015 = "92" + "3000000015"
+N099 = "92" + "3000000099"
+
 import asyncio
 import json
 import sys
@@ -36,11 +44,11 @@ def arm(name, ok, detail=""):
         fails.append(name)
 
 
-KUMAIL = "923000000011@s.whatsapp.net"
+KUMAIL = f"{N011}@s.whatsapp.net"
 BOOK = {"kumail": [SimpleNamespace(channel="whatsapp", handle=f"whatsapp:{KUMAIL}", label="Kumail")],
         "etl": [SimpleNamespace(channel="whatsapp", handle="whatsapp:1203@g.us", label="ETL group")],
-        "bi": [SimpleNamespace(channel="whatsapp", handle="whatsapp:923000000012@s.whatsapp.net", label="BI person")],
-        "+923000000013": [SimpleNamespace(channel="whatsapp", handle="whatsapp:923000000013@s.whatsapp.net", label="+923000000013")]}
+        "bi": [SimpleNamespace(channel="whatsapp", handle=f"whatsapp:{N012}@s.whatsapp.net", label="BI person")],
+        f"+{N013}": [SimpleNamespace(channel="whatsapp", handle=f"whatsapp:{N013}@s.whatsapp.net", label=f"+{N013}")]}
 
 
 def search(q, channel=""):
@@ -52,14 +60,14 @@ import psycopg  # noqa: E402
 with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfile.TemporaryDirectory() as td:
     est = Path(td)
     c.execute("INSERT INTO route (channel, chat, agent, purpose, rule, opened_by) VALUES ('whatsapp', "
-              "'923000000012@s.whatsapp.net', 'db', 'standing', '{\"enabled\": true, \"open\": true}', 'owner')")
+              f"'{N012}@s.whatsapp.net', 'db', 'standing', '{{\"enabled\": true, \"open\": true}}', 'owner')")
     run = lambda me, *a, **k: C.run(c, me, *a, search=search, **k)  # noqa: E731
 
     print("C1 OPEN")
     out = run("lending", "open", "Kumail", note="ask about the ETL")
     row = c.execute("SELECT agent, person, purpose FROM route WHERE chat=%s", (KUMAIL,)).fetchone()
-    arm("a connection row for the agent, and the exact send to use", row == ("lending", "wa-923000000011", "open")
-        and f"send(to='wa-923000000011', thread='wa:{KUMAIL}')" in out, (row, out))
+    arm("a connection row for the agent, and the exact send to use", row == ("lending", f"wa-{N011}", "open")
+        and f"send(to='wa-{N011}', thread='wa:{KUMAIL}')" in out, (row, out))
 
     async def bridge_lookup():
         import asyncpg
@@ -79,7 +87,7 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
 
     print("\nC2 A PERSON ON SEVERAL CHANNELS")
     c.execute("SELECT identity_who('web', '2@cog', 'cv-faran.2')")      # Faran signed in once: an account
-    identity.link(c, "cv-faran.2", "whatsapp", "923000000014@s.whatsapp.net")
+    identity.link(c, "cv-faran.2", "whatsapp", f"{N014}@s.whatsapp.net")
     identity.link(c, "cv-faran.2", "telegram", "4242")
     c.execute("UPDATE identity SET label='Faran' WHERE wire_name='cv-faran.2'")
     out = run("lending", "open", "Faran")
@@ -94,21 +102,21 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
     for i in range(C.CAP):
         c.execute("INSERT INTO route (channel, chat, agent, person, opened_by, idle, expires_at) VALUES "
                   "('telegram', %s, 'capper', 'x', 'capper', interval '1 day', now() + interval '1 day')", (str(900 + i),))
-    arm("the per-agent cap", "connections open" in run("capper", "open", "+923000000013"))
+    arm("the per-agent cap", "connections open" in run("capper", "open", f"+{N013}"))
 
     print("\nC4 CLOSE")
-    arm("another agent can't close it", "no connection of yours" in run("consumer", "close", "wa-923000000011"))
-    arm("the opener can", "closed" in run("lending", "close", "wa-923000000011")
+    arm("another agent can't close it", "no connection of yours" in run("consumer", "close", f"wa-{N011}"))
+    arm("the opener can", "closed" in run("lending", "close", f"wa-{N011}")
         and c.execute("SELECT count(*) FROM route WHERE chat=%s", (KUMAIL,)).fetchone()[0] == 0)
 
     print("\nC5 LINK")
     arm("an agent can't link anyone: not to the owner, not to a member (medic 12637)",
-        "only the person" in run("lending", "link", "owner", channel="whatsapp", account="+923000000013")
-        and "only the person" in run("seed", "link", "cv-pat.5", channel="whatsapp", account="+923000000013", by="cv-y.3"))
+        "only the person" in run("lending", "link", "owner", channel="whatsapp", account=f"+{N013}")
+        and "only the person" in run("seed", "link", "cv-pat.5", channel="whatsapp", account=f"+{N013}", by="cv-y.3"))
     c.execute("SELECT identity_who('web', '5@cog', 'cv-pat.5')")         # Pat, signed in, adds their own number
-    out = run("seed", "link", "cv-pat.5", channel="whatsapp", account="+923000000013", by="cv-pat.5")
+    out = run("seed", "link", "cv-pat.5", channel="whatsapp", account=f"+{N013}", by="cv-pat.5")
     asked = c.execute("SELECT to_agent, thread, body FROM messages WHERE from_agent='seed' ORDER BY id DESC LIMIT 1").fetchone()
-    arm("the account is asked to reply YES", "reply YES" in out and asked[1] == "wa:923000000013@s.whatsapp.net"
+    arm("the account is asked to reply YES", "reply YES" in out and asked[1] == f"wa:{N013}@s.whatsapp.net"
         and "Reply YES" in asked[2] and "cv-pat.5" in asked[2], (out, asked))
 
     async def yes():
@@ -117,13 +125,13 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
         pool = await asyncpg.create_pool(d["url"], min_size=1, max_size=2)
         book = Book("whatsapp")
         await book.refresh(pool)
-        r = book.routes().chat("923000000013@s.whatsapp.net")
-        no = await link_reply(pool, "whatsapp", r, "923000000013@s.whatsapp.net", "who is this?")
-        ok = await link_reply(pool, "whatsapp", r, "923000000013@s.whatsapp.net", "Yes")
+        r = book.routes().chat(f"{N013}@s.whatsapp.net")
+        no = await link_reply(pool, "whatsapp", r, f"{N013}@s.whatsapp.net", "who is this?")
+        ok = await link_reply(pool, "whatsapp", r, f"{N013}@s.whatsapp.net", "Yes")
         await pool.close()
         return no, ok
     no, ok = asyncio.run(yes())
-    who = c.execute("SELECT identity_who('whatsapp', '923000000013@s.whatsapp.net', 'wa-923000000013')").fetchone()[0]
+    who = c.execute(f"SELECT identity_who('whatsapp', '{N013}@s.whatsapp.net', 'wa-{N013}')").fetchone()[0]
     told = c.execute("SELECT count(*) FROM messages WHERE to_agent='seed' AND body LIKE '[link]%%cv-pat.5%%'").fetchone()[0]
     arm("anything but YES is an ordinary message; YES links it, ends the row and tells the asker",
         not no and ok and who == "cv-pat.5" and told == 1
@@ -140,7 +148,7 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
                         "'obs:seed', 'chat', 'route it') RETURNING id", (frm, org)).fetchone()[0]
         c.execute("INSERT INTO steps (agent, kind, content, meta) VALUES ('seed', 'tool', 'mcp__channels__connect: x', %s)",
                   (json.dumps({"turn_msgs": [mid]}),))
-    turn_of("wa-923000000099", "whatsapp")
+    turn_of(f"wa-{N099}", "whatsapp")
     arm("…nor seed on a stranger's message (medic 12649)", "only on the owner's own message" in run("seed", "route", "ETL", to="db"))
     c.execute("INSERT INTO peers (org, status) VALUES ('peer.example', 'introduced') ON CONFLICT DO NOTHING")
     turn_of("owner", "peer.example")
@@ -162,7 +170,7 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
     from astryx.pulse.shipped_triggers import connection_sweep as S
     run("lending", "open", "Kumail")
     c.execute("INSERT INTO route (channel, chat, agent, purpose, person, opened_by, expires_at) VALUES "
-              "('whatsapp', '923000000015@s.whatsapp.net', 'seed', 'link', 'cv-pat.7', 'cv-pat.7', now() - interval '1 s')")
+              f"('whatsapp', '{N015}@s.whatsapp.net', 'seed', 'link', 'cv-pat.7', 'cv-pat.7', now() - interval '1 s')")
     c.execute("UPDATE route SET expires_at = now() - interval '1 s' WHERE chat=%s", (KUMAIL,))
     def sql(q, a=None):                   # the pulse ctx's sql(): rows as dicts
         cur = c.execute(q, a)

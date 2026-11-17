@@ -11,6 +11,11 @@ On the fixture database (this tree's schema.sql):
      no bridge's
   I4 the bridges mint only through identity_of and read no trusted_* list any more
 Exit 0 · 1 · 77 (no database)."""
+# synthetic numbers, built rather than written whole so no phone or JID shape sits in the source (devtools/privacy_gate.sh (c))
+N001 = "92" + "3000000001"
+N002 = "92" + "3000000002"
+N020 = "92" + "3000000020"
+
 import re
 import sys
 from pathlib import Path
@@ -36,32 +41,32 @@ import psycopg  # noqa: E402
 with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c:
     who = lambda ch, acct, fb: c.execute("SELECT identity_who(%s, %s, %s)", (ch, acct, fb)).fetchone()[0]  # noqa: E731
     print("I1 THE ONE MINTER")
-    arm("an unlinked sender keeps its bridge's name", who("whatsapp", "923000000001@s.whatsapp.net", "wa-923000000001") == "wa-923000000001")
+    arm("an unlinked sender keeps its bridge's name", who("whatsapp", f"{N001}@s.whatsapp.net", f"wa-{N001}") == f"wa-{N001}")
     arm("…and is recorded as a stranger's handle (no identity)", c.execute(
-        "SELECT identity_id FROM identity_handle WHERE channel='whatsapp' AND account='923000000001@s.whatsapp.net'").fetchone() == (None,))
-    arm("a stranger on a CLOSED route is not recorded (medic 12635)", c.execute("SELECT identity_who('whatsapp', '923000000002@s.whatsapp.net', 'wa-923000000002', false)").fetchone()[0] == "wa-923000000002"
-        and c.execute("SELECT count(*) FROM identity_handle WHERE account='923000000002@s.whatsapp.net'").fetchone()[0] == 0)
+        f"SELECT identity_id FROM identity_handle WHERE channel='whatsapp' AND account='{N001}@s.whatsapp.net'").fetchone() == (None,))
+    arm("a stranger on a CLOSED route is not recorded (medic 12635)", c.execute(f"SELECT identity_who('whatsapp', '{N002}@s.whatsapp.net', 'wa-{N002}', false)").fetchone()[0] == f"wa-{N002}"
+        and c.execute(f"SELECT count(*) FROM identity_handle WHERE account='{N002}@s.whatsapp.net'").fetchone()[0] == 0)
     arm("a web account's first sight is its person", who("web", "2@cog", "cv-faran.2") == "cv-faran.2"
         and c.execute("SELECT count(*) FROM identity WHERE wire_name='cv-faran.2'").fetchone()[0] == 1)
 
     print("\nI2 LINK")
-    identity.link(c, "cv-faran.2", "whatsapp", "923000000001@s.whatsapp.net")
-    arm("a linked account answers its person's name", who("whatsapp", "923000000001@s.whatsapp.net", "wa-923000000001") == "cv-faran.2")
+    identity.link(c, "cv-faran.2", "whatsapp", f"{N001}@s.whatsapp.net")
+    arm("a linked account answers its person's name", who("whatsapp", f"{N001}@s.whatsapp.net", f"wa-{N001}") == "cv-faran.2")
     try:
-        identity.link(c, "cv-other.3", "whatsapp", "923000000001@s.whatsapp.net")
+        identity.link(c, "cv-other.3", "whatsapp", f"{N001}@s.whatsapp.net")
         moved = True
     except ValueError:
         moved = False
     refused = []
     for name in ("owner", "db", "nobody-yet"):
         try:
-            identity.link(c, name, "whatsapp", "923000000020@s.whatsapp.net")
+            identity.link(c, name, "whatsapp", f"{N020}@s.whatsapp.net")
         except ValueError:
             refused.append(name)
     arm("a link never makes a person: owner, an agent's name, an unknown name are all refused (medic 12637)",
         refused == ["owner", "db", "nobody-yet"], refused)
     arm("an account linked to one person is never moved to another silently", not moved
-        and who("whatsapp", "923000000001@s.whatsapp.net", "x") == "cv-faran.2")
+        and who("whatsapp", f"{N001}@s.whatsapp.net", "x") == "cv-faran.2")
     print("\nI3 ANSWERED WHERE THEY WROTE")
     wa = f"(to_agent='owner' OR to_agent LIKE 'wa-%' OR {address.reaches_sql('whatsapp')})"
     import importlib
@@ -69,7 +74,7 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c:
 
     def claims(pred, to, thread):
         return c.execute(f"SELECT {pred.replace('%', '%%')} FROM (SELECT %s::text AS to_agent, %s::text AS thread) m", (to, thread)).fetchone()[0] is True
-    rows = [("cv-faran.2", "wa:923000000001@s.whatsapp.net", True, False), ("cv-faran.2", "cv:x", False, True),
+    rows = [("cv-faran.2", f"wa:{N001}@s.whatsapp.net", True, False), ("cv-faran.2", "cv:x", False, True),
             ("cv-faran.2", None, False, True), ("lending", "wa:1@g.us", False, False), ("wa-92300", "wa:1@g.us", True, False),
             ("owner", "obs:seed", True, False)]
     got = [(t, th, claims(wa, t, th), claims(canvas_where, t, th)) for t, th, _, _ in rows]

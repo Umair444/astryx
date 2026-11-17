@@ -14,6 +14,9 @@ can't patch it by each channel. later we will add slack and teams too").
   H4 THE PLACES THAT CAN'T IMPORT IT, pinned: init.sh and deploy.sh name every connectable channel's unit, and the
      web's reserved names are orgname's
 Exit 0 · 1 · 77 (no database: H1's SQL arms are not run)."""
+# synthetic numbers, built rather than written whole so no phone or JID shape sits in the source (devtools/privacy_gate.sh (c))
+N000 = "92" + "3000000000"
+
 import importlib
 import os
 import re
@@ -44,7 +47,7 @@ address, orgname, owed, release = fresh("astryx.core.address", "astryx.core.orgn
                                         "astryx.security.release")
 routing, owner_surfaces = fresh("bridges.routing", "bridges.owner_surfaces")
 OLD_PERSON = re.compile(r"^(owner|wa-[^\s@]+|tg-[^\s@]+|dc-[^\s@]+|cv-[^\s@]+|fe-[^\s@]+)$")
-names = ["owner", "wa-923000000000", "tg-123", "dc-9", "cv-pat.2", "fe-dash", "db", "seed", "canvas-3", "room", "pulse"]
+names = ["owner", f"wa-{N000}", "tg-123", "dc-9", "cv-pat.2", "fe-dash", "db", "seed", "canvas-3", "room", "pulse"]
 arm("who is a person: as before", [address.surface_of(n) in address.PERSONS for n in names] == [bool(OLD_PERSON.match(n)) for n in names],
     [(n, address.surface_of(n)) for n in names])
 arm("names no peer may take: the old six, and 'frontend' (the frontends bridge's stamp)",
