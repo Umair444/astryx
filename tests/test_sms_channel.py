@@ -63,7 +63,7 @@ async def no_run(code):
 prov._run = no_run
 for name, dest, text, word in (("no number", "12345", "hi", "not a mobile number"),
                                ("no text", N, "  ", "no text"),
-                               ("past 4000 bytes", N, "ق" * 2001, "4000")):
+                               ("past 4000 bytes", N, "x" * 4001, "4000")):
     r = asyncio.run(prov.send(dest, text))
     check(f"{name}: reported, not raised", not r.ok and word in (r.error or ""), r.error)
 unset = P.SmsProvider()
@@ -78,6 +78,25 @@ r = asyncio.run(odd.send(N, "hi"))
 check("a table name that is not a plain schema.table: not configured", not r.ok and "not configured" in (r.error or ""),
       r.error)
 check("…and none of them reached the host", ran == [], len(ran))
+
+print("T plain text (owner 13096: a \u25b8 became 0xBF and the SMS never arrived):")
+check("typography maps to its plain twin, accents fall off, emoji and other scripts drop, newlines stay",
+      P.plain("\u25b8 seed\nCaf\u00e9 \u2013 \u201cok\u201d \u2026 \u2192 x\U0001F600") == '> seed\nCafe - "ok" ... -> x', 
+      repr(P.plain("\u25b8 seed\nCaf\u00e9 \u2013 \u201cok\u201d \u2026 \u2192 x\U0001F600")))
+seen = []
+
+
+async def capture(code):
+    seen.append(code)
+    return "SMSQUEUED 1\nSMSRESULT {\"id\": 1, \"status\": \"Y\"}", ""
+cap = P.SmsProvider()
+cap._run = capture
+r = asyncio.run(cap.send(N, "\u25b8 seed\nhello \u2014 world"))
+check("what reaches the gateway is ASCII only, and the receipt shows it", r.ok and seen and seen[0].isascii()
+      and r.rendered == "> seed\nhello - world", (r.rendered, seen[0].isascii() if seen else None))
+r = asyncio.run(cap.send(N, "\u0633\u0644\u0627\u0645"))
+check("a text with nothing plain left: refused, never sent empty", not r.ok and "plain characters" in (r.error or "")
+      and len(seen) == 1, r.error)
 
 print("S search (the rail adds an SMS chat through it):")
 found = asyncio.run(prov.search_contacts("+92 " + TEN))
@@ -235,7 +254,7 @@ def world(rows, sent_today=0):
     class Prov:
         async def send(self, chat, text):
             sends.append((chat, text))
-            return SimpleNamespace(ok=True, message_id="4242", error=None, handle=f"sms:{chat}")
+            return SimpleNamespace(ok=True, message_id="4242", error=None, handle=f"sms:{chat}", rendered=P.plain(text))
     B.pool, B.PROVIDER, B.routes = Pool(rows, sent_today), Prov(), (lambda: Routes([ROUTED]))
     return sends
 
@@ -248,6 +267,8 @@ for r in rows:
 check("an unrouted number: refused at the door, nothing sent",
       rows[0]["status"] == "refused" and all(c != OTHER for c, _ in sends), rows[0]["status"])
 check("a routed number: sent, signed with the agent", (N, "\u25b8 seed\nhello") in sends, sends)
+check("…its receipt shows what the phone gets (plain text)", rows[1]["delivery"].get("rendered") == "> seed\nhello",
+      rows[1]["delivery"].get("rendered"))
 check("…its receipt names the gateway's row and the door", rows[1]["status"] == "delivered"
       and rows[1]["delivery"]["message_id"] == "4242" and rows[1]["delivery"].get("door") == "org-unstamped",
       rows[1]["delivery"])

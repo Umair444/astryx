@@ -73,7 +73,7 @@ async def deliver(row):
     else:
         out.failed("text", res.error or "the gateway reported not-ok")
     await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",
-                       row["id"], out.status, out.receipt(res.handle, text, door="org-unstamped"))
+                       row["id"], out.status, out.receipt(res.handle, res.rendered or text, door="org-unstamped"))   # what the phone gets
 
 
 async def on_step(_ev):

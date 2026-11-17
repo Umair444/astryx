@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import unicodedata
 import uuid
 
 import httpx
@@ -31,6 +32,12 @@ from ..common import env
 from .base import ChannelProvider, Chat, Contact, NotSupported, Poll, SendResult
 
 MAX_BYTES = 4000                      # the queue's MESSAGE column: VARCHAR2(4000), in bytes
+# The gateway's database stores single-byte text and its phones get plain characters only: a "▸" became "¿" (0xBF) and
+# the SMS was marked sent but never arrived (owner 13096; none of 310 ETL sends in 3 days had a non-ASCII character).
+# So every text goes out as printable ASCII: typography maps to its plain twin, accents fall off, anything else drops.
+PLAIN = str.maketrans({"\u25b8": ">", "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2013": "-",
+                       "\u2014": "-", "\u2026": "...", "\u2022": "-", "\u00b7": "-", "\u00a0": " ", "\u2192": "->",
+                       "\u00d7": "x"})
 TABLE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*\.[A-Za-z_][A-Za-z0-9_$]*")
 
 # Runs on the ETL host. P is the only input, a JSON literal; the SQL carries bind variables only (the table name, which
@@ -60,6 +67,12 @@ for _ in range(P["wait"] * 2):
 cur.close()
 print("SMSRESULT " + json.dumps({"id": rid, "status": status}))
 '''
+
+
+def plain(text: str) -> str:
+    """`text` as the gateway carries it: printable ASCII and newlines."""
+    t = unicodedata.normalize("NFKD", text.translate(PLAIN))
+    return "".join(c for c in t if c == "\n" or " " <= c <= "~")
 
 
 def number(dest: str) -> str | None:
@@ -165,6 +178,10 @@ class SmsProvider(ChannelProvider):
             return SendResult(self.NAME, False, handle, error="not a mobile number (92 + ten digits)")
         if not (text or "").strip():
             return SendResult(self.NAME, False, handle, error="no text: an SMS carries text only")
+        text = plain(text)
+        if not text.strip():
+            return SendResult(self.NAME, False, handle, error="nothing left in plain characters: the gateway carries "
+                                                              "English letters, digits and punctuation only")
         if len(text.encode()) > MAX_BYTES:
             return SendResult(self.NAME, False, handle, error=f"text is {len(text.encode())} bytes; the gateway takes "
                                                               f"{MAX_BYTES}")
