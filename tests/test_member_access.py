@@ -14,7 +14,9 @@ OpenAI call is made: voice_mint's key and mint are stubbed, so a session that pa
   R1 media library, ?thread= reads (media, artifacts, handoffs, work), attached files and non-charter names: bob's part only
   P  people's own chats (owner 11-17, msg 12970): alice, of the whole org, reads none of the owner's normal or canvas
      chats (wire, library, files, ?thread= reads, titles, the steps of a turn woken there, the live feed), nor carol's;
-     she reads her own (an agents' handoff on it included) and a project chat shared with her; the owner reads all
+     she reads her own (an agents' handoff on it included) and a project chat shared with her; the owner reads all;
+     a step of a turn opened there (linked, or still running) is not in her steps, an agent's profile, her briefing's
+     `did` or /api/agents' last line (medic 12975)
   R2 a member's call is charged 10 min at its mint, which a 1 s report can't lower; past his limit the next is refused
   F2 the Call: a member's default is 403; given to bob in Admin with 25 minutes, status 200 with limit 25; a session as
      medic (outside his agents) is 403; spent minutes say so
@@ -215,6 +217,33 @@ def main(tmp: Path, url: str):
         fe("cv-alice.7", "medic", "chat:20990101-a") and fe("medic", "db", "chat:20990101-a"))
     arm("P7 ...a desk is shared", fe("owner", "medic", "obs:medic"))
     arm("P7 the owner's feed is unscoped", scope.message_ok(Rq(None, "owner", role=None), {"from": "owner", "to": "medic", "thread": "chat:x"}))
+    with psycopg.connect(url, autocommit=True) as c:          # db's newest work and words are on the owner's chat
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+                  "('db','cv-alice.7','chat:20990101-s','chat','db to alice')")
+        c.execute("INSERT INTO steps (agent, kind, content) VALUES ('db','response','db says hers')")
+        t2 = c.execute("INSERT INTO turns (agent, input_msg_id) VALUES ('db', %s) RETURNING id", (mid,)).fetchone()[0]
+        c.execute("INSERT INTO steps (agent, kind, content, turn_id) VALUES ('db','tool','db works the owner''s chat',%s), "
+                  "('db','response','db answers the owner privately',%s)", (t2, t2))
+        c.execute("INSERT INTO steps (agent, kind, content, meta) VALUES ('medic','tool','medic mid-turn on the owner''s chat',"
+                  "jsonb_build_object('turn_msgs', jsonb_build_array(%s::bigint)))", (mid,))
+    sa = [s_["content"] for s_ in cl.get("/api/steps", headers=ALICE()).json()]
+    arm("P6 a step of a turn still running on the owner's chat (meta.turn_msgs, no turn yet) is not in alice's steps",
+        "medic mid-turn on the owner's chat" not in sa, sa)
+    obs.ESTATE, est0 = estate, obs.ESTATE                  # db's charter, for its profile
+    (estate / "agents").mkdir(exist_ok=True)
+    (estate / "agents" / "db.md").write_text("# db\n*the estate steward*\n")
+    prof = lambda h: [r_["content"] for r_ in cl.get("/api/agents/db/profile", headers=h()).json().get("recent", [])]  # noqa: E731
+    pa, po = prof(ALICE), prof(lambda: O)
+    obs.ESTATE = est0
+    arm("P8 db's profile: its recent steps on the owner's chat are not in alice's; they are in the owner's",
+        "db works the owner's chat" not in pa and "db works the owner's chat" in po, (pa, po))
+    did = lambda h: next((a_["did"] for a_ in cl.get("/api/ws/briefing", headers=h()).json().get("agents", []) if a_["agent"] == "db"), None)  # noqa: E731
+    arm("P8 alice's briefing: db's newest words she may read, not its private answer to the owner",
+        (did(ALICE) or "").lower() == "db says hers", did(ALICE))
+    arm("P8 ...the owner's briefing has db's newest", "privately" in (did(lambda: O) or ""), did(lambda: O))
+    last = lambda h: next(a_["last_content"] for a_ in cl.get("/api/agents", headers=h()).json() if a_["agent"] == "db")  # noqa: E731
+    arm("P8 /api/agents: db's last line for alice is hers to read; the owner's is the newest",
+        last(ALICE) == "db says hers" and "privately" in (last(lambda: O) or ""), (last(ALICE), last(lambda: O)))
 
     print("F features")
     dic = lambda h: cl.post("/api/chat/dictate/session", headers=h()).status_code  # noqa: E731

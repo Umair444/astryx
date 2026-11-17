@@ -17,6 +17,8 @@ The owner and the agents themselves (no member role) are unscoped.
   await load(pool, request)   the threads OWN opens to this viewer (request.state.open), read once per request
   sql(r, m, o)             the message predicate over $r (text[] | NULL = every agent), $m (text), $o (text[]: open)
   args(request)            (reach, me, open) for sql(): call load() first
+  steps_sql(o, s)          a step a viewer may read: its turn was not opened on a personal thread closed to them
+  await steps_open(pool, request)   that predicate's $o: None (unscoped: every step) or the open threads
   message_ok(request, d)   the same predicate on a feed event or a row dict ({from, to, thread} or {from_agent, ...})
   threads_ok(pool, request, threads)   the threads every one of whose messages passes (a thread with none is not)
 """
@@ -25,7 +27,13 @@ from __future__ import annotations
 from observatory.api.members import MEMBER_ROLES   # the people this module scopes
 
 PERSONAL = ("chat:", "cv:")          # a person's own chats; every other thread (a desk, the org's work) is shared
-PERSONAL_SQL = "(" + " OR ".join(f"thread LIKE '{p}%'" for p in PERSONAL) + ")"
+
+
+def personal_sql(col: str = "thread") -> str:
+    return "(" + " OR ".join(f"{col} LIKE '{p}%'" for p in PERSONAL) + ")"
+
+
+PERSONAL_SQL = personal_sql()
 
 
 def of(request) -> tuple[list[str] | None, str] | None:
@@ -69,6 +77,21 @@ def sql(r: str, m: str, o: str) -> str:
     return (f"(({r}::text[] IS NULL OR (from_agent = ANY({r}::text[]) AND coalesce(from_org, 'local') = 'local') OR "
             f"(to_agent = ANY({r}::text[]) AND coalesce(to_org, 'local') = 'local') OR from_agent = {m} OR to_agent = {m})"
             f" AND NOT ({PERSONAL_SQL} AND NOT thread = ANY({o}::text[])))")
+
+
+def steps_sql(o: str, s: str = "steps") -> str:
+    """The ONE rule for a step's content, for every steps reader: /api/steps, an agent's profile, the briefing, the
+    chat's work pane (medic 12975). A step's turn opened on its messages: meta.turn_msgs, written with the step while
+    the turn runs, and its turn's input once the turn is linked. $o NULL: unscoped."""
+    msgs = (f"ARRAY(SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof({s}.meta->'turn_msgs') = 'array' "
+            f"THEN {s}.meta->'turn_msgs' END)::bigint)")
+    return (f"({o}::text[] IS NULL OR NOT EXISTS (SELECT 1 FROM messages m WHERE (m.id = ANY({msgs}) OR m.id = "
+            f"(SELECT t.input_msg_id FROM turns t WHERE t.id = {s}.turn_id)) "
+            f"AND {personal_sql('m.thread')} AND NOT m.thread = ANY({o}::text[])))")
+
+
+async def steps_open(pool, request) -> list[str] | None:
+    return None if of(request) is None else sorted(await load(pool, request))
 
 
 def message_ok(request, d: dict) -> bool:

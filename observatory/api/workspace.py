@@ -47,6 +47,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from observatory.api.hostfile import Conflict, atomic_write, etag
+from observatory.api import scope as _scope   # what a member may read (steps_sql: the briefing's own words)
 
 router = APIRouter()
 
@@ -1192,6 +1193,7 @@ SELECT a.agent, s.ts, s.content
   CROSS JOIN LATERAL (
     SELECT ts, left(content, 1200) AS content FROM steps
      WHERE agent = a.agent AND ts >= $2 AND kind = 'response' AND content NOT LIKE '(tool-only%'
+       AND """ + _scope.steps_sql("$3") + """
      ORDER BY ts DESC LIMIT 1) s"""
 
 
@@ -1415,7 +1417,8 @@ async def ws_briefing(request: Request, since: str = "", scope: str = "mine"):
         see = _sees(request)                        # an agent's turn count and own words are its insides (main.sees)
         seen = [a for a in names if see(a)]
         turns = {r["agent"]: r["turns"] for r in await pool.fetch(BRIEF_TURNS_SQL, seen, start, timeout=BRIEF_TIMEOUT)}
-        did = {r["agent"]: dict(r) for r in await pool.fetch(BRIEF_DID_SQL, seen, start, timeout=BRIEF_TIMEOUT)}
+        did = {r["agent"]: dict(r) for r in await pool.fetch(BRIEF_DID_SQL, seen, start, await _scope.steps_open(pool, request),
+                                                              timeout=BRIEF_TIMEOUT)}
     except asyncio.TimeoutError:
         return JSONResponse({"error": "the briefing took too long"}, status_code=504)
     try:

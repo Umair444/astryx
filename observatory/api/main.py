@@ -779,6 +779,13 @@ async def agents(request: Request):
     # roster and on the Floor through its old step rows.
     registry = set(charter.roster())
     rows = [r for r in rows if r["agent"] in registry]
+    if (o := await _scope.steps_open(pool, request)) is not None:   # a member: each agent's last line they may read
+        last = {r["agent"]: r for r in await pool.fetch(
+            "SELECT a.agent, s.kind, s.content FROM unnest($1::text[]) AS a(agent) CROSS JOIN LATERAL ("
+            "SELECT kind, left(content, 120) AS content FROM steps WHERE agent = a.agent AND "
+            f"{_scope.steps_sql('$2')} ORDER BY id DESC LIMIT 1) s", [r["agent"] for r in rows], o)}
+        rows = [{**dict(r), "last_kind": last[r["agent"]]["kind"] if r["agent"] in last else None,
+                 "last_content": last[r["agent"]]["content"] if r["agent"] in last else None} for r in rows]
     alive = {a for a in alive if a in registry}
     out = [{**dict(r), "last_seen": r["last_seen"].isoformat(),
             "alive": r["agent"] in alive, **enrich(r["agent"])} for r in rows]
@@ -879,10 +886,8 @@ async def steps(request: Request, agent: str | None = None, kind: str | None = N
         see = sees(request)
         ok = sorted(a for a in agent_meta().keys() if see(a))
         args.append(ok); cond.append(f"agent = ANY(${len(args)})")
-        if _scope.of(request) is not None:         # a turn woken on a person's chat is that chat's: theirs, or not shown
-            args.append(sorted(await _scope.load(pool, request)))
-            cond.append("NOT EXISTS (SELECT 1 FROM turns t JOIN messages m ON m.id = t.input_msg_id WHERE t.id = steps.turn_id "
-                        f"AND {_scope.PERSONAL_SQL.replace('thread', 'm.thread')} AND NOT m.thread = ANY(${len(args)}::text[]))")
+        args.append(await _scope.steps_open(pool, request))   # a turn woken on a person's chat is theirs, or not shown
+        cond.append(_scope.steps_sql(f"${len(args)}"))
     if agent:
         args.append(agent); cond.append(f"agent = ${len(args)}")
     if kind:
@@ -2041,9 +2046,9 @@ async def vega(m: VegaMsg, request: Request):
     vega_hits[ip] = hits
 
     ov = await overview()
-    milestones = await pool.fetch(
-        "SELECT agent, content FROM steps WHERE kind='milestone' "
-        "ORDER BY id DESC LIMIT 8")
+    milestones = await pool.fetch(                    # a visitor's: none from a turn opened on a person's chat
+        f"SELECT agent, content FROM steps WHERE kind='milestone' AND {_scope.steps_sql('$1')} "
+        "ORDER BY id DESC LIMIT 8", [])
     history = "\n".join(
         f"{'Visitor' if h.get('role') != 'vega' else 'You'}: {str(h.get('text', ''))[:500]}"
         for h in m.history[-8:])
@@ -2238,7 +2243,7 @@ async def agent_profile(name: str, request: Request):
     pr = await pool.fetchrow("SELECT * FROM presence WHERE agent=$1", name)
     recent = await pool.fetch(
         "SELECT ts, kind, content FROM steps WHERE agent=$1 AND kind IN ('tool','milestone','error') "
-        "ORDER BY id DESC LIMIT 8", name)
+        f"AND {_scope.steps_sql('$2')} ORDER BY id DESC LIMIT 8", name, await _scope.steps_open(pool, request))
     # who this agent actually talks to, both directions on the wire — its relationships
     rel = await pool.fetch("""
         SELECT peer, sum(n)::bigint AS n FROM (
