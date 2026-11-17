@@ -24,7 +24,7 @@ A fixture registry with a `cog` block (two orgs, so the HOME names the org), key
      their agent list is db alone; he can't direct a keeper outside grp (seed: 403) nor summon one onto db's canvas
      (403), while he directs db's; alice, of the whole org, reaches both
   C2 a member's own canvas: she shares it with bob, who lists it; never with a non-member (400), nor an invitee (the
-     owner's alone, 403); the owner's share with an invitee still meets the privacy gate (409: no verdict)
+     owner's alone, 403); the owner shares with an invitee (one rule: whom it is shared with sees it)
   M1 main.py: _pipe forwards the identity header only as the verified `vouched` extra (front + request.state.uid, not
      the ear), and relay.FORWARD still never names it
 Exit 0 · 1 · 77."""
@@ -226,7 +226,7 @@ def main():
           g["c_share_id"] not in g["c_before"][0] and g["c_before"][1] == 404, g["c_before"])
     check("C1 the owner shares it with her account: 200", g["c_share"] == 200, g["c_share"])
     lst_, rnd = g["c_after"]
-    check("C1 ...she lists it, and it renders for her (a member is no guest of the privacy gate)",
+    check("C1 ...she lists it, and it renders for her",
           g["c_share_id"] in lst_ and rnd.get("html") and not rnd.get("withheld"), (lst_, rnd.get("withheld")))
     check("C1 ...its live values reach her too, not withheld (owner 13010: \"template but not data\")",
           g["c_data"][0] == 200 and g["c_data"][1] == {"revenue": 10280.5} and not g["c_data"][2], g["c_data"])
@@ -236,8 +236,7 @@ def main():
     check("C2 ...shares it with bob, who lists it", g["c_bob"] == 200 and g["c_bob_list"], (g["c_bob"], g["c_bob_list"]))
     check("C2 ...never with a non-member (400)", g["c_stranger"] == 400, g["c_stranger"])
     check("C2 ...nor an invitee: the owner's alone (403)", g["c_guest_by_member"] == 403, g["c_guest_by_member"])
-    check("C2 the owner's share with an invitee still meets the privacy gate (409: no verdict)",
-          g["c_guest_by_owner"] == 409, g["c_guest_by_owner"])
+    check("C2 the owner shares with an invitee (200)", g["c_guest_by_owner"] == 200, g["c_guest_by_owner"])
 
     print("C3 a member's reach")
     check("C3 carl's agents are grp's alone; alice's are all", sorted(g["r_agents"][0] or []) == ["db"]

@@ -809,16 +809,11 @@ def _cshape(c) -> dict:
             "brief": c["brief"], "updated_at": c["updated_at"].isoformat(), "archived": c["archived"]}
 
 
-async def _shape_for(v, c) -> dict:
-    """_cshape for a VIEWER: a non-owner sees the agent-written title/brief only once steward's
-    pii_canvas sweep has cleared them (a3 #36233 C2). The owner sees everything."""
-    # yours: its maker or the owner (crew, share, roll back, archive); works: anyone not a guest, who directs its agent
-    d = {**_cshape(c), "yours": v.owner or c["user_name"] in v.keys, "works": not v.guest}
-    if v.guest:
-        mv = await sync(cv.meta_view, c["id"])
-        if mv["meta"]:
-            d["title"], d["brief"] = "(withheld: " + "; ".join(mv["meta"]) + ")", None
-    return d
+def _shape_for(v, c) -> dict:
+    """_cshape for a VIEWER: what they may do with it. yours: its maker or the owner (crew, share, roll back, archive);
+    works: anyone not a guest, who directs its agent. Whoever sees a canvas (cv.sees) sees all of it (owner 11-17:
+    one rule; the retired sweep's per-part gates are gone)."""
+    return {**_cshape(c), "yours": v.owner or c["user_name"] in v.keys, "works": not v.guest}
 
 
 @app.get("/api/canvases")
@@ -827,7 +822,7 @@ async def canvases(request: Request):
     rows = await pool.fetch(
         f"SELECT *, version AS ver FROM canvases WHERE NOT archived AND {cv.sees_sql('$1', '$2')} "
         "ORDER BY updated_at DESC", v.owner, v.keys)
-    return [await _shape_for(v, r) for r in rows]
+    return [_shape_for(v, r) for r in rows]
 
 
 class NewCanvas(BaseModel):
@@ -872,11 +867,9 @@ async def canvas_get(cid: int, request: Request):
         return deny(404, "no such canvas")
     vers = await pool.fetch("SELECT version AS ver, author, note, ts FROM canvas_versions WHERE canvas_id=$1 "
                             "ORDER BY version DESC LIMIT 50", cid)
-    held = (await sync(cv.meta_view, cid))["notes"] if v.guest else {}     # per-version note masking
-    return {**(await _shape_for(v, c)), "thread": f"cv:canvas-{cid}",
-            "versions": [{"version": r["ver"], "author": r["author"],
-                          "note": ("(withheld: " + "; ".join(held[r["ver"]]) + ")") if r["ver"] in held else r["note"],
-                          "ts": r["ts"].isoformat()} for r in vers]}
+    return {**_shape_for(v, c), "thread": f"cv:canvas-{cid}",
+            "versions": [{"version": r["ver"], "author": r["author"], "note": r["note"], "ts": r["ts"].isoformat()}
+                         for r in vers]}
 
 
 @app.get("/api/canvases/{cid}/render")
@@ -885,14 +878,6 @@ async def canvas_render(cid: int, request: Request, v: int = 0, theme: str = "da
     if not c:
         return deny(404, "no such canvas")
     ver = v or c["ver"]
-    viewer = V(request)
-    if viewer.guest:
-        # THE VIEW GATE (steward, a3 #35598): a guest is served only content steward's pii_canvas sweep
-        # has CLEARED. Publishing to an already-shared canvas would otherwise reach the guest at once.
-        # A member is no guest (owner 11-17, 12979): an insider, reading under the wire's own rules.
-        blocked = await sync(cv.view_blockers, cid, ver)
-        if blocked:
-            return {"version": ver, "html": None, "withheld": blocked}
     row = await pool.fetchrow("SELECT html FROM canvas_versions WHERE canvas_id=$1 AND version=$2", cid, ver)
     if not row:
         return {"version": 0, "html": None}
@@ -901,17 +886,8 @@ async def canvas_render(cid: int, request: Request, v: int = 0, theme: str = "da
 
 @app.get("/api/canvases/{cid}/data")
 async def canvas_data(cid: int, request: Request, key: str | None = None):
-    viewer = V(request)
-    if not await _canvas_for(viewer, cid):
+    if not await _canvas_for(V(request), cid):
         return deny(404, "no such canvas")
-    if viewer.guest:
-        # the same view gate, for live values (an invitee only; a member is no guest, as the render): all-or-nothing,
-        # the page simply reads no data
-        blocked = await sync(cv.data_blockers, cid)
-        if blocked:
-            body = {"key": key, "value": None} if key is not None else {}
-            why = "; ".join(blocked).replace("\u2014", "-").encode("ascii", "replace").decode()[:500]
-            return JSONResponse(body, headers={"x-astryx-withheld": why})   # headers are latin-1 only
     if key is not None:
         row = await pool.fetchrow("SELECT value FROM canvas_data WHERE canvas_id=$1 AND key=$2", cid, key)
         return {"key": key, "value": json.loads(row["value"]) if row else None}
@@ -1065,8 +1041,8 @@ class Share(BaseModel):
 @app.post("/api/canvases/{cid}/share")
 async def canvas_share(cid: int, body: Share, request: Request):
     """Its maker or the owner shares a canvas: with members by account (the members table, as a project), and, the
-    owner alone, with invitees by name. Members are insiders; an invitee is a guest, whom the privacy gate still
-    guards. An account no longer a member drops out (a removed member never locks a save, as projects)."""
+    owner alone, with invitees by name (a guest watches what it is shared; only members direct its agent). An account
+    no longer a member drops out (a removed member never locks a save, as projects)."""
     v = V(request)
     c = await _canvas_for(v, cid)
     if not c or not (v.owner or c["user_name"] in v.keys):
@@ -1076,14 +1052,8 @@ async def canvas_share(cid: int, body: Share, request: Request):
         return deny(400, "a personal-tier canvas is never shared")
     if strangers:
         return deny(400, "share with this org's members only")
-    if guests:
-        if not v.owner:
-            return deny(403, "only the owner shares a canvas with an invitee")
-        # THE SHARE GATE (seed #35151, steward): widening to a GUEST needs a cleared canvas.
-        # Narrowing or unsharing is always allowed — it only ever reduces exposure.
-        blocked = await sync(cv.share_blockers, cid)
-        if blocked:
-            return deny(409, "not shared — " + "; ".join(blocked))
+    if guests and not v.owner:
+        return deny(403, "only the owner shares a canvas with an invitee")
     await pool.execute("UPDATE canvases SET shared_with=$2 WHERE id=$1", cid, users)
     return {"ok": True, "shared_with": users}
 
