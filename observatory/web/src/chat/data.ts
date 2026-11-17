@@ -20,6 +20,7 @@ export interface WsThread {
   count: number
   pinned: boolean
   project: string | null
+  by?: string | null             // who started it: 'owner', or a member's handle (cog-who)
   switches?: Switch[]            // the owner SWITCHED this chat's agents (oldest first); `agents` is then the last one's
 }
 /* a switch (PUT /api/ws/threads/meta {switch_to}): from `ts` on, the chat is with `agents`; what was said before it
@@ -118,6 +119,31 @@ export function groupOf(t: WsThread, now = new Date()): Group {
   return 'Earlier'
 }
 export const GROUPS: Group[] = ['Pinned', 'Today', 'Yesterday', 'This week', 'Earlier']
+
+/* ONE way to group the list (owner 11-17: "add group things with folding option"): by date (the default), project,
+   person or agent. Every group holds its rows newest first, and the groups come in the order of their newest row
+   (date keeps its own order). In the date view a conversation that belongs to a project lives under that project
+   (ProjectRows), never in Today/Yesterday too: a project CONTAINS its conversations. */
+export type GroupBy = 'date' | 'project' | 'person' | 'agent'
+export const GROUP_BY: { key: GroupBy; label: string }[] = [
+  { key: 'date', label: 'Date' }, { key: 'project', label: 'Project' }, { key: 'person', label: 'Person' }, { key: 'agent', label: 'Agent' },
+]
+export function groupThreads(threads: WsThread[], by: GroupBy, label: (kind: 'project' | 'person' | 'agent', key: string) => string,
+  contain = true): [string, WsThread[]][] {
+  const newest = (t: WsThread) => (t.last_ts ? +new Date(t.last_ts) : 0)
+  const rows = [...threads].sort((a, b) => newest(b) - newest(a))
+  const out = new Map<string, WsThread[]>()
+  for (const t of rows) {
+    if (by === 'date' && contain && t.project) continue
+    const g = by === 'date' ? groupOf(t)
+      : by === 'project' ? (t.project ? label('project', t.project) : 'No project')
+      : by === 'person' ? label('person', t.by || 'owner')
+      : (t.agents[0] ? label('agent', t.agents[0]) : 'No agent')
+    out.set(g, [...(out.get(g) ?? []), t])
+  }
+  const groups = [...out.entries()]
+  return by === 'date' ? GROUPS.filter((g) => out.has(g)).map((g) => [g, out.get(g)!]) : groups
+}
 
 export function greeting(d = new Date()): string {
   const h = d.getHours()

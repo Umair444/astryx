@@ -53,15 +53,16 @@ export interface ComposerHandle { focus: () => void; insert: (text: string) => v
 interface Item { key: string; label: string; hint: string; kind: 'cmd' | 'skill' | 'tool' | 'agent'; apply: () => void; group?: string; arg?: string
   pick?: { on: boolean; lead: boolean; makeLead?: () => void } }   // the agent picker's row: chosen, leads, or can be made lead
 
-const DRAFTS = 'ws.drafts.v1'
-const FILES = new Map<string, Uploaded[]>()           // attachments waiting in a conversation's box (this page only)
-function drafts(): Record<string, string> { try { return JSON.parse(sessionStorage.getItem(DRAFTS) || '{}') as Record<string, string> } catch { return {} } }
-function draftOf(key: string): string { return drafts()[key] ?? '' }
-function keepDraft(key: string, text: string) {
+/* A DRAFT is ONE thing per conversation (owner 11-17: "why the chat text doesnt disappear but attachments does"): its
+   words and its attachments, kept together in the tab's session store on every change, whichever box is mounted. */
+interface Draft { text: string; files: Uploaded[] }
+const DRAFTS = 'ws.drafts.v2'
+function drafts(): Record<string, Draft> { try { return JSON.parse(sessionStorage.getItem(DRAFTS) || '{}') as Record<string, Draft> } catch { return {} } }
+function draftOf(key: string): Draft { const d = drafts()[key]; return { text: d?.text ?? '', files: d?.files ?? [] } }
+function keepDraft(key: string, d: Draft) {
   try {
     const all = drafts()
-    if ((all[key] ?? '') === text) return
-    if (text) all[key] = text; else delete all[key]
+    if (d.text || d.files.length) all[key] = d; else delete all[key]
     sessionStorage.setItem(DRAFTS, JSON.stringify(all))
   } catch { /* private mode: the draft lives as long as the box */ }
 }
@@ -82,17 +83,18 @@ export default forwardRef<ComposerHandle, {
   onSwitch?: (agents: string[]) => void   // hand the chat to these agents (the "To" faces' picker, /switch)
   roles?: Record<string, string>
 }>(function Composer({ roster, inChat, skills, tools, commands, lastMine, onSend, hero = false, placeholder, draftKey = '', onTalk, onSwitch, roles = {}, dictation = true }, ref) {
-  const [text, setText] = useState(() => draftOf(draftKey))
-  const [files, setFiles] = useState<Uploaded[]>(() => FILES.get(draftKey) ?? [])
+  const [text, setText] = useState(() => draftOf(draftKey).text)
+  const [files, setFiles] = useState<Uploaded[]>(() => draftOf(draftKey).files)
   // A DRAFT PER CONVERSATION: the box used to keep its words across a switch, so a line written to finance sat ready
   // to go to seed on Enter; now switching stashes it and brings back that conversation's own (per tab, so a reload
   // or an outage that remounts the workspace keeps it too). Derived state: swapped during render, never a frame late.
   const [owner, setOwner] = useState(draftKey)
   if (owner !== draftKey) {
-    keepDraft(owner, text); FILES.set(owner, files)
-    setOwner(draftKey); setText(draftOf(draftKey)); setFiles(FILES.get(draftKey) ?? [])
+    keepDraft(owner, { text, files })
+    const d = draftOf(draftKey)
+    setOwner(draftKey); setText(d.text); setFiles(d.files)
   }
-  useEffect(() => { if (owner === draftKey) keepDraft(owner, text) }, [owner, draftKey, text])
+  useEffect(() => { if (owner === draftKey) keepDraft(owner, { text, files }) }, [owner, draftKey, text, files])
   const ownerRef = useRef(owner)
   ownerRef.current = owner
   const [uploading, setUploading] = useState(0)
@@ -241,15 +243,20 @@ export default forwardRef<ComposerHandle, {
       await onSend(out.text.trim(), files, to)
       for (const m of text.matchAll(/\[Pasted text #(\d+) /g)) PASTES.delete(Number(m[1]))   // sent: freed
       savePastes()
-      keepDraft(sentFrom, ''); FILES.delete(sentFrom)     // sent: that conversation's draft is spent, even if we moved on
+      keepDraft(sentFrom, { text: '', files: [] })       // sent: that conversation's draft is spent, even if we moved on
       if (ownerRef.current === sentFrom) { setText(''); setFiles([]) }
     } catch (e) { setErr(String((e as Error).message ?? e)) } finally { setBusy(false) }
   }
   async function addFiles(list: FileList | File[]) {
     setErr('')
+    const into = ownerRef.current                 // an upload lands in the draft it was started in, even after a switch
     for (const f of Array.from(list)) {
       setUploading((n) => n + 1)
-      try { const u = await upload(f, f.name || 'pasted.png'); setFiles((x) => [...x, u]) } catch (e) { setErr(String((e as Error).message ?? e)) } finally { setUploading((n) => n - 1) }
+      try {
+        const u = await upload(f, f.name || 'pasted.png')
+        if (ownerRef.current === into) setFiles((x) => [...x, u])
+        else { const d = draftOf(into); keepDraft(into, { ...d, files: [...d.files, u] }) }
+      } catch (e) { setErr(String((e as Error).message ?? e)) } finally { setUploading((n) => n - 1) }
     }
   }
   const dictate = () => (dict.phase === 'live' || dict.phase === 'connecting' ? stopDictation() : startDictation((t) => insert(t)))

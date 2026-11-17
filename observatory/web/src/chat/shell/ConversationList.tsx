@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { agentColor, displayName, fmtAgo } from '../../api'
+import { agentColor, displayName, fmtAgo, personName } from '../../api'
 import AgentFace from '../../components/AgentFace'
-import { GROUPS, SURFACE_LABEL, groupOf, type Group, type WsThread } from '../data'
+import { GROUP_BY, SURFACE_LABEL, groupThreads, type GroupBy, type WsThread } from '../data'
 import type { Project } from '../model'
 import { I } from '../icons'
 import { FilterChip, MoveItems, Nav, ProjectRows, type View } from '../projects/Sidebar'
@@ -46,19 +46,30 @@ export default function ConversationList({ threads, loaded, current, live, proje
   const [menu, setMenu] = useState<string | null>(null)
   const search = useRef<HTMLInputElement>(null)
   const found = useMessageSearch(onJump ? q : '', 20, 180, scope ?? 'mine')
+  const [groupBy, setGroupBy] = useStored<GroupBy>('ws.groupBy', 'date')
+  const [folded, setFolded] = useStored<string[]>('ws.folded', [])
+  const fold = (k: string) => setFolded((f) => (f.includes(k) ? f.filter((x) => x !== k) : [...f, k]))
 
   const groups = useMemo(() => {
     const s = q.trim().toLowerCase()
     const hit = (t: WsThread) => !s || t.title.toLowerCase().includes(s) || t.preview.toLowerCase().includes(s)
       || t.agents.some((a) => a.includes(s) || displayName(a).toLowerCase().includes(s))
-    const by = new Map<Group, WsThread[]>()
     const only = filter ? new Set(projects.find((p) => p.id === filter)?.threads ?? []) : null
-    for (const t of threads.filter((x) => hit(x) && (!only || only.has(x.thread)))) {
-      const g = groupOf(t)
-      by.set(g, [...(by.get(g) ?? []), t])
-    }
-    return GROUPS.filter((g) => by.has(g)).map((g) => [g, by.get(g)!] as const)
-  }, [threads, q, filter, projects])
+    const name = (kind: 'project' | 'person' | 'agent', k: string) =>
+      kind === 'project' ? projects.find((p) => p.id === k)?.name ?? 'A project' : kind === 'person' ? personName(k) : displayName(k)
+    // a search or a project's focus shows every match where it is; the plain list keeps a project's chats inside it
+    return groupThreads(threads.filter((x) => hit(x) && (!only || only.has(x.thread))), groupBy, name, !s && !only)
+  }, [threads, q, filter, projects, groupBy])
+  const row = (t: WsThread) => (
+    <Row key={t.thread} t={t} current={t.thread === current} live={live[t.thread] ?? null} unread={!!unread?.has(t.thread)}
+      editing={editing === t.thread} menuOpen={menu === t.thread}
+      onGo={() => onGo(t.thread)} onMenu={() => setMenu((m) => (m === t.thread ? null : t.thread))}
+      onEdit={() => { setMenu(null); setEditing(t.thread) }}
+      onPin={() => { setMenu(null); onPin(t) }}
+      move={onMove ? <MoveItems thread={t.thread} projects={projects} onMove={(to) => { setMenu(null); onMove(t, to) }} /> : null}
+      onRename={(title) => { setEditing(null); if (title !== t.title) onRename(t, title) }}
+      onCancel={() => setEditing(null)} />
+  )
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null) }
@@ -72,6 +83,12 @@ export default function ConversationList({ threads, loaded, current, live, proje
       <div className="h-14 shrink-0 flex items-center gap-2 pl-4 pr-2.5">
         <span className="ws-display text-[24px] leading-none tracking-tight text-ink">Chats</span>
         <span className="ml-auto" />
+        <label className="ws-icon !w-auto px-1.5 text-[12px] text-ink-dim cursor-pointer" title="Group the list by">
+          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} aria-label="group the list by"
+            className="bg-transparent outline-none cursor-pointer">
+            {GROUP_BY.map((g) => <option key={g.key} value={g.key}>{g.label}</option>)}
+          </select>
+        </label>
         {onScope && (
           <button className="ws-icon !w-auto px-2 text-[12px] text-ink-dim" aria-pressed={scope === 'everyone'}
             title={scope === 'everyone' ? 'Showing every member\u2019s chats; show only mine' : 'Show every member\u2019s chats'}
@@ -93,22 +110,19 @@ export default function ConversationList({ threads, loaded, current, live, proje
       {filter && projects.find((p) => p.id === filter) && <FilterChip p={projects.find((p) => p.id === filter)!} onClear={() => onFilter?.(null)} />}
       <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-4" onScroll={() => menu && setMenu(null)}>
         {!q && <ProjectRows projects={projects} threads={threads} active={view === 'project' ? project : null} filter={filter} onOpen={onProject} onNew={() => onNewProject?.()} onFilter={(id) => onFilter?.(id)}
-          all={view === 'projects'} onAll={onProjects} />}
-        {groups.map(([g, rows]) => (
-          <section key={g} className="mb-1">
-            <div className="ws-label px-2.5 pt-3 pb-1">{g}</div>
-            {rows.map((t) => (
-              <Row key={t.thread} t={t} current={t.thread === current} live={live[t.thread] ?? null} unread={!!unread?.has(t.thread)}
-                editing={editing === t.thread} menuOpen={menu === t.thread}
-                onGo={() => onGo(t.thread)} onMenu={() => setMenu((m) => (m === t.thread ? null : t.thread))}
-                onEdit={() => { setMenu(null); setEditing(t.thread) }}
-                onPin={() => { setMenu(null); onPin(t) }}
-                move={onMove ? <MoveItems thread={t.thread} projects={projects} onMove={(to) => { setMenu(null); onMove(t, to) }} /> : null}
-                onRename={(title) => { setEditing(null); if (title !== t.title) onRename(t, title) }}
-                onCancel={() => setEditing(null)} />
-            ))}
-          </section>
-        ))}
+          all={view === 'projects'} onAll={onProjects} open={(id) => !folded.includes(`project:${id}`) && groupBy === 'date'}
+          onFold={groupBy === 'date' ? (id) => fold(`project:${id}`) : undefined} row={row} />}
+        {groups.map(([g, rows]) => {
+          const k = `${groupBy}:${g}`, shut = folded.includes(k)
+          return (
+            <section key={k} className="mb-1">
+              <button className="ws-label w-full flex items-center gap-1 px-2.5 pt-3 pb-1 text-left hover:text-ink" aria-expanded={!shut} onClick={() => fold(k)}>
+                <Chevron open={!shut} />{g}<span className="ml-auto tabular-nums opacity-70">{shut ? rows.length : ''}</span>
+              </button>
+              {!shut && rows.map(row)}
+            </section>
+          )
+        })}
         {onJump && <MessageHits hits={found.hits} busy={found.busy} threads={threads} onJump={onJump} />}
         {!any && (
           <p className="px-3 pt-6 text-[13px] text-ink-mute leading-relaxed">
@@ -197,4 +211,20 @@ function Faces({ agents }: { agents: string[] }) {
       <span className="absolute right-0 bottom-0 rounded-full ring-2 ring-[var(--t-bg2)]"><AgentFace name={agents[1]} size={18} /></span>
     </span>
   )
+}
+
+/* a group's fold mark */
+export function Chevron({ open }: { open: boolean }) {
+  return <svg viewBox="0 0 24 24" className={`w-3 h-3 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth={2.2} aria-hidden><path d="M9 6l6 6-6 6" /></svg>
+}
+
+/* a per-viewer setting kept across reloads (a fold, the grouping): localStorage, and harmless where it isn't there */
+function useStored<T>(key: string, init: T): [T, (f: T | ((x: T) => T)) => void] {
+  const [v, setV] = useState<T>(() => { try { const r = localStorage.getItem(key); return r ? (JSON.parse(r) as T) : init } catch { return init } })
+  const set = (f: T | ((x: T) => T)) => setV((x) => {
+    const n = typeof f === 'function' ? (f as (x: T) => T)(x) : f
+    try { localStorage.setItem(key, JSON.stringify(n)) } catch { /* private mode: for this visit only */ }
+    return n
+  })
+  return [v, set]
 }
