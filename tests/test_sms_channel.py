@@ -80,9 +80,14 @@ check("a table name that is not a plain schema.table: not configured", not r.ok 
 check("…and none of them reached the host", ran == [], len(ran))
 
 print("T plain text (owner 13096: a \u25b8 became 0xBF and the SMS never arrived):")
-check("typography maps to its plain twin, accents fall off, emoji and other scripts drop, newlines stay",
-      P.plain("\u25b8 seed\nCaf\u00e9 \u2013 \u201cok\u201d \u2026 \u2192 x\U0001F600") == '> seed\nCafe - "ok" ... -> x', 
+check("typography maps to its plain twin, accents fall off, newlines stay; an emoji is dropped AND named",
+      P.plain("\u25b8 seed\nCaf\u00e9 \u2013 \u201cok\u201d \u2026 \u2192 x\U0001F600") == ('> seed\nCafe - "ok" ... -> x',
+                                                                                          "\U0001F600"),
       repr(P.plain("\u25b8 seed\nCaf\u00e9 \u2013 \u201cok\u201d \u2026 \u2192 x\U0001F600")))
+for given, want in (("Rs \u0661\u0662\u0663 million", "Rs 123 million"), ("PKR \u06f5\u06f0\u06f0 bn", "PKR 500 bn"),
+                    ("\u2264 5 \u2265 3, 10\u00b0C, \u20ac5, \u00a35", "<= 5 >= 3, 10 degC, EUR5, GBP5"),
+                    ("Tab\there\u00a0and\rthere", "Tab here and there")):
+    check(f"a figure never changes or goes silently (medic 13103): {want!r}", P.plain(given) == (want, ""), P.plain(given))
 seen = []
 
 
@@ -94,9 +99,12 @@ cap._run = capture
 r = asyncio.run(cap.send(N, "\u25b8 seed\nhello \u2014 world"))
 check("what reaches the gateway is ASCII only, and the receipt shows it", r.ok and seen and seen[0].isascii()
       and r.rendered == "> seed\nhello - world", (r.rendered, seen[0].isascii() if seen else None))
+r = asyncio.run(cap.send(N, "hi \u0633\u0644\u0627\u0645"))
+check("a text that loses a word: sent, and the result NAMES what was dropped", r.ok and r.note and "\u0633\u0644\u0627\u0645" in r.note
+      and r.rendered == "hi ", (r.rendered, r.note))
 r = asyncio.run(cap.send(N, "\u0633\u0644\u0627\u0645"))
 check("a text with nothing plain left: refused, never sent empty", not r.ok and "plain characters" in (r.error or "")
-      and len(seen) == 1, r.error)
+      and len(seen) == 2, r.error)
 
 print("S search (the rail adds an SMS chat through it):")
 found = asyncio.run(prov.search_contacts("+92 " + TEN))
@@ -254,13 +262,14 @@ def world(rows, sent_today=0):
     class Prov:
         async def send(self, chat, text):
             sends.append((chat, text))
-            return SimpleNamespace(ok=True, message_id="4242", error=None, handle=f"sms:{chat}", rendered=P.plain(text))
+            return SimpleNamespace(ok=True, message_id="4242", error=None, handle=f"sms:{chat}", rendered=P.plain(text)[0],
+                                   note="dropped 4 character(s) the gateway can't carry: x" if "\u0633" in text else None)
     B.pool, B.PROVIDER, B.routes = Pool(rows, sent_today), Prov(), (lambda: Routes([ROUTED]))
     return sends
 
 
 rows = [row(1, f"sms:{OTHER}"), row(2, f"sms:{N}"), row(3, f"sms:{N}", f"see [[file:/x/y.png]] [[poll: ok? | y | n]]"),
-        row(4, "", to=f"sms-{N}"), row(6, f"sms:0{TEN}")]
+        row(4, "", to=f"sms-{N}"), row(6, f"sms:0{TEN}"), row(7, f"sms:{N}", "hi \u0633\u0644\u0627\u0645")]
 sends = world(rows)
 for r in rows:
     asyncio.run(B.deliver(r))
@@ -278,6 +287,8 @@ check("a file and a poll: noted, the row still delivered, the text sent without 
       and any(t == "\u25b8 seed\nsee" for _c, t in sends), (rows[2]["status"], d3.get("error"), sends))
 check("to sms-<number> with no thread: delivered to that number", rows[3]["status"] == "delivered", rows[3]["status"])
 check("sms:0300… reaches the route of 92300… (one number, one route)", rows[4]["status"] == "delivered", rows[4]["status"])
+check("a text that lost characters: delivered, and its receipt says what the phone did not get",
+      rows[5]["status"] == "delivered" and "dropped" in (rows[5]["delivery"].get("error") or ""), rows[5]["delivery"])
 
 capped = [row(5, f"sms:{N}")]
 sends = world(capped, sent_today=2)

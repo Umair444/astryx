@@ -70,6 +70,8 @@ async def deliver(row):
     res = await PROVIDER.send(chat, text)
     if res.ok:
         out.sent(res.message_id)
+        if res.note:
+            out.noted("text", res.note)            # the sender sees what the phone did not get
     else:
         out.failed("text", res.error or "the gateway reported not-ok")
     await pool.execute("UPDATE messages SET status=$2, delivered_at=now(), delivery=$3 WHERE id=$1",

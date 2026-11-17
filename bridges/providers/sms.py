@@ -34,10 +34,12 @@ from .base import ChannelProvider, Chat, Contact, NotSupported, Poll, SendResult
 MAX_BYTES = 4000                      # the queue's MESSAGE column: VARCHAR2(4000), in bytes
 # The gateway's database stores single-byte text and its phones get plain characters only: a "▸" became "¿" (0xBF) and
 # the SMS was marked sent but never arrived (owner 13096; none of 310 ETL sends in 3 days had a non-ASCII character).
-# So every text goes out as printable ASCII: typography maps to its plain twin, accents fall off, anything else drops.
+# So every text goes out as printable ASCII: typography and symbols map to their plain twins, accents fall off, a digit
+# of any script is that digit, any space is a space, and whatever is still left over is NAMED on the receipt, never
+# dropped in silence (medic 13103: "Rs ١٢٣ million" must not reach a phone as "Rs  million").
 PLAIN = str.maketrans({"\u25b8": ">", "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2013": "-",
-                       "\u2014": "-", "\u2026": "...", "\u2022": "-", "\u00b7": "-", "\u00a0": " ", "\u2192": "->",
-                       "\u00d7": "x"})
+                       "\u2014": "-", "\u2026": "...", "\u2022": "-", "\u00b7": "-", "\u2192": "->", "\u00d7": "x",
+                       "\u2264": "<=", "\u2265": ">=", "\u20ac": "EUR", "\u00a3": "GBP", "\u00b0": " deg"})
 TABLE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*\.[A-Za-z_][A-Za-z0-9_$]*")
 
 # Runs on the ETL host. P is the only input, a JSON literal; the SQL carries bind variables only (the table name, which
@@ -69,10 +71,21 @@ print("SMSRESULT " + json.dumps({"id": rid, "status": status}))
 '''
 
 
-def plain(text: str) -> str:
-    """`text` as the gateway carries it: printable ASCII and newlines."""
-    t = unicodedata.normalize("NFKD", text.translate(PLAIN))
-    return "".join(c for c in t if c == "\n" or " " <= c <= "~")
+def plain(text: str) -> tuple[str, str]:
+    """(`text` as the gateway carries it: printable ASCII and newlines, what could not be carried at all)."""
+    out, lost = [], []
+    for c in unicodedata.normalize("NFKD", text.translate(PLAIN)):
+        if c == "\n" or " " <= c <= "~":
+            out.append(c)
+        elif unicodedata.category(c) == "Mn":     # an accent, decomposed off its letter
+            continue
+        elif c.isspace():
+            out.append(" ")
+        elif unicodedata.digit(c, None) is not None:
+            out.append(str(unicodedata.digit(c)))
+        else:
+            lost.append(c)
+    return "".join(out), "".join(lost)
 
 
 def number(dest: str) -> str | None:
@@ -178,7 +191,8 @@ class SmsProvider(ChannelProvider):
             return SendResult(self.NAME, False, handle, error="not a mobile number (92 + ten digits)")
         if not (text or "").strip():
             return SendResult(self.NAME, False, handle, error="no text: an SMS carries text only")
-        text = plain(text)
+        text, lost = plain(text)
+        note = f"dropped {len(lost)} character(s) the gateway can't carry: {lost[:60]}" if lost else None
         if not text.strip():
             return SendResult(self.NAME, False, handle, error="nothing left in plain characters: the gateway carries "
                                                               "English letters, digits and punctuation only")
@@ -200,11 +214,11 @@ class SmsProvider(ChannelProvider):
         if "SMSRESULT " not in out:
             queued = re.search(r"SMSQUEUED (\d+)", out)
             if queued:                     # committed, then something failed: it is in the queue and goes out
-                return SendResult(self.NAME, True, handle, message_id=queued.group(1), rendered=text)
+                return SendResult(self.NAME, True, handle, message_id=queued.group(1), rendered=text, note=note)
             return SendResult(self.NAME, False, handle, rendered=text, error=(err or "no result from the ETL host")[:300])
         res = json.loads(out.rsplit("SMSRESULT ", 1)[1].strip())
         # a row the gateway has not flipped yet is still in its queue and still goes out: reporting it as failed would
         # invite a resend, a second SMS. Only a status other than N or Y is the gateway refusing it.
         ok = res["status"] in ("Y", "N")
-        return SendResult(self.NAME, ok, handle, message_id=str(res["id"]), rendered=text,
+        return SendResult(self.NAME, ok, handle, message_id=str(res["id"]), rendered=text, note=note,
                           error=None if ok else f"the gateway marked row {res['id']} '{res['status']}'")
