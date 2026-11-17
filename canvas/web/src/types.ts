@@ -62,7 +62,6 @@ export interface Presence {
 }
 
 export type Route =
-  | { view: 'home'; agent?: string; fresh?: number }
-  | { view: 'chat'; thread: string }
+  | { view: 'home' }
   | { view: 'canvas'; id: number }
   | { view: 'people' }

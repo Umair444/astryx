@@ -8,9 +8,8 @@ import { Avatar, I, ago } from './ui'
 import { NewCanvasDialog } from './NewCanvasDialog'
 import { ThemePicker } from './ThemePicker'
 
-export function Sidebar({ route, onVoice }: { route: Route; onVoice: () => void }) {
+export function Sidebar({ route }: { route: Route }) {
   const me = useStore(s => s.me)!
-  const threads = useStore(s => s.threads)
   const canvases = useStore(s => s.canvases)
   const online = useStore(s => s.online)
   const [newCanvas, setNewCanvas] = useState(false)
@@ -21,7 +20,6 @@ export function Sidebar({ route, onVoice }: { route: Route; onVoice: () => void 
     location.reload()
   }
 
-  const active = (t: string) => route.view === 'chat' && route.thread === t
   return (
     <aside className="w-[284px] h-full flex flex-col glass border-y-0 border-l-0">
       <div className="px-5 pt-5 pb-4 flex items-center gap-3">
@@ -34,17 +32,11 @@ export function Sidebar({ route, onVoice }: { route: Route; onVoice: () => void 
         <span title={online ? 'live' : 'reconnecting'} className={`ml-auto w-2 h-2 rounded-full ${online ? 'bg-good shadow-[0_0_10px_var(--t-good)]' : 'bg-warn animate-pulse'}`} />
       </div>
 
-      <div className="px-3 grid grid-cols-2 gap-2">
-        <button onClick={() => go('/new')} className="flex items-center justify-center gap-2 rounded-xl py-2.5 bg-fg/[.06] hover:bg-fg/[.1] border border-line transition text-sm font-medium">
-          {I.chat()} New chat
-        </button>
-        <button onClick={() => setNewCanvas(true)} className="flex items-center justify-center gap-2 rounded-xl py-2.5 sig hover:brightness-110 transition text-sm font-medium">
-          {I.canvas()} Canvas
+      <div className="px-3">
+        <button onClick={() => setNewCanvas(true)} className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 sig hover:brightness-110 transition text-sm font-medium">
+          {I.canvas()} New canvas
         </button>
       </div>
-      <button onClick={onVoice} className="mx-3 mt-2 flex items-center justify-center gap-2 rounded-xl py-2.5 border border-line hover:border-violet/50 hover:bg-violet/[.06] transition text-sm text-fg-dim hover:text-fg">
-        {I.wave()} Talk
-      </button>
 
       <div className="flex-1 min-h-0 overflow-y-auto mt-4 px-2 pb-4">
         {canvases.length > 0 && <Section label="Canvases" />}
@@ -58,18 +50,6 @@ export function Sidebar({ route, onVoice }: { route: Route; onVoice: () => void 
           </motion.button>
         ))}
 
-        <Section label="Chats" />
-        {threads.length === 0 && <p className="px-3 text-sm text-fg-mute">No conversations yet.</p>}
-        {threads.map(t => (
-          <motion.button layout key={t.thread} onClick={() => go(`/chat/${encodeURIComponent(t.thread)}`)}
-            className={`w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-xl transition ${active(t.thread) ? 'bg-fg/[.08]' : 'hover:bg-fg/[.04]'}`}>
-            <Avatar name={t.agent} size={24} />
-            <span className="flex-1 min-w-0">
-              <span className="block truncate text-[14px]">{t.title || `New chat with ${t.agent}`}</span>
-              <span className="block truncate text-[12px] text-fg-mute">{t.agent} · {ago(t.updated_at)}</span>
-            </span>
-          </motion.button>
-        ))}
       </div>
 
       <div className="border-t border-line px-3 py-3 flex items-center gap-2">
