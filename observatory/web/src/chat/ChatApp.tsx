@@ -672,7 +672,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const roles = Object.fromEntries(team.map((a) => [a.agent, a.role]))
   const title = currentRow?.title ?? (activeProject ? activeProject.name : 'New chat')
   const box = (hero: boolean, placeholder?: string) => (
-    <Composer ref={composer} hero={hero} roster={names} inChat={recipients} skills={cmds.skills} tools={cmds.tools}
+    <Composer ref={composer} me={me} hero={hero} roster={names} inChat={recipients} skills={cmds.skills} tools={cmds.tools}
       commands={commands} onSend={onSendOrCommand} draftKey={view === 'thread' ? current : thread ?? ''}
       placeholder={placeholder ?? (hero ? 'Ask the team anything. @mention who should take it; seed routes the rest.' : undefined)}
       lastMine={() => stripEmbeds([...rows].reverse().find((m) => m.from === me)?.body ?? '')} onTalk={can(who, 'dictate') ? openTalk : undefined} dictation={can(who, 'dictate')}

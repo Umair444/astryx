@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { ApiError, get, post } from './api'
+import { ApiError, get, post, workspaceKey } from './api'
 import { connect, disconnect, refreshLists, set, useStore } from './store'
 import type { Me, Route } from './types'
 import { Login } from './Login'
@@ -48,6 +48,9 @@ export default function App() {
         set({ me: await get<Me>('/me') })
       } catch (e) {
         if (!(e instanceof ApiError && e.status === 401)) console.error(e)
+        else if (workspaceKey()) {                  // signed in to the workspace in this browser: one sign-in (api.ts)
+          try { await post('/login', { key: workspaceKey() }); set({ me: await get<Me>('/me') }) } catch { /* the login screen */ }
+        }
       }
       setBooted(true)
     })()

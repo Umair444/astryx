@@ -92,7 +92,8 @@ export default forwardRef<ComposerHandle, {
   dictation?: boolean                 // owner 11-17: the mic shows only for a person who holds the dictate feature
   onSwitch?: (agents: string[]) => void   // hand the chat to these agents (the "To" faces' picker, /switch)
   roles?: Record<string, string>
-}>(function Composer({ roster, inChat, skills, tools, commands, lastMine, onSend, hero = false, placeholder, draftKey = '', onTalk, onSwitch, roles = {}, dictation = true }, ref) {
+  me?: string                         // the viewer's own handle: a reply to their own message reads "You"
+}>(function Composer({ roster, inChat, skills, tools, commands, lastMine, onSend, hero = false, placeholder, draftKey = '', onTalk, onSwitch, roles = {}, dictation = true, me = 'owner' }, ref) {
   const [text, setText] = useState(() => draftOf(draftKey).text)
   const [files, setFiles] = useState<Uploaded[]>(() => draftOf(draftKey).files)
   const [reply, setReply] = useState<Reply | null>(() => draftOf(draftKey).reply ?? null)
@@ -386,7 +387,7 @@ export default forwardRef<ComposerHandle, {
           <div className="ws-replying flex items-center gap-2 mx-3 mt-3 rounded-[10px] pl-2.5 pr-1 py-1.5 text-[12.5px] text-ink-dim">
             {I.reply('w-3.5 h-3.5 shrink-0 text-ink-mute')}
             <span className="min-w-0 truncate" title={reply.quote}>
-              <span className="text-ink-mute">{isHuman(reply.from) ? humanName(reply.from) : displayName(reply.from)}: </span>“{reply.quote}”
+              <span className="text-ink-mute">{reply.from === me ? 'You' : isHuman(reply.from) ? humanName(reply.from) : displayName(reply.from)}: </span>“{reply.quote}”
             </span>
             <button onClick={() => setReply(null)} aria-label="don't reply to this message" className="ml-auto shrink-0 p-1 rounded hover:text-ink">{I.x('w-3.5 h-3.5')}</button>
           </div>
