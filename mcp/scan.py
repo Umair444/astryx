@@ -43,7 +43,8 @@ def org_local(spec: dict) -> bool:
     """A server whose files the checkout ignores (the estate's chat-sql, ocr): THIS org's, never the framework's. Its
     tools go to the gitignored manifest.local.json, so nothing of the org's estate travels in the tracked manifest."""
     import subprocess
-    files = [a for a in [spec["command"], *spec.get("args", [])] if "/" in a and not a.startswith(("$", "/", "-", "@"))]
+    files = [a for a in spec.get("args", []) if "/" in a and not a.startswith(("$", "/", "-", "@"))]   # its own files,
+    # never its interpreter (venv/ is ignored, and every python server runs from it)
     def ignored(f: str) -> bool:                      # only git's "not ignored" (rc 1) is framework; anything else is local
         try:
             return subprocess.run(["git", "-C", str(REPO), "check-ignore", "-q", f], capture_output=True).returncode != 1

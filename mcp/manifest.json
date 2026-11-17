@@ -3,240 +3,38 @@
     {
       "server": "astryx",
       "who": "every",
-      "error": "Expecting value: line 1 column 1 (char 0)",
-      "tools": []
-    },
-    {
-      "server": "tools",
-      "who": "every",
       "tools": [
         {
-          "name": "find",
-          "description": "Search the org's tool registry BEFORE writing a script or doing by hand what a tool may"
+          "name": "send",
+          "description": "Send a message on the ASTRYX wire (the only way to talk). To ASK a human a question, send a POLL (below) \u2014 never a local picker like AskUserQuestion, which blocks a headless pane; the human's tap retu"
         },
         {
-          "name": "run",
-          "description": "Run a registered script by its registry id (e.g. script:nucleus/smoke.sh) with an argv"
-        }
-      ]
-    },
-    {
-      "server": "hands",
-      "who": "every",
-      "tools": [
-        {
-          "name": "look",
-          "description": "See a screen (\u2264960 wide; its pixels are your coordinates). screen: \"laptop\" | \"background\""
+          "name": "subscribe",
+          "description": "Watch another agent: its milestone/error steps will arrive on your channel."
         },
         {
-          "name": "act",
-          "description": "Do one thing. screen (required): \"laptop\" | \"background\". x,y = look() pixels. Text reply;"
-        }
-      ]
-    },
-    {
-      "server": "influence",
-      "who": "every",
-      "tools": [
-        {
-          "name": "who_should_i_ask",
-          "description": "WHO SHOULD I ASK (plan-11324 S2), ADVISORY: the top-k agents by the influence graph's ROUTING view, personalized"
-        }
-      ]
-    },
-    {
-      "server": "channels",
-      "who": "every",
-      "tools": [
-        {
-          "name": "contact_search",
-          "description": "Find people across your channels (or one, via channel=\"telegram\"). Returns"
+          "name": "query_steps",
+          "description": "Inspect any agent's recent steps (total internal transparency). Watch cheap, inspect deep."
         },
         {
-          "name": "contact_resolve",
-          "description": "Resolve one channel-qualified handle (e.g. \"whatsapp:<jid>\") to who it is."
+          "name": "query_thread",
+          "description": "Read a thread's messages from the wire, oldest first. The table is the truth \u2014 check thread state here before replying, nudging, or re-asking; your context window only holds what happened to arrive in"
         },
         {
-          "name": "list_chats",
-          "description": "List conversations across your channels (or one). Returns send-ready handles."
+          "name": "read_message",
+          "description": "Read ONE wire message in FULL, untruncated \u2014 the lossless peek by id. query_thread/query_steps truncate for scanning; reach here to read a consolidated design, a long receipt, a federation envelope in"
         },
         {
-          "name": "connect",
-          "description": "Open, close or confirm a conversation with a PERSON on any channel, so their replies come to you."
-        }
-      ]
-    },
-    {
-      "server": "phone",
-      "who": "opt-in",
-      "tools": [
-        {
-          "name": "look",
-          "description": "See the phone. device = its name (required). text=True returns the on-screen elements with their"
+          "name": "plan_quorum",
+          "description": "Approval state of a plan thread: each voter's latest verdict (approve/revise) and the goal's state. The canonical quorum check \u2014 read this, never guess from addressees (verdicts bind by thread, not by"
         },
         {
-          "name": "act",
-          "description": "Do one thing on a phone. device (required except for phones). x,y = look() coordinates."
-        }
-      ]
-    },
-    {
-      "server": "chat-sql",
-      "who": "grant",
-      "error": "unhandled errors in a TaskGroup (1 sub-exception)",
-      "tools": []
-    },
-    {
-      "server": "ocr",
-      "who": "grant",
-      "error": "unhandled errors in a TaskGroup (1 sub-exception)",
-      "tools": []
-    },
-    {
-      "server": "mail",
-      "who": "grant",
-      "tools": [
-        {
-          "name": "mail_search",
-          "description": "Search the inbox. On Gmail, Gmail's own syntax (from:, subject:, newer_than:2d, is:unread, has:attachment);"
+          "name": "self_edit",
+          "description": "Edit your own identity (charter, avatar, notes in your folder). Goes through the identity scribe: SHELL fields (## Born/Interests/Personality/\u2026) are yours to shape; CORE (Model/Grants/Rank/Heartbeat, "
         },
         {
-          "name": "mail_recent",
-          "description": "The newest inbox messages: id, from, subject, date, unread."
-        },
-        {
-          "name": "mail_read",
-          "description": "One full message by id (from mail_search/mail_recent): headers + plain body."
-        },
-        {
-          "name": "mail_send",
-          "description": "Send a plain-text email from the org's address. OUTWARD ACT: unless your charter says otherwise, sign the body"
-        }
-      ]
-    },
-    {
-      "server": "compose",
-      "who": "grant",
-      "tools": [
-        {
-          "name": "dag_list",
-          "description": "List the org's composite DAGs (name, description, args, node count)."
-        },
-        {
-          "name": "dag_describe",
-          "description": "Full definition of one DAG: nodes, wiring, returns."
-        },
-        {
-          "name": "dag_run",
-          "description": "Run a composite DAG by name. Independent nodes run in parallel;"
-        }
-      ]
-    },
-    {
-      "server": "imagegen",
-      "who": "grant",
-      "tools": [
-        {
-          "name": "generate",
-          "description": "Generate image(s) from a prompt via OpenAI. `models`: optional list of model ids \u2014"
-        },
-        {
-          "name": "list_models",
-          "description": "Image-capable model ids currently visible to the org's OpenAI key (live query)."
-        }
-      ]
-    },
-    {
-      "server": "growbot",
-      "who": "grant",
-      "tools": [
-        {
-          "name": "body_act",
-          "description": "Play a keyframe plan on the body. steps = [{\"l\":0-180,\"r\":0-180,\"ms\":N}, ...]"
-        },
-        {
-          "name": "body_routine",
-          "description": "Queue a canned gesture: wiggle | dance | shimmy | march | bow | stretch."
-        },
-        {
-          "name": "body_pose",
-          "description": "One absolute pose now (degrees, 90 = neutral). Auto-limps after 500 ms \u2014"
-        },
-        {
-          "name": "body_stop",
-          "description": "Instant hard stop: clear all queued motion, legs go limp."
-        },
-        {
-          "name": "body_stats",
-          "description": "Body telemetry: motion state, act queue, dead-man count, serial link"
-        }
-      ]
-    },
-    {
-      "server": "org",
-      "who": "grant",
-      "tools": [
-        {
-          "name": "propose_goal",
-          "description": "File a goal onto the board as 'proposed' \u2014 the state the plan pipeline gates."
-        },
-        {
-          "name": "goals",
-          "description": "Read the goal board \u2014 the read-back for propose_goal, and what an agent used to reach"
-        },
-        {
-          "name": "announce",
-          "description": "Post a line to the org-news thread \u2014 the shipping log every agent reads at"
-        },
-        {
-          "name": "economy",
-          "description": "The org's economic picture + your own mirror + your usage, in one read, with a glossary"
-        },
-        {
-          "name": "amend_charter",
-          "description": "Append a directive to an agent's charter under a managed section. You may always"
-        },
-        {
-          "name": "set_persona",
-          "description": "Set your OWN persona: a profile picture and/or a short blurb. avatar_path is a path"
-        }
-      ]
-    },
-    {
-      "server": "memory",
-      "who": "grant",
-      "tools": [
-        {
-          "name": "ask",
-          "description": "Ask the org's own MEMORY a question and get a short, CITED answer synthesized from the"
-        }
-      ]
-    },
-    {
-      "server": "jobs",
-      "who": "grant",
-      "tools": [
-        {
-          "name": "ats_job",
-          "description": "One public job posting, read from its ATS's public JSON API (Greenhouse, Lever, Ashby)."
-        },
-        {
-          "name": "ats_board",
-          "description": "Live postings on one Greenhouse / Lever / Ashby board (ats = greenhouse|lever|ashby),"
-        },
-        {
-          "name": "uk_sponsor_check",
-          "description": "Look organisations up on the UK Home Office Register of Licensed Sponsors (Workers)."
-        }
-      ]
-    },
-    {
-      "server": "docpdf",
-      "who": "grant",
-      "tools": [
-        {
-          "name": "html_to_pdf",
-          "description": "Render a local HTML file to PDF with headless Chromium, then verify it."
+          "name": "trigger",
+          "description": "Wake yourself later or when something changes: reminders, deadlines, watches on a database query, a failure that persists. This survives respawn; CronCreate and ScheduleWakeup die with the session. On"
         }
       ]
     },
@@ -347,5 +145,5 @@
       ]
     }
   ],
-  "total_tools": 61
+  "total_tools": 33
 }
