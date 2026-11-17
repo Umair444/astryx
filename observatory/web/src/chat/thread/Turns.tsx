@@ -188,7 +188,10 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     // and must never unpin itself mid-way (medic 12897); any scroll that lands near the end re-pins
     const up = () => { following.current = false }
     const onWheel = (e: WheelEvent) => { if (e.deltaY < 0) up() }
-    const onKey = (e: KeyboardEvent) => { if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) up() }
+    const onKey = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLElement && e.target.closest('input, textarea, [contenteditable="true"]')
+      if (!typing && ['ArrowUp', 'PageUp', 'Home'].includes(e.key)) up()
+    }
     const onGrab = (e: MouseEvent) => { if (e.target === box) up() }   // the scrollbar itself, taken by hand
     const onScroll = () => { if (box.scrollHeight - box.scrollTop - box.clientHeight < 80) following.current = true }
     const ro = new ResizeObserver(pin)
@@ -206,6 +209,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
       box.removeEventListener('mousedown', onGrab)
     }
   }, [loading]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (focus) following.current = false }, [focus?.n])   // a jump to a message is the reader's: stay there
   useEffect(() => {                                // a new message, or my own send: back to the end, and follow it
     if (win.jumping()) return
     following.current = true
