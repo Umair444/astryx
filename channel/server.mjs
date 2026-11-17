@@ -103,6 +103,8 @@ const mcp = new Server(
       `A CANVAS (a live page) is built from ANY chat: venv/bin/python src/astryx/core/canvas.py guide, then new and ` +
       `publish; share it on the web chat as [[canvas:<id>]] in your send body, the way a file is sent: the chat draws a ` +
       `card that opens it beside the conversation. ` +
+      `A REPLY: a human's message may open with [reply #<id> <from>] “<its first words>”: they are answering THAT ` +
+      `message (read_message <id> for the whole of it), so read the rest of their words against it. ` +
       `WHO ASKED: a human's from= is who asked (owner, cv-<name>.<n> a signed-in member with role="member", ` +
       `cv-<name> a canvas guest, wa-<n> a WhatsApp sender); reply to THAT from= on that thread. Owner-only acts ` +
       `(spend, the law, the personal tier, database approvals, permission verdicts) still need the owner himself. ` +

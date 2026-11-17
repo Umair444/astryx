@@ -1,11 +1,11 @@
-import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useReducedMotion } from 'motion/react'
 import { agentColor, displayName, fmtDay, fmtTime } from '../../api'
 import { humanName, isHuman, type Msg, type Step } from '../../types'
 import { placeHuman } from './sides'
 import AgentFace from '../../components/AgentFace'
 import Prose, { HumanText } from './Prose'
-import { embeds, parts, PROJECT_BLOCK, stripEmbeds, type Turn as WTurn, type Work } from '../model'
+import { embeds, parseReply, parts, PROJECT_BLOCK, stripEmbeds, type Reply, type Turn as WTurn, type Work } from '../model'
 import { InlineFile } from './Inline'
 import { inlineParts } from './flow'
 import CanvasEmbed from '../canvas/CanvasEmbed'
@@ -13,11 +13,11 @@ import FileChip, { type OpenRequest } from '../artifacts/FileChip'
 import LiveActivity, { type Pending, type RemindFn, type StopFn } from './LiveActivity'
 import Replay from './Replay'
 import { handoffLabel, type Handoff as WHandoff } from '../live'
-import AskChip from '../artifacts/annotate/AskChip'
+import AskChip, { QuoteChip } from '../artifacts/annotate/AskChip'
 import { parseAsk, type ParsedAsk } from '../artifacts/annotate/ask'
 import { parseChanges } from '../artifacts/versions/changes'
 import ChangesCard from './ChangesCard'
-import TurnActions from './TurnActions'
+import TurnActions, { TurnActionsCtx } from './TurnActions'
 import { blockMsg, useWindowed, type Focus } from './focus'
 import { useThreadTitles, type Switch } from '../data'
 
@@ -267,6 +267,13 @@ const BlockView = memo(function BlockView({ b, role, cb, asks }: { b: Block; rol
   }
 }, (x, y) => x.role === y.role && x.cb === y.cb && x.asks === y.asks && sameBlock(x.b, y.b))
 
+/* the message a reply answers (model.replyLine), as the ONE quote chip: who said it; a click jumps to it */
+function ReplyChip({ reply }: { reply: Reply }) {
+  const ctx = useContext(TurnActionsCtx)
+  return <QuoteChip quote={reply.quote} source={`Replying to ${isHuman(reply.from) ? humanName(reply.from) : displayName(reply.from)}`}
+    title="Go to that message" onOpen={ctx?.jump && (() => ctx.jump!(reply.id))} />
+}
+
 /* the canvas shell prefixes what the owner typed there with its context ("[canvas #1 "Dash" v3]"): a chip, not text */
 const CANVAS_CTX = /^\[canvas #(\d+)(?: "([^"\]]*)")?(?: v(\d+))?\]\s*/
 const LONG = 560
@@ -279,7 +286,9 @@ function Mine({ m, to, by = null, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to:
   const files = embeds(m.body.trimStart().replace(PROJECT_BLOCK, ''))
   const ask = parseAsk(m.body)          // asked from a highlight: the quote is a chip, the question is the text
   const ch = ask ? null : parseChanges(m.body)     // "send my changes": a card, never raw diff text
-  const raw = ask ? ask.question : ch ? '' : stripEmbeds(m.body)
+  const said = ask ? ask.question : ch ? '' : stripEmbeds(m.body)
+  const rp = ask || ch ? null : parseReply(said)   // a reply: the message it answers is a chip, never text
+  const raw = rp ? rp.rest : said
   const ctx = CANVAS_CTX.exec(raw)
   const text = ctx ? raw.slice(ctx[0].length) : raw
   // the owner's words with their uploads in place; a quote-ask or a changes card keeps its own shape
@@ -287,7 +296,10 @@ function Mine({ m, to, by = null, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to:
     if (ask || ch) return []
     const ps = inlineParts(parts(m.body))
     const t0 = ps[0]
-    if (ctx && t0 && 'text' in t0) ps[0] = { text: t0.text.slice(ctx[0].length) }
+    if (t0 && 'text' in t0) {
+      const t = parseReply(t0.text)?.rest ?? t0.text
+      ps[0] = { text: ctx ? t.slice(ctx[0].length) : t }
+    }
     return ps.filter((p) => !('text' in p) || p.text)
   }, [m.body, !!ask, !!ch, !!ctx]) // eslint-disable-line react-hooks/exhaustive-deps
   const long = text.length > LONG || text.split('\n').length > 9
@@ -315,6 +327,7 @@ function Mine({ m, to, by = null, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to:
       </div>
       <div className={`${by ? 'ws-other' : 'ws-mine'} max-w-[80%] max-sm:max-w-[92%] rounded-[14px] px-4 py-2.5 text-[15px] leading-[1.55] text-ink whitespace-pre-wrap break-words`}>
         {ask && <AskChip ask={ask} onOpen={onOpenAsk} />}
+        {rp && <ReplyChip reply={rp.reply} />}
         {ch && <ChangesCard ch={ch} />}
         {!ch && <div className={long && !more ? 'max-h-[11.5em] overflow-hidden [mask-image:linear-gradient(#000_70%,transparent)]' : ''}>
           {ask ? text : flow.map((p, i) => ('embed' in p

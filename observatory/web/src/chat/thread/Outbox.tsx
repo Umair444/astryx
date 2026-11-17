@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { displayName } from '../../api'
-import type { Uploaded } from '../model'
+import { parseReply, type Uploaded } from '../model'
 
 /* The owner's message while it is on its way (iteration 7): it shows at once as the owner's turn, "Sending…", and
    leaves when the wire's row replaces it. A send that failed stays, marked "Not sent", with Retry (only to the agents
@@ -31,7 +31,7 @@ export default function Outbox({ items, onRetry, onEdit, onDiscard }: {
       {items.map((o) => (
         <div key={o.key} className="flex flex-col items-end gap-1">
           <div className={`ws-mine max-w-[80%] rounded-[14px] px-4 py-2.5 text-[15px] leading-[1.55] text-ink whitespace-pre-wrap break-words ${o.failed ? 'ws-unsent' : 'opacity-70'}`}>
-            {o.text}{o.files.length > 0 && <span className="block text-[12.5px] text-ink-dim mt-0.5">{o.files.map((f) => f.name).join(', ')}</span>}
+            {parseReply(o.text)?.rest ?? o.text}{o.files.length > 0 && <span className="block text-[12.5px] text-ink-dim mt-0.5">{o.files.map((f) => f.name).join(', ')}</span>}
           </div>
           <div className="flex items-center gap-2 text-[11.5px] pr-1">
             {o.failed ? <>

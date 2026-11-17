@@ -1138,6 +1138,7 @@ run "chat workspace: a reply shows without a reload (live heal)" "$PY" tests/tes
 run "chat workspace: who a message goes to by default" "$PY" tests/test_ws_recipients.py
 run "chat workspace: switching a chat's agents" "$PY" tests/test_ws_switch.py
 run "chat: inline files" "$PY" tests/test_chat_inline.py
+run "chat: reply by reference" "$PY" tests/test_chat_reply.py
 run "chat: a signed answer's provenance footer" "$PY" tests/test_chat_provenance.py
 run "chat: tables and figures written out" "$PY" tests/test_chat_tables.py
 run "chat: code in an answer, a human's markdown, long pastes" "$PY" tests/test_chat_code.py

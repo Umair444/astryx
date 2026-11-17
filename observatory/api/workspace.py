@@ -119,6 +119,7 @@ _TEAM = re.compile(r"^\[chat with [^\]\n]*\]\n?")                  # model.bodyF
 # short before the close (a 400-char preview) loses the whole block
 _PROJECT = re.compile(r"^\[project: [^\]\n]{1,80}\]\n(?:[\s\S]*?\n\[/project\]\n?|[\s\S]*$)")
 _CANVAS = re.compile(r"^\[canvas #\d+[^\]\n]*\]\s*")               # the canvas shell's context prefix
+_REPLY = re.compile(r"^\[reply #\d{1,12} [\w.@-]{1,80}\] “.*”(?:\n|$)\s*")   # the message it answers (chat/model.ts replyLine)
 _BRIEF = re.compile(r'^NEW CANVAS #\d+\s*\W\s*"([^"]{1,80})"')     # the canvas bridge's first message to a painter
 # "send my changes" (web/src/chat/artifacts/versions/changes.ts, the one place the format lives):
 # "[changes to <name>: v2 (db) → v4 (owner)]\n<note>\n\n```diff\n…\n```\n(N more diff lines not shown: …)\n[[file:…]]"
@@ -140,13 +141,13 @@ def clean(body: str | None) -> str:
     """A body as a person reads it in a list: no file embeds, no routing prefixes, whitespace folded."""
     s = _PROJECT.sub("", _EMBED.sub("", body or "").lstrip())
     s = changes(_TEAM.sub("", s.lstrip()))
-    s = _CANVAS.sub("", s)
+    s = _REPLY.sub("", _CANVAS.sub("", s))
     return re.sub(r"\s+", " ", s).strip()
 
 
 def first_line(body: str | None) -> str:
     s = changes(_TEAM.sub("", _PROJECT.sub("", _EMBED.sub("", body or "").lstrip()).lstrip()))
-    s = _CANVAS.sub("", s)
+    s = _REPLY.sub("", _CANVAS.sub("", s))
     for line in s.splitlines():
         if line.strip():
             return re.sub(r"\s+", " ", line).strip()
