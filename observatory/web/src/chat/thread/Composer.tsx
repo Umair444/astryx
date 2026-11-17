@@ -2,7 +2,8 @@ import { forwardRef, Fragment, useEffect, useImperativeHandle, useMemo, useRef, 
 import { ApiError, apiSend, displayName } from '../../api'
 import AgentFace from '../../components/AgentFace'
 import { startDictation, stopDictation, useDictation } from '../dictate'
-import { mentions, upload, type McpTool, type Skill, type Uploaded } from '../model'
+import { humanName, isHuman } from '../../types'
+import { mentions, replyLine, upload, type McpTool, type Reply, type Skill, type Uploaded } from '../model'
 import { I } from '../icons'
 import { touchFirst } from '../shell/phone'
 import { expandPasteTokens, pasteToken } from './code'
@@ -48,19 +49,21 @@ function savePastes() {
 /* `group` heads the menu section a command sits under (the chat's own when absent); `arg` names what it takes: picking
    it then fills the box ("/model ") for the argument instead of running it */
 export interface Command { key: string; label: string; hint: string; run: (arg: string) => void | string; group?: string; arg?: string }
-export interface ComposerHandle { focus: () => void; insert: (text: string) => void; set: (text: string) => void; get: () => string; attach: (u: Uploaded) => void; pick: () => void }
+export interface ComposerHandle { focus: () => void; insert: (text: string) => void; set: (text: string) => void; get: () => string; attach: (u: Uploaded) => void; pick: () => void
+  reply: (r: Reply | null) => void }   // answer one message: it rides as a reference (model.replyLine), never the chat
 
 interface Item { key: string; label: string; hint: string; kind: 'cmd' | 'skill' | 'tool' | 'agent'; apply: () => void; group?: string; arg?: string
   pick?: { on: boolean; lead: boolean; makeLead?: () => void } }   // the agent picker's row: chosen, leads, or can be made lead
 
 /* A DRAFT is ONE thing per conversation (owner 11-17: "why the chat text doesnt disappear but attachments does"): its
-   words and its attachments, kept together in the tab's session store on every change, whichever box is mounted. */
-interface Draft { text: string; files: Uploaded[] }
+   words, its attachments and the message it replies to, kept together in the tab's session store on every change,
+   whichever box is mounted. */
+interface Draft { text: string; files: Uploaded[]; reply?: Reply | null }
 const DRAFTS = 'ws.drafts.v2'
 function drafts(): Record<string, Draft> { try { return JSON.parse(sessionStorage.getItem(DRAFTS) || '{}') as Record<string, Draft> } catch { return {} } }
 function draftOf(key: string): Draft {
   const d = drafts()[key]
-  if (d) return { text: d.text ?? '', files: d.files ?? [] }
+  if (d) return { text: d.text ?? '', files: d.files ?? [], reply: d.reply ?? null }
   try {                                          // a draft written before ONE draft (ws.drafts.v1: its text alone)
     const old = (JSON.parse(sessionStorage.getItem('ws.drafts.v1') || '{}') as Record<string, string>)[key]
     return { text: old ?? '', files: [] }
@@ -69,7 +72,7 @@ function draftOf(key: string): Draft {
 function keepDraft(key: string, d: Draft) {
   try {
     const all = drafts()
-    if (d.text || d.files.length) all[key] = d; else delete all[key]
+    if (d.text || d.files.length || d.reply) all[key] = d; else delete all[key]
     sessionStorage.setItem(DRAFTS, JSON.stringify(all))
   } catch { /* private mode: the draft lives as long as the box */ }
 }
@@ -92,16 +95,17 @@ export default forwardRef<ComposerHandle, {
 }>(function Composer({ roster, inChat, skills, tools, commands, lastMine, onSend, hero = false, placeholder, draftKey = '', onTalk, onSwitch, roles = {}, dictation = true }, ref) {
   const [text, setText] = useState(() => draftOf(draftKey).text)
   const [files, setFiles] = useState<Uploaded[]>(() => draftOf(draftKey).files)
+  const [reply, setReply] = useState<Reply | null>(() => draftOf(draftKey).reply ?? null)
   // A DRAFT PER CONVERSATION: the box used to keep its words across a switch, so a line written to finance sat ready
   // to go to seed on Enter; now switching stashes it and brings back that conversation's own (per tab, so a reload
   // or an outage that remounts the workspace keeps it too). Derived state: swapped during render, never a frame late.
   const [owner, setOwner] = useState(draftKey)
   if (owner !== draftKey) {
-    keepDraft(owner, { text, files })
+    keepDraft(owner, { text, files, reply })
     const d = draftOf(draftKey)
-    setOwner(draftKey); setText(d.text); setFiles(d.files)
+    setOwner(draftKey); setText(d.text); setFiles(d.files); setReply(d.reply ?? null)
   }
-  useEffect(() => { if (owner === draftKey) keepDraft(owner, { text, files }) }, [owner, draftKey, text, files])
+  useEffect(() => { if (owner === draftKey) keepDraft(owner, { text, files, reply }) }, [owner, draftKey, text, files, reply])
   const ownerRef = useRef(owner)
   ownerRef.current = owner
   const [uploading, setUploading] = useState(0)
@@ -145,6 +149,7 @@ export default forwardRef<ComposerHandle, {
     get: () => text,
     attach: (u) => setFiles((f) => [...f, u]),
     pick: () => openPicker(),
+    reply: (r) => { setReply(r); requestAnimationFrame(() => box.current?.focus()) },
   }))
   const openPicker = () => { if (!onSwitch) return; setPicker(true); setMenuOff(false); requestAnimationFrame(() => box.current?.focus()) }
 
@@ -227,7 +232,8 @@ export default forwardRef<ComposerHandle, {
   }, [sel, items])
 
   const named = mentions(text, roster)
-  const to = named.length ? named : inChat
+  // a reply to one agent's message, where several share the chat, goes to that agent (an @mention still wins)
+  const to = named.length ? named : reply && inChat.length > 1 && inChat.includes(reply.from) ? [reply.from] : inChat
   const canSend = !busy && !uploading && (text.trim() || files.length) && to.length > 0
 
   async function send() {
@@ -247,11 +253,11 @@ export default forwardRef<ComposerHandle, {
       const out = expandPasteTokens(sendText(calcText).text, PASTES)
       if (out.missing.length) throw new Error(`Pasted text #${out.missing.join(', #')} was lost when the page reloaded. Delete the token and paste it again.`)
       if (out.broken) throw new Error('A [Pasted text …] token was edited. Delete it whole, or paste the text again.')
-      await onSend(out.text.trim(), files, to)
+      await onSend(reply ? `${replyLine(reply)}\n${out.text.trim()}` : out.text.trim(), files, to)
       for (const m of text.matchAll(/\[Pasted text #(\d+) /g)) PASTES.delete(Number(m[1]))   // sent: freed
       savePastes()
       keepDraft(sentFrom, { text: '', files: [] })       // sent: that conversation's draft is spent, even if we moved on
-      if (ownerRef.current === sentFrom) { setText(''); setFiles([]) }
+      if (ownerRef.current === sentFrom) { setText(''); setFiles([]); setReply(null) }
     } catch (e) { setErr(String((e as Error).message ?? e)) } finally { setBusy(false) }
   }
   async function addFiles(list: FileList | File[]) {
@@ -375,6 +381,15 @@ export default forwardRef<ComposerHandle, {
               </li>
             )}
           </ul>
+        )}
+        {reply && (
+          <div className="ws-replying flex items-center gap-2 mx-3 mt-3 rounded-[10px] pl-2.5 pr-1 py-1.5 text-[12.5px] text-ink-dim">
+            {I.reply('w-3.5 h-3.5 shrink-0 text-ink-mute')}
+            <span className="min-w-0 truncate" title={reply.quote}>
+              <span className="text-ink-mute">{isHuman(reply.from) ? humanName(reply.from) : displayName(reply.from)}: </span>“{reply.quote}”
+            </span>
+            <button onClick={() => setReply(null)} aria-label="don't reply to this message" className="ml-auto shrink-0 p-1 rounded hover:text-ink">{I.x('w-3.5 h-3.5')}</button>
+          </div>
         )}
         {(files.length > 0 || uploading > 0) && (
           <div className="flex flex-wrap gap-1.5 px-3.5 pt-3">

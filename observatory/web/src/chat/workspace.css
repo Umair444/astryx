@@ -370,6 +370,8 @@
 .ax-askchip { background: color-mix(in srgb, var(--t-bg) 55%, transparent); border: 1px solid color-mix(in srgb, var(--t-accent) 18%, var(--t-line)); box-shadow: inset 2px 0 0 var(--t-accent);
   transition: border-color 120ms, background-color 120ms; }
 .ax-askchip:hover:not(:disabled) { border-color: color-mix(in srgb, var(--t-accent) 40%, var(--t-line)); background: var(--t-bg); }
+/* the message a draft replies to, above the composer's box (thread/Composer.tsx): the quote chip's bar, quieter */
+.ws-replying { background: color-mix(in srgb, var(--t-fg) 5%, transparent); box-shadow: inset 2px 0 0 var(--t-accent); }
 .ax-askchip-q { font-family: "Newsreader Variable", Georgia, serif; font-style: italic; font-size: 14.5px; line-height: 1.45; color: var(--t-dim); white-space: normal; }
 
 @media (prefers-reduced-motion: reduce) {

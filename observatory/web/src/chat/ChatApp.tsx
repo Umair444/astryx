@@ -13,7 +13,7 @@ import { canvasBase } from '../cog'
 import { nowLine } from '../ui/life'
 import { startDictation } from './dictate'
 import {
-  bodyFor, teamOrder, loadCommands, loadWork, newThread, participants, stepsOf, stripEmbeds,
+  bodyFor, teamOrder, loadCommands, loadWork, newThread, participants, stepsOf, stripEmbeds, parseReply,
   type McpTool, type Project, type Skill, type Uploaded, type Work,
 } from './model'
 import {
@@ -44,7 +44,7 @@ import MediaDrawer from './artifacts/MediaDrawer'
 import { byId, createArtifact, distinctMedia, loadMedia, mediaOfRows, openArtifact, type MediaItem } from './artifacts/api'
 import { preferChart } from './tables/DataView'
 import { ChipCtx, useChipAwareness } from './artifacts/versions/awareness'
-import { quoteText, TurnActionsCtx, type TurnActionsValue } from './thread/TurnActions'
+import { TurnActionsCtx, type TurnActionsValue } from './thread/TurnActions'
 import Outbox, { type Outgoing } from './thread/Outbox'
 import type { OpenRequest } from './artifacts/FileChip'
 import type { AnnotateCtx } from './artifacts/annotate/types'
@@ -747,9 +747,11 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         () => toast('Open this page on your phone, then Share → Add to Home Screen.', { kind: 'info' }))
     } else go('library')
   }
-  // a turn's actions: quote into the composer (to whoever said it, when several share the thread); open as a document
+  // a turn's actions: reply to it (the composer carries the reference, and sends to whoever said it when several share
+  // the thread); a reply chip jumps to its message; open as a document
   const turnActsNow: TurnActionsValue = {
-    quote: (text, m) => composer.current?.insert(quoteText(text, m.from !== me && inChat.length > 1 ? m.from : null)),
+    reply: (m, quote) => composer.current?.reply({ id: m.id, from: m.from, quote }),
+    jump: (id) => { setJump({ thread: current, id, n: Date.now() }) },
     openDoc: async (m, text) => {
       const a = await createArtifact({ thread: current, name: docName(text), text, author: m.from, msg: { id: m.id, ts: m.ts } })
       openFile({ path: byId(a.id), label: a.name, from: m.from })
@@ -770,7 +772,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const turnActsRef = useRef(turnActsNow)
   turnActsRef.current = turnActsNow
   const turnActs = useMemo<TurnActionsValue>(() => ({
-    quote: (t, m) => turnActsRef.current.quote(t, m),
+    reply: (m, q) => turnActsRef.current.reply(m, q),
+    jump: (id) => turnActsRef.current.jump?.(id),
     openDoc: (m, t) => turnActsRef.current.openDoc(m, t),
     openTable: (m, csv, name) => turnActsRef.current.openTable!(m, csv, name),
     openNamed: (m, t, name) => turnActsRef.current.openNamed!(m, t, name),
@@ -849,11 +852,11 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
           )}
           {current && <Turns key={current} me={me} older={older} onOlder={loadOlderRows} focus={jump?.thread === current ? jump : null} rows={rows} work={work} pending={pending} roster={names} roles={roles} loading={history === null} handoffs={handoffs} switches={switches} onStop={who.owner ? interruptAgent : undefined}
             onRemind={(a) => onSend('Still waiting for your answer to my message above.', [], [a]).then(() => undefined)}
-            onOpenFile={openFile} onOpenAsk={openAsk} onEdit={(m) => composer.current?.set(stripEmbeds(m.body))}
+            onOpenFile={openFile} onOpenAsk={openAsk} onEdit={(m) => { const r = parseReply(stripEmbeds(m.body)); composer.current?.reply(r?.reply ?? null); composer.current?.set(r ? r.rest : stripEmbeds(m.body)) }}
             empty={histErr ? null : <FreshThread agents={inChat} status={status} roles={roles} lines={lines} />} />}
           {current && <Outbox items={outbox.filter((o) => o.thread === current)} onRetry={(o) => void deliver(o)}
             onDiscard={(o) => setOutbox((xs) => xs.filter((x) => x.key !== o.key))}
-            onEdit={(o) => { setOutbox((xs) => xs.filter((x) => x.key !== o.key)); composer.current?.set(o.text); o.files.forEach((f) => composer.current?.attach(f)) }} />}
+            onEdit={(o) => { setOutbox((xs) => xs.filter((x) => x.key !== o.key)); const r = parseReply(o.text); composer.current?.reply(r?.reply ?? null); composer.current?.set(r ? r.rest : o.text); o.files.forEach((f) => composer.current?.attach(f)) }} />}
           </TurnActionsCtx.Provider></ChipCtx.Provider>
         </div>
         {note && <div className="mx-auto max-w-[760px] w-full px-6 pb-1 text-[12.5px] text-ink-dim cursor-pointer" role="status" onClick={() => setNote('')}>{note}</div>}

@@ -48,6 +48,21 @@ export function bodyFor(text: string, _to: string[], _me: string): string { retu
 /* the order rows are written in: helpers first, the lead (first named) LAST, so a bare follow-up goes to the lead */
 export function teamOrder(to: string[]): string[] { return to.length > 1 ? [...to.slice(1), to[0]] : [...to] }
 
+/* A REPLY (owner 11-17: "giving agent the refernce of chat; instead of whole chat"): a person's message may open with
+   the one message it answers, as one line: [reply #<id> <from>] “<its first words>”. The agent reads the reference
+   (read_message <id> for the whole); the chat draws it as a chip that jumps to that message. */
+export interface Reply { id: number; from: string; quote: string }
+export const REPLY_QUOTE = 160
+const REPLY = /^\[reply #(\d{1,12}) ([\w.@-]{1,80})\] “(.*)”(?:\n|$)/
+export const replyLine = (r: Reply) => {
+  const q = r.quote.replace(/\s+/g, ' ').trim()
+  return `[reply #${r.id} ${r.from}] “${q.length > REPLY_QUOTE ? `${q.slice(0, REPLY_QUOTE - 1)}…` : q}”`
+}
+export function parseReply(text: string): { reply: Reply; rest: string } | null {
+  const m = REPLY.exec(text)
+  return m ? { reply: { id: Number(m[1]), from: m[2], quote: m[3] }, rest: text.slice(m[0].length).trimStart() } : null
+}
+
 export const FILE_EMBED = /\[\[file:([^\]\n]+)\]\](?: \(([^)\n]{1,120})\))?/g    // an upload adds its display name
 export interface Embed { path: string; label?: string }
 export function embeds(body: string): Embed[] { return [...body.matchAll(FILE_EMBED)].map((m) => ({ path: m[1].trim(), label: m[2] })) }
