@@ -6,6 +6,7 @@ import { originFrom, useOpenRequest, type OpenRequest } from '../artifacts/FileC
 import { bytes, KindIcon, KIND_WORD } from '../artifacts/kinds'
 import { BlobImg, useMediaSrc } from '../artifacts/viewers/common'
 import { firstPage, useVisible } from '../library/FileCard'
+import { I } from '../icons'
 import './inline.css'
 
 /* A FILE WHERE IT WAS EMBEDDED (owner 11-11: "inline is how people like to see it"). A [[file:]] in a body is drawn at
@@ -175,7 +176,7 @@ function CardRow({ k, path, name, kind, open, blob, coming, note }: { k: string;
       </button>
       {!note && (
         <button type="button" className="ws-inline-dl" onClick={() => void save()} disabled={busy} title={`Download ${name}`} aria-label={`Download ${name}`}>
-          <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14" /></svg>
+          {I.down()}
         </button>
       )}
     </div>

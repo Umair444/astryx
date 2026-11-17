@@ -328,7 +328,7 @@ function Body({ art, at, view, setView, wide, onSaved, onAttach, saveRef, from, 
               </button>
             )}
             {editable && !old && !view.diff && <button className="ws-tool" onClick={() => void startEdit()} title="Edit (saves a new version)">{I.edit('w-[15px] h-[15px]')}<span>Edit</span></button>}
-            <button className="ws-tool" onClick={() => void dl()} title="Download this version" aria-label="download">{DownIcon}</button>
+            <button className="ws-tool" onClick={() => void dl()} title="Download this version" aria-label="download">{I.down()}</button>
           </>}
         </div>
       </div>
@@ -426,6 +426,5 @@ function Editor({ value, prose, onChange }: { value: string; prose: boolean; onC
 }
 
 const DiffIcon = <svg viewBox="0 0 24 24" className="w-[15px] h-[15px]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden><path d="M6 4v10M1.5 9h9M14 19h8" /><circle cx="18" cy="8" r="3.5" /></svg>
-const DownIcon = <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14" /></svg>
 const Expand = () => <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" /></svg>
 const Shrink = () => <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 10h-6V4M4 14h6v6M14 10l7-7M10 14l-7 7" /></svg>

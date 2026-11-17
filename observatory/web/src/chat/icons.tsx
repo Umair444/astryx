@@ -31,4 +31,5 @@ export const I = {
   spark: (c?: C) => svg(c, <><path d="M12 3l1.8 5.4L19 10l-5.2 1.6L12 17l-1.8-5.4L5 10l5.2-1.6z" /></>),
   wave: (c?: C) => svg(c, <path d="M3 12h2M7 8v8M11 5v14M15 8v8M19 11v2" />),
   arrow: (c?: C) => svg(c, <path d="M5 12h13M13 6l6 6-6 6" />),
+  down: (c?: C) => svg(c, <path d="M12 4v11M7 10.5l5 5 5-5M5 20h14" />),
 }

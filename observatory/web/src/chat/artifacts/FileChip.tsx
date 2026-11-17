@@ -1,5 +1,7 @@
-import { useContext } from 'react'
+import { useContext, useState } from 'react'
 import type { Msg } from '../../types'
+import { download, fetchFile } from '../model'
+import { I } from '../icons'
 import { kindOfName, nameOf, type MsgRef } from './api'
 import { KindIcon, KIND_WORD } from './kinds'
 import { ChipCtx } from './versions/awareness'
@@ -8,7 +10,8 @@ import '../differentials.css'
 /* A file a turn carries ([[file:]]: an agent's artifact, or the owner's upload), as a chip: kind icon, name, kind.
    A click opens it in the artifact panel, attributed to whoever posted the message, AT the version that message
    carried. A newer version of a file the thread already had says so (iteration 7): "v3 · updated", and "What changed"
-   opens the panel straight into the diff from the version before. */
+   opens the panel straight into the diff from the version before. The chip's last segment downloads it (owner 11-17:
+   "a download button on attachments", so nobody has to open the panel first). */
 
 /* msg: the message whose chip was clicked (its version opens); carrier: the newest message embedding this path (the
    import's provenance); diff: open in Diff mode; history: earlier mentions under other paths, imported first */
@@ -52,9 +55,14 @@ export default function FileChip({ path, label, from, active, onOpen, msg }: {
   const { aware, ver, req } = useOpenRequest(path, label, from, msg)
   const name = nameOf(path, label)
   const kind = kindOfName(name)
+  const [busy, setBusy] = useState(false)
+  const save = async () => {
+    setBusy(true)
+    try { download(await (await fetchFile(path)).blob(), name) } catch { /* opening it says why */ } finally { setBusy(false) }
+  }
   const tag = ver ? [ver.n ? `v${ver.n}` : '', ver.updated ? 'updated' : ''].filter(Boolean).join(' · ') : ''
   return (
-    <span className={`ws-chip-wrap inline-flex items-stretch max-w-[340px] ${ver?.updated ? 'is-updated' : ''}`}>
+    <span className="ws-chip-wrap inline-flex items-stretch max-w-[380px]">
       <button data-file-name={name} onClick={(e) => { originFrom(e.currentTarget); onOpen(req) }} title={`Open ${name}${tag ? ` (${tag})` : ''} beside the chat`} aria-pressed={active}
         className="ws-chip group inline-flex items-center gap-2.5 min-w-0 rounded-[12px] pl-2 pr-3 py-1.5 text-left">
         <span className="ws-chip-icon shrink-0 grid place-items-center w-8 h-8 rounded-[9px]"><KindIcon kind={kind} className="w-[17px] h-[17px]" /></span>
@@ -72,6 +80,7 @@ export default function FileChip({ path, label, from, active, onOpen, msg }: {
           <span>What changed</span>
         </button>
       )}
+      <button className="ws-chip-dl" onClick={() => void save()} disabled={busy} title={`Download ${name}`} aria-label={`Download ${name}`}>{I.down('w-[15px] h-[15px]')}</button>
     </span>
   )
 }
