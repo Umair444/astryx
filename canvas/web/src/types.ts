@@ -61,5 +61,5 @@ export interface Presence {
 }
 
 export type Route =
-  | { view: 'home' }
+  | { view: 'home'; paint?: string }   // paint: open New canvas with this agent (the chat's /canvas)
   | { view: 'canvas'; id: number }
