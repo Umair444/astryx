@@ -1,12 +1,10 @@
 import { useEffect, useRef, type RefObject } from 'react'
 
 /* PHONE-FIRST (iteration 16). The owner lives on WhatsApp on his phone and the chat installs as an app, so the phone is
-   a first-class surface, not a squeezed desktop. Four small pieces of behaviour live here; the look is in phone.css.
+   a first-class surface, not a squeezed desktop. Three small pieces of behaviour live here; the look is in phone.css.
      - the KEYBOARD: Android is told to shrink the page with the on-screen keyboard (interactive-widget, only while the
        chat is on screen, so the floor keeps the browser's default); on iOS, where only the visual viewport shrinks,
        the workspace follows visualViewport, so the composer always sits right above the keys.
-     - STICK TO THE END: a conversation read at its end stays at its end when its box gets shorter (the keyboard
-       opening, the composer growing), so the latest message is never hidden behind the keys.
      - the EDGE SWIPE: a drag from the left edge opens the conversation drawer (and one leftward closes it).
      - SWIPE DOWN: a full-screen sheet (an artifact, the files, the palette) follows a downward drag on its header
        and closes past a threshold, like a native sheet. */

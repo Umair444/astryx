@@ -195,12 +195,15 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
       if (!typing) touch()
     }
     const onGrab = (e: MouseEvent) => { if (e.target === box) touch() }   // the scrollbar itself, taken by hand
+    // hysteresis (medic 13559): a hand move UP past 24px unpins, so a slow reader keeps their place while the thread
+    // grows; within 80px a scroll re-pins only moving down or with no recent hand; a hand move further off unpins
     const onScroll = () => {
       const byHand = performance.now() - hand < 600, down = box.scrollTop >= top
+      const dist = box.scrollHeight - box.scrollTop - box.clientHeight
       top = box.scrollTop
-      // near the end re-pins, unless the reader is on their way UP (a slow scroll up through the last 80px, medic 13470)
-      if (box.scrollHeight - box.scrollTop - box.clientHeight < 80) { if (down || !byHand) following.current = true }
-      else if (byHand) following.current = false
+      if (byHand && !down && dist > 24) following.current = false
+      else if (dist < 80 && (down || !byHand)) following.current = true
+      else if (byHand && dist >= 80) following.current = false
     }
     // THE one follower of the end (useStickToEnd was a second one, writing the same scrollTop on its own rule): the box
     // itself (it shrinks when a multi-line draft grows the composer, or a phone's keyboard opens) and everything in it
