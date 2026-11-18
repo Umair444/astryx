@@ -87,6 +87,18 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c:
     none = tok.claims(tok.mint(k, "7@cog", "astryx"), ver, "astryx")
     arm("the signed identity carries the proven email, and '' when the front sends none",
         both and both["email"] == "sana@example.org" and none and none["email"] == "", (both, none))
+    import types
+    sys.path.insert(0, str(REPO / "observatory"))
+    import front
+    v = ("7@cog", "sana", "sana@example.org")
+    proved = tok.claims(front._mint(types.SimpleNamespace(key=k, mail=object()), v, "astryx"), ver, "astryx")
+    unproved = tok.claims(front._mint(types.SimpleNamespace(key=k, mail=None), v, "astryx"), ver, "astryx")
+    arm("a cog with no mailbox proves no address, so its token vouches for none (medic 13734)",
+        proved["email"] == "sana@example.org" and unproved["email"] == "", (proved, unproved))
+    gate_src = (REPO / "observatory" / "api" / "main.py").read_text()
+    gate_src = gate_src[gate_src.index("async def privacy_gate("):]
+    arm("the backend's gate makes every signed-in account a person with its email (census: _account_seen is awaited)",
+        "await _account_seen(request)" in gate_src[:gate_src.index("\n\n\n")])
 
     print("\nI3 ANSWERED WHERE THEY WROTE")
     wa = f"(to_agent='owner' OR to_agent LIKE 'wa-%' OR {address.reaches_sql('whatsapp')})"

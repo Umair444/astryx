@@ -276,7 +276,8 @@ def _mint(a: "_Auth", v: tuple[str, str, str], org: str) -> str:
     """The signed identity for `org`: the account's sub, its own label (cog-who: the email's local part, so the org
     can say WHICH human asked) and its proven email, which the org links as that person's email channel (owner 11-18:
     "users are signing in to org with their emails - so it should be linked")."""
-    return identity.mint(a.key, v[0], org, name=v[1], email=v[2])
+    return identity.mint(a.key, v[0], org, name=v[1], email=v[2] if a.mail else None)   # a cog with no mailbox
+    # proves no address (sign-up took what was typed), so it vouches for none: its people link email by a code (13734)
 
 
 async def viewer_id(request: Request, a: _Auth | None) -> tuple[str, str, str] | None:
