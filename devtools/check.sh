@@ -953,6 +953,9 @@ run "spawn-pinned deployment drift"   "$PY" tests/test_spawn_drift.py
 # recomputes the OLD mtime age for the restore case, so a regression back to mtime fails it.
 run "owner_queue_age content-first-seen age" "$PY" tests/test_owner_queue_age.py
 run "stopped Hands desk, nobody watching"  "$PY" tests/test_desk_stopped.py
+# owner_crisis (seed #66954, medic #66957/#66961): the owner wrote crisis language -> one wake to seed, ids only, guarded
+# silence; live arms read gitignored pins, the install arm reads the trigger row (premium>0). Any skip is 77.
+run "owner crisis wake to seed"  "$PY" tests/test_owner_crisis.py
 # tmpfs_full (goal 11580, seed #59286: /tmp hit 100% inodes at 51% bytes): inodes AND bytes, percent and
 # hours-above ladders, an unreadable /tmp is a line, attribution names top-level prefixes only. Mutants:
 # tests/mutants_tmpfs_full.py.

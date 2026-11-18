@@ -28,7 +28,11 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tests"))
 from org_estate import astryx_call  # noqa: E402
 
-ESTATE = astryx_call(REPO, "paths", "estate", __file__)
+def _astryx(mod, fn, *args):   # astryx.<mod>.<fn>(*args) from THIS tree, side-effect free (tests/org_estate.py)
+    return astryx_call(REPO, mod, fn, *args)
+
+
+ESTATE = _astryx("paths", "estate", __file__)   # the org's estate: this tree on one org, its HOME on several (S3a)
 sys.path.insert(0, str(REPO))
 SRC = os.environ.get("OWNER_CRISIS_SRC") or str(ESTATE / "triggers" / "steward" / "owner_crisis.py")
 if not Path(SRC).exists():
@@ -177,13 +181,13 @@ if fx is not None:
 
 print("LIVE, read-only, on the org's own DB:")
 pins_path = Path(os.environ.get("OWNER_CRISIS_PINS") or ESTATE / "var" / "steward" / "owner_crisis.pins.json")
-dsn = os.environ.get("ASTRYX_DSN")
-if not dsn:
-    try:
-        dsn = next(ln.split("=", 1)[1].strip() for ln in (ESTATE / ".env").read_text().splitlines()
-                   if ln.startswith("ASTRYX_DSN="))
-    except Exception:  # noqa: BLE001
-        dsn = None
+try:
+    dsn = _astryx("config", "dsn", ESTATE / ".env")   # the resolver: the environment first, else the HOME's .env
+except LookupError:
+    dsn = None
+if dsn and _astryx("orgs", "is_fixture", dsn):
+    print("  SKIP  live arms: the DSN names a fixture database, not the org's own (its owner history is not there)")
+    dsn = None
 if not pins_path.exists() or not dsn:
     print(f"  SKIP  live arms: {'no pins file' if not pins_path.exists() else 'no DSN'} (gitignored): the pattern "
           f"was NOT checked against the real owner history this run")
