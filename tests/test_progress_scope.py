@@ -53,8 +53,8 @@ def tool_result():
     return line("user", [{"type": "tool_result", "tool_use_id": "x", "content": "ok"}])
 
 
-def chan(*ids, thread="wa:1", body="hi"):
-    return "".join(f'<channel source="astryx" from="owner" thread="{thread}" intent="chat" msg_id="{i}">{body}</channel>\n'
+def chan(*ids, thread="wa:1", body="hi", frm="owner"):
+    return "".join(f'<channel source="astryx" from="{frm}" thread="{thread}" intent="chat" msg_id="{i}">{body}</channel>\n'
                    for i in ids)
 
 
@@ -186,6 +186,72 @@ def scenario(*lines):
 
 
 A, B = "wa:A", "wa:B"
+# AN AGENT'S NUDGE MID-WORK (owner 13865: db wrote to lending about the disk while lending built Kumail's pull, and the
+# group's bubble went quiet): an agent-only wake keeps the person's request in hand; a person's wake still switches
+work = [line("user", chan(10, thread=A, frm="wa-1@whatsapp")), use("Bash", "t1", command="x")]
+st, msgs = scenario(*work, line("user", chan(30, thread="ch-disk", frm="db@local")), use("Bash", "t2", command="y"))
+arm("N1 an agent's message mid-work keeps the person's request in hand (its steps show in that bubble)", msgs == [10], st)
+st, msgs = scenario(*work, line("user", chan(30, thread="ch-disk", frm="db@local")),
+                    line("user", chan(40, thread=B, frm="owner@local")))
+arm("N2 a person's message after it still switches", msgs == [40], st)
+st, msgs = scenario(line("user", chan(30, thread="ch-disk", frm="db@local")))
+arm("N3 an agent's message with nothing in hand is its own turn", msgs == [30], st)
+st, msgs = scenario(line("user", chan(10, thread=A, frm="wa-1@whatsapp")), use(SEND, thread=A, body="on it, verifying"),
+                    queued(chan(30, thread="ch-disk", frm="db@local")), use(SEND, "t5", thread="ch-disk", body="dropping it"),
+                    use("Bash", "t2", command="y"))
+arm("P1 (medic 13872, the live shape) db's message queued mid-turn, the agent answers db: the person's request stays",
+    msgs == [10], st)
+st, msgs = scenario(line("user", chan(10, thread=A, frm="wa-1@whatsapp")), use(SEND, thread=A, body="here is the answer"),
+                    line("user", chan(30, thread="ch-disk", frm="db@local")), use("Bash", "t2", command="y"))
+arm("P2 answered and the turn over: an agent's wake is its own turn", msgs == [30], st)
+st, msgs = scenario(line("user", chan(50, thread="t-x", frm="db@local")), queued(chan(60, thread="t-y", frm="memory@local")),
+                    use(SEND, thread="t-x", body="done"), use(SEND, "t6", thread="t-y", body="ok"))
+arm("C1 a request an AGENT opened: another agent's queued message and a reply to it switch as today", msgs == [60], st)
+st, msgs = scenario(line("user", chan(10, thread=A, frm="wa-1@whatsapp")), use("Bash", "t7", command="x", run_in_background=True),
+                    use(SEND, "t8", thread=A, body="started, will report"),
+                    line("user", chan(30, thread="ch-disk", frm="db@local")))
+arm("C2 answered but background work still out for it: an agent's wake keeps the request", msgs == [10], st)
+st, msgs = scenario(line("user", chan(10, thread=A, frm="wa-1@whatsapp")), use("Bash", "bg1", command="x", run_in_background=True),
+                    line("user", notice("bg1")), use(SEND, thread=A, body="interim"),
+                    queued(chan(30, thread="ch-disk", frm="db@local")), use(SEND, "t3", thread="ch-disk", body="ok"),
+                    use("Bash", "t2", command="y"))
+arm("P3 (medic 13874) a person's request resumed by its background notice: db queued + a reply to db keeps it",
+    msgs == [10], st)
+st, msgs = scenario(line("user", chan(50, thread="t-task", frm="seed@local")), queued(chan(10, thread=A, frm="wa-1@whatsapp")),
+                    use(SEND, thread="t-task", body="done"), use(SEND, "t4", thread=A, body="on it"),
+                    use(SEND, "t5", thread=A, body="interim"), queued(chan(30, thread="ch-disk", frm="db@local")),
+                    use(SEND, "t6", thread="ch-disk", body="ok"), use("Bash", "t2", command="y"))
+arm("P4b switched to a person's request and answered once: db queued + a reply to db keeps it", msgs == [10], st)
+st, msgs = scenario(line("user", chan(10, thread=A, frm="wa-1@whatsapp")), use("Bash", "bg1", command="x", run_in_background=True),
+                    line("user", chan(20, thread=B, frm="owner@local")), queued(notice("bg1")),
+                    use(SEND, thread=B, body="done"), use(SEND, "t7", thread=A, body="result"), use(SEND, "t8", thread=A, body="more"),
+                    queued(chan(30, thread="ch-disk", frm="db@local")), use(SEND, "t9", thread="ch-disk", body="ok"),
+                    use("Bash", "t2", command="y"))
+arm("P5 (medic 13878) a person's request back in waiting by a queued notice, then switched to: db's reply keeps it",
+    msgs == [10], st)
+with tempfile.TemporaryDirectory() as td:
+    H.TURN_CACHE = str(Path(td) / "cache" / "turn-{agent}.json")
+    t = Path(td) / "s.jsonl"
+    t.write_text(line("user", chan(10, thread=A, frm="wa-1@whatsapp")) + use("Bash", "t1", command="x"))
+    H.turn_state(str(t), "db")
+    cf = Path(H.TURN_CACHE.format(agent="db"))
+    c = json.loads(cf.read_text())
+    for k in ("pp", "seen"):
+        c["st"].pop(k, None)
+    cf.write_text(json.dumps(c))
+    with t.open("a") as f:
+        f.write(queued(chan(20, thread=A, frm="wa-1@whatsapp")) + use("Bash", "t2", command="y"))
+    a1 = H.turn_msgs(str(t), "db")
+    with t.open("a") as f:
+        f.write(use("Bash", "t3", command="z"))
+    a2 = H.turn_msgs(str(t), "db")
+arm("P6 a state cached by an older hook (no new keys) then a queued message: the scope survives (any new key, ever)",
+    a1 == [10, 20] and a2 == [10, 20], (a1, a2))
+keep, H.NUDGE = H.NUDGE, -1
+st, msgs = scenario(*work, line("user", chan(30, thread="ch-disk", frm="db@local")))
+H.NUDGE = keep
+arm("N4 past NUDGE since the last step, an agent's message is its own turn (no stale bubble reopens)", msgs == [30], st)
+
 base = [line("user", chan(10, thread=A)), queued(chan(20, thread=B))]
 st, msgs = scenario(*base, use(SEND, thread=B, body="on it"), use("Bash", "t9", command="x"))
 arm("S1 R1: an early 'on it' to B while A is unanswered never moves A's work: cur stays A, B is acked (not switched)",

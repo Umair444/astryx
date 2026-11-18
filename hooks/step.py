@@ -80,6 +80,13 @@ def ledger_meta(tool, tool_input, response=None):
 # since. Never raises: an unknown is [] (no scope, so a scoped reader shows nothing rather than everything).
 #
 #   a wake (a user line whose channel tags carry msg_ids)  cur = its ids (on 2+ threads: many, content-free for each)
+#   an AGENT's message while a PERSON's request is in hand  queued mid-turn: noted, never waiting, so answering it
+#                                                           can't move the person's work; opening a turn within NUDGE
+#                                                           of the last step while that request is still out (not
+#                                                           answered, or background work out): the request stays cur.
+#                                                           An interruption is not a new request (owner 13865: "the
+#                                                           hooks shouldn't be disturbed by it … fine if some steps of
+#                                                           db also shows in bubble"; medic 13872)
 #   a background notice (<tool-use-id>T) opening a turn     the scope that launched T, else unknown
 #   any other user line (a typed prompt)                    unknown
 #   a person's message QUEUED into the running turn         same chat: joins cur; another chat: waits (cur unchanged)
@@ -97,6 +104,7 @@ TURN_SCAN = 1 << 20                      # a cold start scans back from the end 
 COMPACT_LEAD = "This session is being continued from a previous conversation"
 SEND_TOOL = "mcp__astryx__send"
 BG_TTL = 12 * 3600                       # a background launch whose notice never came is forgotten after this
+NUDGE = 30 * 60                          # an agent-only wake keeps the request in hand if work on it went on this recently
 _TAG = re.compile(r'\s*<channel source="astryx"([^>]*)>')
 _ATTR = re.compile(r'(\w+)="([^"]*)"')
 _NOTICE = re.compile(r"<task-notification>.*?<tool-use-id>([^<]+)</tool-use-id>", re.S)
@@ -109,7 +117,7 @@ CHECK = None
 
 def _fresh(since=0.0) -> dict:
     return {"cur": [], "many": False, "since": since, "waiting": [], "acked": [], "served": [], "answered": False,
-            "th": {}, "bg": {}, "bind": {}}
+            "th": {}, "bg": {}, "bind": {}, "seen": since, "pp": []}
 
 
 def _tags(text: str) -> list:
@@ -128,6 +136,34 @@ def _tags(text: str) -> list:
             break
         pos = close + len("</channel>")
     return _real(out[:20])
+
+
+def _who(text: str) -> dict:
+    """{msg_id: from a PERSON?} for the channel tags opening `text` (the owner, a channel's people: address.PERSONS).
+    A tag that names no sender, or a hook that can't read the table, counts as a person: doubt never keeps a scope."""
+    try:
+        from astryx.core import address
+        person = lambda n: not n or address.surface_of(n) in address.PERSONS    # noqa: E731
+    except Exception:
+        person = lambda n: True                                                # noqa: E731
+    out, pos = {}, 0
+    while True:
+        m = _TAG.match(text, pos)
+        if not m:
+            return out
+        a = dict(_ATTR.findall(m.group(1)))
+        if a.get("msg_id", "").isdigit():
+            out[int(a["msg_id"])] = person(a.get("from", "").split("@")[0])
+        close = text.find("</channel>", m.end())
+        if close < 0:
+            return out
+        pos = close + len("</channel>")
+
+
+def _held(st) -> bool:
+    """Is the request in hand a PERSON's? Keyed on cur's own ids (pp: the ids that came from people), so a resume and a
+    switch to a waiting request carry it (medic 13874)."""
+    return any(i in st.get("pp", []) for i in st.get("cur") or [])
 
 
 def _real(tags: list) -> list:
@@ -154,13 +190,15 @@ def _threads(st, ids) -> set:
 
 
 def _snap(st, ids=None) -> dict:
-    return {"cur": list(st["cur"] if ids is None else ids), "many": st["many"] if ids is None else False,
+    ids = st["cur"] if ids is None else ids
+    return {"cur": list(ids), "many": st["many"] if ids is st["cur"] else False,
             "since": st["since"], "at": datetime.now().timestamp(),
-            "th": {str(i): st["th"].get(str(i), "") for i in (st["cur"] if ids is None else ids)}}
+            "th": {str(i): st["th"].get(str(i), "") for i in ids}, "pp": [i for i in ids if i in st.get("pp", [])]}
 
 
 def _resume(st, snap) -> None:
     st["th"].update(snap.get("th") or {})
+    st["pp"] = list(dict.fromkeys(st.get("pp", []) + list(snap.get("pp") or [])))
     st.update(cur=list(snap.get("cur") or []), many=bool(snap.get("many")), since=snap.get("since") or 0.0)
 
 
@@ -177,6 +215,8 @@ def _opens(e) -> bool:
 def _apply(st, e) -> dict:
     """One transcript entry's effect on the scope state (see the table above). Returns st (mutated)."""
     now = datetime.now().timestamp()
+    for k, v in _fresh(now).items():                # a state cached by an older hook lacks a newer key: never a KeyError
+        st.setdefault(k, v)                         # (one wedged line replays forever: medic 13878 R1)
     if _opens(e):
         text = _text((e.get("message") or {}).get("content"))
         bg = st["bg"]
@@ -184,9 +224,16 @@ def _apply(st, e) -> dict:
         tags = _tags(text)
         new = _fresh(now)
         new["bg"] = {k: v for k, v in bg.items() if now - (v.get("at") or 0) < BG_TTL}
+        who = _who(text)
+        out = not st.get("answered") or any(set(v.get("cur") or []) & set(st.get("cur") or []) for v in bg.values())
+        if tags and _held(st) and out and not st.get("many") \
+                and now - (st.get("seen") or 0) < NUDGE and not any(who.get(i, True) for i, _ in tags):
+            st["seen"] = now                       # an agent's nudge while a person's request is still out: it stays
+            return st
         if tags:                                   # a wake
             new["th"] = {str(i): t for i, t in tags}
             new["cur"] = [i for i, _ in tags]
+            new["pp"] = [i for i, _ in tags if who.get(i, True)]
             new["many"] = len({t for _, t in tags}) > 1
         elif n:                                    # a background notice opening a turn: its launch's scope, else unknown
             snap = new["bg"].pop(n.group(1).strip(), None)
@@ -202,18 +249,27 @@ def _apply(st, e) -> dict:
             snap = st["bg"].pop(n.group(1).strip(), None)
             if snap and set(snap.get("cur") or []) - set(st["cur"]):
                 st["th"].update(snap.get("th") or {})
+                st["pp"] += [i for i in snap.get("pp") or [] if i not in st["pp"]]   # as _resume (medic 13878 R2)
                 st["waiting"] += [i for i in snap["cur"] if i not in st["waiting"] and i not in st["cur"]]
             return st
         cur_th = _threads(st, st["cur"])
+        who, held = _who(text), _held(st)
         for i, t in _tags(text):
             st["th"][str(i)] = t
+            if who.get(i, True) and i not in st["pp"]:
+                st["pp"].append(i)
+            nudge = held and not who.get(i, True)
             if st["cur"] and t in cur_th:
                 st["cur"].append(i)                # the same chat writing again: the same work
+            elif nudge:
+                pass                               # an agent's message while a person's request is in hand: answering
+                                                   # it never moves that request's work (owner 13865, medic 13872 R1)
             elif i not in st["waiting"]:
                 st["waiting"].append(i)            # another chat: it waits; the agent is still on cur
         return st
     if e.get("type") != "assistant":
         return st
+    st["seen"] = now                               # work went on (an agent-only wake within NUDGE keeps this scope)
     for c in (e.get("message") or {}).get("content") or []:
         if not isinstance(c, dict) or c.get("type") != "tool_use":
             continue
