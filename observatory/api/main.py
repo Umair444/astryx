@@ -542,7 +542,8 @@ _WIRE_WRITE = re.compile(r"^/api/(messages|ws/agents/[^/]+/interrupt|federation/
 MEMBER = {("POST", "/api/messages"), ("POST", "/api/thread/read"), ("POST", "/api/chat/upload"),
           ("PUT", "/api/ws/threads/meta"), ("PUT", "/api/chat/projects"),
           ("POST", "/api/chat/calc"),
-          ("POST", "/api/me/channels")}   # a person links THEIR OWN account (identity-channels P3)
+          ("POST", "/api/me/channels"),   # a person links THEIR OWN account (identity-channels P3)
+          ("POST", "/api/me/channels/confirm")}   # … and types back the code sent to it (email, SMS: 11-18)
 # What a person reaches only when they hold the feature (members.caps: their role's default, as the Admin panel set it
 # for them; owner 11-17 "an admin can assign a voice chat to a member"). The owner holds every feature.
 FEATURE_PATHS = {"dictate": {("POST", "/api/chat/dictate/session"), ("POST", "/api/chat/dictate/usage")},
@@ -2994,11 +2995,13 @@ def _me_sync(who: str) -> dict:
         linked = c.execute("SELECT h.channel, h.account FROM identity_handle h JOIN identity i ON i.id = h.identity_id "
                            "AND i.tenant = h.tenant WHERE i.wire_name = %s AND h.channel <> 'web' ORDER BY 1, 2", (who,)).fetchall()
         asked = c.execute("SELECT channel, chat, expires_at FROM route WHERE purpose = 'link' AND person = %s "
-                          "AND expires_at > now() ORDER BY opened", (who,)).fetchall()
+                          "AND expires_at > now() UNION ALL SELECT channel, chat, expires FROM link_pending "
+                          "WHERE person = %s AND expires > now() ORDER BY 3", (who, who)).fetchall()
     title = lambda ch: _channels.BY_NAME[ch].title if ch in _channels.BY_NAME else ch  # noqa: E731
     return {"who": who, "linked": [{"channel": ch, "title": title(ch), "account": a} for ch, a in linked],
             "asked": [{"channel": ch, "title": title(ch), "account": a, "until": t.isoformat() if t else None} for ch, a, t in asked],
-            "channels": [{"channel": c.name, "title": c.title, "numbers": c.numbers} for c in _channels.connectable()]}
+            "channels": [{"channel": c.name, "title": c.title, "numbers": c.numbers, "proof": c.link}
+                         for c in _channels.linkable()]}
 
 
 @app.get("/api/me/channels")
@@ -3015,13 +3018,16 @@ async def my_channel_link(body: MyChannel, request: Request):
     who = wire_handle(request)
     if who is None:
         return Response(status_code=403)
-    if body.channel not in {c.name for c in _channels.connectable()} or not body.account.strip():
+    if body.channel not in {c.name for c in _channels.linkable()} or not body.account.strip():
         return JSONResponse({"error": "pick a channel and type the account (a WhatsApp number in full, +92…)"}, status_code=400)
     from bridges.providers import registry
     from astryx.core import connect as _connect
 
     def search(q, ch=""):
         return asyncio.run(registry.search_contacts(q, [ch] if ch else None))
+
+    def deliver(ch, chat, text):                  # a link code: through the provider, never a messages row
+        return asyncio.run(registry.send(f"{ch}:{chat}", text)).ok
 
     acct = getattr(request.state, "uid", "") or ("owner-key" if who == "owner" else "")
 
@@ -3031,9 +3037,42 @@ async def my_channel_link(body: MyChannel, request: Request):
             # the signed-in person IS an account (its 'web' handle): the one thing a link may join to (identity_link)
             c.execute("SELECT identity_who('web', %s, %s)", (acct, who))
             return _connect.run(c, "seed", "link", who, body.channel, account=body.account.strip(), search=search,
-                                by=who, timeout="1d")
+                                by=who, timeout="1d", deliver=deliver)
     said = await asyncio.to_thread(go)
-    return {"ok": said.startswith("asked"), "said": said, **await asyncio.to_thread(_me_sync, who)}
+    return {"ok": said.startswith(("asked", "sent a code")), "said": said, **await asyncio.to_thread(_me_sync, who)}
+
+
+class MyCode(BaseModel):
+    channel: str
+    account: str
+    code: str
+
+
+@app.post("/api/me/channels/confirm")
+async def my_channel_confirm(body: MyCode, request: Request):
+    """The code sent to one of MY accounts (a channel that only sends: email, SMS), typed back: right, and the link lands
+    at once through link_land, the landing a YES uses too; astryx confirms to the account through its provider."""
+    who = wire_handle(request)
+    if who is None:
+        return Response(status_code=403)
+    from astryx.core import connect as _connect
+    from bridges.providers import registry
+
+    def go():
+        import psycopg
+        with psycopg.connect(DSN, autocommit=True) as c:
+            got = _connect.confirm_code(c, who, body.channel, body.account.strip(), body.code)
+            if isinstance(got, str):
+                return got, None
+            try:
+                return None, c.execute("SELECT link_land_code(%s)", (got,)).fetchone()[0]
+            except psycopg.Error as e:
+                return str(e).splitlines()[0][:200], None
+    why, person = await asyncio.to_thread(go)
+    if person:
+        await registry.send(f"{body.channel}:{body.account.strip()}", _connect.linked_text(body.channel, person))
+    landed = person
+    return {"ok": landed is not None, "said": why or "linked", **await asyncio.to_thread(_me_sync, who)}
 
 
 @app.get("/api/wire/connections")

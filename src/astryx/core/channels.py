@@ -36,6 +36,8 @@ class Channel:
     owner_rows: bool = True   # its bridge delivers rows addressed to the owner on its threads (owner_surfaces)
     numbers: bool = False     # its people are phone numbers: found by number, shown as +<digits>
     steps: tuple[str, ...] = ()   # how the owner gets its token, shown on the channel screen
+    link: str = "reply"       # how a person proves an account of theirs ("Your channels"): "reply" (YES from it),
+                              # "code" (a code sent to it, typed back on the web: a channel that only sends), "" none
 
     @property
     def stamp(self) -> str:
@@ -58,15 +60,16 @@ CHANNELS: tuple[Channel, ...] = (
                    "Under Bot, reset the token and copy it. Turn on Message Content Intent.",
                    "Paste the token below. You get a link to add the bot to your server.")),
     # the web's own: a named person on a canvas page (cv-<name>, threads cv:<id>); no chat is a group
-    Channel("canvas", "Canvas", person="cv", thread="cv", group="", connect=False),
+    Channel("canvas", "Canvas", person="cv", thread="cv", group="", connect=False, link=""),
     # SMS through the org's gateway (bridges/sms.py): text out to one number (92 + ten digits), nothing comes back in
-    Channel("sms", "SMS", person="sms", thread="sms", group="", dm=r"92\d{10}", connect=False, numbers=True),
+    Channel("sms", "SMS", person="sms", thread="sms", group="", dm=r"92\d{10}", connect=False, numbers=True,
+            link="code"),
     # email through the org's mail server (bridges/email.py): one address is one chat (em:<address>, lowercase), out only
     Channel("email", "Email", person="em", thread="em", group="", dm=r"[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+",
-            connect=False),
+            connect=False, link="code"),
     # a deployed third-party frontend (bridges/frontends.py): one user's conversation with one pinned agent
     Channel("frontends", "Frontends", person="fe", thread="fe", group="", dm=r".+", connect=False, org="frontend",
-            owner_rows=False),
+            owner_rows=False, link=""),
 )
 BY_NAME = {c.name: c for c in CHANNELS}
 
@@ -104,6 +107,11 @@ def of_thread(thread: str | None) -> Channel | None:
 
 def connectable() -> tuple[Channel, ...]:
     return tuple(c for c in CHANNELS if c.connect)
+
+
+def linkable() -> tuple[Channel, ...]:
+    """The channels a person can link an account of theirs on ("Your channels"), each proven its own way (`link`)."""
+    return tuple(c for c in CHANNELS if c.link)
 
 
 def wired(env: dict) -> list[str]:
