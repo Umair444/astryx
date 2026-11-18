@@ -227,14 +227,25 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     }
   }, [loading]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (focus) following.current = false }, [focus?.n])   // a jump to a message is the reader's: stay there
-  useEffect(() => {                                // a new message, or my own send: back to the end, and follow it
-    if (win.jumping()) return
+  // MY OWN act (my message landing, a switch) takes me back to the end and follows it. Anything else (an agent's
+  // reply, an agent starting work: `pending` is the agents' live lanes, not mine) follows only a reader already at the
+  // end, through the pin: one reading older messages stays where they are, as every chat app does (owner 11-18: "a
+  // person is trying to read older messages and is pushing down automatically. it is bad ux")
+  const mine = !!rows.at(-1) && rows.at(-1)!.from === me
+  useEffect(() => {
+    if (win.jumping() || !(following.current || mine)) return
     following.current = true
     // straight to the end, never a smooth glide: Safari doesn't cancel a glide when the pin sets scrollTop, so the glide
     // landed on the end as it was when it started, short of the reply or "working" line laid out after it (member 13399)
     const box = end.current?.parentElement?.parentElement
     if (box) box.scrollTop = box.scrollHeight
-  }, [last, pending.length, lastSwitch]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [last]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (win.jumping()) return
+    following.current = true
+    const box = end.current?.parentElement?.parentElement
+    if (box) box.scrollTop = box.scrollHeight
+  }, [lastSwitch]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return (
     <div className="ws-col pt-10 flex flex-col gap-5" aria-busy>
