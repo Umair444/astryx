@@ -53,8 +53,8 @@ def tool_result():
     return line("user", [{"type": "tool_result", "tool_use_id": "x", "content": "ok"}])
 
 
-def chan(*ids, thread="wa:1", body="hi"):
-    return "".join(f'<channel source="astryx" from="owner" thread="{thread}" intent="chat" msg_id="{i}">{body}</channel>\n'
+def chan(*ids, thread="wa:1", body="hi", frm="owner"):
+    return "".join(f'<channel source="astryx" from="{frm}" thread="{thread}" intent="chat" msg_id="{i}">{body}</channel>\n'
                    for i in ids)
 
 
@@ -186,6 +186,21 @@ def scenario(*lines):
 
 
 A, B = "wa:A", "wa:B"
+# AN AGENT'S NUDGE MID-WORK (owner 13865: db wrote to lending about the disk while lending built Kumail's pull, and the
+# group's bubble went quiet): an agent-only wake keeps the person's request in hand; a person's wake still switches
+work = [line("user", chan(10, thread=A, frm="wa-1@whatsapp")), use("Bash", "t1", command="x")]
+st, msgs = scenario(*work, line("user", chan(30, thread="ch-disk", frm="db@local")), use("Bash", "t2", command="y"))
+arm("N1 an agent's message mid-work keeps the person's request in hand (its steps show in that bubble)", msgs == [10], st)
+st, msgs = scenario(*work, line("user", chan(30, thread="ch-disk", frm="db@local")),
+                    line("user", chan(40, thread=B, frm="owner@local")))
+arm("N2 a person's message after it still switches", msgs == [40], st)
+st, msgs = scenario(line("user", chan(30, thread="ch-disk", frm="db@local")))
+arm("N3 an agent's message with nothing in hand is its own turn", msgs == [30], st)
+keep, H.NUDGE = H.NUDGE, -1
+st, msgs = scenario(*work, line("user", chan(30, thread="ch-disk", frm="db@local")))
+H.NUDGE = keep
+arm("N4 past NUDGE since the last step, an agent's message is its own turn (no stale bubble reopens)", msgs == [30], st)
+
 base = [line("user", chan(10, thread=A)), queued(chan(20, thread=B))]
 st, msgs = scenario(*base, use(SEND, thread=B, body="on it"), use("Bash", "t9", command="x"))
 arm("S1 R1: an early 'on it' to B while A is unanswered never moves A's work: cur stays A, B is acked (not switched)",

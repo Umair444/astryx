@@ -80,6 +80,11 @@ def ledger_meta(tool, tool_input, response=None):
 # since. Never raises: an unknown is [] (no scope, so a scoped reader shows nothing rather than everything).
 #
 #   a wake (a user line whose channel tags carry msg_ids)  cur = its ids (on 2+ threads: many, content-free for each)
+#   a wake from AGENTS only, within NUDGE of the last step  the request in hand stays cur: an agent's message mid-work
+#                                                           (db on the disk while lending builds Kumail's pull) is an
+#                                                           interruption, not a new request (owner 13865: "the hooks
+#                                                           shouldn't be disturbed by it … fine if some steps of db
+#                                                           also shows in bubble")
 #   a background notice (<tool-use-id>T) opening a turn     the scope that launched T, else unknown
 #   any other user line (a typed prompt)                    unknown
 #   a person's message QUEUED into the running turn         same chat: joins cur; another chat: waits (cur unchanged)
@@ -97,6 +102,7 @@ TURN_SCAN = 1 << 20                      # a cold start scans back from the end 
 COMPACT_LEAD = "This session is being continued from a previous conversation"
 SEND_TOOL = "mcp__astryx__send"
 BG_TTL = 12 * 3600                       # a background launch whose notice never came is forgotten after this
+NUDGE = 30 * 60                          # an agent-only wake keeps the request in hand if work on it went on this recently
 _TAG = re.compile(r'\s*<channel source="astryx"([^>]*)>')
 _ATTR = re.compile(r'(\w+)="([^"]*)"')
 _NOTICE = re.compile(r"<task-notification>.*?<tool-use-id>([^<]+)</tool-use-id>", re.S)
@@ -109,7 +115,7 @@ CHECK = None
 
 def _fresh(since=0.0) -> dict:
     return {"cur": [], "many": False, "since": since, "waiting": [], "acked": [], "served": [], "answered": False,
-            "th": {}, "bg": {}, "bind": {}}
+            "th": {}, "bg": {}, "bind": {}, "seen": since}
 
 
 def _tags(text: str) -> list:
@@ -128,6 +134,27 @@ def _tags(text: str) -> list:
             break
         pos = close + len("</channel>")
     return _real(out[:20])
+
+
+def _people(text: str) -> bool:
+    """Does any channel tag opening `text` come from a PERSON (the owner, a channel's people: address.PERSONS)? An
+    unparseable sender counts as a person, so doubt never keeps an old scope."""
+    try:
+        from astryx.core import address
+        person = lambda n: address.surface_of(n) in address.PERSONS    # noqa: E731
+    except Exception:
+        return True
+    pos = 0
+    while True:
+        m = _TAG.match(text, pos)
+        if not m:
+            return False
+        if person(dict(_ATTR.findall(m.group(1))).get("from", "").split("@")[0]):
+            return True
+        close = text.find("</channel>", m.end())
+        if close < 0:
+            return False
+        pos = close + len("</channel>")
 
 
 def _real(tags: list) -> list:
@@ -184,6 +211,10 @@ def _apply(st, e) -> dict:
         tags = _tags(text)
         new = _fresh(now)
         new["bg"] = {k: v for k, v in bg.items() if now - (v.get("at") or 0) < BG_TTL}
+        if tags and st.get("cur") and not st.get("many") and now - (st.get("seen") or 0) < NUDGE \
+                and not _people(text):             # an agent's nudge mid-work: the request in hand stays
+            st["seen"] = now
+            return st
         if tags:                                   # a wake
             new["th"] = {str(i): t for i, t in tags}
             new["cur"] = [i for i, _ in tags]
@@ -214,6 +245,7 @@ def _apply(st, e) -> dict:
         return st
     if e.get("type") != "assistant":
         return st
+    st["seen"] = now                               # work went on (an agent-only wake within NUDGE keeps this scope)
     for c in (e.get("message") or {}).get("content") or []:
         if not isinstance(c, dict) or c.get("type") != "tool_use":
             continue
