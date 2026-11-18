@@ -1458,6 +1458,32 @@ CREATE TABLE IF NOT EXISTS link_pending (
   CONSTRAINT link_pending_person_key UNIQUE (tenant, person)
 );
 
+-- A SIGNED-IN ACCOUNT IS A PERSON, AND ITS EMAIL IS ONE OF THEIR CHANNELS (owner 11-18: "users are signing in to org
+-- with their emails - so it should be linked … standardizations is a must"). The cog front proved the address at
+-- sign-up (its code) and vouches for it in the signed identity, so it lands as a linked email exactly as a typed code
+-- would: the owner's through identity_own, everyone else's through identity_link. An address another person already
+-- linked stays theirs (identity_link refuses; this never moves one). Called once per account per backend process.
+CREATE OR REPLACE FUNCTION identity_web(p_uid text, p_who text, p_email text) RETURNS text
+LANGUAGE plpgsql AS $web$
+DECLARE
+  e text := lower(trim(coalesce(p_email, '')));
+BEGIN
+  PERFORM identity_who('web', p_uid, p_who);
+  IF e = '' THEN
+    RETURN p_who;
+  END IF;
+  IF p_who = 'owner' THEN
+    PERFORM identity_own('email', e);
+  ELSE
+    BEGIN
+      PERFORM identity_link(p_who, 'email', e);
+    EXCEPTION WHEN unique_violation THEN
+      NULL;                                    -- linked to someone else: theirs, untouched
+    END;
+  END IF;
+  RETURN p_who;
+END $web$;
+
 -- QUOTAS (owner 11-18: "imagine it like a real web thing. 1000s of people requesting … no bugs of overshoot"): one
 -- counter row per bucket, taken by ONE atomic statement, so N racing takers get exactly `limit` and never one more (a
 -- count-then-insert lets a burst through). A bucket is a key the caller builds with its window in it: a channel's PKT
