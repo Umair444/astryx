@@ -15,7 +15,7 @@ import MessageHits from './MessageHits'
    SEARCH: titles (and previews, agents) filter the rows as you type; below them, "In messages" lists the messages
    that say it (GET /api/ws/search), and a hit opens its conversation at that message. */
 
-export default function ConversationList({ threads, loaded, current, live, projects, project, onGo, onNew, onProject, onPin, onRename, onDelete, onClose, className = '', unread, view = 'thread', filter = null, onFilter, onLibrary, onProjects, onNewProject, onMove, onJump, scope, onScope }: {
+export default function ConversationList({ threads, loaded, current, live, projects, project, onGo, onNew, onProject, onPin, onRename, onDelete, mayDelete, onClose, className = '', unread, view = 'thread', filter = null, onFilter, onLibrary, onProjects, onNewProject, onMove, onJump, scope, onScope }: {
   scope?: 'mine' | 'everyone'                  // cog-who: the list is a VIEW: my chats, or every human's (owner/admin)
   onScope?: (s: 'mine' | 'everyone') => void   // absent: no toggle (a member's list is their own)
   onJump?: (h: MessageHit) => void            // a message search hit: open its conversation at that message
@@ -39,6 +39,7 @@ export default function ConversationList({ threads, loaded, current, live, proje
   onPin: (t: WsThread) => void
   onRename: (t: WsThread, title: string) => void
   onDelete?: (t: WsThread) => void                  // a chat, never a desk (owner 11-18)
+  mayDelete?: (t: WsThread) => boolean               // the chat's starter or the owner (the server's rule, medic 13883)
   onClose?: () => void                         // the phone drawer
   className?: string
 }) {
@@ -67,7 +68,7 @@ export default function ConversationList({ threads, loaded, current, live, proje
       onGo={() => onGo(t.thread)} onMenu={() => setMenu((m) => (m === t.thread ? null : t.thread))}
       onEdit={() => { setMenu(null); setEditing(t.thread) }}
       onPin={() => { setMenu(null); onPin(t) }}
-      onDelete={onDelete && !t.thread.startsWith('obs:') ? () => { setMenu(null); onDelete(t) } : undefined}
+      onDelete={onDelete && !t.thread.startsWith('obs:') && (!mayDelete || mayDelete(t)) ? () => { setMenu(null); onDelete(t) } : undefined}
       move={onMove ? <MoveItems thread={t.thread} projects={projects} onMove={(to) => { setMenu(null); onMove(t, to) }} /> : null}
       onRename={(title) => { setEditing(null); if (title !== t.title) onRename(t, title) }}
       onCancel={() => setEditing(null)} />

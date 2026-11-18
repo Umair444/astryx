@@ -709,7 +709,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       onGo={(t) => go(t)} onNew={newChat} onProject={openProject}
       view={view} filter={listFilter} onFilter={setListFilter} onLibrary={() => go('library')} onProjects={() => go('projects')}
       onNewProject={() => setAsking('new')} onMove={(t, to) => void proj.mutate(moveThread(t.thread, to))}
-      onPin={(t) => setMeta(t, { pinned: !t.pinned })} onRename={(t, title) => setMeta(t, { title })} onDelete={(t) => void deleteChat(t)}
+      onPin={(t) => setMeta(t, { pinned: !t.pinned })} onRename={(t, title) => setMeta(t, { title })} onDelete={(t) => void deleteChat(t)} mayDelete={(t) => who.owner || t.by === me}
       onClose={phone ? () => setDrawer(false) : undefined}
       unread={unread} onJump={onJump}
       scope={scope} onScope={seesEveryone(who) ? setScope : undefined}
