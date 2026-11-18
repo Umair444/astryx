@@ -56,6 +56,7 @@ CHANNELS: tuple[Channel, ...] = (
     Channel("discord", "Discord", person="dc", thread="dc", group=r".+",
             token_key="DISCORD_BOT_TOKEN", token_ask="Discord bot token (Developer Portal → Bot → Reset Token)",
             token_shape=r"[A-Za-z0-9_-]{20,40}\.[A-Za-z0-9_-]{4,10}\.[A-Za-z0-9_-]{20,60}",
+            link="",              # a DM's id has a guild channel's shape (group=.+): no link until the bot proves a DM
             steps=("Open the Discord Developer Portal and create a New Application.",
                    "Under Bot, reset the token and copy it. Turn on Message Content Intent.",
                    "Paste the token below. You get a link to add the bot to your server.")),
@@ -107,6 +108,20 @@ def of_thread(thread: str | None) -> Channel | None:
 
 def connectable() -> tuple[Channel, ...]:
     return tuple(c for c in CHANNELS if c.connect)
+
+
+def sent_today_sql(channel: str) -> str:
+    """What the org sent on `channel` today (PKT), from the wire's own rows: every bridge send's receipt and every link
+    code's record name the handle <channel>:<chat>, whatever the row's thread (medic 13091 R2, 13646); a door refusal is
+    status 'refused', so it never counts."""
+    return ("SELECT count(*) FROM messages WHERE status='delivered' AND delivery->>'handle' LIKE '" + channel + ":%' "
+            "AND delivered_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Karachi') AT TIME ZONE 'Asia/Karachi'")
+
+
+def daily_cap(channel: str, get) -> int:
+    """The owner's bound on what the org sends a day on a channel that reaches people outside it: <NAME>_DAILY_CAP
+    (SMS_DAILY_CAP, EMAIL_DAILY_CAP), default 50. `get` reads the org's .env (the caller's own reader)."""
+    return int(get(f"{channel.upper()}_DAILY_CAP", "50") or 50)
 
 
 def linkable() -> tuple[Channel, ...]:

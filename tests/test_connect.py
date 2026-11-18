@@ -225,9 +225,33 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
         person == "owner" and who == "owner"
         and c.execute("SELECT * FROM route WHERE chat = %s", (OWN,)).fetchone() == standing, (person, who))
     failing = lambda ch, chat, text: False   # noqa: E731
-    out = run("seed", "link", "cv-pat.5", channel="sms", account="92" + "3000000077", by="cv-pat.5", deliver=failing)
-    arm("a code that can't be sent leaves nothing pending", "could not be sent" in out
-        and c.execute("SELECT count(*) FROM link_pending").fetchone()[0] == 0, out)
+    out = run("seed", "link", "cv-fail.2", channel="sms", account="92" + "3000000077", by="cv-fail.2", deliver=failing)
+    arm("a code that can't be sent leaves nothing pending and counts nothing", "could not be sent" in out
+        and c.execute("SELECT count(*) FROM link_pending").fetchone()[0] == 0
+        and c.execute("SELECT count(*) FROM messages WHERE from_agent = 'cv-fail.2'").fetchone()[0] == 0, out)
+    sent = len(mail)
+    for _ in range(C.CODE_PER_HOUR + 1):
+        out = run("seed", "link", "cv-rate.1", channel="email", account="rate@example.org", by="cv-rate.1", deliver=deliver)
+    arm(f"a person gets {C.CODE_PER_HOUR} codes an hour; the next is refused and nothing is sent (medic 13646)",
+        "an hour at most" in out and len(mail) == sent + C.CODE_PER_HOUR, (out, len(mail) - sent))
+    from astryx.core import channels as CH
+    os.environ["SMS_DAILY_CAP"] = str(c.execute(CH.sent_today_sql("sms")).fetchone()[0] + 1)
+    run("seed", "link", "cv-cap.1", channel="sms", account="92" + "3000000066", by="cv-cap.1", deliver=deliver)
+    sent = len(mail)
+    out = run("seed", "link", "cv-cap.2", channel="sms", account="92" + "3000000055", by="cv-cap.2", deliver=deliver)
+    arm("codes count against the owner's daily cap: past it a code is refused and nothing is sent (medic 13646)",
+        "cap for today is spent" in out and len(mail) == sent, out)
+    del os.environ["SMS_DAILY_CAP"]
+
+    print("\nC9 EVERY LINKABLE CHANNEL CAN LINK A PERSON (owner 11-18 \"make channels thing standard\"; medic 13646)")
+    one = {"whatsapp": "+" + "92" + "3000000021", "telegram": "777001", "sms": "92" + "3000000022", "email": "one@example.org"}
+    arm("each linkable channel has a one-person account here (a new one adds its own)",
+        {ch.name for ch in CH.linkable()} <= set(one), {ch.name for ch in CH.linkable()} - set(one))
+    for ch in CH.linkable():
+        p = f"cv-std-{ch.name}.1"
+        c.execute("SELECT identity_who('web', %s, %s)", (f"std-{ch.name}@cog", p))
+        out = run("seed", "link", p, channel=ch.name, account=one.get(ch.name, ""), by=p, deliver=deliver)
+        arm(f"{ch.name}: linking one person's account is asked, never refused as a group", out.startswith(("asked", "sent a code")), out)
 
     print("\nC7 THE OWNER'S ROUTE, ON HIS WORD")
     from astryx.core import tier

@@ -20,13 +20,13 @@ import asyncio
 import asyncpg
 from fastapi import FastAPI
 
-from .common import Book, Outcome, cap_spent, door_org_ok, door_refuse, env, listen, released, sent_today_sql, signed, split_files, split_polls
+from .common import Book, Outcome, cap_spent, door_org_ok, door_refuse, env, listen, released, signed, split_files, split_polls
 from .providers.sms import SmsProvider, number
-from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
+from astryx.core import address, channels  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
 
 PROVIDER = SmsProvider()
 DSN = env("ASTRYX_DSN")
-CAP = int(env("SMS_DAILY_CAP", "50") or 50)
+CAP = channels.daily_cap("sms", env)
 BOOK = Book("sms")
 
 pool: asyncpg.Pool | None = None
@@ -36,7 +36,7 @@ pool: asyncpg.Pool | None = None
 # claimant per row)
 CLAIM = f"({address.reaches_sql('sms')} OR (to_agent LIKE 'sms-%' AND NOT {address.elsewhere_sql('sms')}))"
 
-SENT_TODAY = sent_today_sql("sms")
+SENT_TODAY = channels.sent_today_sql("sms")
 
 
 def routes():

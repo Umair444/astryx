@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import re
 import secrets
 from dataclasses import dataclass
@@ -119,11 +120,25 @@ def run(conn, me: str, action: str, who: str = "", channel: str = "", timeout: s
         # back on the web. It is no route (medic 13630 R2) and never a messages row: a body there is the whole org's
         if channels.chat_kind(channel, chat) == "group":
             return f"that is a {title} group: only one person's account can be linked"
+        # a code is a send to someone outside the org: it counts against the owner's daily cap like every bridge send,
+        # and a person gets CODE_PER_HOUR an hour (medic 13646: uncapped, a member could text any number without limit)
+        from astryx import config
+        if conn.execute(channels.sent_today_sql(channel)).fetchone()[0] >= channels.daily_cap(channel, config.get):
+            return f"the org's {title} cap for today is spent: try again tomorrow"
+        if conn.execute("SELECT count(*) FROM messages WHERE from_agent = %s AND delivery->>'link_code' = 'true' "
+                        "AND ts > now() - interval '1 hour'", (who,)).fetchone()[0] >= CODE_PER_HOUR:
+            return f"{CODE_PER_HOUR} codes an hour at most: try again later"
+        # its record on the wire (the count's one source, as a bridge's receipt is): the handle and who asked, never the code
+        rec = conn.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body, status, delivered_at, delivery) "
+                           "VALUES (%s, 'pulse', NULL, 'chat', %s, 'delivered', now(), %s) RETURNING id",
+                           (who, f"[link] a code to link this {title} account was sent to it",
+                            json.dumps({"handle": f"{channel}:{chat}", "link_code": True}))).fetchone()[0]
         code = issue_code(conn, who, channel, chat, by)
         if not (deliver and deliver(channel, chat, f"Your astryx code to link this {title} account to {who}: {code}. "
                                                    f"Enter it in Your channels within {CODE_MINUTES} minutes. "
                                                    f"If you didn't ask for this, ignore it.")):
             conn.execute("DELETE FROM link_pending WHERE person = %s", (who,))
+            conn.execute("DELETE FROM messages WHERE id = %s", (rec,))
             return f"the code could not be sent to {chat} on {title}; check it and try again"
         return f"sent a code to {chat} on {title}: enter it in Your channels within {CODE_MINUTES} minutes"
     hits = find(conn, who, channel, search)
@@ -175,7 +190,7 @@ def linked_text(channel: str, person: str) -> str:
     return f"Linked: this {channels.BY_NAME[channel].title} account is now part of your astryx account {person}."
 
 
-CODE_TRIES, CODE_MINUTES = 5, 10
+CODE_TRIES, CODE_MINUTES, CODE_PER_HOUR = 5, 10, 3
 
 
 def _link_key() -> bytes:

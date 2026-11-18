@@ -556,17 +556,10 @@ async def door_open(pool, row, channel: str, routes) -> tuple[dict, str] | None:
         return None
 
 
-def sent_today_sql(channel: str) -> str:
-    """What `channel`'s bridge delivered today (PKT): every send's receipt names its handle <channel>:<chat>, whatever
-    the row's thread (medic 13091 R2); a door refusal is status 'refused', so it never counts."""
-    return ("SELECT count(*) FROM messages WHERE status='delivered' AND delivery->>'handle' LIKE '" + channel + ":%' "
-            "AND delivered_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Karachi') AT TIME ZONE 'Asia/Karachi'")
-
-
 async def cap_spent(pool, row, channel: str, cap: int) -> bool:
     """A channel that reaches people outside the org (SMS, email) bounds what it sends in a day: True when today's
     `cap` is spent, and the row is refused saying so."""
-    if await pool.fetchval(sent_today_sql(channel)) < cap:
+    if await pool.fetchval(channels.sent_today_sql(channel)) < cap:
         return False
     await door_refuse(pool, row, channel, f"the org's {channels.BY_NAME[channel].title} cap for today ({cap}) is spent")
     return True
