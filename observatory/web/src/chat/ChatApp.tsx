@@ -472,6 +472,17 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     reload()
   }
 
+  // DELETE a chat (owner 11-18; never a desk): it leaves every list and search at once; its messages stay on the wire,
+  // the org's record. Asked once, plainly
+  async function deleteChat(t: WsThread) {
+    if (!window.confirm(`Delete "${t.title}"? It disappears from everyone's chat list and search.`)) return
+    try {
+      await saveThreadMeta(t.thread, { deleted: true })
+      if (t.thread === current) go(null)
+    } catch (e) { toast(friendly(e, 'Deleting that chat')) }
+    reload()
+  }
+
   // SWITCH this chat to other agents: optimistic (the To faces, the list row's faces, the divider), then saved on the
   // thread's meta. Nothing is sent to anyone: the new agent hears only what is written to it from here on.
   async function switchTo(agents: string[]) {
@@ -698,7 +709,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       onGo={(t) => go(t)} onNew={newChat} onProject={openProject}
       view={view} filter={listFilter} onFilter={setListFilter} onLibrary={() => go('library')} onProjects={() => go('projects')}
       onNewProject={() => setAsking('new')} onMove={(t, to) => void proj.mutate(moveThread(t.thread, to))}
-      onPin={(t) => setMeta(t, { pinned: !t.pinned })} onRename={(t, title) => setMeta(t, { title })}
+      onPin={(t) => setMeta(t, { pinned: !t.pinned })} onRename={(t, title) => setMeta(t, { title })} onDelete={(t) => void deleteChat(t)}
       onClose={phone ? () => setDrawer(false) : undefined}
       unread={unread} onJump={onJump}
       scope={scope} onScope={seesEveryone(who) ? setScope : undefined}

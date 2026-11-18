@@ -218,6 +218,16 @@ def main():
     arm("a member's chat isn't in the owner's own list, but open it is, with its switch: the removed agent stays out",
         not any(t["thread"] == "chat:9-m" for t in mine) and row and row["agents"] == ["db"], (mine, row))
     arm("open names no other thread into the list", [t["thread"] for t in opened] == [t["thread"] for t in mine] + ["chat:9-m"])
+    # DELETE (owner 11-18): a chat leaves every list (open included) and search; a desk can't be deleted; undo is one flag
+    W.bind(lambda: Threads(), est, roster=lambda: ROSTER, scoped=lambda r: False)
+    r = c.put("/api/ws/threads/meta", json={"thread": "chat:9-m", "deleted": True})
+    gone = c.get("/api/ws/threads", params={"open": "chat:9-m"}).json()["threads"]
+    arm("a deleted chat leaves the list, even open", r.status_code == 200 and not any(t["thread"] == "chat:9-m" for t in gone),
+        (r.text, gone))
+    arm("a desk chat can't be deleted", c.put("/api/ws/threads/meta", json={"thread": "obs:seed", "deleted": True}).status_code == 400)
+    c.put("/api/ws/threads/meta", json={"thread": "chat:9-m", "deleted": False})
+    back = c.get("/api/ws/threads", params={"open": "chat:9-m"}).json()["threads"]
+    arm("undeleting brings it back", any(t["thread"] == "chat:9-m" for t in back))
     W.bind(lambda: Threads(), est, roster=lambda: ROSTER, scoped=lambda r: True)
     arm("a member given part of the tree gets no other person's chat by naming it (as `everyone`, medic 13776)",
         not any(t["thread"] == "chat:9-m" for t in c.get("/api/ws/threads", params={"open": "chat:9-m"}).json()["threads"]))

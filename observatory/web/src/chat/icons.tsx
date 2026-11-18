@@ -14,6 +14,7 @@ export const I = {
   mic: (c?: C) => svg(c, <><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></>),
   clip: (c?: C) => svg(c, <path d="M21 11.5l-8.5 8.5a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" />),
   x: (c?: C) => svg(c, <path d="M6 6l12 12M18 6L6 18" />),
+  trash: (c?: C) => svg(c, <path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5" />),
   menu: (c?: C) => svg(c, <path d="M4 7h16M4 12h16M4 17h16" />),
   dots: (c?: C) => svg(c, <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>),
   search: (c?: C) => svg(c, <><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.2-4.2" /></>),
