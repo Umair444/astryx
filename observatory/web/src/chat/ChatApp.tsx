@@ -71,7 +71,7 @@ import ListSeam, { useListWidth } from './shell/ListSeam'
 import MoreMenu from './shell/MoreMenu'
 import { NotifyPrompt, useReplyNotifications } from './shell/notify'
 import { useInstallable } from './shell/pwa'
-import { useEdgeSwipe, useKeyboardViewport, useStickToEnd, useSwipeClose } from './shell/phone'
+import { useEdgeSwipe, useKeyboardViewport, useSwipeClose } from './shell/phone'
 import { exportConversation } from './thread/exportMd'
 
 /* /chat, the WORKSPACE (plan-11884; rebuilt on feat/chat-workspace after homes/seed/chat-rebuild/DESIGN.md). Four
@@ -303,7 +303,6 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const unread = useUnread(threads, current || null)
   useTabTitle(unread.size)
   const listW = useListWidth()
-  useStickToEnd(scrollRef, view === 'thread' && current ? current : null)     // a conversation only: never the home or a page
   useEdgeSwipe(winW < 768 && !drawer && !palette && !talk, () => setDrawer(true))
   const drawerSwipe = useSwipeClose(drawerRef, () => setDrawer(false), 'left')
   const filesSwipe = useSwipeClose(filesRef, () => setFilesOpen(false), 'down')

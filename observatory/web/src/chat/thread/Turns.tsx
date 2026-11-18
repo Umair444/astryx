@@ -188,19 +188,31 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     // within a moment of their wheel, swipe, key or scrollbar grab. The app's own glide fires scroll events too and
     // must never unpin itself mid-way (medic 12897); a trackpad's touch or bounce that leaves the view at the end
     // (Safari on a Mac, member 13389) doesn't unpin; any scroll that lands near the end re-pins
-    let hand = 0
+    let hand = 0, top = box.scrollTop
     const touch = () => { hand = performance.now() }
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLElement && e.target.closest('input, textarea, [contenteditable="true"]')
       if (!typing) touch()
     }
     const onGrab = (e: MouseEvent) => { if (e.target === box) touch() }   // the scrollbar itself, taken by hand
+    // hysteresis (medic 13559): a hand move UP past 24px unpins, so a slow reader keeps their place while the thread
+    // grows; within 80px a scroll re-pins only moving down or with no recent hand; a hand move further off unpins
     const onScroll = () => {
-      if (box.scrollHeight - box.scrollTop - box.clientHeight < 80) following.current = true
-      else if (performance.now() - hand < 600) following.current = false
+      const byHand = performance.now() - hand < 600, down = box.scrollTop >= top
+      const dist = box.scrollHeight - box.scrollTop - box.clientHeight
+      top = box.scrollTop
+      if (byHand && !down && dist > 24) following.current = false
+      else if (dist < 80 && (down || !byHand)) following.current = true
+      else if (byHand && dist >= 80) following.current = false
     }
+    // THE one follower of the end (useStickToEnd was a second one, writing the same scrollTop on its own rule): the box
+    // itself (it shrinks when a multi-line draft grows the composer, or a phone's keyboard opens) and everything in it
+    // (this conversation, the outbox and notes below it) re-pin as they change size
     const ro = new ResizeObserver(pin)
-    ro.observe(content)
+    const watch = () => { ro.disconnect(); ro.observe(box); ro.observe(content); for (const c of Array.from(box.children)) ro.observe(c) }
+    watch()
+    const mo = new MutationObserver(watch)
+    mo.observe(box, { childList: true })
     box.addEventListener('wheel', touch, { passive: true })
     box.addEventListener('touchmove', touch, { passive: true })
     box.addEventListener('keydown', onKey)
@@ -208,7 +220,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     box.addEventListener('scroll', onScroll, { passive: true })
     pin()
     return () => {
-      ro.disconnect()
+      ro.disconnect(); mo.disconnect()
       box.removeEventListener('wheel', touch); box.removeEventListener('touchmove', touch)
       box.removeEventListener('keydown', onKey); box.removeEventListener('scroll', onScroll)
       box.removeEventListener('mousedown', onGrab)

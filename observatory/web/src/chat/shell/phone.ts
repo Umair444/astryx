@@ -1,12 +1,10 @@
 import { useEffect, useRef, type RefObject } from 'react'
 
 /* PHONE-FIRST (iteration 16). The owner lives on WhatsApp on his phone and the chat installs as an app, so the phone is
-   a first-class surface, not a squeezed desktop. Four small pieces of behaviour live here; the look is in phone.css.
+   a first-class surface, not a squeezed desktop. Three small pieces of behaviour live here; the look is in phone.css.
      - the KEYBOARD: Android is told to shrink the page with the on-screen keyboard (interactive-widget, only while the
        chat is on screen, so the floor keeps the browser's default); on iOS, where only the visual viewport shrinks,
        the workspace follows visualViewport, so the composer always sits right above the keys.
-     - STICK TO THE END: a conversation read at its end stays at its end when its box gets shorter (the keyboard
-       opening, the composer growing), so the latest message is never hidden behind the keys.
      - the EDGE SWIPE: a drag from the left edge opens the conversation drawer (and one leftward closes it).
      - SWIPE DOWN: a full-screen sheet (an artifact, the files, the palette) follows a downward drag on its header
        and closes past a threshold, like a native sheet. */
@@ -44,31 +42,6 @@ export function useKeyboardViewport(root: RefObject<HTMLElement | null>) {
       if (el) { el.style.height = ''; el.style.transform = '' }
     }
   }, [root])
-}
-
-/* the scroller keeps its end in view when its box shrinks (the keyboard) or its content grows (a table, an image, a
-   reply laying out), IF the reader was at the end just before: the gap is measured against the sizes before the change,
-   so a reader who scrolled up to read is never yanked down */
-export function useStickToEnd(scroller: RefObject<HTMLElement | null>, key: unknown) {
-  useEffect(() => {
-    const el = scroller.current
-    if (!key || !el || typeof ResizeObserver === 'undefined') return
-    let sh = el.scrollHeight, ch = el.clientHeight
-    const fit = () => {
-      const wasAtEnd = sh - el.scrollTop - ch < 96
-      const grew = el.scrollHeight !== sh || el.clientHeight !== ch
-      if (grew && wasAtEnd && el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight
-      sh = el.scrollHeight; ch = el.clientHeight
-    }
-    const onScroll = () => { sh = el.scrollHeight; ch = el.clientHeight }
-    const ro = new ResizeObserver(fit)
-    const watch = () => { ro.disconnect(); ro.observe(el); for (const c of Array.from(el.children)) ro.observe(c) }
-    watch()
-    const mo = new MutationObserver(watch)
-    mo.observe(el, { childList: true })
-    el.addEventListener('scroll', onScroll, { passive: true })
-    return () => { el.removeEventListener('scroll', onScroll); ro.disconnect(); mo.disconnect() }
-  }, [scroller, key])
 }
 
 /* a drag from the screen's left edge opens the drawer (the drawer closes with a leftward drag: useSwipeClose) */
