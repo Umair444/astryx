@@ -196,6 +196,21 @@ st, msgs = scenario(*work, line("user", chan(30, thread="ch-disk", frm="db@local
 arm("N2 a person's message after it still switches", msgs == [40], st)
 st, msgs = scenario(line("user", chan(30, thread="ch-disk", frm="db@local")))
 arm("N3 an agent's message with nothing in hand is its own turn", msgs == [30], st)
+st, msgs = scenario(line("user", chan(10, thread=A, frm="wa-1@whatsapp")), use(SEND, thread=A, body="on it, verifying"),
+                    queued(chan(30, thread="ch-disk", frm="db@local")), use(SEND, "t5", thread="ch-disk", body="dropping it"),
+                    use("Bash", "t2", command="y"))
+arm("P1 (medic 13872, the live shape) db's message queued mid-turn, the agent answers db: the person's request stays",
+    msgs == [10], st)
+st, msgs = scenario(line("user", chan(10, thread=A, frm="wa-1@whatsapp")), use(SEND, thread=A, body="here is the answer"),
+                    line("user", chan(30, thread="ch-disk", frm="db@local")), use("Bash", "t2", command="y"))
+arm("P2 answered and the turn over: an agent's wake is its own turn", msgs == [30], st)
+st, msgs = scenario(line("user", chan(50, thread="t-x", frm="db@local")), queued(chan(60, thread="t-y", frm="memory@local")),
+                    use(SEND, thread="t-x", body="done"), use(SEND, "t6", thread="t-y", body="ok"))
+arm("C1 a request an AGENT opened: another agent's queued message and a reply to it switch as today", msgs == [60], st)
+st, msgs = scenario(line("user", chan(10, thread=A, frm="wa-1@whatsapp")), use("Bash", "t7", command="x", run_in_background=True),
+                    use(SEND, "t8", thread=A, body="started, will report"),
+                    line("user", chan(30, thread="ch-disk", frm="db@local")))
+arm("C2 answered but background work still out for it: an agent's wake keeps the request", msgs == [10], st)
 keep, H.NUDGE = H.NUDGE, -1
 st, msgs = scenario(*work, line("user", chan(30, thread="ch-disk", frm="db@local")))
 H.NUDGE = keep

@@ -80,11 +80,13 @@ def ledger_meta(tool, tool_input, response=None):
 # since. Never raises: an unknown is [] (no scope, so a scoped reader shows nothing rather than everything).
 #
 #   a wake (a user line whose channel tags carry msg_ids)  cur = its ids (on 2+ threads: many, content-free for each)
-#   a wake from AGENTS only, within NUDGE of the last step  the request in hand stays cur: an agent's message mid-work
-#                                                           (db on the disk while lending builds Kumail's pull) is an
-#                                                           interruption, not a new request (owner 13865: "the hooks
-#                                                           shouldn't be disturbed by it … fine if some steps of db
-#                                                           also shows in bubble")
+#   an AGENT's message while a PERSON's request is in hand  queued mid-turn: noted, never waiting, so answering it
+#                                                           can't move the person's work; opening a turn within NUDGE
+#                                                           of the last step while that request is still out (not
+#                                                           answered, or background work out): the request stays cur.
+#                                                           An interruption is not a new request (owner 13865: "the
+#                                                           hooks shouldn't be disturbed by it … fine if some steps of
+#                                                           db also shows in bubble"; medic 13872)
 #   a background notice (<tool-use-id>T) opening a turn     the scope that launched T, else unknown
 #   any other user line (a typed prompt)                    unknown
 #   a person's message QUEUED into the running turn         same chat: joins cur; another chat: waits (cur unchanged)
@@ -149,7 +151,8 @@ def _people(text: str) -> bool:
         m = _TAG.match(text, pos)
         if not m:
             return False
-        if person(dict(_ATTR.findall(m.group(1))).get("from", "").split("@")[0]):
+        name = dict(_ATTR.findall(m.group(1))).get("from", "").split("@")[0]
+        if not name or person(name):                # no sender named: doubt counts as a person
             return True
         close = text.find("</channel>", m.end())
         if close < 0:
@@ -211,13 +214,15 @@ def _apply(st, e) -> dict:
         tags = _tags(text)
         new = _fresh(now)
         new["bg"] = {k: v for k, v in bg.items() if now - (v.get("at") or 0) < BG_TTL}
-        if tags and st.get("cur") and not st.get("many") and now - (st.get("seen") or 0) < NUDGE \
-                and not _people(text):             # an agent's nudge mid-work: the request in hand stays
-            st["seen"] = now
+        out = not st.get("answered") or any(set(v.get("cur") or []) & set(st.get("cur") or []) for v in bg.values())
+        if tags and st.get("cur") and st.get("person") and out and not st.get("many") \
+                and now - (st.get("seen") or 0) < NUDGE and not _people(text):
+            st["seen"] = now                       # an agent's nudge while a person's request is still out: it stays
             return st
         if tags:                                   # a wake
             new["th"] = {str(i): t for i, t in tags}
             new["cur"] = [i for i, _ in tags]
+            new["person"] = _people(text)
             new["many"] = len({t for _, t in tags}) > 1
         elif n:                                    # a background notice opening a turn: its launch's scope, else unknown
             snap = new["bg"].pop(n.group(1).strip(), None)
@@ -236,10 +241,14 @@ def _apply(st, e) -> dict:
                 st["waiting"] += [i for i in snap["cur"] if i not in st["waiting"] and i not in st["cur"]]
             return st
         cur_th = _threads(st, st["cur"])
+        nudge = bool(st["cur"]) and st.get("person") and not _people(text)
         for i, t in _tags(text):
             st["th"][str(i)] = t
             if st["cur"] and t in cur_th:
                 st["cur"].append(i)                # the same chat writing again: the same work
+            elif nudge:
+                pass                               # an agent's message while a person's request is in hand: answering
+                                                   # it never moves that request's work (owner 13865, medic 13872 R1)
             elif i not in st["waiting"]:
                 st["waiting"].append(i)            # another chat: it waits; the agent is still on cur
         return st
