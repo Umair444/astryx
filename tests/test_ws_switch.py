@@ -3,7 +3,8 @@
 The owner can hand a conversation to another agent; the thread keeps every switch as {ts, agents}, the composer's
 "To" and the list row's faces become the switched-to agents, and the chat draws a divider at each switch.
   - ONE SWITCH: stored as {ts, agents}; the list row's `agents` becomes the switched-to agents (old partners drop).
-  - MANY: appended oldest first; a switch to the agents already current adds nothing; the list keeps its newest
+  - MANY: appended oldest first; a switch to the last switch's agents still lands (from NOW, only these: how an agent
+    written to since is removed, owner 13780); the list keeps its newest
     SWITCHES_MAX; title and pin live beside them, and clearing both keeps the switches.
   - REFUSED: an unknown agent, a malformed name, an empty list, too many, a non-conversation thread -> 400, nothing
     stored (an unknown name is refused, never silently dropped: the owner meant someone).
@@ -56,7 +57,9 @@ def main():
     m2 = W.apply_meta(m1, "chat:1-a", switch=["db", "lending"], now="2099-12-31T11:00:00+00:00")
     m3 = W.apply_meta(m2, "chat:1-a", switch=["finance"], now="2099-12-31T12:00:00+00:00")
     arm("many switches append, oldest first", [s["agents"] for s in m3["chat:1-a"]["switches"]] == [["finance"], ["db", "lending"], ["finance"]], m3)
-    arm("a switch to the agents already current adds nothing", W.apply_meta(m3, "chat:1-a", switch=["finance"], now="z") == m3)
+    again = W.apply_meta(m3, "chat:1-a", switch=["finance"], now="2099-12-31T13:00:00+00:00")["chat:1-a"]["switches"]
+    arm("a switch to the last switch's agents lands from now (owner 13780: an agent written to since comes off)",
+        len(again) == 4 and again[-1] == {"ts": "2099-12-31T13:00:00+00:00", "agents": ["finance"]}, again)
     arm("a switch gets a server ts when none is given", W.apply_meta({}, "c", switch=["db"])["c"]["switches"][0]["ts"].startswith("20"))
     many = {}
     for i in range(W.SWITCHES_MAX + 7):
