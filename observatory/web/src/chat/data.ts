@@ -51,7 +51,11 @@ export interface Briefing {
 export const loadBriefing = (since: string | null) => api<Briefing>(`/ws/briefing${since ? `?since=${encodeURIComponent(since)}` : ''}`)
 
 export type Scope = 'mine' | 'everyone'      // cog-who: the list is a VIEW, the viewer's own chats or every human's
-export const loadWsThreads = (scope: Scope = 'mine') =>api<{ etag: string; threads: WsThread[] }>(`/ws/threads${scope === 'everyone' ? '?scope=everyone' : ''}`)
+// `open`: the conversation on screen, listed whoever's it is, so its agents and switches are the server's (owner 13770)
+export const loadWsThreads = (scope: Scope = 'mine', open = '') => {
+  const q = new URLSearchParams({ ...(scope === 'everyone' ? { scope } : {}), ...(open ? { open } : {}) }).toString()
+  return api<{ etag: string; threads: WsThread[] }>(`/ws/threads${q ? `?${q}` : ''}`)
+}
 export const loadWsAgents = () => api<WsAgent[]>('/ws/agents')
 export const saveThreadMeta = (thread: string, patch: { title?: string; pinned?: boolean; switch_to?: string[] }) =>
   apiSend<{ thread: string; title?: string; pinned?: boolean; switches?: Switch[] }>('PUT', '/ws/threads/meta', { thread, ...patch })
@@ -66,10 +70,10 @@ export const surfaceOf = (t: string): Surface => (t.startsWith('obs:') ? 'floor'
 export const SURFACE_LABEL: Record<Surface, string> = { chat: 'Chat', floor: 'Desk', canvas: 'Canvas' }
 
 /* the list, live: refetched when the wire moves (a new row on any listed thread, or the open one) */
-export function useWsThreads(messages: Msg[], scope: Scope = 'mine') {
+export function useWsThreads(messages: Msg[], scope: Scope = 'mine', open = '') {
   const [threads, setThreads] = useState<WsThread[]>([])
   const [loaded, setLoaded] = useState(false)
-  const reload = useCallback(() => loadWsThreads(scope).then((r) => { setThreads(r.threads); setLoaded(true) }).catch(() => setLoaded(true)), [scope])
+  const reload = useCallback(() => loadWsThreads(scope, open).then((r) => { setThreads(r.threads); setLoaded(true) }).catch(() => setLoaded(true)), [scope, open])
   const newest = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const t = messages[i].thread

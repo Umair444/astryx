@@ -164,6 +164,11 @@ def main():
     est = Path(tempfile.mkdtemp())
     W.bind(lambda: None, est, roster=lambda: ROSTER)
     app = FastAPI()
+
+    @app.middleware("http")
+    async def owner(request, call_next):           # what privacy_gate sets for the owner: reach None (all), not unset
+        request.state.reach = None
+        return await call_next(request)
     app.include_router(W.router)
     c = TestClient(app)
     r1 = c.put("/api/ws/threads/meta", json={"thread": "obs:seed", "pinned": True})
@@ -193,8 +198,29 @@ def main():
     arm("thread-titles: owner chat by the list's own title (its derivation, verbatim), agent thread by its first line, WhatsApp by surface",
         r.status_code == 200 and r.json() == {"titles": {"t-mv1": "Reconcile the close for finance", "chat:1-a": "**Q3** wallets?",
                                                          "wa:9@g.us": "A WhatsApp chat"}}, r.text)
-    arm("the malformed id never reached SQL", all("../x" not in a[0] for _, a in pool.calls if a), pool.calls)
+    arm("the malformed id never reached SQL", all("../x" not in str(a) for _, a in pool.calls), pool.calls)
     arm("no ids -> empty, no query", (pool.calls.clear(), c.get("/api/ws/thread-titles").json())[1] == {"titles": {}} and not pool.calls)
+
+    # THE OPEN CONVERSATION IS LISTED WHOEVER'S IT IS (owner 13770: removing an agent from a member's chat he had open
+    # came back on the next refetch, because its switch lived only in the list, and the list held only his own chats)
+    member = {"thread": "chat:9-m", "count": 3, "last_ts": None, "first_owner": "hi", "starter": "cv-tay.1",
+              "last_body": "x", "last_from": "db", "parties": ["cv-tay.1", "db", "seed"],
+              "partners": ["db", "seed"], "asked": ["db", "seed"]}
+
+    class Threads:
+        async def fetch(self, sql, *args):
+            return [member] if sql == W.THREADS_SQL else []
+    W.bind(lambda: Threads(), est, roster=lambda: ROSTER, scoped=lambda r: False)
+    c.put("/api/ws/threads/meta", json={"thread": "chat:9-m", "switch_to": ["db"]})
+    mine = c.get("/api/ws/threads").json()["threads"]
+    opened = c.get("/api/ws/threads", params={"open": "chat:9-m"}).json()["threads"]
+    row = next((t for t in opened if t["thread"] == "chat:9-m"), None)
+    arm("a member's chat isn't in the owner's own list, but open it is, with its switch: the removed agent stays out",
+        not any(t["thread"] == "chat:9-m" for t in mine) and row and row["agents"] == ["db"], (mine, row))
+    arm("open names no other thread into the list", [t["thread"] for t in opened] == [t["thread"] for t in mine] + ["chat:9-m"])
+    W.bind(lambda: Threads(), est, roster=lambda: ROSTER, scoped=lambda r: True)
+    arm("a member given part of the tree gets no other person's chat by naming it (as `everyone`, medic 13776)",
+        not any(t["thread"] == "chat:9-m" for t in c.get("/api/ws/threads", params={"open": "chat:9-m"}).json()["threads"]))
 
 
 if __name__ == "__main__":

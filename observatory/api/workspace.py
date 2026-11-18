@@ -429,7 +429,7 @@ SELECT thread, count(*) AS count, max(ts) AS last_ts,
        array_agg(to_agent ORDER BY id) FILTER (WHERE {_HF}) AS asked
   FROM messages
  WHERE (thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%')
-   AND status IS DISTINCT FROM 'retracted'
+   AND status IS DISTINCT FROM 'retracted' AND ($3::text IS NULL OR thread = $3)
  GROUP BY thread ORDER BY max(id) DESC LIMIT 400"""
 
 
@@ -439,12 +439,15 @@ def canvas_user(me: str) -> str:
 
 
 @router.get("/api/ws/threads")
-async def ws_threads(request: Request, scope: str = "mine"):
-    """?scope=mine (default): the viewer's own conversations; ?scope=everyone: every human's (a view, not a wall)."""
+async def ws_threads(request: Request, scope: str = "mine", open: str = ""):
+    """?scope=mine (default): the viewer's own conversations; ?scope=everyone: every human's (a view, not a wall).
+    ?open=<thread>: the conversation the viewer has open is listed whoever's it is (a view, not a wall: owner 11-17),
+    so its agents and its switches are the server's, not a guess. Without it, the owner opening a member's chat and
+    removing an agent saw the agent come back on the next refetch: the switch lived only in the list (owner 13770)."""
     pool = _pool(request)
     me, everyone = _me(request) or "owner", _everyone(request, scope)
     aggs = [{**dict(r), "last_ts": r["last_ts"].isoformat() if r["last_ts"] else None}
-            for r in await pool.fetch(THREADS_SQL, me, everyone)]
+            for r in await pool.fetch(THREADS_SQL, me, everyone, None)]
     canvas: dict[str, dict] = {}
     try:                                            # canvas_threads exists where the canvas bridge has run
         for r in await pool.fetch("SELECT thread, agent, title, archived FROM canvas_threads "
@@ -452,9 +455,15 @@ async def ws_threads(request: Request, scope: str = "mine"):
             canvas[r["thread"]] = dict(r)
     except Exception:                               # noqa: BLE001 — an estate without canvas lists the rest
         canvas = {}
-    return {"etag": etag(meta_file()), "scope": "everyone" if everyone else "mine",
-            "threads": build_rows(aggs, read_meta(), _projects(account(request)), set(_roster()), canvas, me=me,
-                                  everyone=everyone)}
+    meta, projects, roster = read_meta(), _projects(account(request)), set(_roster())
+    rows = build_rows(aggs, meta, projects, roster, canvas, me=me, everyone=everyone)
+    if open and valid_thread(open) and not _scoped(request) \
+            and not any(r["thread"] == open for r in rows):   # not the viewer's own: listed too (a scoped member: theirs only, as `everyone`)
+        opened = [a for a in aggs if a["thread"] == open] or [
+            {**dict(r), "last_ts": r["last_ts"].isoformat() if r["last_ts"] else None}
+            for r in await pool.fetch(THREADS_SQL, me, True, open)]               # older than the list's 400
+        rows += build_rows(opened, meta, projects, roster, canvas, me=me, everyone=True)
+    return {"etag": etag(meta_file()), "scope": "everyone" if everyone else "mine", "threads": rows}
 
 
 class Meta(BaseModel):

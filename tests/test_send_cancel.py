@@ -284,7 +284,7 @@ def observatory_arms(db, url: str) -> None:
             import asyncpg
             c = await asyncpg.connect(url)
             try:
-                listed = [r["thread"] for r in await c.fetch(W.THREADS_SQL, "owner", True)]
+                listed = [r["thread"] for r in await c.fetch(W.THREADS_SQL, "owner", True, None)]
                 titled = [r["thread"] for r in await c.fetch(W.TITLES_SQL, ["obs:retract-x", "obs:retract-lone"])]
                 first = {r["thread"]: r["body"] for r in
                          await c.fetch(W.FIRST_SQL, ["obs:retract-x", "obs:retract-lone"])}

@@ -115,7 +115,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   }, [roster, presence, status, now])
 
   const [scope, setScope] = useState<Scope>('mine')        // cog-who: my chats (default) or every human's, a view only
-  const { threads, loaded, reload, patch } = useWsThreads(messages, scope)
+  const { threads, loaded, reload, patch } = useWsThreads(messages, scope, thread && /^(chat|obs|cv):/.test(thread) ? thread : '')
   useEffect(() => { if (conn.resync) reload() }, [conn.resync, reload])     // back from a lost stream: the list catches up
   // iteration 9: an agent's reply while the tab is hidden → an OS notification (opt-in; name + title only); the chat
   // is installable (manifest + icons in <head> only while it is on screen)
