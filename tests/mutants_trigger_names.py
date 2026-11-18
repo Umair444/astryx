@@ -42,6 +42,16 @@ MUTANTS = {
     "an import/decorated def inside a top-level compound statement isn't blind":
         ("                blind(f\"an import or decorated def inside a top-level {type(s).__name__.lower()}\", s)\n",
          "                pass\n"),
+    "a LOCAL import inside a compound statement isn't blind (any import is taken for stdlib)":
+        ("        return any(_root_of(a.name.split(\".\")[0], w) is not None for a in n.names)\n",
+         "        return False\n"),
+    "a builtin decorator the file rebinds isn't blind":
+        ("        return any(not (isinstance(d, ast.Name) and hasattr(builtins, d.id) and rebound is not None\n"
+         "                        and d.id not in rebound) for d in n.decorator_list)\n",
+         "        return any(not (isinstance(d, ast.Name) and hasattr(builtins, d.id)) for d in n.decorator_list)\n"),
+    "a star-import doesn't count as rebinding every builtin":
+        ("                if a.name == \"*\":\n                    return None\n",
+         "                if a.name == \"*\":\n                    continue\n"),
     "a decorator other than the trigger as imported isn't blind (it's just skipped)":
         ("                    blind(f\"`@{ast.unparse(d)}` on {s.name} isn't the trigger decorator as imported\", s)\n",
          "                    pass\n"),

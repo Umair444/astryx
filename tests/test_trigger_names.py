@@ -130,6 +130,11 @@ GOOD = {
     "umair/my_review.py": trigger_tree.shim("pr_review"),
     "memory/m.py": TRIG + DEF.format("zz_mem"),
     "a_fb/fb.py": FALLBACK + DEF.format("zz_fb"),
+    # doctor DEFERRED x4 (11-17): config.py's run-by-path shim and channels.py's @property read as blind
+    "a_std/std.py": "if not __package__:\n    import os as _os, json as _json  # noqa: F401\n\n\n"
+                    + TRIG + DEF.format("zz_std"),
+    "a_cls/cls.py": TRIG + DEF.format("zz_cls") + "class K:\n    @property\n    def p(self):\n        return 1\n\n"
+                    "    @staticmethod\n    def q():\n        return 2\n",
 }
 for rel, body in GOOD.items():
     put(f"triggers/{rel}", body)
@@ -161,6 +166,11 @@ BLIND = {
     "b19 the fallback idiom with a second statement in the try": FALLBACK.replace(
         "    from astryx import trigger\n", "    from astryx import trigger\n    import zzpkg.mod_i  # noqa\n"),
     "b20 the fallback idiom under a broad except": FALLBACK.replace("except ImportError:", "except Exception:"),
+    "b21 a LOCAL import inside a top-level if": "if True:\n    import zzpkg.mod_i  # noqa\n",
+    "b22 a builtin decorator the file rebinds": "from zzpkg.mod_i import zz_i1 as property  # noqa\n\n\n"
+                                                 + "class K:\n    @property\n    def p(self):\n        return 1\n",
+    "b23 a builtin decorator under a star-import": "from zzpkg.mod_iii import *  # noqa\n\n\n" + "class K:\n    @property\n    def p(self):\n        return 1\n",
+    "b24 a non-builtin decorator on a method": "import functools\n\n\n" + "class K:\n    @functools.cache\n    def p(self):\n        return 1\n",
 }
 
 try:
@@ -183,7 +193,11 @@ try:
                      "triggers/a_main/m.py"),
                     ("C9 the init.sh shim under another agent and filename", "pr_review", "triggers/umair/my_review.py"),
                     ("C10 the standalone-fallback idiom (`try: from astryx import trigger` / `except ImportError`) is "
-                     "the plain import, not blind", "zz_fb", "triggers/a_fb/fb.py")):
+                     "the plain import, not blind", "zz_fb", "triggers/a_fb/fb.py"),
+                    ("C11 an import of a module that isn't local (stdlib) inside a top-level if is not blind",
+                     "zz_std", "triggers/a_std/std.py"),
+                    ("C12 a builtin decorator (`@property`, `@staticmethod`) on a method is not blind", "zz_cls",
+                     "triggers/a_cls/cls.py")):
                 rc, out, err = state(name, dsn=DSN)
                 want(f"{label} → installed (exit 0), naming {where}", rc == 0 and out == f"installed {where}",
                      f"rc={rc} {out} {err}")
