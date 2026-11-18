@@ -3,8 +3,40 @@
     {
       "server": "astryx",
       "who": "every",
-      "error": "Expecting value: line 1 column 1 (char 0)",
-      "tools": []
+      "tools": [
+        {
+          "name": "send",
+          "description": "Send a message on the ASTRYX wire (the only way to talk). To ASK a human a question, send a POLL (below) \u2014 never a local picker like AskUserQuestion, which blocks a headless pane; the human's tap retu"
+        },
+        {
+          "name": "subscribe",
+          "description": "Watch another agent: its milestone/error steps will arrive on your channel."
+        },
+        {
+          "name": "query_steps",
+          "description": "Inspect any agent's recent steps (total internal transparency). Watch cheap, inspect deep."
+        },
+        {
+          "name": "query_thread",
+          "description": "Read a thread's messages from the wire, oldest first. The table is the truth \u2014 check thread state here before replying, nudging, or re-asking; your context window only holds what happened to arrive in"
+        },
+        {
+          "name": "read_message",
+          "description": "Read ONE wire message in FULL, untruncated \u2014 the lossless peek by id. query_thread/query_steps truncate for scanning; reach here to read a consolidated design, a long receipt, a federation envelope in"
+        },
+        {
+          "name": "plan_quorum",
+          "description": "Approval state of a plan thread: each voter's latest verdict (approve/revise) and the goal's state. The canonical quorum check \u2014 read this, never guess from addressees (verdicts bind by thread, not by"
+        },
+        {
+          "name": "self_edit",
+          "description": "Edit your own identity (charter, avatar, notes in your folder). Goes through the identity scribe: SHELL fields (## Born/Interests/Personality/\u2026) are yours to shape; CORE (Model/Grants/Rank/Heartbeat, "
+        },
+        {
+          "name": "trigger",
+          "description": "Wake yourself later or when something changes: reminders, deadlines, watches on a database query, a failure that persists. This survives respawn; CronCreate and ScheduleWakeup die with the session. On"
+        }
+      ]
     },
     {
       "server": "tools",
@@ -313,5 +345,5 @@
       ]
     }
   ],
-  "total_tools": 57
+  "total_tools": 65
 }

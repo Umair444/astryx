@@ -27,6 +27,9 @@ async def scan_one(name: str, spec: dict) -> dict:
     if spec.get("list"):                # a server that names its own tools without starting up (the wire: no session)
         import subprocess
         out = subprocess.run([run["command"], *run["args"], spec["list"]], capture_output=True, text=True, timeout=30)
+        if out.returncode:
+            lines = out.stderr.strip().splitlines()      # the line that names the failure, not the stack's tail
+            raise RuntimeError(f"rc {out.returncode}: " + next((l for l in lines if "Error" in l), lines[0] if lines else ""))
         return {"server": name, "who": spec.get("who", "grant"), "tools": json.loads(out.stdout)}
     params = StdioServerParameters(command=run["command"], args=run["args"], env={**os.environ, **run.get("env", {})})
     async with stdio_client(params) as (r, w):
@@ -55,11 +58,18 @@ def org_local(spec: dict) -> bool:
 
 async def main():
     shared, local = [], []
+    before = {}                         # the last good scan: a server that fails this time keeps its tools, with the error
+    for path in ("manifest.json", "manifest.local.json"):
+        try:
+            before |= {x["server"]: x["tools"] for x in json.loads((REPO / "mcp" / path).read_text())["servers"]}
+        except Exception:
+            pass
     for name, spec in REGISTRY.items():
         try:
             got = await scan_one(name, spec)
         except Exception as e:
-            got = {"server": name, "who": spec.get("who", "grant"), "error": str(e)[:200], "tools": []}
+            got = {"server": name, "who": spec.get("who", "grant"), "error": str(e)[:200],
+                   "tools": before.get(name, [])}
         (local if org_local(spec) else shared).append(got)
     for path, servers in (("manifest.json", shared), ("manifest.local.json", local)):
         manifest = {"servers": servers, "total_tools": sum(len(s["tools"]) for s in servers)}
