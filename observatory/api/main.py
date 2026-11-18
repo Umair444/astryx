@@ -257,7 +257,7 @@ async def _who(request: Request) -> tuple[str | None, str | None]:
     (127.0.0.1): every org backend is loopback-bound (the D5 census), and the token is checked whatever the peer."""
     tok = request.headers.get(_identity.HEADER)
     peer = request.client.host if request.client else ""
-    request.state.label = ""                            # the account's own label (cog-who), set only when verified
+    request.state.label = request.state.email = ""     # the account's own label and proven email, set only when verified
     if not (_COGAUTH and tok and peer == "127.0.0.1"):
         return None, None
     c = _identity.claims(tok, _keys(), _AUD)
@@ -268,7 +268,7 @@ async def _who(request: Request) -> tuple[str | None, str | None]:
     uid = c["sub"] if c else None
     if uid is None or pool is None:
         return None, None
-    request.state.label = c["name"]
+    request.state.label, request.state.email = c["name"], c["email"]
     try:
         return uid, await _members.role_of(pool, uid)   # observatory/api/members.py: the ONE reader of the table
     except (asyncpg.PostgresError, OSError) as e:   # no members table yet (schema.sql not re-applied), a DB blip:
@@ -600,12 +600,30 @@ async def _access(request: Request) -> tuple[set | None, dict]:
         print(f"observatory: a member's access reads as none: {type(e).__name__}", file=sys.stderr)
         return set(), {}
 
+_ACCOUNTS: set[tuple[str, str]] = set()    # (uid, email) this process has made a person with their email linked
+
+
+async def _account_seen(request: Request) -> None:
+    """A signed-in account is a person, and the email it signed in with is one of their channels (identity_web), done
+    once per account per process (owner 11-18: "users are signing in to org with their emails - so it should be
+    linked"). A failure is logged and retried on the next request; it never refuses the request."""
+    uid, who, email = getattr(request.state, "uid", None), request.state.me, getattr(request.state, "email", "")
+    if not (uid and who and pool is not None) or (uid, email) in _ACCOUNTS:
+        return
+    try:
+        await pool.execute("SELECT identity_web($1, $2, $3)", uid, who, email)
+        _ACCOUNTS.add((uid, email))
+    except (asyncpg.PostgresError, OSError) as e:
+        print(f"observatory: an account's email was not linked yet: {type(e).__name__}", file=sys.stderr)
+
+
 @app.middleware("http")
 async def privacy_gate(request: Request, call_next):
     request.state.uid, request.state.role = await _who(request)
     p = request.url.path
     request.state.reach, request.state.caps = await _access(request) if p.startswith("/api/") else (set(), {})
     request.state.me = wire_handle(request)
+    await _account_seen(request)
     m = "GET" if request.method == "HEAD" else request.method
     if (p.startswith("/api/") and (m, p) not in PUBLIC and not (m == "GET" and _PUBLIC_AVATAR.match(p))
             and not is_owner(request) and not (member_may(m, p) and insider(request))

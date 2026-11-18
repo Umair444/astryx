@@ -272,15 +272,16 @@ async def viewer(request: Request, a: _Auth | None) -> str | None:
     return v[0] if v else None
 
 
-def _mint(a: "_Auth", v: tuple[str, str], org: str) -> str:
-    """The signed identity for `org`: the account's sub and its own label (cog-who: the email's local part, so the
-    org can say WHICH human asked; never the whole email)."""
-    return identity.mint(a.key, v[0], org, name=v[1])
+def _mint(a: "_Auth", v: tuple[str, str, str], org: str) -> str:
+    """The signed identity for `org`: the account's sub, its own label (cog-who: the email's local part, so the org
+    can say WHICH human asked) and its proven email, which the org links as that person's email channel (owner 11-18:
+    "users are signing in to org with their emails - so it should be linked")."""
+    return identity.mint(a.key, v[0], org, name=v[1], email=v[2])
 
 
-async def viewer_id(request: Request, a: _Auth | None) -> tuple[str, str] | None:
-    """(sub, label) of the signed-in account behind this request, or None. sub is identity's (uid@cog id), the label
-    its email's local part. The browser must say the
+async def viewer_id(request: Request, a: _Auth | None) -> tuple[str, str, str] | None:
+    """(sub, label, email) of the signed-in account behind this request, or None. sub is identity's (uid@cog id), the
+    label its email's local part. The browser must say the
     request started on this origin (Sec-Fetch-Site), and a state-changing method must also come FROM a configured
     origin (D7's Origin check, on top of SameSite=Strict)."""
     tok = request.cookies.get(SESSION)
@@ -298,7 +299,7 @@ async def viewer_id(request: Request, a: _Auth | None) -> tuple[str, str] | None
         s = await a.db(cogauth.session_of, tok)
     except Exception:  # noqa: BLE001 — a store that can't answer signs nobody in (fail closed), the key still works
         return None
-    return (cogauth.sub(s[0], a.cog_id), str(s[1]).partition("@")[0]) if s else None
+    return (cogauth.sub(s[0], a.cog_id), str(s[1]).partition("@")[0], str(s[1])) if s else None
 
 
 @app.post("/auth/login")

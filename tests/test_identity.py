@@ -67,6 +67,27 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c:
         refused == ["owner", "db", "nobody-yet"], refused)
     arm("an account linked to one person is never moved to another silently", not moved
         and who("whatsapp", f"{N001}@s.whatsapp.net", "x") == "cv-faran.2")
+    print("\nI5 A SIGNED-IN ACCOUNT'S EMAIL IS ONE OF ITS CHANNELS (owner 11-18)")
+    web = lambda uid, w, e: c.execute("SELECT identity_web(%s, %s, %s)", (uid, w, e)).fetchone()[0]  # noqa: E731
+    web("7@cog", "cv-sana.7", " Sana@Example.org ")
+    arm("a member's sign-in email is linked to them, as one form (lowercase, trimmed)",
+        who("email", "sana@example.org", "em-x") == "cv-sana.7" and who("web", "7@cog", "x") == "cv-sana.7")
+    web("1@cog", "owner", "boss@example.org")
+    arm("the owner's own email goes through identity_own", who("email", "boss@example.org", "em-x") == "owner")
+    web("8@cog", "cv-mallory.8", "sana@example.org")
+    arm("an email linked to someone else stays theirs: no error, never moved",
+        who("email", "sana@example.org", "em-x") == "cv-sana.7" and who("web", "8@cog", "x") == "cv-mallory.8")
+    web("9@cog", "cv-noemail.9", "")
+    arm("no email: the person is made, nothing linked", who("web", "9@cog", "x") == "cv-noemail.9")
+    from astryx.security import identity as tok
+    from nacl.signing import SigningKey
+    k = SigningKey.generate()
+    ver = {tok.kid_of(k.verify_key): k.verify_key}
+    both = tok.claims(tok.mint(k, "7@cog", "astryx", name="sana", email="sana@example.org"), ver, "astryx")
+    none = tok.claims(tok.mint(k, "7@cog", "astryx"), ver, "astryx")
+    arm("the signed identity carries the proven email, and '' when the front sends none",
+        both and both["email"] == "sana@example.org" and none and none["email"] == "", (both, none))
+
     print("\nI3 ANSWERED WHERE THEY WROTE")
     wa = f"(to_agent='owner' OR to_agent LIKE 'wa-%' OR {address.reaches_sql('whatsapp')})"
     import importlib
