@@ -62,6 +62,11 @@ def main():
     rows = W.build_rows([a], {}, [], {*ROSTER, "consumer"}, me="cv-t.8")
     arm("13389: a helper the lead brought in (db answered the member) is not one of the row's agents",
         rows and rows[0]["agents"] == ["consumer"], rows)
+    a = agg("chat:3-g", ["owner", "gone", "seed"], ["gone", "seed"])
+    a["asked"] = ["gone"]                            # an agent since removed from the roster (medic 13470)
+    rows = W.build_rows([a], {}, [], {"seed", "db"})
+    arm("asked holding only non-agents falls back to who wrote to the human, as the composer does",
+        rows and rows[0]["agents"] == ["seed"], rows)
     rows = W.build_rows([agg("cv:x", ["seed", "finance"], [])], {}, [], ROSTER)
     arm("listing still needs the owner as a party", rows == [], rows)
 

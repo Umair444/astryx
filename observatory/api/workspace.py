@@ -251,8 +251,9 @@ def build_rows(aggs: list[dict], meta: dict, projects: list[dict], roster: set[s
         # but never joins the human's "To" (a member 11-18, 13389: "the other agents it is calling is his thing"). A
         # thread only agents have written in yet goes back to whoever wrote to the human (`partners`); an agent→agent
         # row is history, never a recipient. Rows without `partners` (older callers) use parties
-        partners = a.get("asked") or (a.get("partners") if "partners" in a else parties)
-        agents = agents_of(t, list(partners or []), roster, cv.get("agent"))
+        partners = a.get("partners") if "partners" in a else parties
+        agents = agents_of(t, list(a.get("asked") or []), roster, cv.get("agent")) \
+            or agents_of(t, list(partners or []), roster, cv.get("agent"))     # filtered first, then the fallback
         if sw:                                      # a SWITCH: the chat is now with these, whoever spoke before it
             agents = [n for n in sw[-1]["agents"] if not roster or n in roster] or agents
         out.append({
