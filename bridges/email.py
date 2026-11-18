@@ -28,14 +28,14 @@ from pathlib import Path
 import asyncpg
 from fastapi import FastAPI
 
-from .common import Book, Outcome, door_org_ok, door_refuse, env, listen, released, split_files, split_polls
+from .common import Book, Outcome, cap_spent, door_org_ok, door_refuse, env, listen, released, split_files, split_polls
 from .embed_root import Refused, owner_only, read_checked
 from .providers.email import EmailProvider, address
-from astryx.core import address as wire_address  # noqa: E402  reaches_sql: a linked person answered on this channel
+from astryx.core import address as wire_address, channels  # noqa: E402  reaches_sql: a linked person answered on this channel
 
 PROVIDER = EmailProvider()
 DSN = env("ASTRYX_DSN")
-CAP = int(env("EMAIL_DAILY_CAP", "50") or 50)
+CAP = channels.daily_cap("email", env)
 BOOK = Book("email")
 
 pool: asyncpg.Pool | None = None
@@ -45,8 +45,7 @@ pool: asyncpg.Pool | None = None
 CLAIM = (f"({wire_address.reaches_sql('email')} OR "
          f"(to_agent LIKE 'em-%' AND NOT {wire_address.elsewhere_sql('email')}))")   # another channel's thread is its own
 
-SENT_TODAY = ("SELECT count(*) FROM messages WHERE status='delivered' AND delivery->>'handle' LIKE 'email:%' "
-              "AND delivered_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Karachi') AT TIME ZONE 'Asia/Karachi'")
+SENT_TODAY = channels.sent_today_sql("email")
 LAST = ("SELECT delivery FROM messages WHERE thread=$1 AND status='delivered' AND delivery->>'handle' LIKE 'email:%' "
         "AND delivery->>'message_id' IS NOT NULL ORDER BY id DESC LIMIT 1")
 
@@ -85,8 +84,7 @@ async def deliver(row):
         return
     if not await door_org_ok(pool, row, "email", routes(), chat):
         return                                     # refused at the door: only a declared route is mailed
-    if await pool.fetchval(SENT_TODAY) >= CAP:
-        await door_refuse(pool, row, "email", f"the org's email cap for today ({CAP}) is spent")
+    if await cap_spent(pool, row, "email", CAP):
         return
     agent = row["from_agent"]
     text, files = split_files(row["body"] or "")

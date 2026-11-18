@@ -556,6 +556,15 @@ async def door_open(pool, row, channel: str, routes) -> tuple[dict, str] | None:
         return None
 
 
+async def cap_spent(pool, row, channel: str, cap: int) -> bool:
+    """A channel that reaches people outside the org (SMS, email) bounds what it sends in a day: True when today's
+    `cap` is spent, and the row is refused saying so."""
+    if await pool.fetchval(channels.sent_today_sql(channel)) < cap:
+        return False
+    await door_refuse(pool, row, channel, f"the org's {channels.BY_NAME[channel].title} cap for today ({cap}) is spent")
+    return True
+
+
 async def door_org_ok(pool, row, channel: str, routes, chat) -> bool:
     """An UNSTAMPED row: True when `chat` is a declared org route of this bridge; else the row is refused. A miss re-reads
     the route table once first: a route opened in the same breath as its message (a link's "Reply YES", 13614) is
