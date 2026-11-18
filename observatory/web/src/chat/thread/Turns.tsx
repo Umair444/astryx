@@ -1,5 +1,4 @@
 import { Fragment, memo, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { useReducedMotion } from 'motion/react'
 import { agentColor, displayName, fmtDay, fmtTime } from '../../api'
 import { humanName, isHuman, type Msg, type Step } from '../../types'
 import { placeHuman } from './sides'
@@ -152,7 +151,6 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   loading: boolean
   empty: React.ReactNode
 }) {
-  const reduce = useReducedMotion()
   const end = useRef<HTMLDivElement>(null)
   const blocks = useMemo(() => blocksOf(rowsOf(rows, work), new Set(roster), handoffs, switches, me), [rows, work, roster, handoffs, switches, me])
   const last = rows.at(-1)?.id ?? 0
@@ -177,35 +175,41 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   }
   // FOLLOW THE END (owner 11-17: a long chat opened short of its end, a short one at it): the view is pinned to the end
   // while the reader is there, and STAYS pinned as the content below keeps laying out (cards, tables, images, a
-  // collapsed "worked" line), however long that takes: a ResizeObserver re-pins on every growth. Scrolling up by hand
-  // unpins; reaching the end again re-pins. A jump to a message (win.jumping) never pins. One rule for every thread.
+  // collapsed "worked" line), however long that takes: a ResizeObserver re-pins on every growth. The reader moving the
+  // view off the end by hand unpins; reaching the end again re-pins. A jump to a message (win.jumping) never pins. One
+  // rule for every thread.
   const following = useRef(true)
   useEffect(() => {
     const box = end.current?.parentElement?.parentElement
     const content = end.current?.parentElement
     if (!box || !content) return
     const pin = () => { if (following.current && !win.jumping()) box.scrollTop = box.scrollHeight }
-    // only the READER unpins (a wheel or swipe up, a key that moves up): the app's own glide fires scroll events too,
-    // and must never unpin itself mid-way (medic 12897); any scroll that lands near the end re-pins
-    const up = () => { following.current = false }
-    const onWheel = (e: WheelEvent) => { if (e.deltaY < 0) up() }
+    // only the READER unpins, and only by MOVING the view off the end: a scroll that lands more than 80px from the end
+    // within a moment of their wheel, swipe, key or scrollbar grab. The app's own glide fires scroll events too and
+    // must never unpin itself mid-way (medic 12897); a trackpad's touch or bounce that leaves the view at the end
+    // (Safari on a Mac, member 13389) doesn't unpin; any scroll that lands near the end re-pins
+    let hand = 0
+    const touch = () => { hand = performance.now() }
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLElement && e.target.closest('input, textarea, [contenteditable="true"]')
-      if (!typing && ['ArrowUp', 'PageUp', 'Home'].includes(e.key)) up()
+      if (!typing) touch()
     }
-    const onGrab = (e: MouseEvent) => { if (e.target === box) up() }   // the scrollbar itself, taken by hand
-    const onScroll = () => { if (box.scrollHeight - box.scrollTop - box.clientHeight < 80) following.current = true }
+    const onGrab = (e: MouseEvent) => { if (e.target === box) touch() }   // the scrollbar itself, taken by hand
+    const onScroll = () => {
+      if (box.scrollHeight - box.scrollTop - box.clientHeight < 80) following.current = true
+      else if (performance.now() - hand < 600) following.current = false
+    }
     const ro = new ResizeObserver(pin)
     ro.observe(content)
-    box.addEventListener('wheel', onWheel, { passive: true })
-    box.addEventListener('touchmove', up, { passive: true })
+    box.addEventListener('wheel', touch, { passive: true })
+    box.addEventListener('touchmove', touch, { passive: true })
     box.addEventListener('keydown', onKey)
     box.addEventListener('mousedown', onGrab)
     box.addEventListener('scroll', onScroll, { passive: true })
     pin()
     return () => {
       ro.disconnect()
-      box.removeEventListener('wheel', onWheel); box.removeEventListener('touchmove', up)
+      box.removeEventListener('wheel', touch); box.removeEventListener('touchmove', touch)
       box.removeEventListener('keydown', onKey); box.removeEventListener('scroll', onScroll)
       box.removeEventListener('mousedown', onGrab)
     }
@@ -214,16 +218,19 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   useEffect(() => {                                // a new message, or my own send: back to the end, and follow it
     if (win.jumping()) return
     following.current = true
-    end.current?.scrollIntoView({ block: 'end', behavior: reduce ? 'auto' : 'smooth' })
-  }, [last, pending.length, reduce, lastSwitch]) // eslint-disable-line react-hooks/exhaustive-deps
+    // straight to the end, never a smooth glide: Safari doesn't cancel a glide when the pin sets scrollTop, so the glide
+    // landed on the end as it was when it started, short of the reply or "working" line laid out after it (member 13399)
+    const box = end.current?.parentElement?.parentElement
+    if (box) box.scrollTop = box.scrollHeight
+  }, [last, pending.length, lastSwitch]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return (
-    <div className="mx-auto w-full max-w-[720px] px-6 pt-10 flex flex-col gap-5" aria-busy>
+    <div className="ws-col pt-10 flex flex-col gap-5" aria-busy>
       {[72, 48, 88].map((w, i) => <div key={i} className="ax-skel h-4 rounded-md" style={{ width: `${w}%` }} />)}
     </div>
   )
   return (
-    <div className="mx-auto w-full max-w-[720px] px-5 md:px-6 pt-8 flex flex-col" role="log" aria-label="conversation">
+    <div className="ws-col pt-8 flex flex-col" role="log" aria-label="conversation">
       {blocks.length === 0 && empty}
       {(win.hidden > 0 || (older && !!onOlder)) && (
         <button onClick={() => void earlier()} disabled={fetching} className="ws-earlier w-full mb-2 py-2 hover:text-ink">

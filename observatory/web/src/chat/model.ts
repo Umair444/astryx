@@ -25,18 +25,21 @@ export function mentions(body: string, roster: string[]): string[] {
   return out
 }
 
-/* who is in a chat: the agents that exchanged a message WITH THE OWNER here (the owner wrote to them, or they wrote
-   to the owner), first-seen order. An agent→agent row on an owner thread (seed correcting finance, a handoff) stays
-   in the history and draws its divider, but never makes its sender a recipient: the owner's next reply would copy
-   them in silently (workspace.py agents_of is the same rule for the list) */
+/* who is in a chat: the agents THE HUMAN wrote to here, first-seen order (before the human has written, the agents
+   that wrote to the human). An agent's reply alone, or an agent→agent row (seed correcting finance, a handoff), stays
+   in the history and draws its divider, but never makes its sender a recipient: the human's next message would copy
+   them in silently (workspace.py's `asked` is the same rule for the list) */
 export function participants(rows: Msg[], roster: string[]): string[] {
   const known = new Set(roster)                     // agents only: pulse, a canvas, a federation peer never join
-  const out: string[] = []
-  for (const m of rows) {
-    const n = isHuman(m.from) ? m.to : isHuman(m.to) ? m.from : null      // the human side: the owner or a member
-    if (n && known.has(n) && !out.includes(n)) out.push(n)
+  // the agents the human wrote to: a helper the lead brought in answers here but never joins the human's "To" (a member
+  // 11-18: "the other agents it is calling is his thing"); before the human has written, whoever wrote to the human
+  const pick = (side: (m: Msg) => string | null) => {
+    const out: string[] = []
+    for (const m of rows) { const n = side(m); if (n && known.has(n) && !out.includes(n)) out.push(n) }
+    return out
   }
-  return out
+  const asked = pick((m) => (isHuman(m.from) ? m.to : null))
+  return asked.length ? asked : pick((m) => (isHuman(m.to) ? m.from : null))
 }
 
 /* the body every recipient gets: alone, the text as typed; with others, a first line naming the team, so each agent

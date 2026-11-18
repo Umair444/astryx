@@ -1,5 +1,6 @@
 // The chat's default recipients (observatory/web/src/chat/model.ts participants), run by tests/test_ws_recipients.py.
-// Rule: an agent is a recipient only if it exchanged a message WITH THE OWNER on the thread; an agent→agent row on an
+// Rule: an agent is a recipient only if THE HUMAN wrote to it on the thread (before the human writes, an agent that
+// wrote to the human); an agent→agent row on an
 // owner thread (seed correcting finance, a handoff) never adds its sender (the owner's reply would copy them in).
 import { participants } from '../../observatory/web/src/chat/model'
 import type { Msg } from '../../observatory/web/src/types'
@@ -12,7 +13,7 @@ const arm = (name: string, got: unknown, want: unknown) => {
 }
 let id = 0
 const m = (from: string, to: string | null): Msg => ({ id: ++id, ts: '2026-11-10T10:00:00Z', from, from_org: null, to, to_org: null, thread: 'cv:x', intent: null, body: 'x', status: null })
-const R = ['seed', 'finance', 'db', 'lending']
+const R = ['seed', 'finance', 'db', 'lending', 'consumer']
 
 arm('cv:0b7661abb9 shape: seed→finance correction does not add seed',
   participants([m('owner', 'finance'), m('finance', 'owner'), m('seed', 'finance'), m('owner', 'finance')], R), ['finance'])
@@ -22,5 +23,8 @@ arm('a handoff row alone (db→seed) adds nobody', participants([m('db', 'seed')
 arm('first-seen order, no duplicates', participants([m('owner', 'db'), m('owner', 'seed'), m('db', 'owner'), m('seed', 'owner')], R), ['db', 'seed'])
 arm('non-agents never join (canvas page, pulse)', participants([m('canvas-1', 'lending'), m('owner', 'pulse'), m('lending', 'owner')], R), ['lending'])
 arm('a null recipient is ignored', participants([m('owner', null)], R), [])
+arm('13389 shape: a helper the lead brought in (db answers the member directly) never joins',
+  participants([m('cv-t.8', 'consumer'), m('consumer', 'cv-t.8'), m('consumer', 'db'), m('db', 'cv-t.8'), m('cv-t.8', 'consumer')], R), ['consumer'])
+arm('a thread only agents have written in: the agent that wrote to the human', participants([m('db', 'cv-t.8'), m('seed', 'cv-t.8')], R), ['db', 'seed'])
 console.log(`\n${fails ? 'FAIL' : 'PASS'}: ${fails} failing arm(s)`)
 process.exit(fails ? 1 : 0)

@@ -339,7 +339,7 @@ export default forwardRef<ComposerHandle, {
   const live = dict.phase === 'live'
   const hint = placeholder ?? (to.length ? `Message ${to.map(displayName).join(', ')}` : 'Mention an agent with @ to start')
   return (
-    <div className={hero ? 'w-full' : 'ws-dock-bottom mx-auto w-full max-w-[760px] px-3 sm:px-4 md:px-6 pt-1'}>
+    <div className={hero ? 'w-full' : 'ws-dock-bottom ws-col pt-1'}>
       <div className="ws-composer relative" data-drop={drop}
         onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDrop(true) } }}
         onDragLeave={() => setDrop(false)}
