@@ -57,7 +57,7 @@ export const loadWsThreads = (scope: Scope = 'mine', open = '') => {
   return api<{ etag: string; threads: WsThread[] }>(`/ws/threads${q ? `?${q}` : ''}`)
 }
 export const loadWsAgents = () => api<WsAgent[]>('/ws/agents')
-export const saveThreadMeta = (thread: string, patch: { title?: string; pinned?: boolean; switch_to?: string[] }) =>
+export const saveThreadMeta = (thread: string, patch: { title?: string; pinned?: boolean; switch_to?: string[]; deleted?: boolean }) =>
   apiSend<{ thread: string; title?: string; pinned?: boolean; switches?: Switch[] }>('PUT', '/ws/threads/meta', { thread, ...patch })
 
 /* the agent a thread is WITH before anyone has spoken on it: a desk thread names it (obs:<agent>) */
