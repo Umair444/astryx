@@ -1439,6 +1439,67 @@ BEGIN
   RETURN i;
 END $own$;
 
+-- A PENDING CODE LINK (owner 11-18; medic 13630): a channel that only sends (email, SMS) proves an account with a code
+-- sent to it and typed back on the web. It is its own row, never a route: a route row would sit on route_chat_key
+-- beside the owner's own route for that chat, and would open the bridge's door to that address for its whole life.
+-- `mac` is HMAC(LINK_KEY, id|code), keyed by a secret no agent holds, so a reader of this table can't recover the
+-- code; `tries` is spent before each compare; one pending link per person, a new one replacing the old; minutes long.
+CREATE TABLE IF NOT EXISTS link_pending (
+  tenant    text NOT NULL DEFAULT 'astryx',
+  id        bigserial,
+  person    text NOT NULL,                   -- the signed-in person linking THEIR account
+  channel   text NOT NULL,
+  chat      text NOT NULL,                   -- the account: an address, a number
+  opened_by text NOT NULL,                   -- = person ('owner' for the owner's own: identity_own)
+  mac       text NOT NULL,
+  tries     int  NOT NULL DEFAULT 0,
+  expires   timestamptz NOT NULL,
+  CONSTRAINT link_pending_pkey PRIMARY KEY (tenant, id),
+  CONSTRAINT link_pending_person_key UNIQUE (tenant, person)
+);
+
+-- THE ONE JOIN of a proven account to its person: the owner's own (person = opened_by = 'owner', which only an
+-- owner_call opens) through identity_own, everyone else through identity_link, which never reaches 'owner' and refuses
+-- an account that is someone else's.
+CREATE OR REPLACE FUNCTION link_join(p_person text, p_opened_by text, p_channel text, p_account text) RETURNS text
+LANGUAGE plpgsql AS $join$
+BEGIN
+  IF p_person = 'owner' AND p_opened_by = 'owner' THEN
+    PERFORM identity_own(p_channel, p_account);
+  ELSE
+    PERFORM identity_link(p_person, p_channel, p_account);
+  END IF;
+  RETURN p_person;
+END $join$;
+
+-- THE LANDINGS (owner 11-18: "instantly after yes … not back to an agent"), one per proof, each one transaction that
+-- reads the person from the row it ends (never from a caller or a bridge's cached copy) and joins through link_join.
+-- No message: the caller confirms to the account through its provider, off the wire, with no agent in it.
+CREATE OR REPLACE FUNCTION link_land(p_route bigint, p_account text) RETURNS text
+LANGUAGE plpgsql AS $land$
+DECLARE
+  r record;
+BEGIN
+  DELETE FROM route WHERE id = p_route AND purpose = 'link' AND expires_at > now()
+    RETURNING person, opened_by, channel INTO r;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'no pending link %', p_route USING ERRCODE = 'no_data_found';
+  END IF;
+  RETURN link_join(r.person, r.opened_by, r.channel, p_account);
+END $land$;
+
+CREATE OR REPLACE FUNCTION link_land_code(p_pending bigint) RETURNS text
+LANGUAGE plpgsql AS $code$
+DECLARE
+  r record;
+BEGIN
+  DELETE FROM link_pending WHERE id = p_pending AND expires > now() RETURNING person, opened_by, channel, chat INTO r;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'no pending code link %', p_pending USING ERRCODE = 'no_data_found';
+  END IF;
+  RETURN link_join(r.person, r.opened_by, r.channel, r.chat);
+END $code$;
+
 -- ROUTES ARE ROWS (identity-channels P2, owner 11-15 "a row in postgres" / 11-16 "routes.json and route table should be
 -- just route table … no one edits files"): EVERY route of every channel is one row; the routes-<channel>.json files
 -- are gone (imported once by astryx.core.routes.import_files). One row per (channel, chat): a chat reaches one agent.

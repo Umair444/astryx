@@ -10,6 +10,10 @@ On the fixture database, with a fake contact search (no channel is touched):
   C5 LINK: the account is asked to reply YES; the bridges' link_reply turns that YES into a link (identity_link), ends
      the row and tells the asker; a later message from that account writes as the person
   C6 THE SWEEP: an expired connection is deleted and its agent told; an expired link tells whoever asked
+  C8 A CHANNEL THAT ONLY SENDS (email, SMS; owner 11-18, medic 13630): the code goes through the provider (never a
+     messages row, step or output), its MAC is keyed (no unkeyed hash over all 10^6 codes matches), a wrong code spends
+     a try and the 5th ends it, only its person can confirm, a re-issue kills the old code, the right one lands it at
+     once (link_land_code), the owner's own goes through identity_own, and the owner's standing route is untouched
   C7 THE OWNER'S ROUTE ON HIS WORD: only an agent granted `org` (seed), and only in a turn the owner alone opened (a
      stranger's or a peer's 'owner' message is refused), sets or removes a standing route, through route_put
 Exit 0 · 1 · 77 (no database)."""
@@ -22,7 +26,11 @@ N015 = "92" + "3000000015"
 N099 = "92" + "3000000099"
 
 import asyncio
+import contextlib
+import hashlib
+import io
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -33,6 +41,7 @@ sys.path[:0] = [str(REPO), str(REPO / "src")]
 from astryx.security.sqlguard.estate import gate  # noqa: E402
 gate("test_connect", REPO, deps=("psycopg", "asyncpg"), env=False)
 from astryx.security.sqlguard.fixture import fixture_db  # noqa: E402
+os.environ["LINK_KEY"] = "synthetic-link-key-for-the-fixture"   # never the live .env's: config.get reads the env first
 from astryx.core import connect as C, identity  # noqa: E402
 
 fails = []
@@ -115,7 +124,8 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
         and "only the person" in run("seed", "link", "cv-pat.5", channel="whatsapp", account=f"+{N013}", by="cv-y.3"))
     c.execute("SELECT identity_who('web', '5@cog', 'cv-pat.5')")         # Pat, signed in, adds their own number
     out = run("seed", "link", "cv-pat.5", channel="whatsapp", account=f"+{N013}", by="cv-pat.5")
-    asked = c.execute("SELECT to_agent, thread, body FROM messages WHERE from_agent='seed' ORDER BY id DESC LIMIT 1").fetchone()
+    asked = c.execute("SELECT to_agent, thread, body, id FROM messages WHERE from_agent='seed' ORDER BY id DESC LIMIT 1").fetchone()
+    asked_id = asked[3]
     arm("the account is asked to reply YES", "reply YES" in out and asked[1] == f"wa:{N013}@s.whatsapp.net"
         and "Reply YES" in asked[2] and "cv-pat.5" in asked[2], (out, asked))
 
@@ -126,16 +136,98 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
         book = Book("whatsapp")
         await book.refresh(pool)
         r = book.routes().chat(f"{N013}@s.whatsapp.net")
-        no = await link_reply(pool, "whatsapp", r, f"{N013}@s.whatsapp.net", "who is this?")
-        ok = await link_reply(pool, "whatsapp", r, f"{N013}@s.whatsapp.net", "Yes")
+        from bridges.providers import registry
+        sent, real = [], registry.send
+
+        async def record(handle, text=None, **k):
+            sent.append((handle, text))
+        registry.send = record
+        try:
+            no = await link_reply(pool, "whatsapp", r, f"{N013}@s.whatsapp.net", "who is this?")
+            ok = await link_reply(pool, "whatsapp", r, f"{N013}@s.whatsapp.net", "Yes")
+        finally:
+            registry.send = real
         await pool.close()
-        return no, ok
-    no, ok = asyncio.run(yes())
+        return no, ok, sent
+    no, ok, sent = asyncio.run(yes())
     who = c.execute(f"SELECT identity_who('whatsapp', '{N013}@s.whatsapp.net', 'wa-{N013}')").fetchone()[0]
-    told = c.execute("SELECT count(*) FROM messages WHERE to_agent='seed' AND body LIKE '[link]%%cv-pat.5%%'").fetchone()[0]
-    arm("anything but YES is an ordinary message; YES links it, ends the row and tells the asker",
-        not no and ok and who == "cv-pat.5" and told == 1
-        and c.execute("SELECT count(*) FROM route WHERE purpose='link'").fetchone()[0] == 0, (no, ok, who, told))
+    woke = c.execute("SELECT count(*) FROM messages WHERE body LIKE '%%cv-pat.5%%' AND id > %s", (asked_id,)).fetchone()[0]
+    arm("anything but YES is an ordinary message; YES links it at once, ends the row, confirms to the account through "
+        "its provider and wakes no agent (owner 11-18)",
+        not no and ok and who == "cv-pat.5" and woke == 0
+        and sent == [(f"whatsapp:{N013}@s.whatsapp.net", C.linked_text("whatsapp", "cv-pat.5"))]
+        and c.execute("SELECT count(*) FROM route WHERE purpose='link'").fetchone()[0] == 0, (no, ok, who, woke, sent))
+
+    print("\nC8 A CHANNEL THAT ONLY SENDS: a code")
+    ADDR, OWN = "pat@example.org", "boss@example.org"
+    c.execute("INSERT INTO route (channel, chat, agent, purpose, rule, opened_by) VALUES ('email', %s, 'seed', "
+              "'standing', '{\"enabled\": true}', 'owner')", (OWN,))
+    standing = c.execute("SELECT * FROM route WHERE chat = %s", (OWN,)).fetchone()
+    mail = []
+    deliver = lambda ch, chat, text: mail.append((ch, chat, text)) or True   # noqa: E731 — the provider, recorded
+    code_of = lambda: mail[-1][2].split(": ")[1][:6]                         # noqa: E731
+    before = c.execute("SELECT coalesce(max(id), 0) FROM messages").fetchone()[0]
+    out_buf = io.StringIO()
+    with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(out_buf):
+        out = run("seed", "link", "cv-pat.5", channel="email", account=ADDR, by="cv-pat.5", deliver=deliver)
+    code = code_of()
+    arm("the code goes to the address through the provider; no route row is opened for it",
+        out.startswith("sent a code") and mail[-1][:2] == ("email", ADDR) and code.isdigit()
+        and c.execute("SELECT count(*) FROM route WHERE chat = %s", (ADDR,)).fetchone()[0] == 0, (out, mail))
+    leak = c.execute("SELECT (SELECT count(*) FROM messages WHERE id > %s AND (body LIKE %s OR delivery::text LIKE %s)) "
+                     "+ (SELECT count(*) FROM steps WHERE content LIKE %s)",
+                     (before, f"%{code}%", f"%{code}%", f"%{code}%")).fetchone()[0]
+    arm("R3: the code is in no messages row, delivery, step, or this process's output", leak == 0
+        and code not in out_buf.getvalue() and code not in out, (leak, out_buf.getvalue()[-200:]))
+    mac = c.execute("SELECT mac FROM link_pending WHERE person = 'cv-pat.5'").fetchone()[0]
+    plain = {hashlib.sha256(f"cv-pat.5|email|{ADDR}|{n:06d}".encode()).hexdigest() for n in range(10**6)}
+    arm("R1: the MAC is keyed: no unkeyed sha256 over all 10^6 codes matches it", mac not in plain, mac)
+    wrong = f"{(int(code) + 1) % 10**6:06d}"
+    arm("only its person can confirm it", isinstance(C.confirm_code(c, "cv-other.9", "email", ADDR, code), str))
+    first = C.confirm_code(c, "cv-pat.5", "email", ADDR, wrong)
+    arm("a wrong code spends a try and says how many are left", "4 tries left" in str(first), first)
+    run("seed", "link", "cv-pat.5", channel="email", account=ADDR, by="cv-pat.5", deliver=deliver)
+    old, code = code, code_of()
+    arm("a re-issue replaces the old code (the old one fails, the count starts again)",
+        old == code or isinstance(C.confirm_code(c, "cv-pat.5", "email", ADDR, old), str))
+    for _ in range(3):
+        C.confirm_code(c, "cv-pat.5", "email", ADDR, f"{(int(code) + 7) % 10**6:06d}")
+    fifth = C.confirm_code(c, "cv-pat.5", "email", ADDR, f"{(int(code) + 7) % 10**6:06d}")
+    arm("the 5th wrong code ends the link", "cancelled" in str(fifth)
+        and c.execute("SELECT count(*) FROM link_pending WHERE person = 'cv-pat.5'").fetchone()[0] == 0, fifth)
+    import threading
+    run("seed", "link", "cv-race.1", channel="sms", account="92" + "3000000088", by="cv-race.1", deliver=deliver)
+    wrong = f"{(int(code_of()) + 1) % 10**6:06d}"
+    conns = [psycopg.connect(d["url"], autocommit=True) for _ in range(40)]
+    got, gate = [], threading.Barrier(40)
+
+    def guess(cn):
+        gate.wait()
+        got.append(C.confirm_code(cn, "cv-race.1", "sms", "92" + "3000000088", wrong))
+    threads = [threading.Thread(target=guess, args=(cn,)) for cn in conns]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    [cn.close() for cn in conns]
+    compared = sum("not right" in str(r) or "too many" in str(r) for r in got)
+    arm(f"40 racing wrong guesses get at most {C.CODE_TRIES} compares (medic 13639)", compared <= C.CODE_TRIES, compared)
+    run("seed", "link", "cv-pat.5", channel="email", account=ADDR, by="cv-pat.5", deliver=deliver)
+    pid = C.confirm_code(c, "cv-pat.5", "email", ADDR, code_of())
+    person = c.execute("SELECT link_land_code(%s)", (pid,)).fetchone()[0] if isinstance(pid, int) else None
+    who = c.execute(f"SELECT identity_who('email', '{ADDR}', 'em-x')").fetchone()[0]
+    arm("the right code lands it at once: the address is the person's, the pending row gone",
+        person == "cv-pat.5" and who == "cv-pat.5"
+        and c.execute("SELECT count(*) FROM link_pending").fetchone()[0] == 0, (pid, person, who))
+    run("seed", "link", "owner", channel="email", account=OWN, by="owner", deliver=deliver)
+    pid = C.confirm_code(c, "owner", "email", OWN, code_of())
+    person = c.execute("SELECT link_land_code(%s)", (pid,)).fetchone()[0] if isinstance(pid, int) else None
+    who = c.execute(f"SELECT identity_who('email', '{OWN}', 'em-x')").fetchone()[0]
+    arm("the owner's own address goes through identity_own; his standing route for it is untouched (R2)",
+        person == "owner" and who == "owner"
+        and c.execute("SELECT * FROM route WHERE chat = %s", (OWN,)).fetchone() == standing, (person, who))
+    failing = lambda ch, chat, text: False   # noqa: E731
+    out = run("seed", "link", "cv-pat.5", channel="sms", account="92" + "3000000077", by="cv-pat.5", deliver=failing)
+    arm("a code that can't be sent leaves nothing pending", "could not be sent" in out
+        and c.execute("SELECT count(*) FROM link_pending").fetchone()[0] == 0, out)
 
     print("\nC7 THE OWNER'S ROUTE, ON HIS WORD")
     from astryx.core import tier

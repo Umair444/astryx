@@ -20,7 +20,10 @@ per chat at a time; at most CAP open per agent; the idle time is at most MAX_IDL
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -74,7 +77,7 @@ def find(conn, who: str, channel: str, search) -> list[Handle]:
 
 
 def run(conn, me: str, action: str, who: str = "", channel: str = "", timeout: str = "1d", note: str = "",
-        account: str = "", *, search, by: str | None = None, to: str = "", pool=None) -> str:
+        account: str = "", *, search, by: str | None = None, to: str = "", pool=None, deliver=None) -> str:
     """One connect call by agent `me`. `by`: who asked, when it is not the agent (a person adding their own account on
     the web asks through seed): the link's lapse is told to them."""
     action = (action or "").strip().lower()
@@ -107,9 +110,22 @@ def run(conn, me: str, action: str, who: str = "", channel: str = "", timeout: s
             return "link needs who (the person's wire name, e.g. cv-faran.2), channel and account (their number or id)"
         hits = [h for h in find(conn, account, channel, search) if h.channel == channel]
         chat = hits[0].chat if hits else account      # a +number is the provider's to resolve (its search)
-        return _open(conn, me, Handle(channel, chat, person_name(channel, chat), account), "link", idle, note,
-                     person=who, by=by, prompt=f"Reply YES to link this {channels.BY_NAME[channel].title} account to the astryx "
-                                        f"account {who}. (Asked by {by or me}; nothing happens if you don't.)")
+        title = channels.BY_NAME[channel].title
+        if channels.BY_NAME[channel].link != "code":
+            return _open(conn, me, Handle(channel, chat, person_name(channel, chat), account), "link", idle, note,
+                         person=who, by=by, prompt=f"Reply YES to link this {title} account to the astryx "
+                                            f"account {who}. (Asked by {by or me}; nothing happens if you don't.)")
+        # a channel that only sends: the proof is a code sent to the account through `deliver` (its provider), typed
+        # back on the web. It is no route (medic 13630 R2) and never a messages row: a body there is the whole org's
+        if channels.chat_kind(channel, chat) == "group":
+            return f"that is a {title} group: only one person's account can be linked"
+        code = issue_code(conn, who, channel, chat, by)
+        if not (deliver and deliver(channel, chat, f"Your astryx code to link this {title} account to {who}: {code}. "
+                                                   f"Enter it in Your channels within {CODE_MINUTES} minutes. "
+                                                   f"If you didn't ask for this, ignore it.")):
+            conn.execute("DELETE FROM link_pending WHERE person = %s", (who,))
+            return f"the code could not be sent to {chat} on {title}; check it and try again"
+        return f"sent a code to {chat} on {title}: enter it in Your channels within {CODE_MINUTES} minutes"
     hits = find(conn, who, channel, search)
     if not hits:
         return (f"no one called {who!r} on {channel or 'any channel'}. A WhatsApp number works in full (+92…); Telegram "
@@ -129,7 +145,7 @@ def _open(conn, me, h: Handle, purpose, idle, note, person=None, prompt=None, by
     if channels.chat_kind(h.channel, h.chat) == "group":
         return f"that is a {title} group: groups are the owner's to route; ask him"
     owned = routes.standing_route(conn, h.channel, h.chat)
-    if owned:
+    if owned:                                         # one row per chat (route_chat_key): a link can't sit beside it
         return f"the owner routes that chat to {owned}: write there (send to {owned} on it), or ask him"
     held = conn.execute("SELECT agent, expires_at FROM route WHERE channel = %s AND chat = %s AND expires_at > now()",
                         (h.channel, h.chat)).fetchone()
@@ -152,6 +168,59 @@ def _open(conn, me, h: Handle, purpose, idle, note, person=None, prompt=None, by
     return (f"connected to {h.label} on {title} for {idle} of quiet (each message renews it). Write with "
             f"send(to={h.person!r}, thread={thread!r}); their replies come to you on that thread. "
             f"connect action=close who={h.person!r} ends it")
+
+
+def linked_text(channel: str, person: str) -> str:
+    """What astryx tells an account the moment it is linked (a YES, or its code typed on the web)."""
+    return f"Linked: this {channels.BY_NAME[channel].title} account is now part of your astryx account {person}."
+
+
+CODE_TRIES, CODE_MINUTES = 5, 10
+
+
+def _link_key() -> bytes:
+    """LINK_KEY, the org's secret for link codes (.env; unclassified, so a declared secret no agent's context holds):
+    made on first use. A code's MAC under it can't be inverted by a reader of link_pending (medic 13630 R1)."""
+    from astryx import config
+    key = config.get("LINK_KEY")
+    if not key:
+        key = secrets.token_hex(32)
+        config.set_env("LINK_KEY", key)
+    return key.encode()
+
+
+def _mac(person: str, channel: str, chat: str, code: str) -> str:
+    return hmac.new(_link_key(), f"{person}|{channel}|{chat}|{code}".encode(), hashlib.sha256).hexdigest()
+
+
+def issue_code(conn, person: str, channel: str, chat: str, opened_by: str) -> str:
+    """A fresh 6-digit code for `person` proving `chat` on `channel`: its MAC, a tries count and CODE_MINUTES of life
+    in link_pending, replacing any pending link of theirs. The caller sends the code to the account through its
+    provider; it is never written to messages, steps or logs."""
+    code = f"{secrets.randbelow(10**6):06d}"
+    conn.execute("INSERT INTO link_pending (person, channel, chat, opened_by, mac, expires) "
+                 "VALUES (%s, %s, %s, %s, %s, now() + make_interval(mins => %s)) "
+                 "ON CONFLICT ON CONSTRAINT link_pending_person_key DO UPDATE SET channel = EXCLUDED.channel, "
+                 "chat = EXCLUDED.chat, opened_by = EXCLUDED.opened_by, mac = EXCLUDED.mac, tries = 0, "
+                 "expires = EXCLUDED.expires", (person, channel, chat, opened_by, _mac(person, channel, chat, code), CODE_MINUTES))
+    return code
+
+
+def confirm_code(conn, who: str, channel: str, chat: str, code: str) -> int | str:
+    """The signed-in `who` typing the code of THEIR pending link to `chat` on `channel`: its id when right, else why
+    not. A try is spent BEFORE the compare, bounded in the same statement, so racing guesses can't beat the count
+    (medic 13639: 40 at once got 15 compares without the bound); the CODE_TRIES-th wrong one ends the link."""
+    r = conn.execute("UPDATE link_pending SET tries = tries + 1 WHERE person = %s AND channel = %s AND chat = %s "
+                     "AND expires > now() AND tries < %s RETURNING id, mac, tries", (who, channel, chat, CODE_TRIES)).fetchone()
+    if r is None:
+        return "no code is waiting for that account: add it again to get a new one"
+    pid, want, tries = r
+    if hmac.compare_digest(want, _mac(who, channel, chat, (code or "").strip())):
+        return pid
+    if tries >= CODE_TRIES:
+        conn.execute("DELETE FROM link_pending WHERE id = %s", (pid,))
+        return "too many wrong codes: that link is cancelled, add the account again for a new code"
+    return f"that code is not right ({CODE_TRIES - tries} tries left)"
 
 
 def _owner_asked(conn, me: str) -> bool:

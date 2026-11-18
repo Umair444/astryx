@@ -125,28 +125,20 @@ YES = re.compile(r"^\s*(yes|y|haan|ha|ji)\s*[.!]*\s*$", re.I)
 
 
 async def link_reply(pool, channel: str, route: dict, account: str, text: str) -> bool:
-    """A connection opened to LINK this account (connect(action=link), or a member adding their number on the web): its
-    YES links the account to the person and ends the row; the asker and the person are told. True when handled (the
-    bridge stops there); anything else is an ordinary message to the connection's agent."""
+    """A connection opened to LINK this account (a person adding it in "Your channels"): its YES lands the link at once
+    (link_land, the one landing the web's code confirm uses too) and astryx confirms to the account itself, through
+    the provider: no agent is woken or named (owner 11-18). True when handled (the bridge stops there); anything else
+    is an ordinary message to the connection's agent."""
     if route.get("purpose") != "link" or not YES.match(text or ""):
         return False
-    person, agent = route["person"], route["agent"]
     try:
-        async with pool.acquire() as c, c.transaction():
-            asker = await c.fetchval("DELETE FROM route WHERE id = $1 RETURNING opened_by", route["connection"])
-            if person == "owner" and asker == "owner":      # the owner adding his own account (an owner_call opened it)
-                await c.fetchval("SELECT identity_own($1, $2)", channel, str(account))
-            else:                                            # anyone else: identity_link, which never reaches 'owner'
-                await c.fetchval("SELECT identity_link($1, $2, $3)", person, channel, str(account))
-            await c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES ($1,$2,NULL,'chat',$3)",
-                            "pulse", agent, f"[link] {channel} account confirmed by its holder: now linked to {person} "
-                            f"(asked by {asker}). Their messages on {channel} arrive as {person}.")
-            await c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES ($1,$2,$3,'chat',$4)",
-                            agent, person, f"{channels.BY_NAME[channel].thread}:{route['chat']}",
-                            f"Linked: this {channels.BY_NAME[channel].title} account is now part of your astryx account {person}.")
-    except Exception as e:  # noqa: BLE001 — refused (already someone else's) or failed: the agent hears it as a message
+        person = await pool.fetchval("SELECT link_land($1, $2)", route["connection"], str(account))
+    except Exception as e:  # noqa: BLE001 — refused (already someone else's) or lapsed: an ordinary message then
         print(f"{channel}: link of connection {route.get('connection')} REFUSED ({str(e).splitlines()[0][:120]})", flush=True)
         return False
+    from astryx.core.connect import linked_text
+    from bridges.providers import registry
+    await registry.send(f"{channel}:{route['chat']}", linked_text(channel, person))
     return True
 
 
