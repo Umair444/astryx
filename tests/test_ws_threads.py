@@ -164,6 +164,11 @@ def main():
     est = Path(tempfile.mkdtemp())
     W.bind(lambda: None, est, roster=lambda: ROSTER)
     app = FastAPI()
+
+    @app.middleware("http")
+    async def owner(request, call_next):           # what privacy_gate sets for the owner: reach None (all), not unset
+        request.state.reach = None
+        return await call_next(request)
     app.include_router(W.router)
     c = TestClient(app)
     r1 = c.put("/api/ws/threads/meta", json={"thread": "obs:seed", "pinned": True})
@@ -205,7 +210,7 @@ def main():
     class Threads:
         async def fetch(self, sql, *args):
             return [member] if sql == W.THREADS_SQL else []
-    W.bind(lambda: Threads(), est, roster=lambda: ROSTER)
+    W.bind(lambda: Threads(), est, roster=lambda: ROSTER, scoped=lambda r: False)
     c.put("/api/ws/threads/meta", json={"thread": "chat:9-m", "switch_to": ["db"]})
     mine = c.get("/api/ws/threads").json()["threads"]
     opened = c.get("/api/ws/threads", params={"open": "chat:9-m"}).json()["threads"]
@@ -213,6 +218,9 @@ def main():
     arm("a member's chat isn't in the owner's own list, but open it is, with its switch: the removed agent stays out",
         not any(t["thread"] == "chat:9-m" for t in mine) and row and row["agents"] == ["db"], (mine, row))
     arm("open names no other thread into the list", [t["thread"] for t in opened] == [t["thread"] for t in mine] + ["chat:9-m"])
+    W.bind(lambda: Threads(), est, roster=lambda: ROSTER, scoped=lambda r: True)
+    arm("a member given part of the tree gets no other person's chat by naming it (as `everyone`, medic 13776)",
+        not any(t["thread"] == "chat:9-m" for t in c.get("/api/ws/threads", params={"open": "chat:9-m"}).json()["threads"]))
 
 
 if __name__ == "__main__":

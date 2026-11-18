@@ -457,7 +457,8 @@ async def ws_threads(request: Request, scope: str = "mine", open: str = ""):
         canvas = {}
     meta, projects, roster = read_meta(), _projects(account(request)), set(_roster())
     rows = build_rows(aggs, meta, projects, roster, canvas, me=me, everyone=everyone)
-    if open and valid_thread(open) and not any(r["thread"] == open for r in rows):   # not the viewer's own: listed too
+    if open and valid_thread(open) and not _scoped(request) \
+            and not any(r["thread"] == open for r in rows):   # not the viewer's own: listed too (a scoped member: theirs only, as `everyone`)
         opened = [a for a in aggs if a["thread"] == open] or [
             {**dict(r), "last_ts": r["last_ts"].isoformat() if r["last_ts"] else None}
             for r in await pool.fetch(THREADS_SQL, me, True, open)]               # older than the list's 400
