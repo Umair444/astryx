@@ -89,6 +89,21 @@ function useWidth() {
   return w
 }
 
+/* THE LINE UNDER THE BOX (owner 11-18: "chat bots usually show the disclaimers in the end … for desk chats … it is
+   public desk chat with a link of creating new private chat"): a desk is one shared conversation per agent, so it says
+   so and offers a private chat with that agent; any other chat says what every assistant should */
+function Footnote({ desk, onPrivate }: { desk: string | null; onPrivate: (agent: string) => void }) {
+  return (
+    <p className="ws-col -mt-3 pb-2 text-center text-[11.5px] text-ink-mute">
+      {desk ? (<>
+        Desk chat with {displayName(desk)}: everyone who opens {displayName(desk)} sees it.{' '}
+        <button type="button" onClick={() => onPrivate(desk)} className="underline underline-offset-2 hover:text-ink">Start a private chat</button>
+      </>) : 'Agents can make mistakes. Check figures that matter against their source.'}
+    </p>
+  )
+}
+
+
 export default function ChatApp({ thread, go: nav }: { thread: string | null; go: (t: string | null) => void }) {
   const { agents: roster, messages, presence, send, who, conn } = useStore()
   const me = who.handle || 'owner'          // the viewer's wire name: whose words are "mine" (cog-gaps)
@@ -318,7 +333,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   const lastSwitch = switches.at(-1) ?? null
   // the home's (or a project page's) box before its chat exists: a switch there only picks who the first message goes to
   const [homeTo, setHomeTo] = useState<string[] | null>(null)
-  useEffect(() => { setHomeTo(null) }, [thread])
+  const nextTo = useRef<string[] | null>(null)          // who a fresh chat opened FOR someone starts with (a desk's "private chat")
+  useEffect(() => { setHomeTo(nextTo.current); nextTo.current = null }, [thread])
   // who a message goes to: the thread's own agents (a desk's agent, a canvas chat's agent), then anyone who spoke;
   // after a SWITCH, the switched-to agents and whoever the owner has talked with SINCE it (what came before belongs to
   // the previous agent); a new chat defaults to seed, the owner's line to the org (an @mention always overrides)
@@ -532,7 +548,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
     { key: 'voice', label: 'Dictate', hint: 'speak into the message box (⌘.)', run: () => void startDictation((t) => composer.current?.insert(t)) },
     { key: 'talk', label: 'Talk', hint: 'a voice conversation with the agent here (⌘⇧.)', run: () => openTalk() },
     { key: 'remember', label: 'Remember', hint: 'propose the rest of the line to the memory agent', run: () => composer.current?.set('/remember ') },
-    { key: 'canvas', label: 'Open in canvas', hint: 'build a page with the first agent here', run: () => void window.open(`${canvasBase()}#/new/${encodeURIComponent(inChat[0] ?? 'painter')}`, '_blank') },
+    { key: 'canvas', label: 'Open in canvas', hint: 'build a page with the first agent here', run: () => void window.open(`${canvasBase()}#/paint/${encodeURIComponent(inChat[0] ?? 'painter')}`, '_blank') },   // #/new is an old chat link now (11-17)
     { key: 'switch', label: 'Switch agent', hint: 'hand this chat to another agent (/switch finance); it starts fresh here', run: () => composer.current?.pick() },
     { key: 'keys', label: 'Keyboard', hint: 'every shortcut', run: () => setHelp(true) },
     ...termCommands,
@@ -863,6 +879,8 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
         {view === 'thread' && !home && card && termAgent === card.agent && <SessionCard ask={card} onClose={() => { setCard(null); composer.current?.focus() }} />}
         {view === 'thread' && !home && term && termAgent === term.agent && <TerminalPeek agent={term.agent} run={term.run} onClose={() => { setTerm(null); composer.current?.focus() }} />}
         {view === 'thread' && !home && box(false)}
+        {view === 'thread' && !home && <Footnote desk={current ? deskAgent(current, names) : null}
+          onPrivate={(a) => { nextTo.current = [a]; go(null); requestAnimationFrame(() => composer.current?.focus()) }} />}
 
         {/* the media drawer: over the conversation's right edge, under the top bar (the whole screen on a phone) */}
         <AnimatePresence>

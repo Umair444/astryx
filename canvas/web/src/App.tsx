@@ -16,6 +16,7 @@ function parse(hash: string): Route {
   const h = hash.replace(/^#\/?/, '')
   const [a, b] = h.split('/')
   if (a === 'canvas' && b && /^\d+$/.test(b)) return { view: 'canvas', id: Number(b) }
+  if (a === 'paint') return { view: 'home', paint: b ? decodeURIComponent(b) : '' }   // the chat's /canvas: a new one, by this agent
   return { view: 'home' }
 }
 
@@ -93,7 +94,7 @@ export default function App() {
             initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.18 }}
           >
-            {route.view === 'home' && <Home />}
+            {route.view === 'home' && <Home paint={route.paint} />}
             {route.view === 'canvas' && <CanvasView id={route.id} />}
           </motion.div>
         </AnimatePresence>

@@ -8,10 +8,10 @@ import { Avatar, I, ago } from './ui'
 /* CANVAS IS ABOUT CANVASES (owner 11-17: "this move is required"): its front page is the gallery of the canvases you
    see (yours and those shared with you) and the way to start one. Talking to an agent is the workspace's: a chat here
    duplicated it (its cv: chats were already in the workspace list). */
-export function Home() {
+export function Home({ paint }: { paint?: string } = {}) {
   const me = useStore(s => s.me)!
   const canvases = useStore(s => s.canvases)
-  const [seed, setSeed] = useState<string | null>(null)
+  const [seed, setSeed] = useState<string | null>(paint === undefined ? null : '')
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -56,7 +56,7 @@ export function Home() {
             </div>
           )}
       </div>
-      {seed !== null && <NewCanvasDialog seed={seed} onClose={() => setSeed(null)} />}
+      {seed !== null && <NewCanvasDialog seed={seed} agent={paint} onClose={() => setSeed(null)} />}
     </div>
   )
 }

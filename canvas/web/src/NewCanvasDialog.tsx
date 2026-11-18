@@ -11,12 +11,12 @@ const IDEAS = [
   ['Explain the wire', 'A short animated explainer of how a message travels from me to an agent and back.'],
 ]
 
-export function NewCanvasDialog({ onClose, seed }: { onClose: () => void; seed?: string }) {
+export function NewCanvasDialog({ onClose, seed, agent: asked }: { onClose: () => void; seed?: string; agent?: string }) {
   const me = useStore(s => s.me)!
   const agents = useStore(s => s.agents)
   const [title, setTitle] = useState('')
   const [brief, setBrief] = useState(seed ?? '')
-  const [agent, setAgent] = useState(me.agents.includes(me.painter) ? me.painter : me.agents[0] ?? me.painter)
+  const [agent, setAgent] = useState(asked && me.agents.includes(asked) ? asked : me.agents.includes(me.painter) ? me.painter : me.agents[0] ?? me.painter)
   const [tier, setTier] = useState<'org' | 'personal'>('org')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
