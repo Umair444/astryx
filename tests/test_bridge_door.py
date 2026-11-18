@@ -269,21 +269,21 @@ async def bridge_arms():
         if ch == "whatsapp":                     # a route opened in the same breath as its message (a link, 13614)
             r = plain_row(off[ch])
             w = World(ch, [r])
+            # the bridge's REAL Book (registered by its own __init__) and its real refresh; only the table read is
+            # stubbed, so a Book that stops registering itself, or a door that stops re-reading, goes red (medic 13617)
+            import astryx.core.routes as table
             fresh = ROUTES[ch] + [{"chat": off[ch][3:], "agent": "seed", "enabled": True}]
+            book, load = bridges.common.BOOKS.get(ch), table.load
 
-            class Fresh:
-                table = Routes(ROUTES[ch])
-
-                async def refresh(self, pool):
-                    self.table = Routes(fresh)
-
-                def routes(self):
-                    return self.table
-            saved, bridges.common.BOOKS[ch] = bridges.common.BOOKS.get(ch), Fresh()
+            async def newer(pool, channel):
+                return fresh
+            table.load = newer
             try:
                 got = await w.deliver(r)
             finally:
-                bridges.common.BOOKS[ch] = saved
+                table.load = load
+                if book is not None:
+                    book.table = Routes([])
             check(f"{ch}: a route newer than the Book's last read is found on one re-read, the row delivered (13614)",
                   got["status"] == "delivered" and w.sends, repr((got, w.sends)))
         r = plain_row(org[ch][0])
