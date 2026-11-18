@@ -117,7 +117,7 @@ CHECK = None
 
 def _fresh(since=0.0) -> dict:
     return {"cur": [], "many": False, "since": since, "waiting": [], "acked": [], "served": [], "answered": False,
-            "th": {}, "bg": {}, "bind": {}, "seen": since}
+            "th": {}, "bg": {}, "bind": {}, "seen": since, "pp": []}
 
 
 def _tags(text: str) -> list:
@@ -138,26 +138,32 @@ def _tags(text: str) -> list:
     return _real(out[:20])
 
 
-def _people(text: str) -> bool:
-    """Does any channel tag opening `text` come from a PERSON (the owner, a channel's people: address.PERSONS)? An
-    unparseable sender counts as a person, so doubt never keeps an old scope."""
+def _who(text: str) -> dict:
+    """{msg_id: from a PERSON?} for the channel tags opening `text` (the owner, a channel's people: address.PERSONS).
+    A tag that names no sender, or a hook that can't read the table, counts as a person: doubt never keeps a scope."""
     try:
         from astryx.core import address
-        person = lambda n: address.surface_of(n) in address.PERSONS    # noqa: E731
+        person = lambda n: not n or address.surface_of(n) in address.PERSONS    # noqa: E731
     except Exception:
-        return True
-    pos = 0
+        person = lambda n: True                                                # noqa: E731
+    out, pos = {}, 0
     while True:
         m = _TAG.match(text, pos)
         if not m:
-            return False
-        name = dict(_ATTR.findall(m.group(1))).get("from", "").split("@")[0]
-        if not name or person(name):                # no sender named: doubt counts as a person
-            return True
+            return out
+        a = dict(_ATTR.findall(m.group(1)))
+        if a.get("msg_id", "").isdigit():
+            out[int(a["msg_id"])] = person(a.get("from", "").split("@")[0])
         close = text.find("</channel>", m.end())
         if close < 0:
-            return False
+            return out
         pos = close + len("</channel>")
+
+
+def _held(st) -> bool:
+    """Is the request in hand a PERSON's? Keyed on cur's own ids (pp: the ids that came from people), so a resume and a
+    switch to a waiting request carry it (medic 13874)."""
+    return any(i in st.get("pp", []) for i in st.get("cur") or [])
 
 
 def _real(tags: list) -> list:
@@ -184,13 +190,15 @@ def _threads(st, ids) -> set:
 
 
 def _snap(st, ids=None) -> dict:
-    return {"cur": list(st["cur"] if ids is None else ids), "many": st["many"] if ids is None else False,
+    ids = st["cur"] if ids is None else ids
+    return {"cur": list(ids), "many": st["many"] if ids is st["cur"] else False,
             "since": st["since"], "at": datetime.now().timestamp(),
-            "th": {str(i): st["th"].get(str(i), "") for i in (st["cur"] if ids is None else ids)}}
+            "th": {str(i): st["th"].get(str(i), "") for i in ids}, "pp": [i for i in ids if i in st.get("pp", [])]}
 
 
 def _resume(st, snap) -> None:
     st["th"].update(snap.get("th") or {})
+    st["pp"] = list(dict.fromkeys(st.get("pp", []) + list(snap.get("pp") or [])))
     st.update(cur=list(snap.get("cur") or []), many=bool(snap.get("many")), since=snap.get("since") or 0.0)
 
 
@@ -214,15 +222,16 @@ def _apply(st, e) -> dict:
         tags = _tags(text)
         new = _fresh(now)
         new["bg"] = {k: v for k, v in bg.items() if now - (v.get("at") or 0) < BG_TTL}
+        who = _who(text)
         out = not st.get("answered") or any(set(v.get("cur") or []) & set(st.get("cur") or []) for v in bg.values())
-        if tags and st.get("cur") and st.get("person") and out and not st.get("many") \
-                and now - (st.get("seen") or 0) < NUDGE and not _people(text):
+        if tags and _held(st) and out and not st.get("many") \
+                and now - (st.get("seen") or 0) < NUDGE and not any(who.get(i, True) for i, _ in tags):
             st["seen"] = now                       # an agent's nudge while a person's request is still out: it stays
             return st
         if tags:                                   # a wake
             new["th"] = {str(i): t for i, t in tags}
             new["cur"] = [i for i, _ in tags]
-            new["person"] = _people(text)
+            new["pp"] = [i for i, _ in tags if who.get(i, True)]
             new["many"] = len({t for _, t in tags}) > 1
         elif n:                                    # a background notice opening a turn: its launch's scope, else unknown
             snap = new["bg"].pop(n.group(1).strip(), None)
@@ -241,9 +250,12 @@ def _apply(st, e) -> dict:
                 st["waiting"] += [i for i in snap["cur"] if i not in st["waiting"] and i not in st["cur"]]
             return st
         cur_th = _threads(st, st["cur"])
-        nudge = bool(st["cur"]) and st.get("person") and not _people(text)
+        who, held = _who(text), _held(st)
         for i, t in _tags(text):
             st["th"][str(i)] = t
+            if who.get(i, True) and i not in st["pp"]:
+                st["pp"].append(i)
+            nudge = held and not who.get(i, True)
             if st["cur"] and t in cur_th:
                 st["cur"].append(i)                # the same chat writing again: the same work
             elif nudge:

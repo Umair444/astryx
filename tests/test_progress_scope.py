@@ -211,6 +211,17 @@ st, msgs = scenario(line("user", chan(10, thread=A, frm="wa-1@whatsapp")), use("
                     use(SEND, "t8", thread=A, body="started, will report"),
                     line("user", chan(30, thread="ch-disk", frm="db@local")))
 arm("C2 answered but background work still out for it: an agent's wake keeps the request", msgs == [10], st)
+st, msgs = scenario(line("user", chan(10, thread=A, frm="wa-1@whatsapp")), use("Bash", "bg1", command="x", run_in_background=True),
+                    line("user", notice("bg1")), use(SEND, thread=A, body="interim"),
+                    queued(chan(30, thread="ch-disk", frm="db@local")), use(SEND, "t3", thread="ch-disk", body="ok"),
+                    use("Bash", "t2", command="y"))
+arm("P3 (medic 13874) a person's request resumed by its background notice: db queued + a reply to db keeps it",
+    msgs == [10], st)
+st, msgs = scenario(line("user", chan(50, thread="t-task", frm="seed@local")), queued(chan(10, thread=A, frm="wa-1@whatsapp")),
+                    use(SEND, thread="t-task", body="done"), use(SEND, "t4", thread=A, body="on it"),
+                    use(SEND, "t5", thread=A, body="interim"), queued(chan(30, thread="ch-disk", frm="db@local")),
+                    use(SEND, "t6", thread="ch-disk", body="ok"), use("Bash", "t2", command="y"))
+arm("P4b switched to a person's request and answered once: db queued + a reply to db keeps it", msgs == [10], st)
 keep, H.NUDGE = H.NUDGE, -1
 st, msgs = scenario(*work, line("user", chan(30, thread="ch-disk", frm="db@local")))
 H.NUDGE = keep
