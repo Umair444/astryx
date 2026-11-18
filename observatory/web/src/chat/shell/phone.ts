@@ -46,31 +46,6 @@ export function useKeyboardViewport(root: RefObject<HTMLElement | null>) {
   }, [root])
 }
 
-/* the scroller keeps its end in view when its box shrinks (the keyboard) or its content grows (a table, an image, a
-   reply laying out), IF the reader was at the end just before: the gap is measured against the sizes before the change,
-   so a reader who scrolled up to read is never yanked down */
-export function useStickToEnd(scroller: RefObject<HTMLElement | null>, key: unknown) {
-  useEffect(() => {
-    const el = scroller.current
-    if (!key || !el || typeof ResizeObserver === 'undefined') return
-    let sh = el.scrollHeight, ch = el.clientHeight
-    const fit = () => {
-      const wasAtEnd = sh - el.scrollTop - ch < 96
-      const grew = el.scrollHeight !== sh || el.clientHeight !== ch
-      if (grew && wasAtEnd && el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight
-      sh = el.scrollHeight; ch = el.clientHeight
-    }
-    const onScroll = () => { sh = el.scrollHeight; ch = el.clientHeight }
-    const ro = new ResizeObserver(fit)
-    const watch = () => { ro.disconnect(); ro.observe(el); for (const c of Array.from(el.children)) ro.observe(c) }
-    watch()
-    const mo = new MutationObserver(watch)
-    mo.observe(el, { childList: true })
-    el.addEventListener('scroll', onScroll, { passive: true })
-    return () => { el.removeEventListener('scroll', onScroll); ro.disconnect(); mo.disconnect() }
-  }, [scroller, key])
-}
-
 /* a drag from the screen's left edge opens the drawer (the drawer closes with a leftward drag: useSwipeClose) */
 export function useEdgeSwipe(enabled: boolean, open: () => void) {
   const openRef = useRef(open)

@@ -202,8 +202,14 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
       if (box.scrollHeight - box.scrollTop - box.clientHeight < 80) { if (down || !byHand) following.current = true }
       else if (byHand) following.current = false
     }
+    // THE one follower of the end (useStickToEnd was a second one, writing the same scrollTop on its own rule): the box
+    // itself (it shrinks when a multi-line draft grows the composer, or a phone's keyboard opens) and everything in it
+    // (this conversation, the outbox and notes below it) re-pin as they change size
     const ro = new ResizeObserver(pin)
-    ro.observe(content)
+    const watch = () => { ro.disconnect(); ro.observe(box); ro.observe(content); for (const c of Array.from(box.children)) ro.observe(c) }
+    watch()
+    const mo = new MutationObserver(watch)
+    mo.observe(box, { childList: true })
     box.addEventListener('wheel', touch, { passive: true })
     box.addEventListener('touchmove', touch, { passive: true })
     box.addEventListener('keydown', onKey)
@@ -211,7 +217,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     box.addEventListener('scroll', onScroll, { passive: true })
     pin()
     return () => {
-      ro.disconnect()
+      ro.disconnect(); mo.disconnect()
       box.removeEventListener('wheel', touch); box.removeEventListener('touchmove', touch)
       box.removeEventListener('keydown', onKey); box.removeEventListener('scroll', onScroll)
       box.removeEventListener('mousedown', onGrab)

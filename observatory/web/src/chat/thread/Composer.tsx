@@ -438,7 +438,8 @@ export default forwardRef<ComposerHandle, {
             // (owner 11-16): the name is the hover title and the label, the lead its accent ring
             <div className="ws-to flex items-center min-w-0 ml-1.5 text-[12px] text-ink-mute" role="group" aria-label={`To ${to.map(displayName).join(', ')}`}>
               <span className="max-sm:hidden mr-1.5">To</span>
-              <span className="flex items-center min-w-0 overflow-x-auto [scrollbar-width:none]">
+              {/* room for each face's ×: the scroller clips what overflows it, and the last chip's × sat half outside */}
+              <span className="flex items-center min-w-0 overflow-x-auto [scrollbar-width:none] pt-1.5 pr-2 -mt-1.5">
                 {to.map((n, i) => (
                   <span key={n} className="flex items-center shrink-0">
                     {i > 0 && <span className="mx-1 h-3.5 w-px bg-line" aria-hidden />}
