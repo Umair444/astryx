@@ -222,6 +222,31 @@ st, msgs = scenario(line("user", chan(50, thread="t-task", frm="seed@local")), q
                     use(SEND, "t5", thread=A, body="interim"), queued(chan(30, thread="ch-disk", frm="db@local")),
                     use(SEND, "t6", thread="ch-disk", body="ok"), use("Bash", "t2", command="y"))
 arm("P4b switched to a person's request and answered once: db queued + a reply to db keeps it", msgs == [10], st)
+st, msgs = scenario(line("user", chan(10, thread=A, frm="wa-1@whatsapp")), use("Bash", "bg1", command="x", run_in_background=True),
+                    line("user", chan(20, thread=B, frm="owner@local")), queued(notice("bg1")),
+                    use(SEND, thread=B, body="done"), use(SEND, "t7", thread=A, body="result"), use(SEND, "t8", thread=A, body="more"),
+                    queued(chan(30, thread="ch-disk", frm="db@local")), use(SEND, "t9", thread="ch-disk", body="ok"),
+                    use("Bash", "t2", command="y"))
+arm("P5 (medic 13878) a person's request back in waiting by a queued notice, then switched to: db's reply keeps it",
+    msgs == [10], st)
+with tempfile.TemporaryDirectory() as td:
+    H.TURN_CACHE = str(Path(td) / "cache" / "turn-{agent}.json")
+    t = Path(td) / "s.jsonl"
+    t.write_text(line("user", chan(10, thread=A, frm="wa-1@whatsapp")) + use("Bash", "t1", command="x"))
+    H.turn_state(str(t), "db")
+    cf = Path(H.TURN_CACHE.format(agent="db"))
+    c = json.loads(cf.read_text())
+    for k in ("pp", "seen"):
+        c["st"].pop(k, None)
+    cf.write_text(json.dumps(c))
+    with t.open("a") as f:
+        f.write(queued(chan(20, thread=A, frm="wa-1@whatsapp")) + use("Bash", "t2", command="y"))
+    a1 = H.turn_msgs(str(t), "db")
+    with t.open("a") as f:
+        f.write(use("Bash", "t3", command="z"))
+    a2 = H.turn_msgs(str(t), "db")
+arm("P6 a state cached by an older hook (no new keys) then a queued message: the scope survives (any new key, ever)",
+    a1 == [10, 20] and a2 == [10, 20], (a1, a2))
 keep, H.NUDGE = H.NUDGE, -1
 st, msgs = scenario(*work, line("user", chan(30, thread="ch-disk", frm="db@local")))
 H.NUDGE = keep

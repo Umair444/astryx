@@ -215,6 +215,8 @@ def _opens(e) -> bool:
 def _apply(st, e) -> dict:
     """One transcript entry's effect on the scope state (see the table above). Returns st (mutated)."""
     now = datetime.now().timestamp()
+    for k, v in _fresh(now).items():                # a state cached by an older hook lacks a newer key: never a KeyError
+        st.setdefault(k, v)                         # (one wedged line replays forever: medic 13878 R1)
     if _opens(e):
         text = _text((e.get("message") or {}).get("content"))
         bg = st["bg"]
@@ -247,6 +249,7 @@ def _apply(st, e) -> dict:
             snap = st["bg"].pop(n.group(1).strip(), None)
             if snap and set(snap.get("cur") or []) - set(st["cur"]):
                 st["th"].update(snap.get("th") or {})
+                st["pp"] += [i for i in snap.get("pp") or [] if i not in st["pp"]]   # as _resume (medic 13878 R2)
                 st["waiting"] += [i for i in snap["cur"] if i not in st["waiting"] and i not in st["cur"]]
             return st
         cur_th = _threads(st, st["cur"])
