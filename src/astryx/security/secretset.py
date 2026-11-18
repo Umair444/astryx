@@ -53,6 +53,10 @@ NOT_SECRET = frozenset({
     # a URL query value is secret by default; these name ONE parameter ("<KEY>:<param>") whose
     # value is an ordinary word (it appears in the tree's own code) and grants nothing
     "AUTOREMOTE_GETLOC_URL:message",
+    # sms (bridges/providers/sms.py): where the gateway queue lives and how much a day; the Jupyter host:port has no
+    # token in it, and every seat names that same host:port in its jupyter_* calls (db 13307: guarding it blocked them)
+    "SMS_JUPYTER", "SMS_ETL_DIR", "SMS_DB", "SMS_SHORTCODE", "SMS_IPADDRESS", "SMS_TABLE", "SMS_DAILY_CAP",
+    "EMAIL_DAILY_CAP",
 })
 
 
