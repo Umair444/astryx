@@ -433,9 +433,12 @@ def arm_channel_config():
     guarded whole, and the guard refused every seat's jupyter_* call naming that host:port)."""
     import re
     files = ["bridges/providers/sms.py", "bridges/sms.py", "bridges/email.py"]
+    SECRET_OK: set[str] = set()      # a key these bridges read that IS a secret (a token) goes here, never in NOT_SECRET
     keys = {k for f in files for k in re.findall(r'env\("([A-Z0-9_]+)"', (REPO / f).read_text())}
+    loose = sorted(keys - ss.NOT_SECRET - ss.URL_CONFIG - SECRET_OK)
     check("S0.16 every key the SMS and email bridges read is classified config (NOT_SECRET or URL_CONFIG)",
-          bool(keys) and keys <= ss.NOT_SECRET | ss.URL_CONFIG, f"unclassified={sorted(keys - ss.NOT_SECRET - ss.URL_CONFIG)}")
+          bool(keys) and not loose, f"unclassified={loose}: config goes in NOT_SECRET; a key that IS a secret goes in "
+          "this arm's SECRET_OK, never in NOT_SECRET (that makes it printable)")
 
 
 def arm_live():
