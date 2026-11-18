@@ -138,6 +138,7 @@ GOOD = {
 }
 for rel, body in GOOD.items():
     put(f"triggers/{rel}", body)
+METHOD = "if True:\n    class K:\n        @property\n        def p(self):\n            return 1\n"
 BLIND = {
     "b1 an import inside a top-level try": "try:\n    from zzpkg.mod_i import *  # noqa\nexcept ImportError:\n    pass\n",
     "b2 a decorated def inside a top-level if": TRIG + 'if True:\n    @trigger("* * * * *")\n    def zz_b2(ctx):\n'
@@ -171,6 +172,14 @@ BLIND = {
                                                  + "class K:\n    @property\n    def p(self):\n        return 1\n",
     "b23 a builtin decorator under a star-import": "from zzpkg.mod_iii import *  # noqa\n\n\n" + "class K:\n    @property\n    def p(self):\n        return 1\n",
     "b24 a non-builtin decorator on a method": "import functools\n\n\n" + "class K:\n    @functools.cache\n    def p(self):\n        return 1\n",
+    # seed 13185 R1: a builtin rebound other than by assignment
+    "b25 a builtin rebound by an except capture": "try:\n    pass\nexcept Exception as property:\n    pass\n\n\n" + METHOD,
+    "b26 a builtin rebound by a match capture": "match 1:\n    case property:\n        pass\n\n\n" + METHOD,
+    "b27 a builtin rebound through the builtins module": "import builtins\nbuiltins.property = id\n\n\n" + METHOD,
+    "b28 a builtin rebound through globals()": "globals()[\"property\"] = id\n\n\n" + METHOD,
+    "b29 a builtin rebound through the builtins module, aliased": "import builtins as b\nb.property = id\n\n\n" + METHOD,
+    "b30 a builtin rebound by a match-mapping rest": "match {}:\n    case {**property}:\n        pass\n\n\n" + METHOD,
+    "b31 a builtin decorator other than property/staticmethod/classmethod": METHOD.replace("@property", "@print"),
 }
 
 try:

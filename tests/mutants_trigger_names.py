@@ -46,12 +46,25 @@ MUTANTS = {
         ("        return any(_root_of(a.name.split(\".\")[0], w) is not None for a in n.names)\n",
          "        return False\n"),
     "a builtin decorator the file rebinds isn't blind":
-        ("        return any(not (isinstance(d, ast.Name) and hasattr(builtins, d.id) and rebound is not None\n"
-         "                        and d.id not in rebound) for d in n.decorator_list)\n",
-         "        return any(not (isinstance(d, ast.Name) and hasattr(builtins, d.id)) for d in n.decorator_list)\n"),
+        ("d.id in _BUILTIN_DECORATORS and rebound is not None\n                        and d.id not in rebound)",
+         "d.id in _BUILTIN_DECORATORS)"),
+    "an except/match capture doesn't rebind a builtin":
+        ("        elif isinstance(n, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and n.name:\n            names.add(n.name)\n",
+         ""),
+    "a load of builtins/globals/vars/locals/setattr doesn't count as rebinding every builtin":
+        ("                if n.id in _REBINDERS:\n                    return None\n",
+         "                pass\n"),
+    "importing the builtins module doesn't count as rebinding every builtin":
+        ("                if a.name == \"*\" or a.name.split(\".\")[0] == \"builtins\":\n",
+         "                if a.name == \"*\":\n"),
+    "any builtin decorator is safe, not only property/staticmethod/classmethod":
+        ("d.id in _BUILTIN_DECORATORS and rebound", "hasattr(__import__(\"builtins\"), d.id) and rebound"),
+    "a match-mapping rest doesn't rebind a builtin":
+        ("        elif isinstance(n, ast.MatchMapping) and n.rest:\n            names.add(n.rest)\n", ""),
     "a star-import doesn't count as rebinding every builtin":
-        ("                if a.name == \"*\":\n                    return None\n",
-         "                if a.name == \"*\":\n                    continue\n"),
+        ('                if a.name == "*" or a.name.split(".")[0] == "builtins":\n                    return None\n',
+         '                if a.name == "*":\n                    continue\n                if a.name.split(".")[0] == "builtins":\n'
+         '                    return None\n'),
     "a decorator other than the trigger as imported isn't blind (it's just skipped)":
         ("                    blind(f\"`@{ast.unparse(d)}` on {s.name} isn't the trigger decorator as imported\", s)\n",
          "                    pass\n"),

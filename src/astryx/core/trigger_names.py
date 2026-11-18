@@ -12,7 +12,8 @@ makes the file BLIND, and a blind file can hide any name, so a name that would o
 (a1 BC-1: an under-read is a duplicate install, the defect this exists to stop; deferral is the safe direction):
   - an import, or a decorated def, inside any top-level compound statement (if/try/with/for/while/class/match),
     except an import of a module that isn't local (stdlib, site-packages: it reads no trigger file) and a def
-    whose every decorator is a builtin the file never rebinds (`@property` in a class: it can't be the trigger)
+    whose every decorator is property/staticmethod/classmethod and the file never rebinds it (by assignment,
+    import, except/match capture, or builtins/globals/vars/locals/setattr: a class's `@property` isn't the trigger)
   - a decorator on a top-level def that isn't `trigger(...)` from `from astryx import trigger`, or `astryx.trigger(...)`
     from `import astryx` (an alias, an attribute chain, a call result, any other decorator)
   - the trigger function used other than as a decorator; exec/eval/compile/runpy/importlib/__import__ at top level;
@@ -50,7 +51,6 @@ from astryx.paths import repo_root  # noqa: E402
 from astryx import config, paths  # noqa: E402
 
 import ast
-import builtins
 import importlib.machinery
 import json
 import os
@@ -231,31 +231,47 @@ def _uses(node: ast.AST, pred) -> bool:
     return False
 
 
+_BUILTIN_DECORATORS = {"property", "staticmethod", "classmethod"}
+_REBINDERS = {"builtins", "__builtins__", "globals", "vars", "locals", "setattr"}   # rebind a name out of sight
+
+
 def _rebound(tree: ast.Module) -> set[str] | None:
-    """Every name the file binds anywhere (assigned, imported, def'd), or None if a star-import may bind any name."""
+    """Every name the file binds anywhere (assigned, imported, def'd, caught, matched), or None if it may bind any name
+    out of sight: a star-import, or a load of builtins/globals/vars/locals/setattr."""
     names: set[str] = set()
     for n in ast.walk(tree):
-        if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load):
-            names.add(n.id)
+        if isinstance(n, ast.Name):
+            if isinstance(n.ctx, ast.Load):
+                if n.id in _REBINDERS:
+                    return None
+            else:
+                names.add(n.id)
         elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            if getattr(n, "module", None) == "builtins":
+                return None
             for a in n.names:
-                if a.name == "*":
+                if a.name == "*" or a.name.split(".")[0] == "builtins":
                     return None
                 names.add((a.asname or a.name).split(".")[0])
         elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(n.name)
+        elif isinstance(n, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and n.name:
+            names.add(n.name)
+        elif isinstance(n, ast.MatchMapping) and n.rest:
+            names.add(n.rest)
     return names
 
 
 def _hidden(n: ast.AST, w: Walk, rebound: set[str] | None) -> bool:
     """Inside a compound statement: might `n` register a trigger the reader can't place? An import of a module that
-    isn't local reads no trigger file; a def whose every decorator is a builtin the file never rebinds isn't one."""
+    isn't local reads no trigger file; a def whose every decorator is property/staticmethod/classmethod, which the
+    file never rebinds, isn't one."""
     if isinstance(n, ast.Import):
         return any(_root_of(a.name.split(".")[0], w) is not None for a in n.names)
     if isinstance(n, ast.ImportFrom):
         return bool(n.level) or _root_of((n.module or "").split(".")[0], w) is not None
     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return any(not (isinstance(d, ast.Name) and hasattr(builtins, d.id) and rebound is not None
+        return any(not (isinstance(d, ast.Name) and d.id in _BUILTIN_DECORATORS and rebound is not None
                         and d.id not in rebound) for d in n.decorator_list)
     return False
 
