@@ -49,7 +49,7 @@ from .progress import Progress  # noqa: E402
 from .common import signed  # noqa: E402  the sender label when the BOT speaks (a webhook names the agent itself)
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
-from .common import identity_of  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
+from .common import identity_of, link_reply  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
 BOOK = Book("discord")      # this bridge's routes, from the route table (common.Book)
 
 pool: asyncpg.Pool | None = None
@@ -288,6 +288,8 @@ async def on_message(msg: discord.Message):
     if not text:
         return
     who = await identity_of(pool, "discord", msg.author.id, f"dc-{msg.author.id}", route)   # the one minter
+    if await link_reply(pool, "discord", route, msg.author.id, text):   # YES to "link this account to <person>"
+        return
     if who != "owner":
         if not route.get("open"):
             print(f"discord: sender {msg.author.id} on closed "

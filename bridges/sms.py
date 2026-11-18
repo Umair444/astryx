@@ -20,7 +20,7 @@ import asyncio
 import asyncpg
 from fastapi import FastAPI
 
-from .common import Book, Outcome, door_org_ok, door_refuse, env, listen, released, signed, split_files, split_polls
+from .common import Book, Outcome, cap_spent, door_org_ok, door_refuse, env, listen, released, sent_today_sql, signed, split_files, split_polls
 from .providers.sms import SmsProvider, number
 from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
 
@@ -36,10 +36,7 @@ pool: asyncpg.Pool | None = None
 # claimant per row)
 CLAIM = f"({address.reaches_sql('sms')} OR (to_agent LIKE 'sms-%' AND NOT {address.elsewhere_sql('sms')}))"
 
-# what THIS bridge delivered today (PKT): every send's receipt names its handle sms:<number>, whatever the row's thread
-# (CLAIM also takes sms-<n> on any thread; medic 13091 R2); a door refusal is status 'refused'
-SENT_TODAY = ("SELECT count(*) FROM messages WHERE status='delivered' AND delivery->>'handle' LIKE 'sms:%' "
-              "AND delivered_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Karachi') AT TIME ZONE 'Asia/Karachi'")
+SENT_TODAY = sent_today_sql("sms")
 
 
 def routes():
@@ -56,8 +53,7 @@ async def deliver(row):
     chat = number(chat) or chat                    # sms:0300… and sms:92300… are one number, one route
     if not chat or not await door_org_ok(pool, row, "sms", routes(), chat):
         return                                     # refused at the door: only a declared route is texted
-    if await pool.fetchval(SENT_TODAY) >= CAP:
-        await door_refuse(pool, row, "sms", f"the org's SMS cap for today ({CAP}) is spent")
+    if await cap_spent(pool, row, "sms", CAP):
         return
     agent = row["from_agent"]
     text, files = split_files(row["body"] or "")

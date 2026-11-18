@@ -99,6 +99,16 @@ provided = {m.group(1) for f in (REPO / "bridges" / "providers").glob("*.py")
             for m in re.finditer(r'^\s+NAME = "([a-z]+)"', f.read_text(), re.M)}
 arm("each provider names a channel", provided <= set(C.BY_NAME), provided - set(C.BY_NAME))
 arm("each channel the owner connects has a provider", {c.name for c in C.connectable()} <= provided, {c.name for c in C.connectable()} - provided)
+# LINKING IS ONE RULE ON EVERY CHANNEL (owner 11-18 "make channels thing standard"): a person can link an account on
+# each linkable channel, each proven its own way; a missing half was Discord, linkable but its bridge never heard a YES
+reply = [c.name for c in C.linkable() if c.link == "reply"]
+arm("each channel proven by a YES has a bridge that hears it (link_reply)",
+    all("link_reply(" in (REPO / "bridges" / f"{n}.py").read_text() for n in reply),
+    [n for n in reply if "link_reply(" not in (REPO / "bridges" / f"{n}.py").read_text()])
+code = [c.name for c in C.linkable() if c.link == "code"]
+arm("each channel proven by a code has a provider to send it", set(code) <= provided, set(code) - provided)
+arm("every linkable proof is one the server knows", {c.link for c in C.linkable()} <= {"reply", "code"},
+    {c.link for c in C.linkable()})
 
 print("\nH3 A NEW CHANNEL IS ONE ROW")
 slack = C.Channel("slack", "Slack", person="sl", thread="sl", group=r"C[A-Z0-9]+", dm=r"D[A-Z0-9]+",
