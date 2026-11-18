@@ -28,7 +28,8 @@ async def scan_one(name: str, spec: dict) -> dict:
         import subprocess
         out = subprocess.run([run["command"], *run["args"], spec["list"]], capture_output=True, text=True, timeout=30)
         if out.returncode:
-            raise RuntimeError(f"rc {out.returncode}: {out.stderr.strip()[-200:]}")
+            lines = out.stderr.strip().splitlines()      # the line that names the failure, not the stack's tail
+            raise RuntimeError(f"rc {out.returncode}: " + next((l for l in lines if "Error" in l), lines[0] if lines else ""))
         return {"server": name, "who": spec.get("who", "grant"), "tools": json.loads(out.stdout)}
     params = StdioServerParameters(command=run["command"], args=run["args"], env={**os.environ, **run.get("env", {})})
     async with stdio_client(params) as (r, w):
