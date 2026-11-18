@@ -428,6 +428,16 @@ def arms_manifest(tmp):
           list(u3) == [str(tmp / "scratch2" / ".env")], str(list(u3)))
 
 
+def arm_channel_config():
+    """S0.16 every key the SMS and email bridges read is classified config (db 13307: an unclassified SMS_JUPYTER was
+    guarded whole, and the guard refused every seat's jupyter_* call naming that host:port)."""
+    import re
+    files = ["bridges/providers/sms.py", "bridges/sms.py", "bridges/email.py"]
+    keys = {k for f in files for k in re.findall(r'env\("([A-Z0-9_]+)"', (REPO / f).read_text())}
+    check("S0.16 every key the SMS and email bridges read is classified config (NOT_SECRET or URL_CONFIG)",
+          bool(keys) and keys <= ss.NOT_SECRET | ss.URL_CONFIG, f"unclassified={sorted(keys - ss.NOT_SECRET - ss.URL_CONFIG)}")
+
+
 def arm_live():
     """The REAL holders: the set is non-empty (anti-vacuity) and every NOT_SECRET value is clean."""
     if not ss.ENV_FILE.exists():
@@ -505,6 +515,7 @@ def main():
             arms_manifest(tmp)
         finally:
             ss.ENV_FILE, ss.PGPASS_FILE = saved
+    arm_channel_config()
     arm_live()
     if fails:
         print(f"\nFAIL: {len(fails)} arm(s) red")
