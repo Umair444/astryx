@@ -188,7 +188,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     // within a moment of their wheel, swipe, key or scrollbar grab. The app's own glide fires scroll events too and
     // must never unpin itself mid-way (medic 12897); a trackpad's touch or bounce that leaves the view at the end
     // (Safari on a Mac, member 13389) doesn't unpin; any scroll that lands near the end re-pins
-    let hand = 0
+    let hand = 0, top = box.scrollTop
     const touch = () => { hand = performance.now() }
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLElement && e.target.closest('input, textarea, [contenteditable="true"]')
@@ -196,8 +196,11 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     }
     const onGrab = (e: MouseEvent) => { if (e.target === box) touch() }   // the scrollbar itself, taken by hand
     const onScroll = () => {
-      if (box.scrollHeight - box.scrollTop - box.clientHeight < 80) following.current = true
-      else if (performance.now() - hand < 600) following.current = false
+      const byHand = performance.now() - hand < 600, down = box.scrollTop >= top
+      top = box.scrollTop
+      // near the end re-pins, unless the reader is on their way UP (a slow scroll up through the last 80px, medic 13470)
+      if (box.scrollHeight - box.scrollTop - box.clientHeight < 80) { if (down || !byHand) following.current = true }
+      else if (byHand) following.current = false
     }
     const ro = new ResizeObserver(pin)
     ro.observe(content)
