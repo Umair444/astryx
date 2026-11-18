@@ -305,8 +305,10 @@ def switch_check(agents, roster: set[str]) -> tuple[list[str], str | None]:
 def apply_meta(meta: dict, thread: str, title=..., pinned=..., switch=..., now: str | None = None) -> dict:
     """One thread's patch onto the stored meta (a new dict; the input is never mutated). `...` = leave as is;
     a blank title clears it; an entry left with nothing in it is removed, so the file holds only what was set.
-    `switch` = a validated agent list appended as {ts: now, agents} (a switch to the agents already current is no
-    switch and adds nothing; the list keeps its newest SWITCHES_MAX)."""
+    `switch` = a validated agent list appended as {ts: now, agents}, even when it names the last switch's agents: the
+    chat's agents are that switch's PLUS whoever the human wrote to since (model.ts inChat), so re-switching to the same
+    set is how an agent written to since is removed (owner 13780: the × saved nothing and seed came back). The list
+    keeps its newest SWITCHES_MAX."""
     out = {k: dict(v) for k, v in meta.items() if isinstance(v, dict)}
     cur = out.get(thread, {})
     if title is not ...:
@@ -322,8 +324,7 @@ def apply_meta(meta: dict, thread: str, title=..., pinned=..., switch=..., now: 
             cur.pop("pinned", None)
     if switch is not ...:
         sw = switches_of(cur)
-        if not sw or sw[-1]["agents"] != list(switch):
-            sw.append({"ts": now or _utcnow(), "agents": list(switch)})
+        sw.append({"ts": now or _utcnow(), "agents": list(switch)})   # even to the same agents: from NOW, only these
         cur["switches"] = sw[-SWITCHES_MAX:]
     if cur:
         out[thread] = cur
