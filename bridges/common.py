@@ -150,6 +150,9 @@ async def link_reply(pool, channel: str, route: dict, account: str, text: str) -
     return True
 
 
+BOOKS: dict[str, "Book"] = {}  # each bridge's Book by channel: the door re-reads one on a miss
+
+
 class Book:
     """A bridge's ROUTES, from the one route table (astryx.core.routes; owner 11-16: "just route table"): read once at
     start, then every EVERY seconds, so an edit on the rail or an agent's connect reaches the bridge within seconds, no
@@ -160,6 +163,7 @@ class Book:
 
     def __init__(self, channel: str):
         self.channel, self.table, self.failing = channel, resolve([]), False
+        BOOKS[channel] = self
 
     def routes(self) -> Routes:
         return self.table
@@ -561,12 +565,22 @@ async def door_open(pool, row, channel: str, routes) -> tuple[dict, str] | None:
 
 
 async def door_org_ok(pool, row, channel: str, routes, chat) -> bool:
-    """An UNSTAMPED row: True when `chat` is a declared org route of this bridge; else the row is refused."""
+    """An UNSTAMPED row: True when `chat` is a declared org route of this bridge; else the row is refused. A miss re-reads
+    the route table once first: a route opened in the same breath as its message (a link's "Reply YES", 13614) is
+    newer than the Book's last 3-second read, and refusing it would drop the one message that route exists for."""
     R = _release()
     try:
         R.door_org(channel, chat, routes)
         return True
     except R.Refused as e:
+        book = BOOKS.get(channel)
+        if book is not None:
+            await book.refresh(pool)
+            try:
+                R.door_org(channel, chat, book.routes())
+                return True
+            except R.Refused as again:
+                e = again
         await door_refuse(pool, row, channel, e)
         return False
 
