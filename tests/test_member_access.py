@@ -228,9 +228,13 @@ def main(tmp: Path, url: str):
                   "('db','response','db answers the owner privately',%s)", (t2, t2))
         c.execute("INSERT INTO steps (agent, kind, content, meta) VALUES ('medic','tool','medic mid-turn on the owner''s chat',"
                   "jsonb_build_object('turn_msgs', jsonb_build_array(%s::bigint)))", (mid,))
+        c.execute("INSERT INTO steps (agent, kind, content, meta) VALUES ('medic','tool','medic juggling two chats, one the owner''s',"
+                  "jsonb_build_object('many', jsonb_build_array(%s::bigint)))", (mid,))   # hooks/step.py: work for 2+ chats
     sa = [s_["content"] for s_ in cl.get("/api/steps", headers=ALICE()).json()]
     arm("P6 a step of a turn still running on the owner's chat (meta.turn_msgs, no turn yet) is not in alice's steps",
         "medic mid-turn on the owner's chat" not in sa, sa)
+    arm("P6 a step whose work served several chats at once (meta.many) naming the owner's chat is not in alice's steps "
+        "(medic 13170)", "medic juggling two chats, one the owner's" not in sa, sa)
     obs.ESTATE, est0 = estate, obs.ESTATE                  # db's charter, for its profile
     (estate / "agents").mkdir(exist_ok=True)
     (estate / "agents" / "db.md").write_text("# db\n*the estate steward*\n")

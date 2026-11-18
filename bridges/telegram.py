@@ -60,7 +60,6 @@ BOOK = Book("telegram")      # this bridge's routes, from the route table (commo
 
 pool: asyncpg.Pool | None = None
 http: httpx.AsyncClient | None = None
-JOB_TIMEOUT = 1800    # a progress job is forgotten 30 min after it opened (or after its last reply)
 
 
 def routes() -> list[dict]:
@@ -197,7 +196,7 @@ async def _typing(chat: str):
 
 
 # the live steps bubble: one lifecycle for every channel (bridges/progress.py); Telegram's four acts
-progress = Progress(lambda: pool, post=_post, edit=_edit, finish=_finish, typing=_typing, timeout=JOB_TIMEOUT)
+progress = Progress(lambda: pool, post=_post, edit=_edit, finish=_finish, typing=_typing)
 on_step = progress.on_step
 
 

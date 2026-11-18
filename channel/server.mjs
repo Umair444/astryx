@@ -13,6 +13,7 @@ import { homeFile, homePath, dsn } from './home.mjs'
 import { joinState } from './join.mjs'
 import { asker } from './asker.mjs'
 import { reply } from './reply.mjs'
+import { midTask } from './midtask.mjs'
 import { team } from './team.mjs'
 
 // mode 'repo' (spawn.sh's residents: ASTRYX_AGENT only) is the behaviour this file always had. The Claude Code
@@ -607,6 +608,7 @@ async function pushMessage(row) {
     }
   }
   const again = Number(row.delivery?.recovered || 0)
+  const busy = await midTask(row, { pool, agent: AGENT })
   const crew = team(row, AGENT)                   // a fanned-out message: this member's lead/helper line first
   const said = crew ? `${crew.line}\n${text}` : text
   const content = again
@@ -624,6 +626,7 @@ async function pushMessage(row) {
         ...(re.id ? { reply_to: re.id } : {}),
         ...(crew ? { team: crew.members, lead: crew.lead } : {}),
         ...(again ? { redelivered: String(again) } : {}),
+        ...(busy ? { mid_task: busy } : {}),
       },
     },
   })

@@ -534,7 +534,7 @@ run "org backup: a cog org's own dump and restore-verify triggers, the shims' on
 run "init.sh schedules a one-org backup, deferentially by either name (seed 61526)" "$PY" tests/test_init_orgbackup.py
 run "influence nightly: every org computes its influence graph, so the floor draws it (owner 11-15)" "$PY" tests/test_influence_nightly.py
 run "whatsapp: the chat search finds groups as well as people (owner 11-15)" "$PY" tests/test_wa_group_search.py
-run "bridges: one live steps bubble for every channel; the wire's own send never opens one; a steps-only bubble goes at the turn's end (owner 11-16)" "$PY" tests/test_bridge_progress.py
+run "bridges: one live steps bubble per REQUEST for every channel: it lives through background work, waits behind another chat, reopens a false finished (owner 11-18)" "$PY" tests/test_bridge_progress.py
 run "owed replies: a person's message with no reply keeps the agent from going idle, once per message (owner 11-15)" "$PY" tests/test_owed.py
 run "a turn a Stop hook made go on is ONE turn, and its continuation delivers nothing by itself (medic 12441)" "$PY" tests/test_turn_once.py
 run ".env: one locked, fsynced, atomic writer (init.sh appends under the same lock); vault keys derived, never taken (medic 12364 R2)" "$PY" tests/test_env_write.py
@@ -1148,6 +1148,7 @@ run "chat: the live line follows any human's ask" "$PY" tests/test_chat_pending.
 run "chat: a member opens an attached file read-only (the store's import is the owner's)" "$PY" tests/test_chat_open.py
 run "chat: the client never spells the viewer as the literal 'owner'" "$PY" tests/test_chat_viewer_lint.py
 run "chat: a chat's live progress carries only the work it asked for" "$PY" tests/test_progress_scope.py
+run "channel: a person's message from another chat while the agent is mid-task carries the mid_task line (owner 11-18)" "$PY" tests/test_mid_task.py
 run "chat: the calculator's server (qalc in a jail)" "$PY" tests/test_chat_calc.py
 run "chat: the calculator's boxes" "$PY" tests/test_chat_calc_ui.py
 run "member insides: an insider reads the agents' work short of the personal tier" "$PY" tests/test_member_insides.py

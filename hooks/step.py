@@ -71,93 +71,274 @@ def ledger_meta(tool, tool_input, response=None):
         return None
 
 
-# TURN SCOPE (owner 11-15: a chat's live progress is for everyone in it): which messages opened the turn a step belongs
-# to. steps.turn_id is back-filled only at Stop, so a live reader (a bridge's progress line) couldn't tell a step that
-# serves this chat's ask from one serving another thread, and streamed them all into the group (medic 12159). Each
-# Pre/PostToolUse step now carries meta.turn_msgs: the msg_ids in the turn's opening prompt (a redelivered batch holds
-# several). Read from the session's own transcript, which the hook is handed anyway; a cache per transcript keeps the
-# offset already read, so a call reads only what the session wrote since. Never raises: an unknown is [] (no scope,
-# so a scoped reader shows nothing rather than everything). A batch whose messages came from two threads stamps the
-# turn for both, so its work shows in both chats: one turn served both, there is no finer truth to show.
+# TURN SCOPE (owner 11-15: a chat's live progress is for everyone in it; owner 11-18, 13154: progress follows the
+# REQUEST, not the turn, homes/seed/progress-requests/DESIGN.md). Which requests a step serves. steps.turn_id is
+# back-filled only at Stop, so a live reader (a bridge's progress line) couldn't tell a step that serves this chat's
+# ask from one serving another thread (medic 12159). Each step carries meta.turn_msgs (and, when it applies, waiting /
+# acked / many / since), from a small state machine over the session's own transcript, which the hook is handed
+# anyway. A cache per agent keeps the offset already read and the state, so a call reads only what the session wrote
+# since. Never raises: an unknown is [] (no scope, so a scoped reader shows nothing rather than everything).
+#
+#   a wake (a user line whose channel tags carry msg_ids)  cur = its ids (on 2+ threads: many, content-free for each)
+#   a background notice (<tool-use-id>T) opening a turn     the scope that launched T, else unknown
+#   any other user line (a typed prompt)                    unknown
+#   a person's message QUEUED into the running turn         same chat: joins cur; another chat: waits (cur unchanged)
+#   the agent's send to a waiting request's chat            switches cur to it once cur is ANSWERED (a send to cur's
+#                                                           chat since cur began) or unknown; before that it only
+#                                                           marks it acked (an early "on it" never moves A's work to B)
+#   the agent's send to cur's chat while others wait        many (what follows can't be told apart)
+#   an Agent call whose brief names msg_id=N of cur/waiting  that helper serves N alone
+#   a run_in_background call                                its scope is kept for its notice
+# Ids are read only from a channel tag's own attributes, and only from tags that open the text or follow a closed tag,
+# never from a person's words (medic 13157 R3).
 TURN_DIR = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", f"astryx-turn-{os.getuid()}")   # 0700, ours
 TURN_CACHE = os.path.join(TURN_DIR, "{agent}.json")
 TURN_SCAN = 1 << 20                      # a cold start scans back from the end this many bytes at a time
 COMPACT_LEAD = "This session is being continued from a previous conversation"
+SEND_TOOL = "mcp__astryx__send"
+BG_TTL = 12 * 3600                       # a background launch whose notice never came is forgotten after this
+_TAG = re.compile(r'\s*<channel source="astryx"([^>]*)>')
+_ATTR = re.compile(r'(\w+)="([^"]*)"')
+_NOTICE = re.compile(r"<task-notification>.*?<tool-use-id>([^<]+)</tool-use-id>", re.S)
+_BRIEF_ID = re.compile(r"msg_id=\"?(\d+)")
+# A typed "</channel>" followed by a typed tag is text-indistinguishable from a real batch boundary, so a tag's id
+# counts only when it is a real message to this agent on the thread the tag names (medic 13157 R3). main() sets CHECK
+# from its database connection; None (a hook with no database, the oracle's pure arms) takes the tags as written.
+CHECK = None
 
 
-def _opening_msgs(line: str):
-    """The msg_ids a transcript line opens a turn with, or None when the line changes no scope. A message that lands
-    INSIDE a running turn is no user line: Claude Code writes it as an `attachment` of type queued_command (medic
-    12163: 22 in one 11 MB transcript), and the agent works on it in the same turn, so from there on no step can be
-    told apart: the scope becomes [] (unknown is nothing; a union would let one chat's job show another's work)."""
+def _fresh(since=0.0) -> dict:
+    return {"cur": [], "many": False, "since": since, "waiting": [], "acked": [], "served": [], "answered": False,
+            "th": {}, "bg": {}, "bind": {}}
+
+
+def _tags(text: str) -> list:
+    """[(msg_id, thread)] of the channel tags that open `text` or follow a closed tag (a wake's own wrappers), each a
+    real message to this agent on that thread (CHECK): a tag a person typed, even after a typed close, adds nothing."""
+    out, pos = [], 0
+    while True:
+        m = _TAG.match(text, pos)
+        if not m:
+            break
+        a = dict(_ATTR.findall(m.group(1)))
+        if a.get("msg_id", "").isdigit():
+            out.append((int(a["msg_id"]), a.get("thread", "")))
+        close = text.find("</channel>", m.end())
+        if close < 0:
+            break
+        pos = close + len("</channel>")
+    return _real(out[:20])
+
+
+def _real(tags: list) -> list:
+    """The tags whose (id, thread) is a real message to this agent (CHECK), in order; all of them when unchecked."""
+    if CHECK is None or not tags:
+        return tags
     try:
-        e = json.loads(line)
+        ok = CHECK(tags)
+        return [t for t in tags if t in ok]
     except Exception:
-        return None
-    if e.get("type") == "attachment" and (e.get("attachment") or {}).get("type") == "queued_command":
         return []
+
+
+def _text(c) -> str:
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "\n".join(x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text")
+    return ""
+
+
+def _threads(st, ids) -> set:
+    return {st["th"].get(str(i), "") for i in ids}
+
+
+def _snap(st, ids=None) -> dict:
+    return {"cur": list(st["cur"] if ids is None else ids), "many": st["many"] if ids is None else False,
+            "since": st["since"], "at": datetime.now().timestamp(),
+            "th": {str(i): st["th"].get(str(i), "") for i in (st["cur"] if ids is None else ids)}}
+
+
+def _resume(st, snap) -> None:
+    st["th"].update(snap.get("th") or {})
+    st.update(cur=list(snap.get("cur") or []), many=bool(snap.get("many")), since=snap.get("since") or 0.0)
+
+
+def _opens(e) -> bool:
+    """Does this transcript entry open a new turn (a user line that is no tool result and no compaction summary)?"""
     if e.get("type") != "user":
-        return None
+        return False
     c = (e.get("message") or {}).get("content")
     if is_tool_result(c) or e.get("isCompactSummary"):
-        return None
-    text = c if isinstance(c, str) else json.dumps(c)
-    # a channel wake is written isMeta (so isMeta is NOT a "skip"); the one user line inside a turn is the compaction
-    # summary, which shares its turn's index (seen in medic's and db's transcripts, 11-15)
-    if text.lstrip().startswith(COMPACT_LEAD):
-        return None
-    return [int(x) for x in re.findall(r'msg_id=\\?"(\d+)', text)][:20]
+        return False
+    return not _text(c).lstrip().startswith(COMPACT_LEAD)
 
 
-def turn_msgs(path, agent) -> list:
+def _apply(st, e) -> dict:
+    """One transcript entry's effect on the scope state (see the table above). Returns st (mutated)."""
+    now = datetime.now().timestamp()
+    if _opens(e):
+        text = _text((e.get("message") or {}).get("content"))
+        bg = st["bg"]
+        n = _NOTICE.search(text)
+        tags = _tags(text)
+        new = _fresh(now)
+        new["bg"] = {k: v for k, v in bg.items() if now - (v.get("at") or 0) < BG_TTL}
+        if tags:                                   # a wake
+            new["th"] = {str(i): t for i, t in tags}
+            new["cur"] = [i for i, _ in tags]
+            new["many"] = len({t for _, t in tags}) > 1
+        elif n:                                    # a background notice opening a turn: its launch's scope, else unknown
+            snap = new["bg"].pop(n.group(1).strip(), None)
+            if snap:
+                _resume(new, snap)
+        st.clear()
+        st.update(new)
+        return st
+    if e.get("type") == "attachment" and (e.get("attachment") or {}).get("type") == "queued_command":
+        text = str((e.get("attachment") or {}).get("prompt") or "")
+        n = _NOTICE.search(text)
+        if n:                                      # a background notice inside the turn: that work is in hand too
+            snap = st["bg"].pop(n.group(1).strip(), None)
+            if snap and set(snap.get("cur") or []) - set(st["cur"]):
+                st["th"].update(snap.get("th") or {})
+                st["waiting"] += [i for i in snap["cur"] if i not in st["waiting"] and i not in st["cur"]]
+            return st
+        cur_th = _threads(st, st["cur"])
+        for i, t in _tags(text):
+            st["th"][str(i)] = t
+            if st["cur"] and t in cur_th:
+                st["cur"].append(i)                # the same chat writing again: the same work
+            elif i not in st["waiting"]:
+                st["waiting"].append(i)            # another chat: it waits; the agent is still on cur
+        return st
+    if e.get("type") != "assistant":
+        return st
+    for c in (e.get("message") or {}).get("content") or []:
+        if not isinstance(c, dict) or c.get("type") != "tool_use":
+            continue
+        name, ti, tid = c.get("name") or "", c.get("input") or {}, str(c.get("id") or "")
+        if name == SEND_TOOL and ti.get("thread"):
+            t = ti["thread"]
+            if t in _threads(st, st["cur"]):
+                st["answered"] = True
+                if st["waiting"]:
+                    st["many"] = True
+                continue
+            pool_ids = st["waiting"] + st["acked"] + st["served"]
+            ids = [i for i in pool_ids if st["th"].get(str(i)) == t]
+            if not ids:
+                continue
+            if st["answered"] or not st["cur"] or st["many"]:
+                st["served"] = [i for i in st["served"] + st["cur"] if i not in ids]
+                st["waiting"] = [i for i in st["waiting"] if i not in ids]
+                st["acked"] = [i for i in st["acked"] if i not in ids]
+                st.update(cur=ids, many=False, answered=False, since=now)
+            else:
+                st["acked"] += [i for i in ids if i not in st["acked"]]
+        elif name in ("Agent", "Task"):
+            named = [int(x) for x in _BRIEF_ID.findall(str(ti.get("prompt") or ""))]
+            mine = [i for i in named if i in st["cur"] or i in st["waiting"] or i in st["acked"]]
+            if mine:
+                st["bind"][tid] = mine
+                st["waiting"] = [i for i in st["waiting"] if i not in mine]
+                st["acked"] = [i for i in st["acked"] if i not in mine]
+            if ti.get("run_in_background"):
+                st["bg"][tid] = _snap(st, mine or None)
+        elif ti.get("run_in_background"):
+            st["bg"][tid] = _snap(st)
+    return st
+
+
+def turn_state(path, agent) -> dict:
+    """The scope state for the session at `path` (see the table above): read incrementally, cached per agent."""
     try:
         if not path or not os.path.isfile(path):
-            return []
+            return _fresh()
         size = os.path.getsize(path)
         cache_f = TURN_CACHE.format(agent=re.sub(r"[^a-z0-9_-]", "", agent))
         d = os.path.dirname(cache_f)
         os.makedirs(d, mode=0o700, exist_ok=True)
-        st = os.lstat(d)                          # a dir someone else made, or a link, is not ours: no cache, no scope
-        if st.st_uid != os.getuid() or not os.path.isdir(d) or os.path.islink(d):
-            return []
+        lst = os.lstat(d)                         # a dir someone else made, or a link, is not ours: no cache, no scope
+        if lst.st_uid != os.getuid() or not os.path.isdir(d) or os.path.islink(d):
+            return _fresh()
         try:
             with open(cache_f) as f:
                 c = json.load(f)
         except Exception:
             c = {}
-        msgs, off = c.get("msgs", []), c.get("off", 0)
+        st, off = c.get("st") or _fresh(), c.get("off", 0)
         with open(path, "rb") as f:
-            if c.get("path") != path or off > size:   # a new session (or a rewritten file): find the last opening
-                msgs, pos, tail = [], size, b""
+            if c.get("path") != path or off > size or "st" not in c:   # a new session: from its last turn's opening
+                st, off, pos, tail = _fresh(), 0, size, b""
                 while pos > 0:
                     step = min(TURN_SCAN, pos)
                     pos -= step
                     f.seek(pos)
                     tail = f.read(step) + tail
                     lines = tail.split(b"\n")
-                    found = next((m for m in (_opening_msgs(l.decode("utf-8", "replace")) for l in reversed(lines[1 if pos else 0:]))
-                                  if m is not None), None)
-                    if found is not None:
-                        msgs = found
+                    at, k = None, len(lines) - 1
+                    while k >= (1 if pos else 0):
+                        try:
+                            if _opens(json.loads(lines[k].decode("utf-8", "replace"))):
+                                at = k
+                                break
+                        except Exception:
+                            pass
+                        k -= 1
+                    if at is not None:
+                        off = pos + sum(len(x) + 1 for x in lines[:at])
                         break
                     tail = lines[0] if pos else b""
-                off = size
-            else:
-                f.seek(off)
-                chunk = f.read(size - off)
-                end = chunk.rfind(b"\n") + 1         # only whole lines; a half-written one is read next time
-                for l in chunk[:end].split(b"\n"):
-                    m = _opening_msgs(l.decode("utf-8", "replace"))
-                    if m is not None:
-                        msgs = m
-                off += end
+            f.seek(off)
+            chunk = f.read(size - off)
+            end = chunk.rfind(b"\n") + 1             # only whole lines; a half-written one is read next time
+            for l in chunk[:end].split(b"\n"):
+                try:
+                    e = json.loads(l.decode("utf-8", "replace"))
+                except Exception:
+                    continue
+                if isinstance(e, dict):
+                    _apply(st, e)
+            off += end
         tmp = cache_f + ".tmp"
         with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600), "w") as f:
-            json.dump({"path": path, "off": off, "msgs": msgs}, f)
+            json.dump({"path": path, "off": off, "st": st}, f)
         os.replace(tmp, cache_f)
-        return msgs
+        return st
     except Exception:
-        return []
+        return _fresh()
+
+
+def turn_msgs(path, agent) -> list:
+    """The requests a step serves now: cur, or [] while the agent's work can't be told apart (many)."""
+    st = turn_state(path, agent)
+    return [] if st.get("many") else list(st.get("cur") or [])
+
+
+def turn_end(st, continues: bool) -> dict:
+    """The response step's meta: the requests whose background work is still out (pending), the ones still waiting or
+    only acked, and whether the turn goes on (an owed-reply block). bridges/progress.py closes every other job."""
+    end = {"pending": sorted({i for v in (st.get("bg") or {}).values() for i in (v.get("cur") or [])}),
+           "waiting": list(st.get("waiting") or []), "acked": list(st.get("acked") or [])}
+    end = {k: v for k, v in end.items() if v}
+    if continues:
+        end["continues"] = True
+    return end
+
+
+def scope_extra(st) -> dict:
+    """What a step carries beside turn_msgs for the chats that are not being served: waiting, acked, many, since."""
+    out = {}
+    if st.get("many"):
+        out["many"] = list(dict.fromkeys(st["cur"] + st["waiting"] + st["acked"]))
+    if st.get("waiting"):
+        out["waiting"] = list(st["waiting"])
+    if st.get("acked"):
+        out["acked"] = list(st["acked"])
+    if out:
+        out["since"] = int(st.get("since") or 0)
+    return out
 
 
 # SUB-AGENTS (owner 11-15: "agents use forks and sub-agents … it should also appear in chat"). Measured on this host the
@@ -269,23 +450,30 @@ def _launching(agent):
 
 
 def scope(h, agent):
-    """(turn_msgs, sub) for one hook event: the parent's own turn, or a helper's. A helper is scoped by the turn that
-    LAUNCHED it: its binding, else (a foreground helper, or a first call that raced its launch's PostToolUse) the launch
-    still in flight. Never by the parent's CURRENT turn, which may be another thread's by now (medic 12186): with
-    neither, the scope is [] and a scoped reader shows nothing."""
+    """(turn_msgs, sub, extra) for one hook event: the parent's own, or a helper's. A helper is scoped by what LAUNCHED
+    it: its binding (the turn's scope, or the one request its brief named), else (a foreground helper, or a first call
+    that raced its launch's PostToolUse) the launch still in flight. Never by the parent's CURRENT scope, which may be
+    another thread's by now (medic 12186): with neither, the scope is [] and a scoped reader shows nothing. `extra` is
+    the parent's waiting / acked / many / since (a helper serves one scope and carries none)."""
     aid = h.get("agent_id")
     if not aid:
-        return turn_msgs(h.get("transcript_path"), agent), None
+        st = turn_state(h.get("transcript_path"), agent)
+        msgs = [] if st.get("many") else list(st.get("cur") or [])
+        tid = str(h.get("tool_use_id") or "")
+        if tid and tid in (st.get("bind") or {}):      # an Agent call naming one request: that is the launch's scope
+            msgs = list(st["bind"][tid])
+        return msgs, None, scope_extra(st)
     b = _bound(agent, aid)
     sub = {"id": str(aid)[:12], "type": (h.get("agent_type") or (b or {}).get("type") or "")[:40]}
     if b and b.get("desc"):
         sub["desc"] = b["desc"]
-    return (b.get("msgs", []) if b else _launching(agent)), sub
+    return (b.get("msgs", []) if b else _launching(agent)), sub, {}
 
 
-def step_meta(base, msgs, sub=None):
-    """steps.meta: the ledger's (a Jsonb or None) plus the turn's opening msg_ids and, for a helper's step, who it is."""
-    if not msgs and not sub:
+def step_meta(base, msgs, sub=None, extra=None):
+    """steps.meta: the ledger's (a Jsonb or None) plus the requests the step serves (turn_msgs), for a helper's step
+    who it is, and the scope's other chats (waiting / acked / many / since, scope_extra)."""
+    if not msgs and not sub and not extra:
         return base
     try:
         from psycopg.types.json import Jsonb
@@ -294,6 +482,7 @@ def step_meta(base, msgs, sub=None):
             d["turn_msgs"] = msgs
         if sub:
             d["sub"] = sub
+        d.update(extra or {})
         return Jsonb(d)
     except Exception:
         return base
@@ -852,6 +1041,12 @@ def main():
     import psycopg
     with psycopg.connect(dsn(), connect_timeout=3) as conn:
         cur = conn.cursor()
+        global CHECK
+
+        def CHECK(tags):                                # noqa: F811 — see CHECK above
+            rows = conn.execute("SELECT id, thread FROM messages WHERE id = ANY(%s) AND to_agent = %s",
+                                ([i for i, _ in tags], agent)).fetchall()
+            return {(i, t) for i, t in rows}
 
         if ev == "PreToolUse":
             tool = h.get("tool_name", "?")
@@ -885,11 +1080,11 @@ def main():
             if denied:
                 why = "daily cap" if cap_denied else "child spawn" if strip and denied.startswith('a ' + MARK) else "secret holder"
                 detail = f"DENIED, {why}: {brief(detail, 200)}"
-            msgs, sub = scope(h, agent)
+            msgs, sub, extra = scope(h, agent)
             if tool in ("Agent", "Task"):                      # a helper is being launched from this scope
                 launch_open(agent, h.get("tool_use_id"), msgs)
             cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool',%s,%s)",
-                        (agent, f"{tool}: {brief(detail)}", step_meta(ledger_meta(tool, ti), msgs, sub)))
+                        (agent, f"{tool}: {brief(detail)}", step_meta(ledger_meta(tool, ti), msgs, sub, extra)))
             if guard_err:
                 cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
                             (agent, guard_err))
@@ -897,8 +1092,8 @@ def main():
         elif ev == "PostToolUse":
             tool = h.get("tool_name", "?")
             r = h.get("tool_response")
-            msgs, sub = scope(h, agent)
-            meta = step_meta(ledger_meta(tool, h.get("tool_input") or {}, r if r is not None else ""), msgs, sub)
+            msgs, sub, extra = scope(h, agent)
+            meta = step_meta(ledger_meta(tool, h.get("tool_input") or {}, r if r is not None else ""), msgs, sub, extra)
             if tool in ("Agent", "Task"):
                 if isinstance(r, dict) and r.get("agentId"):   # a helper launched: bind it, then close the launch
                     ti2 = h.get("tool_input") or {}
@@ -940,12 +1135,12 @@ def main():
             # resets 2:50pm"), and the chat's live line shows it instead of a timer. A limit's turn resumes on its
             # own when the limit resets ("Your claude.ai usage limit has reset. Continue …"), and its steps follow.
             launch_close(agent)
-            msgs, sub = scope(h, agent)
+            msgs, sub, extra = scope(h, agent)
             said = "" if strip else (h.get("last_assistant_message") or "").strip()   # S1d: a stripped session's text stays out
             said = said or f"stopped: {h.get('error') or 'unknown error'}"
             from psycopg.types.json import Jsonb
             cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'stopped',%s,%s)",
-                        (agent, brief(said, 300), step_meta(Jsonb({"error": str(h.get("error") or "unknown")[:40]}), msgs, sub)))
+                        (agent, brief(said, 300), step_meta(Jsonb({"error": str(h.get("error") or "unknown")[:40]}), msgs, sub, extra)))
 
         elif ev == "Stop":
             launch_close(agent)                        # the turn ended: no launch of it is still in flight
@@ -955,21 +1150,12 @@ def main():
             except Exception:  # noqa: BLE001
                 pass
             res = handle_stop(cur, agent, h, strip)
-            # short response step for the wall/status line (full text lives in turns)
-            if res:
-                turn_id, last_text, tin, tout = res
-                cur.execute(
-                    "INSERT INTO steps (agent, kind, content, turn_id, tokens_in, tokens_out) "
-                    "VALUES (%s,'response',%s,%s,%s,%s)",
-                    (agent, (f"[{MARK}: {len(last_text.encode())} bytes]" if strip
-                             else (last_text[:2000] or "(tool-only turn)")), turn_id, tin, tout))
-            else:
-                cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'response',%s)",
-                            (agent, "(turn unreadable)"))
             # A REPLY OWED (owner 11-15: "you never replied, so the counter ran for 20 minutes … agents can forget"):
             # a person's message that reached this agent since its last turn, with nothing from it on that thread
-            # since (astryx.core.owed), keeps it from going idle: it is told once per message and decides. The turn
-            # is written first, so nothing here can cost it. Fail-open.
+            # since (astryx.core.owed), keeps it from going idle: it is told once per message and decides. Decided
+            # BEFORE the response step is written (medic 13157), so that step can say the turn goes on (`continues`)
+            # and a chat's bubble is not closed under work that continues. The turn row is written first. Fail-open.
+            block = None
             if res and not h.get("stop_hook_active"):      # one block per stop chain: the second stop ends the turn
                 conn.commit()
                 try:
@@ -979,10 +1165,27 @@ def main():
                     rows = _owed.owed(cur, agent, prev[0] if prev else None)
                     fresh = set(_owed.told(_subs_dir(agent, "owed"), [r[0] for r in rows]))
                     if fresh:
-                        print(json.dumps({"decision": "block",
-                                          "reason": _owed.reminder([r for r in rows if r[0] in fresh])}), flush=True)
+                        block = _owed.reminder([r for r in rows if r[0] in fresh])
                 except Exception:  # noqa: BLE001
                     conn.rollback()
+            # the turn's end, for a chat's bubble: which of its requests still have background work out (pending),
+            # which still wait or were only acked, and whether the turn goes on (bridges/progress.py closes the rest)
+            end = turn_end(turn_state(h.get("transcript_path"), agent), bool(block))
+            from psycopg.types.json import Jsonb
+            # short response step for the wall/status line (full text lives in turns)
+            if res:
+                turn_id, last_text, tin, tout = res
+                cur.execute(
+                    "INSERT INTO steps (agent, kind, content, turn_id, tokens_in, tokens_out, meta) "
+                    "VALUES (%s,'response',%s,%s,%s,%s,%s)",
+                    (agent, (f"[{MARK}: {len(last_text.encode())} bytes]" if strip
+                             else (last_text[:2000] or "(tool-only turn)")), turn_id, tin, tout, Jsonb(end) if end else None))
+            else:
+                cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'response',%s,%s)",
+                            (agent, "(turn unreadable)", Jsonb(end) if end else None))
+            if block:
+                conn.commit()
+                print(json.dumps({"decision": "block", "reason": block}), flush=True)
 
 
 if __name__ == "__main__":
