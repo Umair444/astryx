@@ -208,10 +208,10 @@ def issue_code(conn, person: str, channel: str, chat: str, opened_by: str) -> st
 
 def confirm_code(conn, who: str, channel: str, chat: str, code: str) -> int | str:
     """The signed-in `who` typing the code of THEIR pending link to `chat` on `channel`: its id when right, else why
-    not. A try is spent BEFORE the compare, in one statement, so racing guesses can't beat the count; the CODE_TRIES-th
-    wrong one ends the link."""
+    not. A try is spent BEFORE the compare, bounded in the same statement, so racing guesses can't beat the count
+    (medic 13639: 40 at once got 15 compares without the bound); the CODE_TRIES-th wrong one ends the link."""
     r = conn.execute("UPDATE link_pending SET tries = tries + 1 WHERE person = %s AND channel = %s AND chat = %s "
-                     "AND expires > now() RETURNING id, mac, tries", (who, channel, chat)).fetchone()
+                     "AND expires > now() AND tries < %s RETURNING id, mac, tries", (who, channel, chat, CODE_TRIES)).fetchone()
     if r is None:
         return "no code is waiting for that account: add it again to get a new one"
     pid, want, tries = r

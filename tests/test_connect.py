@@ -195,6 +195,21 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
     fifth = C.confirm_code(c, "cv-pat.5", "email", ADDR, f"{(int(code) + 7) % 10**6:06d}")
     arm("the 5th wrong code ends the link", "cancelled" in str(fifth)
         and c.execute("SELECT count(*) FROM link_pending WHERE person = 'cv-pat.5'").fetchone()[0] == 0, fifth)
+    import threading
+    run("seed", "link", "cv-race.1", channel="sms", account="92" + "3000000088", by="cv-race.1", deliver=deliver)
+    wrong = f"{(int(code_of()) + 1) % 10**6:06d}"
+    conns = [psycopg.connect(d["url"], autocommit=True) for _ in range(40)]
+    got, gate = [], threading.Barrier(40)
+
+    def guess(cn):
+        gate.wait()
+        got.append(C.confirm_code(cn, "cv-race.1", "sms", "92" + "3000000088", wrong))
+    threads = [threading.Thread(target=guess, args=(cn,)) for cn in conns]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    [cn.close() for cn in conns]
+    compared = sum("not right" in str(r) or "too many" in str(r) for r in got)
+    arm(f"40 racing wrong guesses get at most {C.CODE_TRIES} compares (medic 13639)", compared <= C.CODE_TRIES, compared)
     run("seed", "link", "cv-pat.5", channel="email", account=ADDR, by="cv-pat.5", deliver=deliver)
     pid = C.confirm_code(c, "cv-pat.5", "email", ADDR, code_of())
     person = c.execute("SELECT link_land_code(%s)", (pid,)).fetchone()[0] if isinstance(pid, int) else None
