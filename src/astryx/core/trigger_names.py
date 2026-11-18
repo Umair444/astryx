@@ -10,7 +10,10 @@ imports at top level, transitively: `from M import N` registers all of M's trigg
 This is a STATIC model of that: it reads, never executes (a2 G2). Every construct it does not positively understand
 makes the file BLIND, and a blind file can hide any name, so a name that would otherwise read ABSENT reads DEFERRED
 (a1 BC-1: an under-read is a duplicate install, the defect this exists to stop; deferral is the safe direction):
-  - an import, or a decorated def, inside any top-level compound statement (if/try/with/for/while/class/match)
+  - an import, or a decorated def, inside any top-level compound statement (if/try/with/for/while/class/match),
+    except an import of a module that isn't local (stdlib, site-packages: it reads no trigger file) and a def
+    whose every decorator is property/staticmethod/classmethod and the file never rebinds it (by assignment,
+    import, except/match capture, or builtins/globals/vars/locals/setattr: a class's `@property` isn't the trigger)
   - a decorator on a top-level def that isn't `trigger(...)` from `from astryx import trigger`, or `astryx.trigger(...)`
     from `import astryx` (an alias, an attribute chain, a call result, any other decorator)
   - the trigger function used other than as a decorator; exec/eval/compile/runpy/importlib/__import__ at top level;
@@ -228,6 +231,51 @@ def _uses(node: ast.AST, pred) -> bool:
     return False
 
 
+_BUILTIN_DECORATORS = {"property", "staticmethod", "classmethod"}
+_REBINDERS = {"builtins", "__builtins__", "globals", "vars", "locals", "setattr"}   # rebind a name out of sight
+
+
+def _rebound(tree: ast.Module) -> set[str] | None:
+    """Every name the file binds anywhere (assigned, imported, def'd, caught, matched), or None if it may bind any name
+    out of sight: a star-import, or a load of builtins/globals/vars/locals/setattr."""
+    names: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name):
+            if isinstance(n.ctx, ast.Load):
+                if n.id in _REBINDERS:
+                    return None
+            else:
+                names.add(n.id)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            if getattr(n, "module", None) == "builtins":
+                return None
+            for a in n.names:
+                if a.name == "*" or a.name.split(".")[0] == "builtins":
+                    return None
+                names.add((a.asname or a.name).split(".")[0])
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(n.name)
+        elif isinstance(n, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and n.name:
+            names.add(n.name)
+        elif isinstance(n, ast.MatchMapping) and n.rest:
+            names.add(n.rest)
+    return names
+
+
+def _hidden(n: ast.AST, w: Walk, rebound: set[str] | None) -> bool:
+    """Inside a compound statement: might `n` register a trigger the reader can't place? An import of a module that
+    isn't local reads no trigger file; a def whose every decorator is property/staticmethod/classmethod, which the
+    file never rebinds, isn't one."""
+    if isinstance(n, ast.Import):
+        return any(_root_of(a.name.split(".")[0], w) is not None for a in n.names)
+    if isinstance(n, ast.ImportFrom):
+        return bool(n.level) or _root_of((n.module or "").split(".")[0], w) is not None
+    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return any(not (isinstance(d, ast.Name) and d.id in _BUILTIN_DECORATORS and rebound is not None
+                        and d.id not in rebound) for d in n.decorator_list)
+    return False
+
+
 def _read_module(dotted: str, w: Walk, out: Read, blind, s) -> Path | None:
     """Read every file `import dotted` executes; its root, or None (and blind) if it's local-looking but unresolved.
     Not local at all (stdlib, site-packages) → Ellipsis: nothing to read."""
@@ -273,6 +321,8 @@ def _read(path: Path, w: Walk, out: Read):
     def blind(why, node):
         out.blind.append(f"{rel}:{getattr(node, 'lineno', '?')}: {why}")
 
+    rebound = _rebound(tree)
+
     for s in tree.body:
         s = _fallback_import(s) or s                     # the standalone-fallback idiom IS the plain import
         if _main_guard(s):                               # never runs under discover: imported, or run as <run_path>
@@ -283,8 +333,7 @@ def _read(path: Path, w: Walk, out: Read):
                 w.front.insert(0, d.resolve())
             continue
         if isinstance(s, _COMPOUND):
-            if _uses(s, lambda n: isinstance(n, (ast.Import, ast.ImportFrom))
-                     or (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.decorator_list)):
+            if _uses(s, lambda n: _hidden(n, w, rebound)):
                 blind(f"an import or decorated def inside a top-level {type(s).__name__.lower()}", s)
         if isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name):
             v = _static_path(s.value, env, path)
