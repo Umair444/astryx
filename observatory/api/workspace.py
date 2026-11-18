@@ -229,6 +229,10 @@ def human_sql(col: str) -> str:
     return f"({col} = 'owner' OR {col} LIKE 'cv-%')"
 
 
+STARTER_SQL = (f"SELECT from_agent FROM messages WHERE thread = $1 AND {human_sql('from_agent')} "
+               "ORDER BY id LIMIT 1")             # the human who opened the chat (its first human row)
+
+
 def build_rows(aggs: list[dict], meta: dict, projects: list[dict], roster: set[str],
                canvas: dict[str, dict] | None = None, me: str = "owner", everyone: bool = False) -> list[dict]:
     """The unified list. `aggs` = one dict per thread (thread, count, last_ts, first_owner, last_body, parties);
@@ -500,8 +504,6 @@ class Meta(BaseModel):
 
 
 # A thread is a viewer's OWN when she wrote on it or was written to on it, or (canvas) it is registered under her
-STARTER_SQL = ("SELECT from_agent FROM messages WHERE thread = $1 AND (from_agent = 'owner' OR from_agent LIKE 'cv-%') "
-               "ORDER BY id LIMIT 1")             # the human who opened the chat (its first human row)
 PARTY_SQL = ("SELECT EXISTS (SELECT 1 FROM messages WHERE thread = $1 AND (from_agent = $2 OR to_agent = $2)) "
              "OR EXISTS (SELECT 1 FROM canvas_threads WHERE thread = $1 AND user_name = $3)")
 PARTY_MSG_SQL = "SELECT EXISTS (SELECT 1 FROM messages WHERE thread = $1 AND (from_agent = $2 OR to_agent = $2))"
