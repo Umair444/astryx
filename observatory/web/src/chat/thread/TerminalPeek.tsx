@@ -72,7 +72,7 @@ export default function TerminalPeek({ agent, run, onClose }: { agent: string; r
     setLine(''); void send({ text: t })
   }
   return (
-    <section className="ws-term mx-auto w-full max-w-[760px] px-3 sm:px-4 md:px-6" aria-label={`${who}'s terminal`}>
+    <section className="ws-term ws-col" aria-label={`${who}'s terminal`}>
       <div className="ws-term-box">
         <header className="flex items-center gap-2 px-3 h-10 border-b border-line">
           <AgentFace name={agent} size={20} />

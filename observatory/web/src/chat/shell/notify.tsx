@@ -99,7 +99,7 @@ export function NotifyPrompt({ waiting }: { waiting: boolean }) {
   useEffect(() => { if (waiting && s === 'ask') { const t = setTimeout(() => setShown(true), 2500); return () => clearTimeout(t) } }, [waiting, s])
   if (!shown || s !== 'ask') return null
   return (
-    <div className="mx-auto max-w-[760px] w-full px-6 pb-1.5" role="region" aria-label="reply notifications">
+    <div className="ws-col pb-1.5" role="region" aria-label="reply notifications">
       <div className="flex items-center gap-2.5 flex-wrap text-[12.5px] text-ink-dim rounded-[12px] px-3 py-2 bg-[var(--t-panel)] border border-line">
         <svg viewBox="0 0 24 24" className="w-4 h-4 text-ink-mute shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z" /><path d="M10 20.5a2.2 2.2 0 0 0 4 0" />

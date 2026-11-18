@@ -6,7 +6,12 @@
 
 /* in the components layer, so a Tailwind utility on the same element (md:hidden, !w-7) always wins */
 @layer components {
-.ws { --ws-rail: 56px; --ws-list: 268px; --ws-ease: cubic-bezier(.22, 1, .36, 1); }
+.ws { --ws-rail: 56px; --ws-list: 268px; --ws-ease: cubic-bezier(.22, 1, .36, 1); --ws-col: 1120px; --ws-gutter: 12px; }
+@media (min-width: 768px) { .ws { --ws-gutter: 16px; } }
+
+/* THE conversation column (owner 11-18: "the page margin of chat is too high … very low"): the turns, the composer, the
+   notes and cards around them share one width and one gutter, so they line up and change together */
+.ws-col { width: 100%; max-width: var(--ws-col); margin-inline: auto; padding-inline: var(--ws-gutter); }
 
 /* the backdrop: canvas's aurora, still (no drift), two soft pools behind the conversation */
 .ws-backdrop {

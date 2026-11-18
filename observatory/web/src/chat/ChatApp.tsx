@@ -845,7 +845,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
           </Suspense>
           <ChipCtx.Provider value={chipAware}><TurnActionsCtx.Provider value={turnActs}>
           {current && histErr && (
-            <div className="mx-auto max-w-[760px] w-full px-6 pt-4 text-[12.5px] text-ink-dim flex items-center gap-2" role="status">
+            <div className="ws-col pt-4 text-[12.5px] text-ink-dim flex items-center gap-2" role="status">
               <span className="ws-live-dot" aria-hidden />Couldn’t load this conversation’s history: the org isn’t answering. Trying again…
               <button className="underline underline-offset-2 hover:text-ink" onClick={() => setHistTry((n) => n + 1)}>Retry now</button>
             </div>
@@ -859,7 +859,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
             onEdit={(o) => { setOutbox((xs) => xs.filter((x) => x.key !== o.key)); const r = parseReply(o.text); composer.current?.reply(r?.reply ?? null); composer.current?.set(r ? r.rest : o.text); o.files.forEach((f) => composer.current?.attach(f)) }} />}
           </TurnActionsCtx.Provider></ChipCtx.Provider>
         </div>
-        {note && <div className="mx-auto max-w-[760px] w-full px-6 pb-1 text-[12.5px] text-ink-dim cursor-pointer" role="status" onClick={() => setNote('')}>{note}</div>}
+        {note && <div className="ws-col pb-1 text-[12.5px] text-ink-dim cursor-pointer" role="status" onClick={() => setNote('')}>{note}</div>}
         {view === 'thread' && !home && <NotifyPrompt waiting={pending.length > 0 || outbox.some((o) => o.thread === current)} />}
         {view === 'thread' && !home && card && termAgent === card.agent && <SessionCard ask={card} onClose={() => { setCard(null); composer.current?.focus() }} />}
         {view === 'thread' && !home && term && termAgent === term.agent && <TerminalPeek agent={term.agent} run={term.run} onClose={() => { setTerm(null); composer.current?.focus() }} />}

@@ -27,7 +27,7 @@ export default function Outbox({ items, onRetry, onEdit, onDiscard }: {
   useEffect(() => { end.current?.scrollIntoView({ block: 'end' }) }, [items.length])
   if (!items.length) return null
   return (
-    <div className="mx-auto w-full max-w-[720px] px-5 md:px-6 -mt-2 pb-6 flex flex-col gap-4" aria-live="polite">
+    <div className="ws-col -mt-2 pb-6 flex flex-col gap-4" aria-live="polite">
       {items.map((o) => (
         <div key={o.key} className="flex flex-col items-end gap-1">
           <div className={`ws-mine max-w-[80%] rounded-[14px] px-4 py-2.5 text-[15px] leading-[1.55] text-ink whitespace-pre-wrap break-words ${o.failed ? 'ws-unsent' : 'opacity-70'}`}>

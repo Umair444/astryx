@@ -63,7 +63,7 @@ export default function SessionCard({ ask, onClose }: { ask: SessionAsk; onClose
 
   const w = s?.energy?.windows
   return (
-    <section className="mx-auto w-full max-w-[760px] px-3 sm:px-4 md:px-6" aria-label={`${name}'s session`}>
+    <section className="ws-col" aria-label={`${name}'s session`}>
       <div className="mb-2 rounded-[14px] border border-line px-3.5 py-2.5 flex flex-col gap-1.5" style={{ background: 'color-mix(in srgb, var(--t-panel) 92%, transparent)' }}>
         <div className="flex items-center gap-2">
           <AgentFace name={ask.agent} size={20} />
