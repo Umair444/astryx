@@ -110,14 +110,6 @@ def connectable() -> tuple[Channel, ...]:
     return tuple(c for c in CHANNELS if c.connect)
 
 
-def sent_today_sql(channel: str) -> str:
-    """What the org sent on `channel` today (PKT), from the wire's own rows: every bridge send's receipt and every link
-    code's record name the handle <channel>:<chat>, whatever the row's thread (medic 13091 R2, 13646); a door refusal is
-    status 'refused', so it never counts."""
-    return ("SELECT count(*) FROM messages WHERE status='delivered' AND delivery->>'handle' LIKE '" + channel + ":%' "
-            "AND delivered_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Karachi') AT TIME ZONE 'Asia/Karachi'")
-
-
 def daily_cap(channel: str, get) -> int:
     """The owner's bound on what the org sends a day on a channel that reaches people outside it: <NAME>_DAILY_CAP
     (SMS_DAILY_CAP, EMAIL_DAILY_CAP), default 50. `get` reads the org's .env (the caller's own reader)."""

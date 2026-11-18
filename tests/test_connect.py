@@ -235,7 +235,8 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
     arm(f"a person gets {C.CODE_PER_HOUR} codes an hour; the next is refused and nothing is sent (medic 13646)",
         "an hour at most" in out and len(mail) == sent + C.CODE_PER_HOUR, (out, len(mail) - sent))
     from astryx.core import channels as CH
-    os.environ["SMS_DAILY_CAP"] = str(c.execute(CH.sent_today_sql("sms")).fetchone()[0] + 1)
+    os.environ["SMS_DAILY_CAP"] = str((c.execute("SELECT n FROM quota WHERE key = 'send:sms:' || to_char(now() AT TIME ZONE "
+                                                 "'Asia/Karachi', 'YYYY-MM-DD')").fetchone() or [0])[0] + 1)
     run("seed", "link", "cv-cap.1", channel="sms", account="92" + "3000000066", by="cv-cap.1", deliver=deliver)
     sent = len(mail)
     out = run("seed", "link", "cv-cap.2", channel="sms", account="92" + "3000000055", by="cv-cap.2", deliver=deliver)

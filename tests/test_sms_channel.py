@@ -241,7 +241,7 @@ class Pool:
         self.rows, self.sent_today = {r["id"]: r for r in rows}, sent_today
 
     async def fetchval(self, sql, *a):
-        return self.sent_today
+        return self.sent_today < a[1] if "send_take" in sql else self.sent_today
 
     async def execute(self, sql, *args):
         r = self.rows[args[0]]
@@ -299,22 +299,26 @@ check("past SMS_DAILY_CAP: refused with the cap named, nothing sent",
 check("the claim takes sms threads and sms people (which rows exactly: test_email_channel's C arm, on real SQL)",
       "thread LIKE 'sms:%'" in B.CLAIM and "to_agent LIKE 'sms-%'" in B.CLAIM, B.CLAIM)
 
-print("C the cap's own SQL, on the fixture DB (medic 13091 R2):")
+print("C the cap's own SQL, on the fixture DB (owner 11-18: no overshoot under a burst):")
 try:
     import psycopg
+    import threading
     from astryx.security.sqlguard.fixture import fixture_db
     with fixture_db() as fx, psycopg.connect(fx["dsn"], autocommit=True) as c:
-        for thread, to, status, handle in ((f"sms:{N}", "owner", "delivered", f"sms:{N}"),
-                                           ("", f"sms-{N}", "delivered", f"sms:{N}"),
-                                           ("wa:1@g.us", f"sms-{N}", "delivered", f"sms:{N}"),
-                                           (f"sms:{OTHER}", "owner", "refused", "sms:door"),
-                                           ("wa:1@g.us", "owner", "delivered", "whatsapp:1@g.us")):
-            c.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body, status, "
-                      "delivered_at, delivery) VALUES ('seed','local',%s,'local',%s,'chat','m',%s,now(),%s)",
-                      (to, thread, status, json.dumps({"handle": handle})))
-        n = c.execute(B.SENT_TODAY).fetchone()[0]
-        check("every SMS this bridge delivered counts, whatever its thread; a refusal and another channel don't",
-              n == 3, n)
+        took = [c.execute("SELECT send_take('sms', 3)").fetchone()[0] for _ in range(4)]
+        check("send_take: three of a cap of 3, then refused; another channel's day is its own",
+              took == [True, True, True, False] and c.execute("SELECT send_take('email', 3)").fetchone()[0], took)
+        conns = [psycopg.connect(fx["dsn"], autocommit=True) for _ in range(60)]
+        got, gate = [], threading.Barrier(60)
+
+        def take(cn):
+            gate.wait()
+            got.append(cn.execute("SELECT quota_take('burst', 10)").fetchone()[0])
+        ts = [threading.Thread(target=take, args=(cn,)) for cn in conns]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        [cn.close() for cn in conns]
+        check("60 racing takers of a quota of 10 get exactly 10, never one more", sum(got) == 10, sum(got))
 except Exception as e:  # noqa: BLE001
     print(f"  SKIP  the fixture DB: {type(e).__name__}: {e}")
 

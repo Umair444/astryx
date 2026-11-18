@@ -36,7 +36,6 @@ pool: asyncpg.Pool | None = None
 # claimant per row)
 CLAIM = f"({address.reaches_sql('sms')} OR (to_agent LIKE 'sms-%' AND NOT {address.elsewhere_sql('sms')}))"
 
-SENT_TODAY = channels.sent_today_sql("sms")
 
 
 def routes():
