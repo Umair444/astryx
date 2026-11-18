@@ -266,6 +266,26 @@ async def bridge_arms():
         got = await w.deliver(r)
         check(f"{ch}: an unstamped row to a destination on NO route is REFUSED with a status, nothing sent (#45091)",
               got["status"] == "refused" and "door_refused" in got["delivery"] and not w.sends, repr((got, w.sends)))
+        if ch == "whatsapp":                     # a route opened in the same breath as its message (a link, 13614)
+            r = plain_row(off[ch])
+            w = World(ch, [r])
+            fresh = ROUTES[ch] + [{"chat": off[ch][3:], "agent": "seed", "enabled": True}]
+
+            class Fresh:
+                table = Routes(ROUTES[ch])
+
+                async def refresh(self, pool):
+                    self.table = Routes(fresh)
+
+                def routes(self):
+                    return self.table
+            saved, bridges.common.BOOKS[ch] = bridges.common.BOOKS.get(ch), Fresh()
+            try:
+                got = await w.deliver(r)
+            finally:
+                bridges.common.BOOKS[ch] = saved
+            check(f"{ch}: a route newer than the Book's last read is found on one re-read, the row delivered (13614)",
+                  got["status"] == "delivered" and w.sends, repr((got, w.sends)))
         r = plain_row(org[ch][0])
         w = World(ch, [r])
         got = await w.deliver(r)
