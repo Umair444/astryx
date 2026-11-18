@@ -1458,6 +1458,43 @@ CREATE TABLE IF NOT EXISTS link_pending (
   CONSTRAINT link_pending_person_key UNIQUE (tenant, person)
 );
 
+-- QUOTAS (owner 11-18: "imagine it like a real web thing. 1000s of people requesting … no bugs of overshoot"): one
+-- counter row per bucket, taken by ONE atomic statement, so N racing takers get exactly `limit` and never one more (a
+-- count-then-insert lets a burst through). A bucket is a key the caller builds with its window in it: a channel's PKT
+-- day (send_take), a person's hour of link codes. Old buckets are pruned now and then by the takers themselves.
+CREATE TABLE IF NOT EXISTS quota (
+  tenant  text NOT NULL DEFAULT 'astryx',
+  key     text NOT NULL,
+  n       int  NOT NULL DEFAULT 0,
+  created timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT quota_pkey PRIMARY KEY (tenant, key)
+);
+
+CREATE OR REPLACE FUNCTION quota_take(p_key text, p_limit int) RETURNS boolean
+LANGUAGE plpgsql AS $take$
+DECLARE
+  got int;
+BEGIN
+  IF random() < 0.01 THEN
+    DELETE FROM quota WHERE created < now() - interval '2 days';
+  END IF;
+  IF p_limit < 1 THEN
+    RETURN false;
+  END IF;
+  INSERT INTO quota (key, n) VALUES (p_key, 1)
+    ON CONFLICT ON CONSTRAINT quota_pkey DO UPDATE SET n = quota.n + 1 WHERE quota.n < p_limit
+    RETURNING n INTO got;
+  RETURN got IS NOT NULL;
+END $take$;
+
+-- One send to someone outside the org on `channel` today (PKT), within the owner's daily cap: every bridge send and
+-- every link code takes one before it goes; false = the cap is spent, nothing goes. A send that then fails keeps its
+-- slot (an SMS that timed out may still have gone out): the cap bounds attempts.
+CREATE OR REPLACE FUNCTION send_take(p_channel text, p_limit int) RETURNS boolean
+LANGUAGE sql AS $send$
+  SELECT quota_take('send:' || p_channel || ':' || to_char(now() AT TIME ZONE 'Asia/Karachi', 'YYYY-MM-DD'), p_limit)
+$send$;
+
 -- THE ONE JOIN of a proven account to its person: the owner's own (person = opened_by = 'owner', which only an
 -- owner_call opens) through identity_own, everyone else through identity_link, which never reaches 'owner' and refuses
 -- an account that is someone else's.

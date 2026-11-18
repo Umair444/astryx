@@ -142,8 +142,8 @@ class Pool:
         self.rows, self.sent_today, self.last = {r["id"]: r for r in rows}, sent_today, {}
 
     async def fetchval(self, sql, *a):
-        if "count(*)" in sql:
-            return self.sent_today
+        if "send_take" in sql:
+            return self.sent_today < a[1]
         return json.dumps(self.last.get(a[0])) if self.last.get(a[0]) else None
 
     async def execute(self, sql, *args):
@@ -216,13 +216,9 @@ try:
     import psycopg
     from astryx.security.sqlguard.fixture import fixture_db
     with fixture_db() as fx, psycopg.connect(fx["dsn"], autocommit=True) as c:
-        for thread, status, handle in ((f"em:{TO}", "delivered", f"email:{TO}"), ("em:x@y.com", "delivered", "email:x@y.com"),
-                                       ("em:z@y.com", "refused", "email:door"), ("wa:1@g.us", "delivered", "whatsapp:1@g.us")):
-            c.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body, status, "
-                      "delivered_at, delivery) VALUES ('seed','local','owner','local',%s,'chat','m',%s,now(),%s)",
-                      (thread, status, json.dumps({"handle": handle})))
-        n = c.execute(B.SENT_TODAY).fetchone()[0]
-        check("every email this bridge delivered counts; a refusal and another channel don't", n == 2, n)
+        took = [c.execute("SELECT send_take('email', 2)").fetchone()[0] for _ in range(3)]
+        check("send_take: two of a cap of 2, then refused (the one quota every capped send takes)",
+              took == [True, True, False], took)
         from bridges import sms as SB
         ids = {}
         for name, to, thread in (("em-owner", "owner", f"em:{TO}"), ("em-bare", "em-x", None), ("em-on-wa", "em-x", "wa:1@g.us"),

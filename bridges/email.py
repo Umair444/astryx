@@ -45,7 +45,6 @@ pool: asyncpg.Pool | None = None
 CLAIM = (f"({wire_address.reaches_sql('email')} OR "
          f"(to_agent LIKE 'em-%' AND NOT {wire_address.elsewhere_sql('email')}))")   # another channel's thread is its own
 
-SENT_TODAY = channels.sent_today_sql("email")
 LAST = ("SELECT delivery FROM messages WHERE thread=$1 AND status='delivered' AND delivery->>'handle' LIKE 'email:%' "
         "AND delivery->>'message_id' IS NOT NULL ORDER BY id DESC LIMIT 1")
 

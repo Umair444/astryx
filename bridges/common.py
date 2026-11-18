@@ -557,9 +557,9 @@ async def door_open(pool, row, channel: str, routes) -> tuple[dict, str] | None:
 
 
 async def cap_spent(pool, row, channel: str, cap: int) -> bool:
-    """A channel that reaches people outside the org (SMS, email) bounds what it sends in a day: True when today's
-    `cap` is spent, and the row is refused saying so."""
-    if await pool.fetchval(channels.sent_today_sql(channel)) < cap:
+    """A channel that reaches people outside the org (SMS, email) bounds what it sends in a day: this send takes one
+    of today's `cap` (send_take, atomic: a burst never overshoots), or the row is refused saying the cap is spent."""
+    if await pool.fetchval("SELECT send_take($1, $2)", channel, cap):
         return False
     await door_refuse(pool, row, channel, f"the org's {channels.BY_NAME[channel].title} cap for today ({cap}) is spent")
     return True
