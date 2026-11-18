@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from datetime import datetime, timezone
 import subprocess
 from pathlib import Path
 
@@ -243,7 +244,7 @@ def build_rows(aggs: list[dict], meta: dict, projects: list[dict], roster: set[s
         if surface is None or not (me in parties or (everyone and any(human(x) for x in parties))):
             continue
         cv = canvas.get(t) or {}
-        if cv.get("archived") or (meta.get(t) or {}).get("deleted"):
+        if cv.get("archived") or hidden(meta.get(t) or {}, a.get("last_ts")):
             continue
         m = meta.get(t) or {}
         sw = switches_of(m)
@@ -336,6 +337,24 @@ def apply_meta(meta: dict, thread: str, title=..., pinned=..., switch=..., delet
     else:
         out.pop(thread, None)
     return out
+
+
+def _when(ts) -> datetime | None:
+    """A timestamp (a datetime, or ISO text with or without microseconds) as an aware datetime, or None."""
+    if isinstance(ts, datetime):
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    try:
+        d = datetime.fromisoformat(str(ts))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def hidden(m: dict, ts) -> bool:
+    """A DELETED chat stays out of sight only while nothing in it is newer than the delete: a reply that lands after
+    (a background job, a late helper, someone writing again) brings it back, as WhatsApp does (medic 13883)."""
+    d, t = _when(m.get("deleted")), _when(ts)
+    return bool(d) and (t is None or t <= d)
 
 
 def _utcnow() -> str:
@@ -481,6 +500,8 @@ class Meta(BaseModel):
 
 
 # A thread is a viewer's OWN when she wrote on it or was written to on it, or (canvas) it is registered under her
+STARTER_SQL = ("SELECT from_agent FROM messages WHERE thread = $1 AND (from_agent = 'owner' OR from_agent LIKE 'cv-%') "
+               "ORDER BY id LIMIT 1")             # the human who opened the chat (its first human row)
 PARTY_SQL = ("SELECT EXISTS (SELECT 1 FROM messages WHERE thread = $1 AND (from_agent = $2 OR to_agent = $2)) "
              "OR EXISTS (SELECT 1 FROM canvas_threads WHERE thread = $1 AND user_name = $3)")
 PARTY_MSG_SQL = "SELECT EXISTS (SELECT 1 FROM messages WHERE thread = $1 AND (from_agent = $2 OR to_agent = $2))"
@@ -509,6 +530,9 @@ async def ws_meta(body: Meta, request: Request):
         return JSONResponse({"error": "nothing to change"}, status_code=400)
     if "deleted" in patch and body.thread.startswith("obs:"):   # a desk is every viewer's shared chat: never deleted
         return JSONResponse({"error": "a desk chat is shared by everyone and can't be deleted"}, status_code=400)
+    if "deleted" in patch and not (_owner(request) or me == "owner") \
+            and await _pool(request).fetchval(STARTER_SQL, body.thread) != me:   # removing from others' views: its
+        return JSONResponse({"error": "only the person who started this chat can delete it"}, status_code=403)
     switch = ...
     if "switch_to" in patch:                         # a SWITCH: the chat's agents become these (the composer's "To")
         switch, why = switch_check(patch["switch_to"], set(_roster()))
@@ -1096,7 +1120,8 @@ async def ws_search(request: Request, q: str = "", limit: int = SEARCH_LIMIT, sc
             "SELECT thread FROM canvas_threads WHERE (user_name = $1 OR $2) AND archived", canvas_user(me), everyone)}
     except Exception:                               # noqa: BLE001 — an estate without canvas: nothing is archived
         archived = set()
-    archived |= {t for t, m in read_meta().items() if isinstance(m, dict) and m.get("deleted")}   # deleted: gone here too
+    meta = read_meta()                              # a deleted chat's messages from before the delete: gone here too
+    rows = [r for r in rows if not hidden(meta.get(r["thread"]) or {}, r.get("ts"))]
     return {"q": q, "results": search_hits(rows, q[:SEARCH_Q_MAX], archived, limit)}
 
 

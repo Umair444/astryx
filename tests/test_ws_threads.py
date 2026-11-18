@@ -218,6 +218,15 @@ def main():
     arm("a member's chat isn't in the owner's own list, but open it is, with its switch: the removed agent stays out",
         not any(t["thread"] == "chat:9-m" for t in mine) and row and row["agents"] == ["db"], (mine, row))
     arm("open names no other thread into the list", [t["thread"] for t in opened] == [t["thread"] for t in mine] + ["chat:9-m"])
+    # a delete hides only what came before it: a reply landing after brings the chat back (medic 13883)
+    dm = W.apply_meta({}, "chat:d", deleted=True, now="2099-12-31T11:00:00.123456+00:00")
+    agg_d = {"thread": "chat:d", "count": 2, "first_owner": "q", "starter": "owner", "last_body": "a", "last_from": "db",
+             "parties": ["owner", "db"], "partners": ["db"], "asked": ["db"]}
+    arm("D1 a deleted chat with a newer message is back in the list",
+        [r["thread"] for r in W.build_rows([{**agg_d, "last_ts": "2099-12-31T11:20:00+00:00"}], dm, [], ROSTER)] == ["chat:d"])
+    arm("D2 a deleted chat with nothing newer stays hidden (microsecond stamp vs a plain one, compared as times)",
+        W.build_rows([{**agg_d, "last_ts": "2099-12-31T11:00:00+00:00"}], dm, [], ROSTER) == [])
+
     # DELETE (owner 11-18): a chat leaves every list (open included) and search; a desk can't be deleted; undo is one flag
     W.bind(lambda: Threads(), est, roster=lambda: ROSTER, scoped=lambda r: False)
     r = c.put("/api/ws/threads/meta", json={"thread": "chat:9-m", "deleted": True})
@@ -228,7 +237,19 @@ def main():
     c.put("/api/ws/threads/meta", json={"thread": "chat:9-m", "deleted": False})
     back = c.get("/api/ws/threads", params={"open": "chat:9-m"}).json()["threads"]
     arm("undeleting brings it back", any(t["thread"] == "chat:9-m" for t in back))
-    W.bind(lambda: Threads(), est, roster=lambda: ROSTER, scoped=lambda r: True)
+    class Party:                                   # a member who is a party of chat:9-m, which cv-tay.1 started
+        async def fetch(self, sql, *a):
+            return []
+
+        async def fetchval(self, sql, *a):
+            return "cv-tay.1" if sql == W.STARTER_SQL else True
+    W.bind(lambda: Party(), est, roster=lambda: ROSTER, owner=lambda r: False, me=lambda r: "cv-zed.4")
+    arm("only the person who started a chat (or the owner) can delete it: a party who didn't is refused",
+        c.put("/api/ws/threads/meta", json={"thread": "chat:9-m", "deleted": True}).status_code == 403)
+    W.bind(lambda: Party(), est, roster=lambda: ROSTER, owner=lambda r: False, me=lambda r: "cv-tay.1")
+    arm("...and its starter can", c.put("/api/ws/threads/meta", json={"thread": "chat:9-m", "deleted": True}).status_code == 200)
+    c.put("/api/ws/threads/meta", json={"thread": "chat:9-m", "deleted": False})
+    W.bind(lambda: Threads(), est, roster=lambda: ROSTER, owner=lambda r: True, me=lambda r: "owner", scoped=lambda r: True)
     arm("a member given part of the tree gets no other person's chat by naming it (as `everyone`, medic 13776)",
         not any(t["thread"] == "chat:9-m" for t in c.get("/api/ws/threads", params={"open": "chat:9-m"}).json()["threads"]))
 

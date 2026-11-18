@@ -475,7 +475,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   // DELETE a chat (owner 11-18; never a desk): it leaves every list and search at once; its messages stay on the wire,
   // the org's record. Asked once, plainly
   async function deleteChat(t: WsThread) {
-    if (!window.confirm(`Delete "${t.title}"? It disappears from everyone's chat list and search.`)) return
+    if (!window.confirm(`Delete "${t.title}"? It disappears from everyone's chat list and search, until someone writes in it again.`)) return
     try {
       await saveThreadMeta(t.thread, { deleted: true })
       if (t.thread === current) go(null)
