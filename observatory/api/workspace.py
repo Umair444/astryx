@@ -247,9 +247,11 @@ def build_rows(aggs: list[dict], meta: dict, projects: list[dict], roster: set[s
             continue
         m = meta.get(t) or {}
         sw = switches_of(m)
-        # recipients = who exchanged messages WITH THE OWNER here (`partners`); an agent→agent row on an owner thread
-        # (seed correcting finance) is history, never a recipient. Rows without `partners` (older callers) use parties
-        partners = a.get("partners") if "partners" in a else parties
+        # recipients = the agents THE HUMAN wrote to here (`asked`): a helper the lead brought in answers on the thread
+        # but never joins the human's "To" (a member 11-18, 13389: "the other agents it is calling is his thing"). A
+        # thread only agents have written in yet goes back to whoever wrote to the human (`partners`); an agent→agent
+        # row is history, never a recipient. Rows without `partners` (older callers) use parties
+        partners = a.get("asked") or (a.get("partners") if "partners" in a else parties)
         agents = agents_of(t, list(partners or []), roster, cv.get("agent"))
         if sw:                                      # a SWITCH: the chat is now with these, whoever spoke before it
             agents = [n for n in sw[-1]["agents"] if not roster or n in roster] or agents
@@ -422,7 +424,8 @@ SELECT thread, count(*) AS count, max(ts) AS last_ts,
        (array_agg(from_agent ORDER BY id DESC))[1] AS last_from,
        array_agg(DISTINCT from_agent) || array_agg(DISTINCT to_agent) AS parties,
        array_agg(CASE WHEN {_HF} THEN to_agent ELSE from_agent END ORDER BY id)
-         FILTER (WHERE {_HF} OR {_HT}) AS partners
+         FILTER (WHERE {_HF} OR {_HT}) AS partners,
+       array_agg(to_agent ORDER BY id) FILTER (WHERE {_HF}) AS asked
   FROM messages
  WHERE (thread LIKE 'chat:%' OR thread LIKE 'obs:%' OR thread LIKE 'cv:%')
    AND status IS DISTINCT FROM 'retracted'

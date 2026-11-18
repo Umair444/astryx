@@ -57,6 +57,11 @@ def main():
     arm("no partners at all (NULL from SQL) → no crash, no agents", rows[0]["agents"] == [], rows)
     rows = W.build_rows([agg("chat:old", ["owner", "db", "seed"])], {}, [], ROSTER)
     arm("an aggregate without `partners` (an older caller) keeps the parties rule", rows[0]["agents"] == ["db", "seed"], rows)
+    a = agg("chat:2-t", ["cv-t.8", "consumer", "db"], ["consumer", "consumer", "db"])
+    a["asked"] = ["consumer"]
+    rows = W.build_rows([a], {}, [], {*ROSTER, "consumer"}, me="cv-t.8")
+    arm("13389: a helper the lead brought in (db answered the member) is not one of the row's agents",
+        rows and rows[0]["agents"] == ["consumer"], rows)
     rows = W.build_rows([agg("cv:x", ["seed", "finance"], [])], {}, [], ROSTER)
     arm("listing still needs the owner as a party", rows == [], rows)
 
@@ -70,6 +75,7 @@ def main():
         f"CASE WHEN {hf} THEN to_agent ELSE from_agent END" in sql, sql)
     arm("partners filtered to rows with the owner on one end",
         f"FILTER (WHERE {hf} OR {ht}) AS partners" in sql, sql)
+    arm("asked: the agents the human wrote to", f"array_agg(to_agent ORDER BY id) FILTER (WHERE {hf}) AS asked" in sql, sql)
 
     print("the composer's recipients (model.ts participants, esbuild + node)")
     esb = REPO / "observatory/web/node_modules/.bin/esbuild"
