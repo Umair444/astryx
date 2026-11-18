@@ -154,7 +154,6 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   const end = useRef<HTMLDivElement>(null)
   const blocks = useMemo(() => blocksOf(rowsOf(rows, work), new Set(roster), handoffs, switches, me), [rows, work, roster, handoffs, switches, me])
   const last = rows.at(-1)?.id ?? 0
-  const lastSwitch = switches?.at(-1)?.ts ?? ''
   // a long thread renders its newest window ("Show earlier" above); a jump widens it and lands on its message
   const win = useWindowed(blocks, focus, !loading, () => end.current?.parentElement?.parentElement ?? null)
   // the conversation's hands, held still (iteration 14): a block re-renders when ITS content changes, never because
@@ -227,12 +226,15 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     }
   }, [loading]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (focus) following.current = false }, [focus?.n])   // a jump to a message is the reader's: stay there
-  // MY OWN act (my message landing, a switch) takes me back to the end and follows it. Anything else (an agent's
-  // reply, an agent starting work: `pending` is the agents' live lanes, not mine) follows only a reader already at the
-  // end, through the pin: one reading older messages stays where they are, as every chat app does (owner 11-18: "a
-  // person is trying to read older messages and is pushing down automatically. it is bad ux")
-  const mine = !!rows.at(-1) && rows.at(-1)!.from === me
+  // MY OWN message landing takes me back to the end and follows it. Anything else (an agent's reply, an agent starting
+  // work, a switch another person on this thread made) follows only a reader already at the end, through the pin: one
+  // reading older messages stays where they are, as every chat app does (owner 11-18: "a person is trying to read older
+  // messages and is pushing down automatically. it is bad ux"). Mine = ANY row new since the last look is mine, so an
+  // agent's row landing in the same refresh can't hide it (medic 13703)
+  const seen = useRef(last)
   useEffect(() => {
+    const mine = rows.some((m) => m.id > seen.current && m.from === me)
+    seen.current = last
     if (win.jumping() || !(following.current || mine)) return
     following.current = true
     // straight to the end, never a smooth glide: Safari doesn't cancel a glide when the pin sets scrollTop, so the glide
@@ -240,12 +242,6 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     const box = end.current?.parentElement?.parentElement
     if (box) box.scrollTop = box.scrollHeight
   }, [last]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (win.jumping()) return
-    following.current = true
-    const box = end.current?.parentElement?.parentElement
-    if (box) box.scrollTop = box.scrollHeight
-  }, [lastSwitch]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return (
     <div className="ws-col pt-10 flex flex-col gap-5" aria-busy>
