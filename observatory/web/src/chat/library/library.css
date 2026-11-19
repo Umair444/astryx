@@ -21,6 +21,7 @@
 .ws-librow[data-active="true"] > button { background: color-mix(in srgb, var(--t-fg) 7.5%, transparent); }
 
 .ws-libmenu { position: absolute; right: 8px; top: 8px; opacity: 0; transition: opacity 120ms; }
+.ws-libmenu[data-open="true"] { z-index: 40; }   /* above the rows after it: in a list the open menu hangs over them (11-19) */
 .ws-librow .ws-libmenu { top: 50%; transform: translateY(-50%); }
 .group:hover > .ws-libmenu, .ws-libmenu[data-open="true"], .ws-libmenu:focus-within { opacity: 1; }
 @media (hover: none) { .ws-libmenu { opacity: 1; } }
