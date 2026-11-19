@@ -136,6 +136,15 @@ async def main():
     await wa.hook(Req(event("G6", f"call @{NUM}9 about it")))
     check("G6 a longer number that starts with ours is not a tag", w.chats == [], f"{w.chats}")
 
+    async def stored(text):
+        async def f(chat, msgid, *a, **k): return text
+        return f
+    for tag, txt, want in (("G8a", "lunch at 1?", 0), ("G8b", f"@{NUM} is it loaded?", 1)):
+        w = World(QUIET).install(); real = wa.stored_text; wa.stored_text = await stored(txt)
+        await wa.hook(Req(event(tag, "")))
+        wa.stored_text = real
+        check(f"{tag} an event whose text arrives only from the store: {'tagged reaches the agent' if want else 'chatter reaches nothing'}", len(w.chats) == want, f"{w.chats}")
+
     w = World({**QUIET, "wake": None}).install()
     await wa.hook(Req(event("G7", "an ordinary message")))
     check("G7 control: a route without the rule delivers an untagged message", len(w.chats) == 1, f"{w.chats}")
