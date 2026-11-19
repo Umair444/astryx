@@ -15,6 +15,7 @@ ETL_PREFECT (prefect.exe on the box), ETL_GIT (git.exe on the box), ETL_PF_KEY (
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -24,6 +25,7 @@ from mcp.server.fastmcp import FastMCP
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.append(str(REPO / "src"))
 import box  # noqa: E402
 
 mcp = FastMCP("etl")
@@ -137,31 +139,90 @@ def etl_flow_run_logs(flow_run_id: str, tail: int = 100, min_level: int = 0) -> 
         return f"error: Prefect's database: {type(e).__name__}: {str(e)[:300]}"
 
 
+_CAUSES = [("memory", r"MemoryError|Not enough space|Errno 12\\]|out of memory"),
+           ("size", r"sheet is too large"),
+           ("git", r"does not match the configured repository|could not read Username"),
+           ("import", r"ImportError|ModuleNotFoundError|frozen importlib|site-packages[\\/][^\\/]+[\\/].*__init__\.py"),
+           ("sql", r"Execution failed on sql|teradatasql|psycopg|OperationalError|DatabaseError|ProgrammingError|goCreateConnection"),
+           ("creds", r"KeyError"),
+           ("file", r"FileNotFoundError|No such file"),
+           ("timeout", r"TimeoutError|timed out|Timeout"),
+           ("empty", r"'NoneType' object"),
+           ("monitor", r"error occurred while monitoring flow run"),
+           ("exit", r"exited with status code")]
+_EXC = re.compile(r"^\s*((?:[A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt)|ERROR)\b.*)$")
+_URL_CRED = re.compile(r"://[^\s/]*@")              # up to the LAST @ before the host: a password may hold an @
+_KV_CRED = re.compile(r"""(?im)\b(password|passwd|pwd|secret|token|api_?key)(['"]?\s*[=:]\s*)(?:(['"])(?:(?!\3).)*(?:\3|$)|[^\s'",;)}]+)""")
+
+
+def _mask(text: str) -> str:
+    """Credentials out of an error text, before it reaches the wire: a URL's user:pass@, key=value / key: 'value'
+    pairs (traceback source lines carry connect(..., password=...)), then every org secret in any of its forms."""
+    q = lambda m: m.group(3) or ""            # a quoted value keeps its quotes, whatever it held
+    text = _KV_CRED.sub(lambda m: f"{m.group(1)}{m.group(2)}{q(m)}***{q(m)}", _URL_CRED.sub("://***@", text or ""))
+    try:
+        from astryx.security.secretset import redact
+        return redact(text)
+    except Exception:          # no org layer importable here: the two patterns above still hold
+        return text
+
+
+def _cause(text: str) -> tuple[str, str]:
+    """(cause class, one line) for an error text: the class from the first matching pattern, the line the last
+    exception line (a run.bat log ends with its banner, so the plain last line is rarely the error)."""
+    text = _mask(text)
+    cause = next((c for c, rx in _CAUSES if re.search(rx, text)), "other")
+    lines = [l.strip() for l in text.splitlines() if l.strip() and not set(l.strip()) <= set("=-~^ ")]
+    exc = [m.group(1) for m in map(_EXC.match, lines) if m]
+    return cause, ((exc or lines or [""])[-1])[:200]
+
+
 @mcp.tool()
-def etl_failures(hours: int = 24) -> dict | str:
-    """Everything that failed in the last `hours`, in one call: Prefect flow runs FAILED or CRASHED (with the last
-    error line of each) and run.bat reports whose status in prefect.reporting_logs isn't success."""
+def etl_failures(hours: int = 24, detail: str = "") -> dict | str:
+    """What failed in the last `hours`, one row per job: Prefect deployments (FAILED/CRASHED runs) and run.bat
+    reports (prefect.reporting_logs status not success), each with fails, first/last time, a cause class (memory, git,
+    size, import, sql, creds, file, timeout, empty, monitor, exit, other) and the last error line; plus counts per cause.
+    detail=<job name> returns that job's failed runs with each one's error tail instead."""
     try:
         h = {"h": max(1, min(hours, 24 * 30))}
         flows = _rows("""
-            SELECT f.name || '/' || coalesce(d.name, '?') AS deployment, fr.id AS flow_run_id, fr.state_type,
-                   fr.start_time, fr.end_time,
-                   (SELECT left(l.message, 400) FROM prefect.log l WHERE l.flow_run_id = fr.id AND l.level >= 40
-                     ORDER BY l.timestamp DESC LIMIT 1) AS last_error
+            SELECT f.name || '/' || coalesce(d.name, '?') AS job, fr.id AS flow_run_id, fr.state_type AS state,
+                   coalesce(fr.end_time, fr.state_timestamp) AS at,
+                   (SELECT right(l.message, 1500) FROM prefect.log l WHERE l.flow_run_id = fr.id AND l.level >= 40
+                     ORDER BY l.timestamp DESC LIMIT 1) AS error
               FROM prefect.flow_run fr JOIN prefect.flow f ON f.id = fr.flow_id
               LEFT JOIN prefect.deployment d ON d.id = fr.deployment_id
              WHERE fr.state_type IN ('FAILED','CRASHED')
                AND coalesce(fr.end_time, fr.state_timestamp) > now() - make_interval(hours => %(h)s)
-             ORDER BY coalesce(fr.end_time, fr.state_timestamp) DESC""", h)
+             ORDER BY 4 DESC""", h)
         reports = _rows("""
-            SELECT report_name, start_time, end_time, exit_code, status, left(error_message, 400) AS error
+            SELECT report_name AS job, start_time AS at, exit_code, status AS state, right(error_message, 1500) AS error
               FROM prefect.reporting_logs
              WHERE lower(coalesce(status, '')) NOT IN ('success', 'succeeded', 'completed', 'ok')
                AND start_time > now() - make_interval(hours => %(h)s)
              ORDER BY start_time DESC""", h)
-        return {"flow_runs": flows, "reports": reports}
     except Exception as e:
         return f"error: Prefect's database: {type(e).__name__}: {str(e)[:300]}"
+    if detail:
+        runs = [dict(r, kind=k, error=_mask(r["error"])) for k, rows in
+                (("flow", flows), ("report", reports)) for r in rows if r["job"] == detail]
+        return {"job": detail, "runs": runs[:10], "more": max(0, len(runs) - 10)} if runs else \
+            f"error: no failure of {detail!r} in the last {h['h']}h (names as the digest lists them)"
+    causes: dict[str, int] = {}
+
+    def digest(rows):
+        jobs: dict[str, dict] = {}
+        for r in rows:                                    # newest first: the first row seen is the last failure
+            j = jobs.get(r["job"])
+            if not j:
+                cause, line = _cause(r["error"])
+                j = jobs[r["job"]] = {"job": r["job"], "fails": 0, "last": r["at"], "cause": cause, "error": line}
+                causes[cause] = causes.get(cause, 0) + 1
+            j["fails"] += 1
+            j["first"] = r["at"]
+        return sorted(jobs.values(), key=lambda j: (-j["fails"], j["job"]))
+
+    return {"hours": h["h"], "causes": causes, "flows": digest(flows), "reports": digest(reports)}
 
 
 # ------------------------------------------------------------------ the box (fixed snippets through Jupyter)
@@ -310,23 +371,41 @@ async def etl_job_enable(name: str, on: bool) -> dict | str:
 
 _PREFECT = r'''
 import subprocess, json
-r = subprocess.run([ARGS["exe"]] + ARGS["argv"], capture_output=True, text=True, timeout=120)
+import os
+env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")      # the CLI's rich output crashed on cp1252
+r = subprocess.run([ARGS["exe"]] + ARGS["argv"], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                   timeout=120, env=env)
 print(json.dumps({"rc": r.returncode, "out": (r.stdout + r.stderr).strip()[-1500:]}))
 '''
 
 
+_PARAM = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
+
 @mcp.tool()
-async def etl_flow_run(deployment: str) -> dict | str:
-    """Start a Prefect deployment now ('flow/deployment', as etl_deployments names it). etl seats only."""
+async def etl_flow_run(deployment: str, params: dict | None = None) -> dict | str:
+    """Start a Prefect deployment now ('flow/deployment', as etl_deployments names it), optionally with flow
+    parameters for this run only (a backfill: {"run_date": "2026-11-15"}); scalar values only. Returns the new
+    flow_run_id. etl seats only."""
     no = _refuse()
     if no:
         return no
+    params = params or {}
+    if not isinstance(params, dict) or len(params) > 20 or not all(
+            isinstance(k, str) and _PARAM.match(k) and (v is None or isinstance(v, (bool, int))
+                                                        or (isinstance(v, float) and math.isfinite(v))
+                                                        or (isinstance(v, str) and len(v) <= 200))
+            for k, v in params.items()):
+        return "error: params is a flat object of at most 20 names to scalar values (strings up to 200 chars)"
     known = etl_deployments(name_like=deployment, days=1)
     if isinstance(known, str):
         return known
     if deployment not in {d["deployment"] for d in known}:
         return f"error: no deployment named {deployment!r}"
-    return await box.run(_PREFECT, {"exe": PREFECT, "argv": ["deployment", "run", deployment]}, timeout=150)
+    argv = ["deployment", "run", deployment] + (["--params", json.dumps(params)] if params else [])
+    out = await box.run(_PREFECT, {"exe": PREFECT, "argv": argv}, timeout=150)
+    m = re.search(r"UUID:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", str(out.get("out", "")))
+    return dict(out, flow_run_id=m.group(1)) if m else out          # the CLI prints the new run as "UUID: <id>"
 
 
 @mcp.tool()
