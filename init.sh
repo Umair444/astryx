@@ -964,7 +964,7 @@ _chk_connsweep() { _trigger_chk connection_sweep; }
 _act_connsweep() {
   mkdir -p triggers/seed
   venv/bin/python -m astryx.pulse.shipped_triggers.shims write connection_sweep triggers/seed   # one source (shims.py)
-  say "installed the idle usage reading (seed): each login's limits are read when no turn has, so energy is never stale"
+  say "installed the connection sweep (seed): a connection no one wrote in for its idle time ends, and its agent is told"
 }
 
 # the precondition DAG, in dependency order (top depends on nothing).  name|class

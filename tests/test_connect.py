@@ -289,10 +289,19 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
     c.execute("INSERT INTO route (channel, chat, agent, purpose, person, opened_by, expires_at) VALUES "
               f"('whatsapp', '{N015}@s.whatsapp.net', 'seed', 'link', 'cv-pat.7', 'cv-pat.7', now() - interval '1 s')")
     c.execute("UPDATE route SET expires_at = now() - interval '1 s' WHERE chat=%s", (KUMAIL,))
-    def sql(q, a=None):                   # the pulse ctx's sql(): rows as dicts
+    from astryx.pulse import pulse_run
+    def sql(q, a=None):                   # the pulse ctx's sql(): rows as dicts, and its guard (a check never writes messages)
+        if pulse_run._WAKE_WRITE.search(pulse_run._COMMENT.sub(" ", str(q))):
+            raise PermissionError("checks don't write messages: ctx.say")
         cur = c.execute(q, a)
         return [dict(zip([x.name for x in cur.description], r)) for r in cur.fetchall()] if cur.description else []
-    S.connection_sweep(SimpleNamespace(sql=sql))
+    def say(to, body, *, thread=None, intent="trigger", from_agent="pulse", **_k):   # the pulse writes the wake
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES (%s, %s, %s, %s, %s)",
+                  (from_agent, to, thread, intent, body))
+    try:
+        S.connection_sweep(SimpleNamespace(sql=sql, say=say))
+    except PermissionError as e:
+        arm("the sweep queues its notices with ctx.say (the pulse's ctx.sql refuses a messages write)", False, e)
     gone = c.execute("SELECT count(*) FROM route WHERE expires_at <= now()").fetchone()[0]
     lend = c.execute("SELECT count(*) FROM messages WHERE to_agent='lending' AND body LIKE '[connect] your connection%%timed out%%'").fetchone()[0]
     pat = c.execute("SELECT count(*) FROM messages WHERE to_agent='cv-pat.7' AND body LIKE '[connect] the link%%lapsed%%'").fetchone()[0]
