@@ -23,7 +23,9 @@ export function noteServerTime(serverMs: number, resolutionMs: number, sentAt: n
   skewLo = Math.max(skewLo, lo); skewHi = Math.min(skewHi, hi)
 }
 function noteDate(r: Response, sentAt: number) {
-  const d = r.headers.get('date')
+  // the FIRST date: through the TLS front a response carries two Date headers, which fetch joins with ", " into a string
+  // Date.parse can't read (NaN), so the skew was never measured and the timer froze at 00:00 again (owner 14522)
+  const d = r.headers.get('date')?.match(/^\w{3}, \d{1,2} \w{3} \d{4} [\d:]{8} GMT/)?.[0]
   // 2.1 s: the header is whole seconds AND uvicorn re-stamps its cached Date only once a second (Server.on_tick)
   if (d) noteServerTime(Date.parse(d), 2100, sentAt, Date.now())
 }
