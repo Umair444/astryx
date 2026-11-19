@@ -19,6 +19,7 @@ import ChangesCard from './ChangesCard'
 import TurnActions, { TurnActionsCtx } from './TurnActions'
 import { blockMsg, useWindowed, type Focus } from './focus'
 import { useThreadTitles, type Switch } from '../data'
+import { LiveFrom, revealParts, totalText, useReveal } from './reveal'
 
 /* The conversation (plan-11884 C2, reshaped for the workspace per DESIGN.md "turns: flat, not bubbles"). Agents'
    answers read as a page: face + name + role + time, then prose at a reading measure; consecutive answers from the
@@ -232,6 +233,8 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   // messages and is pushing down automatically. it is bad ux"). Mine = ANY row new since the last look is mine, so an
   // agent's row landing in the same refresh can't hide it (medic 13703)
   const seen = useRef(last)
+  const liveFrom = useRef<number | null>(null)     // the newest id when this conversation loaded: newer ones play (reveal.ts)
+  if (!loading && liveFrom.current === null) liveFrom.current = last
   useEffect(() => {
     const mine = rows.some((m) => m.id > seen.current && m.from === me)
     seen.current = last
@@ -249,6 +252,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     </div>
   )
   return (
+    <LiveFrom.Provider value={liveFrom.current ?? Infinity}>
     <div className="ws-col pt-8 flex flex-col" role="log" aria-label="conversation">
       {blocks.length === 0 && empty}
       {(win.hidden > 0 || (older && !!onOlder)) && (
@@ -262,6 +266,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
       {/* the end carries the log's bottom space, so scrolling it into view lands at the true end, not 24px short */}
       <div ref={end} className="h-6 shrink-0" />
     </div>
+    </LiveFrom.Provider>
   )
 }
 
@@ -372,7 +377,11 @@ function Mine({ m, to, by = null, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to:
 function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | null; cont: boolean; role?: string; onOpenFile: (r: OpenRequest) => void }) {
   const files = embeds(m.body)
   const text = stripEmbeds(m.body)
-  const flow = useMemo(() => inlineParts(parts(m.body)), [m.body])      // the text with its files in place
+  const whole = useMemo(() => inlineParts(parts(m.body)), [m.body])     // the text with its files in place
+  const textOf = (p: (typeof whole)[number]) => ('text' in p ? p.text : null)
+  const n = useReveal(m.id, useMemo(() => totalText(whole, textOf), [whole]))   // eslint-disable-line react-hooks/exhaustive-deps
+  const flow = useMemo(() => revealParts(whole, n, textOf, (p, text) => ({ ...p, text })), [whole, n]) // eslint-disable-line react-hooks/exhaustive-deps
+  const done = n === Infinity
   return (
     <div className={`ws-turn ${cont ? 'mt-2.5 is-cont' : 'mt-5 first:mt-0'}`} data-turn>
       {cont && <TurnActions m={m} text={text} />}
@@ -393,7 +402,7 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
           ? <InlineFile key={`f:${p.embed.path}`} e={p.embed} from={m.from} msg={m} onOpen={onOpenFile} />
           : 'canvas' in p ? <CanvasEmbed key={`c:${p.canvas}:${i}`} id={p.canvas} />
           : <Prose key={`t:${i}`} text={p.text} msg={m} />))}
-        {files.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} msg={m} onOpen={onOpenFile} />)}</div>}
+        {done && files.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{files.map((f) => <FileChip key={f.path} path={f.path} label={f.label} from={m.from} msg={m} onOpen={onOpenFile} />)}</div>}
       </div>
     </div>
   )
