@@ -338,5 +338,22 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
     arm("C6b notice() raising on the second row: the first row's agent is still told (durable), the evaluation fails",
         isinstance(e, RuntimeError) and len(calls) == 2 and len(told) == 1 and told <= {calls[0]}, (e, calls, told))
 
+print("C10 THE WIRE NAME OF AN UNLINKED ACCOUNT (consumer 14306)")
+pn = C.person_name
+names = [pn("email", a) for a in ("ahmad.khan5@x.example", "suleman.anwar@x.example", "syed.zafar@x.example",
+                                 "syed.zafar@y.example")]
+arm("C10 an email address: no '@' in its wire name, its local part kept, never only its digits",
+    all("@" not in n and n.startswith("em-") for n in names) and names[0].startswith("em-ahmad.khan5-") and names[0] != "em-5",
+    names)
+arm("C10 two addresses never share a name (same local part, other domain included)", len(set(names)) == len(names), names)
+arm("C10 a phone or a numeric id keeps its digits, as the bridges mint it",
+    pn("whatsapp", "923001112223@s.whatsapp.net") == "wa-923001112223" and pn("telegram", "4242") == "tg-4242"
+    and pn("email", "SYED.Zafar@x.example") == pn("email", "syed.zafar@x.example"),
+    (pn("whatsapp", "923001112223@s.whatsapp.net"), pn("telegram", "4242")))
+arm("C10 two numeric mailboxes on two domains never share a name (medic 14313 R1)",
+    pn("email", "12345@a.pk") != pn("email", "12345@b.pk"), (pn("email", "12345@a.pk"), pn("email", "12345@b.pk")))
+arm("C10 a Telegram group id keeps its digits, as before (medic 14313 R2)", pn("telegram", "-1001234567") == "tg-1001234567",
+    pn("telegram", "-1001234567"))
+
 print(f"\n{'ALL PASS' if not fails else f'FAILED ({len(fails)})'}: connect")
 sys.exit(1 if fails else 0)

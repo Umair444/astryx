@@ -51,10 +51,17 @@ def idle_of(timeout: str) -> timedelta:
 
 
 def person_name(channel: str, chat: str) -> str:
-    """The wire name an unlinked person's chat writes as (the bridges' own mint)."""
+    """The wire name an unlinked person's chat writes as (the bridges' own mint). A number (a phone, a Telegram id) is
+    its digits. Anything else (an email address) is its local part plus a short digest of the whole chat: a
+    wire name never holds '@' (send reads it as an org), and two addresses never share one (consumer 14306: the digits
+    of "ahmad.khan5@…" made em-5; "syed.zafar@…" kept its '@' and went to the gateway)."""
     c = channels.BY_NAME[channel]
-    digits = "".join(ch for ch in chat.split("@")[0] if ch.isdigit())
-    return f"{c.person}-{digits or chat}"
+    local = chat.split("@")[0]
+    digits = "".join(ch for ch in local if ch.isdigit())
+    if digits and digits == local.lstrip("+-") and (c.numbers or "@" not in chat):    # a number; an address is never one
+        return f"{c.person}-{digits}"
+    slug = re.sub(r"[^a-z0-9.]+", "-", local.lower()).strip("-.")[:24] or "x"
+    return f"{c.person}-{slug}-{hashlib.sha256(chat.lower().encode()).hexdigest()[:6]}"
 
 
 def find(conn, who: str, channel: str, search) -> list[Handle]:
