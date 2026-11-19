@@ -1,4 +1,4 @@
-import { forwardRef, Fragment, useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react'
+import { forwardRef, Fragment, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { ApiError, apiSend, displayName } from '../../api'
 import AgentFace from '../../components/AgentFace'
 import { startDictation, stopDictation, useDictation } from '../dictate'
@@ -516,20 +516,26 @@ const DraftMirror = forwardRef<HTMLDivElement, { text: string; hero: boolean; ba
 /* THE MENU'S ROOM (owner 14944: the agent picker ran off the top of the screen). The menu opens on the side of the
    composer with room, as floating menus do (floating-ui's flip + size): above while there is room for it there, else
    below where there is more; its height is the room on that side (never past MENU_MAX), and it scrolls inside. The room
-   is measured on the composer box (the menu's own box is what it changes) and again on every scroll, resize and on a
-   phone's keyboard (visualViewport), so it never leaves the screen while it's open. */
+   is the part of the composer's scroller that is ON SCREEN (the scroller's box within the visual viewport), so a bar or
+   panel edge above it never covers the menu (medic 14968: a phone's 48px top bar hid the header). Measured before the
+   first paint (a layout effect: no frame on the wrong side) and again on every scroll, resize and keyboard change. */
 const MENU_MAX = 340, MENU_MIN = 160, MENU_GAP = 12
 function useRoom(menu: RefObject<HTMLElement | null>, open: boolean) {
   const [room, setRoom] = useState({ below: false, max: MENU_MAX })
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return
     const measure = () => {
       const anchor = menu.current?.parentElement
       if (!anchor) return
       const r = anchor.getBoundingClientRect(), vv = window.visualViewport
-      const top = vv ? vv.offsetTop : 0, bottom = vv ? vv.offsetTop + vv.height : window.innerHeight
+      let top = vv ? vv.offsetTop : 0, bottom = vv ? vv.offsetTop + vv.height : window.innerHeight
+      for (let s = anchor.parentElement; s; s = s.parentElement) {      // the nearest scroller clips what can be seen
+        if (/auto|scroll/.test(getComputedStyle(s).overflowY)) {
+          const b = s.getBoundingClientRect(); top = Math.max(top, b.top); bottom = Math.min(bottom, b.bottom); break
+        }
+      }
       const above = r.top - top - MENU_GAP, below = bottom - r.bottom - MENU_GAP
-      const flip = above < Math.min(MENU_MAX, MENU_MIN) && below > above
+      const flip = above < MENU_MIN && below > above
       const max = Math.max(0, Math.min(MENU_MAX, Math.floor(flip ? below : above)))
       setRoom((p) => (p.below === flip && p.max === max ? p : { below: flip, max }))
     }
