@@ -183,7 +183,18 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     const box = end.current?.parentElement?.parentElement
     const content = end.current?.parentElement
     if (!box || !content) return
-    const pin = () => { if (following.current && !win.jumping()) toEnd(box) }
+    const pin = () => {
+      if (win.jumping()) return
+      const el = anchorEl(box)
+      if (el) {                                    // room below the anchor so it can sit at the top of the view
+        const top = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 16
+        const pad = parseFloat(box.style.paddingBottom) || 0
+        const room = Math.max(0, Math.round(box.clientHeight - (box.scrollHeight - pad - top)))
+        if (Math.abs(room - pad) > 1) box.style.paddingBottom = `${room}px`
+        if (anchor.current !== null && Math.abs(box.scrollTop - top) > 1) box.scrollTop = top
+      } else if (following.current) box.scrollTop = box.scrollHeight
+    }
+    const sent = () => { anchor.current = 'mine'; following.current = false; pin() }
     // only the READER unpins, and only by MOVING the view off the end: a scroll that lands more than 80px from the end
     // within a moment of their wheel, swipe, key or scrollbar grab. The app's own glide fires scroll events too and
     // must never unpin itself mid-way (medic 12897); a trackpad's touch or bounce that leaves the view at the end
@@ -201,7 +212,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
       const byHand = performance.now() - hand < 600, down = box.scrollTop >= top
       const dist = box.scrollHeight - box.scrollTop - box.clientHeight
       top = box.scrollTop
-      if (byHand) released.current = newest.current       // the reader took the view: a held reply lets go
+      if (byHand) anchor.current = null           // the reader took the view: nothing holds it any more
       if (byHand && !down && dist > 24) following.current = false
       else if (dist < 80 && (down || !byHand)) following.current = true
       else if (byHand && dist >= 80) following.current = false
@@ -219,15 +230,18 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     box.addEventListener('keydown', onKey)
     box.addEventListener('mousedown', onGrab)
     box.addEventListener('scroll', onScroll, { passive: true })
+    box.addEventListener('ws-sent', sent)
+    pinRef.current = pin
     pin()
     return () => {
       ro.disconnect(); mo.disconnect()
       box.removeEventListener('wheel', touch); box.removeEventListener('touchmove', touch)
       box.removeEventListener('keydown', onKey); box.removeEventListener('scroll', onScroll)
-      box.removeEventListener('mousedown', onGrab)
+      box.removeEventListener('mousedown', onGrab); box.removeEventListener('ws-sent', sent)
+      box.style.paddingBottom = ''
     }
   }, [loading]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (focus) following.current = false }, [focus?.n])   // a jump to a message is the reader's: stay there
+  useEffect(() => { if (focus) { following.current = false; anchor.current = null } }, [focus?.n])   // a jump to a message is the reader's: stay there
   // MY OWN message landing takes me back to the end and follows it. Anything else (an agent's reply, an agent starting
   // work, a switch another person on this thread made) follows only a reader already at the end, through the pin: one
   // reading older messages stays where they are, as every chat app does (owner 11-18: "a person is trying to read older
@@ -239,28 +253,34 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   // first loaded render of THIS thread
   if (loading) liveFrom.current = null
   else if (liveFrom.current === null) liveFrom.current = last
-  // A REPLY IS READ FROM ITS FIRST LINE (owner 14414: "a person is reading it; but as it ends the scroll moves to the end
-  // of page"): following the end never carries the view past the top of the newest reply that arrived while the reader
-  // was here; a reply taller than the view holds there as it grows. The reader's own scroll releases it (from then on
-  // the end is followed as before)
-  const tail = rows.at(-1)
-  const newest = useRef<number | null>(null)
-  newest.current = tail && liveFrom.current !== null && tail.id > liveFrom.current && !isHuman(tail.from) ? tail.id : null
-  const released = useRef<number | null>(null)
-  const toEnd = (box: HTMLElement) => {
-    const r = newest.current !== null && newest.current !== released.current ? box.querySelector<HTMLElement>(`[data-reply="${newest.current}"]`) : null
-    const top = r ? r.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 16 : Infinity
-    box.scrollTop = Math.min(top, box.scrollHeight)
+  // A NEW TURN SITS AT THE TOP OF THE VIEW (owner 14464/14465, as claude.ai does): what I send moves to the top, with
+  // room left below it, and the reply grows into that room; nothing scrolls on its own after that. A reply that arrives
+  // while I'm at the end, with nothing of mine pending, opens at ITS first line the same way (owner 14414). The anchor
+  // is 'mine' (my newest message this visit: the outbox's, then the row that replaces it) or a reply's id. The reader's
+  // own scroll lets go of it; the room below stays until the turn fills it, so letting go never moves the view.
+  const anchor = useRef<'mine' | number | null>(null)
+  const pinRef = useRef<() => void>(() => {})
+  const anchorEl = (box: HTMLElement): HTMLElement | null => {
+    if (anchor.current === 'mine' || anchor.current === null) {
+      const els = [...box.querySelectorAll<HTMLElement>('[data-outgoing], [data-mine]')]
+        .filter((e) => e.hasAttribute('data-outgoing') || Number(e.dataset.mine) > (liveFrom.current ?? Infinity))
+      if (anchor.current === 'mine' || els.length) return els.at(-1) ?? null
+    }
+    return typeof anchor.current === 'number' ? box.querySelector<HTMLElement>(`[data-reply="${anchor.current}"]`) : null
   }
   useEffect(() => {
     const mine = rows.some((m) => m.id > seen.current && m.from === me)
     seen.current = last
-    if (win.jumping() || !(following.current || mine)) return
-    following.current = true
+    if (win.jumping()) return
+    const tail = rows.at(-1)
+    if (mine) anchor.current = 'mine'
+    else if (anchor.current === null && following.current && tail && !isHuman(tail.from) && tail.id > (liveFrom.current ?? Infinity)) anchor.current = tail.id
+    if (anchor.current !== null) return pinRef.current()
+    if (!following.current) return
     // straight to the end, never a smooth glide: Safari doesn't cancel a glide when the pin sets scrollTop, so the glide
     // landed on the end as it was when it started, short of the reply or "working" line laid out after it (member 13399)
     const box = end.current?.parentElement?.parentElement
-    if (box) toEnd(box)
+    if (box) box.scrollTop = box.scrollHeight
   }, [last]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return (
@@ -352,7 +372,7 @@ function Mine({ m, to, by = null, onEdit, onOpenFile, onOpenAsk }: { m: Msg; to:
   }, [m.body, !!ask, !!ch, !!ctx]) // eslint-disable-line react-hooks/exhaustive-deps
   const long = text.length > LONG || text.split('\n').length > 9
   return (
-    <div className={`flex flex-col ${by ? 'items-start' : 'items-end'} gap-1 group mt-4 first:mt-0`} data-turn data-by={by ?? undefined}>
+    <div className={`flex flex-col ${by ? 'items-start' : 'items-end'} gap-1 group mt-4 first:mt-0`} data-turn data-by={by ?? undefined} data-mine={by ? undefined : m.id}>
       {/* another human's words (cog-gaps): on the left, under their name; only the viewer's own sit right */}
       {by && <span className="text-[11.5px] font-medium text-ink-dim">{humanName(by)}</span>}
       {ctx && <span className="text-[11px] text-ink-mute border border-line rounded-full px-2 py-[1px] mb-0.5">on canvas #{ctx[1]}{ctx[2] ? ` · ${ctx[2]}` : ''}{ctx[3] ? ` · v${ctx[3]}` : ''}</span>}

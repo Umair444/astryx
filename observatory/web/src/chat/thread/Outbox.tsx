@@ -23,13 +23,18 @@ export default function Outbox({ items, onRetry, onEdit, onDiscard }: {
   onEdit: (o: Outgoing) => void
   onDiscard: (o: Outgoing) => void
 }) {
-  const end = useRef<HTMLDivElement>(null)
-  useEffect(() => { end.current?.scrollIntoView({ block: 'end' }) }, [items.length])
+  // a message just sent: the conversation (Turns) moves it to the top of the view, the one place that scrolls it
+  const box = useRef<HTMLDivElement>(null)
+  const n = useRef(items.length)
+  useEffect(() => {
+    if (items.length > n.current) box.current?.dispatchEvent(new Event('ws-sent', { bubbles: true }))
+    n.current = items.length
+  }, [items.length])
   if (!items.length) return null
   return (
-    <div className="ws-col -mt-2 pb-6 flex flex-col gap-4" aria-live="polite">
+    <div ref={box} className="ws-col -mt-2 pb-6 flex flex-col gap-4" aria-live="polite">
       {items.map((o) => (
-        <div key={o.key} className="flex flex-col items-end gap-1">
+        <div key={o.key} className="flex flex-col items-end gap-1" data-outgoing>
           <div className={`ws-mine max-w-[80%] rounded-[14px] px-4 py-2.5 text-[15px] leading-[1.55] text-ink whitespace-pre-wrap break-words ${o.failed ? 'ws-unsent' : 'opacity-70'}`}>
             {parseReply(o.text)?.rest ?? o.text}{o.files.length > 0 && <span className="block text-[12.5px] text-ink-dim mt-0.5">{o.files.map((f) => f.name).join(', ')}</span>}
           </div>
@@ -45,7 +50,6 @@ export default function Outbox({ items, onRetry, onEdit, onDiscard }: {
           </div>
         </div>
       ))}
-      <div ref={end} />
     </div>
   )
 }
