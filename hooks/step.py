@@ -1052,9 +1052,12 @@ def handle_stop(cur, agent, h, strip=None):
         # and pulse triggers are no person, so they can't auto-message anyone. No bubble is fine: a bridge's deliver()
         # falls back to a fresh send. The reply goes BACK to that sender on that thread.
         if src and src[3]:
+            # a reply is a send to the sender OR on the sender's thread: in a group, an agent answers "@Ali" to the
+            # group (to 'owner'), not to Ali's own name, and that is still the answer (owner 14225: a second
+            # "I have sent Ali the stats" posted under every group reply)
             already = cur.execute(
-                "SELECT count(*) FROM messages WHERE turn_id=%s AND to_agent=%s",
-                (turn_id, src[0])).fetchone()[0]
+                "SELECT count(*) FROM messages WHERE turn_id=%s AND (to_agent=%s OR thread=%s)",
+                (turn_id, src[0], src[2])).fetchone()[0]
             if not already:
                 lbl, why = _label(agent)
                 if lbl or why:
