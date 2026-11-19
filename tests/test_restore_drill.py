@@ -38,7 +38,7 @@ print("not run:")
 with tempfile.TemporaryDirectory() as td:
     nodock = Path(td) / "nodock"
     nodock.mkdir()
-    for tool in ("awk", "grep", "cut", "dirname", "mktemp", "bash", "cat", "psql", "tr", "sed", "tail"):
+    for tool in ("awk", "grep", "cut", "dirname", "mktemp", "bash", "cat", "psql", "tr", "sed", "tail", "rm"):
         w = shutil.which(tool)
         if w:
             (nodock / tool).symlink_to(w)
@@ -61,6 +61,30 @@ with tempfile.TemporaryDirectory() as td:
     r = run([str(stub), str(nodock)])
     check("the declared image absent, the running container's present → the drill takes the running one",
           r.returncode == 2 and "docker run of run:1 failed" in r.stderr, f"rc {r.returncode}: {r.stderr[-200:]}")
+
+    # seed 14905: initdb's bootstrap superuser is the provisioner when its root-only DSN file is readable (the org's role
+    # is a restricted login inside), else the org's role; a stub `docker run` records its argv and fails, starting nothing
+    seen = Path(td) / "run.argv"
+    (stub / "docker").write_text('#!/bin/sh\ncase "$1" in\n  image) exit 0 ;;\n'
+                                 f'  run) printf "%s\\n" "$@" > {seen}; exit 1 ;;\nesac\nexit 0\n')
+    sup = Path(td) / "pg-super.dsn"
+    sup.write_text("postgresql://super_fx:pw@db.invalid:5432/postgres\n")
+
+    def boot(super_file):
+        seen.unlink(missing_ok=True)
+        r = subprocess.run(["bash", str(DRILL), "/dev/null"], cwd=REPO, capture_output=True, text=True, timeout=60,
+                           env={**os.environ, "PATH": f"{stub}:{nodock}", "ASTRYX_PG_SUPER_FILE": str(super_file)})
+        users = [a.split("=", 1)[1] for a in (seen.read_text().split() if seen.exists() else []) if a.startswith("POSTGRES_USER=")]
+        return r, users
+    r, users = boot(sup)
+    if not seen.exists() and ("ASTRYX_DSN" in r.stderr or "venv python" in r.stderr):
+        print("  SKIP  bootstrap role: this checkout has no .env/venv (link them to run it)")
+    else:
+        check("the provisioner's DSN file readable → initdb's bootstrap superuser is its user",
+              users == ["super_fx"], f"{users} {r.stderr[-200:]}")
+        r, users = boot(Path(td) / "absent.dsn")
+        check("…and without it, the org's own role, as before", len(users) == 1 and users[0] != "super_fx" and users[0],
+              f"{users} {r.stderr[-200:]}")
 
 print("wiring:")
 rv = (REPO / "scripts" / "restore_verify.sh").read_text()
