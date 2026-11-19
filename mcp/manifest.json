@@ -347,7 +347,61 @@
           "description": "Wait for text to appear or disappear or a specified time to pass. When both text and textGone are provided, waits for the first one to happen"
         }
       ]
+    },
+    {
+      "server": "etl",
+      "who": "grant",
+      "tools": [
+        {
+          "name": "etl_deployments",
+          "description": "Every Prefect deployment ('flow/deployment') with its schedules, paused flag, entrypoint and path, and its last"
+        },
+        {
+          "name": "etl_flow_run_logs",
+          "description": "One flow run: its deployment, state and times, and its last `tail` log lines (min_level 40 = errors only)."
+        },
+        {
+          "name": "etl_failures",
+          "description": "Everything that failed in the last `hours`, in one call: Prefect flow runs FAILED or CRASHED (with the last"
+        },
+        {
+          "name": "etl_jobs",
+          "description": "The Task Scheduler jobs under the ETL folder (ETL_TASK_FOLDER), one row each: state (Enabled/Disabled), status,"
+        },
+        {
+          "name": "etl_box",
+          "description": "The ETL box's health: free/total GB per drive, memory, boot time, and the Prefect worker processes alive."
+        },
+        {
+          "name": "etl_log_tail",
+          "description": "The last `lines` of a file on the box, under the ETL root (ETL_ROOT; a relative path is taken from it): a job's"
+        },
+        {
+          "name": "etl_job_run",
+          "description": "Start a Task Scheduler job now (its full name, e.g. '\\BI Jobs\\umair.fiaz\\merchant_active'). etl seats only."
+        },
+        {
+          "name": "etl_job_stop",
+          "description": "Stop a running Task Scheduler job. etl seats only."
+        },
+        {
+          "name": "etl_job_enable",
+          "description": "Enable (on=true) or disable (on=false) a Task Scheduler job. Retiring a job disables it for 7 days first"
+        },
+        {
+          "name": "etl_flow_run",
+          "description": "Start a Prefect deployment now ('flow/deployment', as etl_deployments names it). etl seats only."
+        },
+        {
+          "name": "etl_flow_cancel",
+          "description": "Cancel a running Prefect flow run (by its uuid). etl seats only."
+        },
+        {
+          "name": "etl_box_pull",
+          "description": "Deploy merged code: `git pull --ff-only` in the box's ETL repo (ETL_ROOT). Returns the head before and after."
+        }
+      ]
     }
   ],
-  "total_tools": 66
+  "total_tools": 78
 }
