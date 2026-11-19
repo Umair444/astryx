@@ -61,6 +61,9 @@ NOT_SECRET = frozenset({
     # KEY (a name) of Prefect's database; locations, none grants anything. Guarding the repo path refused every seat's
     # jupyter_run that named it (etl-architect 14945)
     "ETL_ROOT", "ETL_TASK_FOLDER", "ETL_PREFECT", "ETL_GIT", "ETL_PF_KEY",
+    # whatsapp (bridges/whatsapp.py): our own linked number and LID, the ids a group tags us by; public identities
+    # (owner 11-15: our users' numbers and jids are not secret), and every agent's group messages carry them
+    "WA_SELF_IDS",
 })
 
 
