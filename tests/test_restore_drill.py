@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Oracle for scripts/restore_drill.sh, the empty-data-dir restore rehearsal (#5497, seed #44479/#44481).
 
-  NOT RUN   with no docker on PATH, and with docker present but the declared image absent, the drill exits 2 and says
-            NOT RUN, naming why. It never exits 0 for a path it didn't walk.
+  NOT RUN   with no docker on PATH, and with docker present but neither the declared image nor the running postgres
+            container's, the drill exits 2 and says NOT RUN, naming why. With only the running one, it drills on that (seed 14901). It never exits 0 for a path it didn't walk.
   WIRING    restore_verify.sh runs the drill BEFORE its OK stamp, under a wall cap, and any non-zero (NOT RUN and a
             timeout included) sets fail=1, so the stamp reads FAILED.
   LIVE      a SMALL dump (a stamped fixture DB with one row in each core table) drilled end to end on a throwaway server
@@ -38,7 +38,7 @@ print("not run:")
 with tempfile.TemporaryDirectory() as td:
     nodock = Path(td) / "nodock"
     nodock.mkdir()
-    for tool in ("awk", "grep", "cut", "dirname", "mktemp", "bash", "cat", "psql", "tr"):
+    for tool in ("awk", "grep", "cut", "dirname", "mktemp", "bash", "cat", "psql", "tr", "sed", "tail"):
         w = shutil.which(tool)
         if w:
             (nodock / tool).symlink_to(w)
@@ -53,6 +53,14 @@ with tempfile.TemporaryDirectory() as td:
     check("docker present, the declared image absent → exit 2, NOT RUN, naming the image",
           r.returncode == 2 and "NOT RUN" in r.stderr and "not on this host" in r.stderr,
           f"rc {r.returncode}: {r.stderr[-200:]}")
+
+    # seed 14901: the declared image absent, the drill runs on the image this host's postgres container runs, and
+    # says so; a stub `docker run` that fails shows WHICH image it chose without starting anything
+    (stub / "docker").write_text('#!/bin/sh\ncase "$1 $2 $3" in\n  "image inspect run:1") exit 0 ;;\n'
+                                 '  "image inspect "*) exit 1 ;;\n  "inspect -f "*) echo run:1 ;;\n  run*) exit 1 ;;\nesac\nexit 0\n')
+    r = run([str(stub), str(nodock)])
+    check("the declared image absent, the running container's present → the drill takes the running one",
+          r.returncode == 2 and "docker run of run:1 failed" in r.stderr, f"rc {r.returncode}: {r.stderr[-200:]}")
 
 print("wiring:")
 rv = (REPO / "scripts" / "restore_verify.sh").read_text()
