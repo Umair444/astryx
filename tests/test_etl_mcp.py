@@ -183,7 +183,13 @@ V = "Zq7#secretval"
 leaks = ['  File "x.py", line 9, in c\n    con = connect(host=h, password="' + V + '")\nOperationalError: boom',
          "Driver: PWD=" + V + ";UID=u\nDatabaseError: x",
          "connection failed: password='" + V + "'\nRuntimeError: y",
-         "sqlalchemy.exc: postgresql://u:p@" + V + "@h/db\nOperationalError: z"]
+         "sqlalchemy.exc: postgresql://u:p@" + V + "@h/db\nOperationalError: z",
+         'connect(password="Hun ter2x, ' + V + '")\nOperationalError: a',            # quoted, with a space and a comma
+         'connect(password="x,' + V + '")\nOperationalError: b',
+         "password='x;" + V + "'\nOperationalError: c",
+         "{'user': 'u', 'password': 'a b, " + V + "'}\nKeyError: d",               # a dict repr
+         '{"password": "a b, ' + V + '"}\nValueError: e',
+         'con = connect(password="a b ' + V + '\nSyntaxError: unterminated string']   # a quote cut off by the tail                           # json
 pf_rows = {"flow": [], "report": [{"job": f"L{i}", "at": "t", "exit_code": 1, "state": "FAILED", "error": e}
                                   for i, e in enumerate(leaks)]}
 d = srv.etl_failures(hours=24)
