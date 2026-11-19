@@ -39,6 +39,13 @@ port_up() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }   # 0 = something l
 # exits, the loop it just launched is still its child, so the verify below counted 0 for one live loop (11-13).
 pulse_loops() { ps -eo args= 2>/dev/null | awk '$1=="bash" && $2=="-c" && $3=="cd" && /while :/ && /nucleus\/pulse\.py/ {n++} END{print n+0}'; }
 
+# --- 0. the clock: a container has no systemd to start chrony, and this host drifts ~80 s a day without it (11-19:
+# 197 s fast, the chat timer sat at 00:00). Started only where chrony is installed and passwordless sudo exists.
+# Up = chronyc gets an answer: ps alone counts a dead chronyd, since this container's PID 1 never reaps it.
+if command -v chronyd >/dev/null && ! chronyc -n tracking >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+  sudo -n chronyd -f /etc/chrony/chrony.conf && echo "resume: chronyd started"
+fi
+
 # --- 1. postgres (docker astryx-pg; ~50s to accept after a cold boot) ---
 echo "resume: waiting for postgres..."
 for _ in $(seq 1 60); do
