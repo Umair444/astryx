@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import { isMine, personName } from '../../api'
+import { isOwnerHere, useMe } from '../../me'
 import { I } from '../icons'
 import { surfaceOf, SURFACE_LABEL } from '../data'
 import type { Project } from '../model'
 import { FILTER_OF, type Filter } from '../artifacts/kinds'
 import { ProjectMark } from '../projects/parts'
-import { ensureImported, loadLibrary, type Item } from './api'
+import { ensureImported, loadLibrary, setStandard, type Item } from './api'
 import { FileCard, FileRow, type Action } from './FileCard'
 import { useCanvases, type CanvasRow } from '../canvas/api'
 import { CanvasCard, CanvasRowItem } from '../canvas/CanvasCard'
@@ -17,7 +18,9 @@ import { CanvasCard, CanvasRowItem } from '../canvas/CanvasCard'
    annotations come along); "Open its conversation" goes to where it was made. A file nobody has opened yet is listed
    too ("new"): opening it imports it into its own conversation's history, exactly as a chip click would.
    CANVASES (iteration 13): the live pages agents paint sit first, each card the page itself, live; a click opens it
-   in the panel here, beside the library (view only; canvas holds the edits). */
+   in the panel here, beside the library (view only; canvas holds the edits).
+   STANDARDS (owner 11-19): the owner marks a file the org's standard for its file type (one per type); agents start
+   from it. "Standards" filters to them. */
 
 const KINDS: { id: Filter; label: string }[] = [
   { id: 'all', label: 'All' }, { id: 'images', label: 'Images' }, { id: 'docs', label: 'Docs' }, { id: 'data', label: 'Data' }, { id: 'code', label: 'Code' },
@@ -46,6 +49,8 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
   const [project, setProject] = useState('')
   const [thread, setThread] = useState('')
   const [sort, setSort] = useState<Sort>('recent')
+  const [std, setStd] = useState(false)
+  const owner = isOwnerHere(useMe())
   const [view, setView] = useState<'grid' | 'list'>(() => { try { return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid' } catch { return 'grid' } })
   const search = useRef<HTMLInputElement>(null)
 
@@ -70,6 +75,7 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
     return [...by.entries()].sort((a, b) => a[1].localeCompare(b[1]))
   }, [all])
   const inProject = useCallback((i: Item, p: Project) => p.threads.includes(i.thread) || i.thread === `project:${p.id}` || (!!i.id && p.files.includes(i.id)), [])
+  const nStd = all.filter((i) => i.standard).length
   const counts = useMemo(() => {
     const c: Record<Kind, number> = { all: all.length, images: 0, docs: 0, data: 0, code: 0, canvases: canvases?.length ?? 0 }
     for (const i of all) c[FILTER_OF[i.kind]]++
@@ -79,24 +85,24 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase()
     const p = projects.find((x) => x.id === project)
-    const out = all.filter((i) => (kind === 'all' || FILTER_OF[i.kind] === kind) && (!agent || i.author === agent) && (!thread || i.thread === thread)
+    const out = all.filter((i) => (kind === 'all' || FILTER_OF[i.kind] === kind) && (!std || i.standard) && (!agent || i.author === agent) && (!thread || i.thread === thread)
       && (!p || inProject(i, p)) && (!s || i.name.toLowerCase().includes(s) || i.title.toLowerCase().includes(s)))
     if (sort === 'name') out.sort((a, b) => a.name.localeCompare(b.name))
     else if (sort === 'versions') out.sort((a, b) => b.versions - a.versions)
     return out
-  }, [all, q, kind, agent, project, thread, sort, projects, inProject])
+  }, [all, q, kind, std, agent, project, thread, sort, projects, inProject])
   // the canvases the same filters leave (a kind other than All/Canvases leaves none: they aren't files)
   const cvAll = canvases ?? []
   const cvShown = useMemo(() => {
-    if (kind !== 'all' && kind !== 'canvases') return [] as CanvasRow[]
+    if (std || (kind !== 'all' && kind !== 'canvases')) return [] as CanvasRow[]
     const s = q.trim().toLowerCase()
     const p = projects.find((x) => x.id === project)
     return cvAll.filter((c) => (!agent || c.agent === agent) && (!thread || c.thread === thread) && (!p || p.threads.includes(c.thread))
       && (!s || c.title.toLowerCase().includes(s) || (c.brief ?? '').toLowerCase().includes(s)))
-  }, [cvAll, kind, q, agent, thread, project, projects])
+  }, [cvAll, kind, std, q, agent, thread, project, projects])
   const files = kind === 'canvases' ? [] : shown
-  const filtered = kind !== 'all' || !!agent || !!project || !!thread || !!q.trim()
-  const clear = () => { setKind('all'); setAgent(''); setProject(''); setThread(''); setQ('') }
+  const filtered = kind !== 'all' || std || !!agent || !!project || !!thread || !!q.trim()
+  const clear = () => { setKind('all'); setStd(false); setAgent(''); setProject(''); setThread(''); setQ('') }
 
   const open = async (it: Item) => {
     try {
@@ -105,8 +111,18 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
       onOpen(id, { ...it, id })
     } catch (e) { setErr(String((e as Error).message)) }
   }
+  const pin = async (it: Item, on: boolean) => {
+    try {
+      await setStandard(await ensureImported(it), on)
+      await load()
+    } catch (e) { setErr(String((e as Error).message)) }
+  }
   const actions = (it: Item): Action[] => {
     const out: Action[] = []
+    const ext = it.name.includes('.') ? it.name.split('.').pop()!.toLowerCase() : ''
+    if (owner && ext) out.push(it.standard
+      ? { label: 'Remove standard', icon: I.pin('w-3.5 h-3.5'), run: () => void pin(it, false) }
+      : { label: `Make standard for .${ext}`, icon: I.pin('w-3.5 h-3.5'), run: () => void pin(it, true) })
     if (!it.thread.startsWith('project:')) out.push({ label: 'Open its conversation', icon: I.chat('w-3.5 h-3.5'), run: () => onThread(it.thread) })
     for (const p of projects) {
       if (inProject(it, p)) continue
@@ -149,6 +165,11 @@ export default function Library({ projects, activeId, onOpen, onThread, onAddToP
             </button>
           ))}
         </div>
+        {nStd > 0 && (
+          <button aria-pressed={std} onClick={() => setStd((v) => !v)} className="ws-filter shrink-0 ml-1" title="The org’s standard files: agents start from them">
+            Standards<span className="tabular-nums opacity-60 ml-1">{nStd}</span>
+          </button>
+        )}
         <span className="w-px h-5 bg-line mx-1.5 shrink-0" aria-hidden />
         <select className="ws-select shrink-0" data-on={!!agent} value={agent} onChange={(e) => setAgent(e.target.value)} aria-label="made by">
           <option value="">Anyone</option>

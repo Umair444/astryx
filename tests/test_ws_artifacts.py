@@ -221,7 +221,7 @@ def main():
     full = S.artifact(a1["id"])
     arm("the library's versions equal the artifact's own", one["versions"] == full["versions"] and one["head"] == full["head"])
     arm("+ author (who made v1) and updated (the head's time)", one["author"] == "db" and one["updated"] == full["versions"][0]["ts"], one)
-    arm("the artifact shape plus author/updated only", set(one) == set(full) | {"author", "updated"}, set(one))
+    arm("the artifact shape plus author/updated/standard/stale only", set(one) == set(full) | {"author", "updated", "standard", "stale"}, set(one))
     arm("an empty store lists nothing", A.Store(tmp / "nostore").list_all() == [])
 
     print("export")
@@ -367,6 +367,7 @@ def main():
 
     class Req:
         query_params: dict = {}
+        state = type("State", (), {"reach": None})()   # the owner: scope.of reads request.state (no member's reach)
     real_store, A.store = A.store, (lambda: S)
     try:
         r = asyncio.run(A.art_content(asv["id"], Req(), None))
@@ -401,6 +402,68 @@ def main():
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
         shutil.rmtree(other, ignore_errors=True)
+
+
+    print("standards (owner 11-19)")
+    SS = A.Store(tmp / "store-std", max_bytes=1024 * 1024, media=media)
+    deck1, deck2, doc = home / "Jazz.pptx", home / "Other.pptx", home / "memo.docx"
+    deck1.write_bytes(b"PK jazz v1")
+    deck2.write_bytes(b"PK other")
+    doc.write_bytes(b"PK memo")
+    j = A.import_source(SS, str(deck1), T, "owner")
+    o = A.import_source(SS, str(deck2), T, "db")
+    m = A.import_source(SS, str(doc), T, "db")
+    pdir = media / "standards" / "pptx"
+    got = SS.set_standard(j["id"], True)
+    arm("a pin marks it and mirrors its head to <media>/standards/<ext>/<name>",
+        got["standard"] and (pdir / "Jazz.pptx").read_bytes() == b"PK jazz v1" and sorted(os.listdir(pdir)) == ["Jazz.pptx"],
+        (got.get("standard"), sorted(os.listdir(pdir)) if pdir.is_dir() else None))
+    lib = {a["id"]: a for a in SS.list_all()}
+    arm("the Library says which is the standard, and that it is current",
+        lib[j["id"]]["standard"] and not lib[j["id"]]["stale"] and not lib[o["id"]]["standard"] and not lib[m["id"]]["standard"],
+        {k: (v["standard"], v["stale"]) for k, v in lib.items()})
+    deck1.write_bytes(b"PK jazz v2")
+    A.import_source(SS, str(deck1), T, "owner")
+    arm("a new version of the standard is the standard at once (the mirror follows)",
+        (pdir / "Jazz.pptx").read_bytes() == b"PK jazz v2", (pdir / "Jazz.pptx").read_bytes())
+    deck2.write_bytes(b"PK other v2")
+    A.import_source(SS, str(deck2), T, "db")
+    arm("a new version of another file of that type leaves the mirror alone", (pdir / "Jazz.pptx").read_bytes() == b"PK jazz v2"
+        and sorted(os.listdir(pdir)) == ["Jazz.pptx"], sorted(os.listdir(pdir)))
+    SS.set_standard(o["id"], True)
+    lib = {a["id"]: a for a in SS.list_all()}
+    arm("pinning another of the same type moves it: one standard per type, the old file gone from the mirror",
+        sorted(os.listdir(pdir)) == ["Other.pptx"] and lib[o["id"]]["standard"] and not lib[j["id"]]["standard"],
+        sorted(os.listdir(pdir)))
+    SS.set_standard(m["id"], True)
+    arm("each type has its own", sorted(os.listdir(media / "standards" / "docx")) == ["memo.docx"] and (pdir / "Other.pptx").is_file())
+    SS.set_standard(j["id"], False)
+    arm("unpinning a file that isn't the standard changes nothing", sorted(os.listdir(pdir)) == ["Other.pptx"])
+    SS.set_standard(o["id"], False)
+    arm("unpinning the standard empties its folder", os.listdir(pdir) == [] and not any(a["standard"] and a["id"] == o["id"] for a in SS.list_all()),
+        os.listdir(pdir))
+    (media / "standards" / "docx" / "memo.docx").write_bytes(b"tampered")
+    lib = {a["id"]: a for a in SS.list_all()}
+    arm("a mirror that doesn't hold the head is marked stale (a failed write shows)", lib[m["id"]]["stale"], lib[m["id"]])
+    SS.mirror()
+    arm("the next mirror heals it", not {a["id"]: a for a in SS.list_all()}[m["id"]]["stale"])
+    (media / "standards" / "docx" / "stray.docx").write_bytes(b"x")
+    SS.mirror()
+    arm("nothing but the standard lives in its folder", os.listdir(media / "standards" / "docx") == ["memo.docx"],
+        os.listdir(media / "standards" / "docx"))
+    arm("a store with no media dir pins without mirroring", A.Store(tmp / "store-nomedia").mirror() is None)
+    SS.set_standard(j["id"], True)
+    SS.restore(j["id"], SS.artifact(j["id"])["versions"][-1]["rev"])
+    arm("a restore of the standard is mirrored too", (pdir / "Jazz.pptx").read_bytes() == b"PK jazz v1", (pdir / "Jazz.pptx").read_bytes())
+    note = home / "layout.md"
+    note.write_text("# layout\n")
+    md = A.import_source(SS, str(note), T, "owner")
+    SS.set_standard(md["id"], True)
+    SS.save(md["id"], "# layout v2\n")
+    arm("an owner edit of the standard is mirrored too", (media / "standards" / "md" / "layout.md").read_text() == "# layout v2\n")
+    import observatory.api.main as M
+    arm("a member can't pin (the member allowlist has no PUT here)",
+        not M.member_may("PUT", f"/api/ws/artifacts/{j['id']}/standard"), "member_may said yes")
 
     print(f"\n{'ALL PASS' if not fails else f'{fails} FAILED'}")
     return 1 if fails else 0

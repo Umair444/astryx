@@ -14,6 +14,7 @@ that agent, an owner edit or restore is a commit by owner. History is never rewr
     GET  /api/ws/artifacts/{id}/content?rev=   the raw bytes of a version (head by default)
     POST /api/ws/artifacts/{id}/save           {text, message?}  text/table/code only; 409 when unchanged
     POST /api/ws/artifacts/{id}/restore        {rev, message?}  a new commit holding that version's bytes
+    PUT  /api/ws/artifacts/{id}/standard       {on}  the org's STANDARD for its file type (below); owner only
     GET  /api/ws/artifacts/{id}/annotations    {etag, items}
     PUT  /api/ws/artifacts/{id}/annotations    If-Match: <etag>; [annotation...]; 412 when stale
     GET  /api/ws/media?thread=                 every [[file:]] embed in the thread, oldest first
@@ -28,6 +29,13 @@ every git call has a timeout. Files land through hostfile.atomic_write (the obse
     <store>/.sources.json                  {id: {source path: sha256}}: what each source held when last imported
     <store>/<thread dir>/<name>            the artifact (thread ':' -> '_', unsafe chars stripped)
     <store>/<thread dir>/<name>.annotations.json
+    <store>/.standards.json                {ext: id}: the org's standard file for each file type
+
+STANDARDS (owner 11-19, homes/seed/standards/DESIGN.md). The owner pins a Library file as the org's standard for its
+file type (one per extension: the Jazz deck is THE .pptx); pinning another of that type moves it. Agents read it at
+<media>/standards/<ext>/<name>: the store mirrors each standard's head there on every pin and every new version, and
+nothing else lives in those folders. The Library marks a standard `stale` when its mirror doesn't hold the head's bytes,
+so a mirror write that failed shows, never silently.
 
 PROVENANCE (iteration 7, the differentials loop). A version imported from a message's [[file:]] carries git trailers
 naming where its bytes came from: `Astryx-Source: <resolved path>`, `Astryx-Msg: <message id>`, `Astryx-Msg-Ts: <the
@@ -70,6 +78,7 @@ router = APIRouter()
 MAX_BYTES = 50 * 1024 * 1024                       # 50 MB per file (the contract's cap)
 GIT_TIMEOUT = 30                                   # seconds per git call
 INDEX = ".index.json"
+STANDARDS = ".standards.json"                      # {ext: artifact id}
 SOURCES = ".sources.json"                          # {id: {resolved source path: sha256 of its bytes at last import}}
 ANN = ".annotations.json"
 OWNER = "owner"
@@ -264,8 +273,9 @@ def version_rows(chunks: list[str]) -> list[dict]:
 class Store:
     """The git repo. Every write holds self.lock (re-entrant) for its whole read-modify-commit."""
 
-    def __init__(self, root: Path, max_bytes: int = MAX_BYTES, timeout: float = GIT_TIMEOUT):
+    def __init__(self, root: Path, max_bytes: int = MAX_BYTES, timeout: float = GIT_TIMEOUT, media: Path | None = None):
         self.root, self.max_bytes, self.timeout = Path(root), max_bytes, timeout
+        self.media = Path(media) if media else None     # where standards are mirrored for agents (<media>/standards)
         self.lock = threading.RLock()
 
     # -- git
@@ -361,6 +371,7 @@ class Store:
             for f in files.splitlines():
                 if f.strip():
                     by.setdefault(f.strip(), []).append(head)
+        std = {a: x for x, a in self.standards().items()}
         arts = []
         for aid, e in self.index().items():
             if not (ID_RE.fullmatch(aid) and isinstance(e, dict) and e.get("path")):
@@ -372,7 +383,8 @@ class Store:
                 continue                            # indexed but gone from the tree: not a file anyone can open
             arts.append({"id": aid, "thread": e.get("thread", ""), "name": e.get("name", ""), "kind": kind_of(e.get("name", "")),
                          "path_in_store": e["path"], "size": size, "head": vs[0]["rev"] if vs else None, "versions": vs,
-                         "author": vs[-1]["author"] if vs else None, "updated": vs[0]["ts"] if vs else None})
+                         "author": vs[-1]["author"] if vs else None, "updated": vs[0]["ts"] if vs else None,
+                         "standard": aid in std, "stale": aid in std and not self.mirrored(std[aid], e)})
         return sorted(arts, key=lambda x: order.get(x["head"], len(order)))
 
     def export(self, aid: str, media: Path) -> dict:
@@ -472,6 +484,7 @@ class Store:
                 paths.append(SOURCES)
             subject = message or (f"import {name}" if new else f"new version of {name}")
             self.commit(paths, subject + provenance(msg, source), author)
+            self.mirror()
             return self.artifact(aid)
 
     def save(self, aid: str, text: str, message: str | None = None) -> dict:
@@ -485,6 +498,7 @@ class Store:
             atomic_write(self.root / e["path"], data)
             if not self.commit([e["path"]], (message or "").strip()[:200] or "edit", OWNER):
                 raise StoreError(409, "unchanged")
+            self.mirror()
             return self.artifact(aid)
 
     def restore(self, aid: str, rev: str, message: str | None = None) -> dict:
@@ -498,6 +512,7 @@ class Store:
             subject = re.sub(r"\s+", " ", message or "").strip()[:200] or f"restore {v['short']} (v{v['n']})"
             if not self.commit([e["path"]], subject, OWNER):
                 raise StoreError(409, "unchanged")
+            self.mirror()
             return self.artifact(aid)
 
     def create(self, thread: str, name: str, text: str, author: str, msg: dict | None = None) -> dict:
@@ -534,6 +549,63 @@ class Store:
                 if first and first[0]["author"] == author and self.content(aid, first[0]["rev"])[0] == data:
                     return self.artifact(aid)
             raise StoreError(409, "too many documents by that name")
+
+    # -- standards
+    def standards(self) -> dict:
+        try:
+            raw = json.loads((self.root / STANDARDS).read_text())
+        except (OSError, ValueError):
+            return {}
+        return {x: a for x, a in raw.items() if isinstance(a, str) and ID_RE.fullmatch(a)} if isinstance(raw, dict) else {}
+
+    def set_standard(self, aid: str, on: bool) -> dict:
+        """Pin (on) or unpin `aid` as the standard for its file type; a pin replaces that type's previous standard."""
+        e = self.entry(aid)
+        ext = PurePosixPath(e["name"]).suffix.lower()[1:]
+        if not re.fullmatch(r"[a-z0-9]{1,5}", ext):
+            raise StoreError(400, "a standard needs a file type (an extension)")
+        with self.lock:
+            std = self.standards()
+            if on:
+                std[ext] = aid
+            elif std.get(ext) == aid:
+                del std[ext]
+            atomic_write(self.root / STANDARDS, json.dumps(std, indent=1, sort_keys=True) + "\n", mode=0o640)
+            self.commit([STANDARDS], f"{'standard' if on else 'no longer the standard'} .{ext}: {e['name']}", OWNER)
+            self.mirror()
+            return {**self.artifact(aid), "standard": std.get(ext) == aid}
+
+    def mirror_dir(self, ext: str) -> Path | None:
+        return self.media / "standards" / ext if self.media else None
+
+    def mirrored(self, aid: str, e: dict) -> bool:
+        """Does the mirror hold exactly this standard's head (the working tree is the head: every write commits)?"""
+        d = self.mirror_dir(PurePosixPath(e["name"]).suffix.lower()[1:])
+        try:
+            return d is not None and (d / e["name"]).read_bytes() == (self.root / e["path"]).read_bytes()
+        except OSError:
+            return False
+
+    def mirror(self) -> None:
+        """Make <media>/standards/<ext>/ hold exactly each standard's head, and nothing in a folder no standard owns.
+        A failure leaves the Library's `stale` mark to say so; it never fails the write that called it."""
+        if self.media is None:
+            return
+        root = self.media / "standards"
+        idx, std = self.index(), self.standards()
+        try:
+            for d in (root.iterdir() if root.is_dir() else ()):
+                if d.is_dir() and not d.is_symlink():
+                    keep = idx.get(std.get(d.name, ""), {}).get("name")
+                    for f in d.iterdir():
+                        if f.name != keep:
+                            f.unlink()
+            for ext, aid in std.items():
+                e = idx.get(aid)
+                if e and not self.mirrored(aid, e):
+                    atomic_write(root / ext / e["name"], (self.root / e["path"]).read_bytes(), mode=0o644)
+        except OSError as err:
+            print(f"artifacts: the standards mirror failed ({err}); the Library marks it stale", flush=True)
 
     def annotations(self, aid: str) -> dict:
         p = self.root / (self.entry(aid)["path"] + ANN)
@@ -584,7 +656,7 @@ def store_root() -> Path:
 def store() -> Store:
     root = str(store_root())
     if root not in _stores:
-        _stores[root] = Store(Path(root))
+        _stores[root] = Store(Path(root), media=_chat.MEDIA)
     return _stores[root]
 
 
@@ -791,6 +863,15 @@ async def art_save(aid: str, body: Save):
 @router.post("/api/ws/artifacts/{aid}/restore")
 async def art_restore(aid: str, body: Restore):
     return await _run(store().restore, aid, body.rev, body.message)
+
+
+class Standard(BaseModel):
+    on: bool
+
+
+@router.put("/api/ws/artifacts/{aid}/standard")
+async def art_standard(aid: str, body: Standard):
+    return await _run(store().set_standard, aid, body.on)
 
 
 @router.get("/api/ws/artifacts/{aid}/annotations")
