@@ -191,8 +191,9 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
         const pad = parseFloat(box.style.paddingBottom) || 0
         const room = Math.max(0, Math.round(box.clientHeight - (box.scrollHeight - pad - top)))
         if (Math.abs(room - pad) > 1) box.style.paddingBottom = `${room}px`
-        if (anchor.current !== null && Math.abs(box.scrollTop - top) > 1) box.scrollTop = top
-      } else if (following.current) box.scrollTop = box.scrollHeight
+        if (anchor.current !== null) { if (Math.abs(box.scrollTop - top) > 1) box.scrollTop = top; return }
+      }
+      if (following.current) box.scrollTop = box.scrollHeight     // let go (or nothing of mine): the end is followed
     }
     const sent = () => { anchor.current = 'mine'; following.current = false; pin() }
     // only the READER unpins, and only by MOVING the view off the end: a scroll that lands more than 80px from the end
