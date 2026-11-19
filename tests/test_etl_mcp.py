@@ -189,7 +189,9 @@ leaks = ['  File "x.py", line 9, in c\n    con = connect(host=h, password="' + V
          "password='x;" + V + "'\nOperationalError: c",
          "{'user': 'u', 'password': 'a b, " + V + "'}\nKeyError: d",               # a dict repr
          '{"password": "a b, ' + V + '"}\nValueError: e',
-         'con = connect(password="a b ' + V + '\nSyntaxError: unterminated string']   # a quote cut off by the tail                           # json
+         'con = connect(password="a b ' + V + '\nSyntaxError: unterminated string',
+         "DB_PASSWORD=" + V + "\nKeyError: env",                                    # an env/config line
+         "Authorization: Bearer " + V + "\nHTTPError: 401"]                          # an HTTP error dump   # a quote cut off by the tail                           # json
 pf_rows = {"flow": [], "report": [{"job": f"L{i}", "at": "t", "exit_code": 1, "state": "FAILED", "error": e}
                                   for i, e in enumerate(leaks)]}
 d = srv.etl_failures(hours=24)
