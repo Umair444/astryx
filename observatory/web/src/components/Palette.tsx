@@ -7,7 +7,7 @@ import { useStore } from '../store'
 import { LINKS } from './Sidebar'
 import AgentFace from './AgentFace'
 import { THEMES } from '../theme'
-import { deskOf, useDesks } from '../ui/hands'
+import { deskOf, freeDesks, useDesks } from '../ui/hands'
 import { pilot } from '../pilot'
 import type { Json, Outcome } from '../pilot/core'
 import { canvasBase } from '../cog'
@@ -82,10 +82,13 @@ export default function Palette() {
       id: `a:${a.agent}`, label: displayName(a.agent), hint: 'open profile', icon: <AgentFace name={a.agent} size={24} />,
       call: ['open_agent', { agent: a.agent }],
     }))
-    const watch: Item[] = agents.filter((a) => deskOf(a.agent, desks)).map((a) => ({
+    const watch: Item[] = [...agents.filter((a) => deskOf(a.agent, desks)).map((a): Item => ({
       id: `d:${a.agent}`, label: `Watch ${displayName(a.agent)}'s desktop`, hint: 'live, and you can take over', icon: glyph('✋'),
       call: ['open_desktop', { agent: a.agent }],
-    }))
+    })), ...freeDesks(desks).map((d): Item => ({
+      id: `d:${d}`, label: `Open ${d}`, hint: 'free desk: nobody holds it, you can use it', icon: glyph('✋'),
+      call: ['open_desktop', { agent: d }],
+    }))]
     const numbers: Item[] = [
       { id: 'n:usage', label: 'Token usage', hint: '5-hour and 7-day limits', icon: glyph('▤'), call: ['get_usage', {}], keep: true },
       { id: 'n:active', label: 'Active goals', hint: 'what the org is pursuing now', icon: glyph('◎'), call: ['list_goals', { state: 'active' }], keep: true },

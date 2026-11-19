@@ -50,6 +50,9 @@ export const openedDesktop = () => opened
 const snapDesks = () => desks
 const snapOpen = () => opened
 
+/** Running pool desks nobody holds: no agent's badge leads to them, so the palette lists them by name. */
+export const freeDesks = (list: Desk[]) => list.filter((d) => d.running && d.kind === 'pool' && !d.holder).map((d) => d.agent)
+
 /** The desktop an agent is using right now, if any: its own, or the owner's laptop. */
 export function deskOf(agent: string, list: Desk[], nowS = Date.now() / 1000): Desk | null {
   // a pool desk and a phone's desk both belong to whoever HOLDS them; an agent's own desk is its own name

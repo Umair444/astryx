@@ -2,6 +2,7 @@
 // Called by tests/test_pilot_s1.py:  node tests/pilot_core_test.ts <catalog.json>
 // The TRUSTED-input arms (a real click, keys, focus, timing in a page) are tests/pilot_browser_test.mjs.
 import { readFileSync } from 'node:fs'
+import { makeHandlers, type PilotCtx } from '../observatory/web/src/pilot/handlers.ts'
 import { CONFIRM_ARM_MS, createExecutor, validate, type Catalog, type Handler, type TapEvent } from '../observatory/web/src/pilot/core.ts'
 
 const catalog = JSON.parse(readFileSync(process.argv[2], 'utf8')) as Catalog
@@ -113,6 +114,20 @@ arm('a stale nonce cannot be bound', ex.bindConfirm(n1, EL) === false)
 // metrics (C6 f)
 const m = ex.metrics()
 arm('per-action latency is recorded', !!m.get_usage && m.get_usage.n >= 1 && typeof m.get_usage.p95 === 'number')
+
+// a free desk opens by name (owner 11-19: canopus released desk-1, and no agent's badge led to it any more)
+{
+  const opened: (string | null)[] = []
+  const base = { agents: () => ['forge'], openDesktop: (d: string | null) => { opened.push(d) }, deskOf: () => null } as unknown as PilotCtx
+  const r = await makeHandlers({ ...base, freeDesks: () => ['desk-1'] }).open_desktop({ agent: 'Desk-1' })
+  arm('open_desktop: a free desk named by the owner opens', opened.length === 1 && opened[0] === 'desk-1' && JSON.stringify(r) === '{"desktop":"desk-1"}')
+  let threw = ''
+  try { await makeHandlers(base).open_desktop({ agent: 'desk-1' }) } catch (e) { threw = String(e) }
+  arm('open_desktop: a desk that is not free is refused, nothing opens', /no agent or free desk/.test(threw) && opened.length === 1)
+  let busy = ''
+  try { await makeHandlers({ ...base, freeDesks: () => ['desk-1'] }).open_desktop({ agent: 'forge' }) } catch (e) { busy = String(e) }
+  arm('open_desktop: an agent with no desktop is still refused (a free desk is not handed to an agent name)', /not using a desktop/.test(busy) && opened.length === 1)
+}
 
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')
 process.exit(fails ? 1 : 0)

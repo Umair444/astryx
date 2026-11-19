@@ -19,6 +19,7 @@ export interface PilotCtx {
   desktopOpen: () => string | null
   openDesktop: (desk: string | null) => void
   deskOf: (agent: string) => string | null                 // the desktop an agent is using now, if any
+  freeDesks?: () => string[]                               // running pool desks nobody holds (owner 11-19: a released desk had no door)
   get: <T>(path: string) => Promise<T>
 }
 
@@ -92,7 +93,9 @@ export function makeHandlers(ctx: PilotCtx): Record<string, Handler> {
     open_desktop: (a) => {
       const want = (a.agent as string).trim().toLowerCase()
       const name = want === 'laptop' ? 'laptop' : ctx.agents().find((n) => n.toLowerCase() === want)
-      if (!name) throw new Error(`no agent named ${a.agent}`)
+      const free = !name && (ctx.freeDesks?.() ?? []).find((d) => d.toLowerCase() === want)
+      if (free) { ctx.openDesktop(free); return { desktop: free } }
+      if (!name) throw new Error(`no agent or free desk named ${a.agent}`)
       const desk = name === 'laptop' ? 'laptop' : ctx.deskOf(name)
       if (!desk) throw new Error(`${name} is not using a desktop right now`)
       ctx.openDesktop(desk)

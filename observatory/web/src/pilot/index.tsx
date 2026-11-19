@@ -11,7 +11,7 @@ import { THEMES, useTheme } from '../theme'
 import { nav } from '../App'
 import type { Route } from '../App'
 import { useStore } from '../store'
-import { deskOf, openDesktop, openedDesktop, useDesks } from '../ui/hands'
+import { deskOf, freeDesks, openDesktop, openedDesktop, useDesks } from '../ui/hands'
 import { createExecutor, type Catalog, type Pending } from './core'
 import { makeHandlers, type PilotCtx } from './handlers'
 import { project } from './egress'
@@ -75,6 +75,7 @@ export function PilotHost({ route, agentOpen, setAgentOpen }: {
       desktopOpen: () => openedDesktop(),
       openDesktop: (d) => openDesktop(d),
       deskOf: (agent) => deskOf(agent, live.current.desks)?.agent ?? null,
+      freeDesks: () => freeDesks(live.current.desks),
       get: (path) => api(path),
     }
     return () => { ctx = null }
