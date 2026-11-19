@@ -291,10 +291,10 @@ def main():
             print("\nA8 ITS SHIPPED TRIGGERS: ONE SOURCE, INSTALLED, RECONCILED DEFERENTIALLY")
             from astryx.pulse.shipped_triggers import shims
             trig = 'from astryx import trigger\n\n\n@trigger("*/5 * * * *", note="x")\ndef {}(ctx):\n    return None\n'
-            four = {"context_compact", "pr_review", "agent_heal", "org_backup", "influence_nightly", "usage_idle", "connection_sweep"}
+            four = {"context_compact", "pr_review", "agent_heal", "org_backup", "influence_nightly", "usage_idle", "connection_sweep", "late_failure_notice"}
             sd2 = h2 / "triggers" / "seed"
             got2 = {f.stem: f.read_text() for f in sd2.glob("*.py")} if sd2.is_dir() else {}
-            check("A2's new HOME: triggers/seed holds context_compact, pr_review, agent_heal, org_backup, influence_nightly, usage_idle, connection_sweep (no Windows "
+            check("A2's new HOME: triggers/seed holds context_compact, pr_review, agent_heal, org_backup, influence_nightly, usage_idle, connection_sweep, late_failure_notice (no Windows "
                   "container named), each the one source's text", set(got2) == four
                   and all(got2[s] == shims.SHIMS[s] for s in got2), str(sorted(got2)))
             before = {f.name: (f.read_bytes(), f.stat().st_mtime_ns) for f in sd2.glob("*.py")}
@@ -332,8 +332,8 @@ def main():
             rc, out = run("--reconcile", key, "--registry", str(o3))
             outs.append(out)
             check("another agent's agent_heal stands its shim down, and org_backup stands down on EITHER name "
-                  "(run_backup owned, run_restore_verify not): only context_compact, pr_review, influence_nightly, usage_idle and connection_sweep go in",
-                  rc == 0 and seed3() == {"context_compact", "pr_review", "influence_nightly", "usage_idle", "connection_sweep"} and "stand down trigger org_backup" in out
+                  "(run_backup owned, run_restore_verify not): only context_compact, pr_review, influence_nightly, usage_idle, connection_sweep and late_failure_notice go in",
+                  rc == 0 and seed3() == {"context_compact", "pr_review", "influence_nightly", "usage_idle", "connection_sweep", "late_failure_notice"} and "stand down trigger org_backup" in out
                   and "run_backup installed" in out, f"{sorted(seed3())} {out[-400:]}")
             clear()
             (sd3 / "x").mkdir(parents=True)

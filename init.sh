@@ -967,19 +967,27 @@ _act_connsweep() {
   say "installed the idle usage reading (seed): each login's limits are read when no turn has, so energy is never stale"
 }
 
+# late_failure_notice: tells an agent when a message it sent failed after its send stopped waiting ("still in flight")
+_chk_latefail() { _trigger_chk late_failure_notice; }
+_act_latefail() {
+  mkdir -p triggers/seed
+  venv/bin/python -m astryx.pulse.shipped_triggers.shims write late_failure_notice triggers/seed   # one source (shims.py)
+  say "installed the late failure notice (seed): an agent hears when a message it sent fails after its send stopped waiting"
+}
+
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
   "peoplegate|interior" "derivedgraphs|interior" "geoschema|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "androidlic|halt"
-  "android|interior" "phonesweep|interior" "winidle|interior" "agentheal|interior" "orgbackup|interior" "influence|interior" "usageidle|interior" "connsweep|interior" "upstreamprs|interior" "login|halt"
+  "android|interior" "phonesweep|interior" "winidle|interior" "agentheal|interior" "orgbackup|interior" "influence|interior" "usageidle|interior" "connsweep|interior" "latefail|interior" "upstreamprs|interior" "login|halt"
   "seed|interior" "prompt|interior")
 
 # >>> trigger reinstall
 # The shipped triggers init.sh installs, name|node. `./init.sh --reinstall N` is the owner's exit from a DEFERRED name
 # (doctor says when): it clears seed's tombstone for N (a creator of (seed, N) erases it, a3 BC-2) and installs N unless
 # it is installed already or this host doesn't use it (the node's own gate).
-TRIGGER_NODES=("context_compact|ccompact" "pr_review|prreview" "phone_resume_sweep|phonesweep" "windows_idle_stop|winidle" "agent_heal|agentheal" "run_backup|orgbackup" "run_restore_verify|orgbackup" "influence_nightly|influence" "usage_idle|usageidle" "connection_sweep|connsweep" "upstream_prs|upstreamprs")
+TRIGGER_NODES=("context_compact|ccompact" "pr_review|prreview" "phone_resume_sweep|phonesweep" "windows_idle_stop|winidle" "agent_heal|agentheal" "run_backup|orgbackup" "run_restore_verify|orgbackup" "influence_nightly|influence" "usage_idle|usageidle" "connection_sweep|connsweep" "late_failure_notice|latefail" "upstream_prs|upstreamprs")
 # A node shared by several names (orgbackup: run_backup and run_restore_verify) stands down when ANY of them is not
 # absent. "<name> <state…>" of the first such OTHER name of node $2, else rc 1 (a2 #61535: an absent name standing down
 # for its sibling is not "not used on this host", and doctor must not read green for it).
