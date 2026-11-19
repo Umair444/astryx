@@ -23,6 +23,22 @@ def host() -> str:
     return os.environ.get("ETL_JUPYTER") or os.environ.get("SMS_JUPYTER") or ""
 
 
+async def _drop(h: str) -> None:
+    """Forget the kernel and shut it down (best effort), as bridges/providers/sms.py does: a stalled snippet (a hung
+    schtasks, git or prefect) must not keep running on the box in a kernel nothing will reuse (medic 14956)."""
+    global _kernel
+    kid, _kernel = _kernel, None
+    if not kid:
+        return
+    try:
+        async with httpx.AsyncClient(base_url=f"http://{h}", timeout=10, follow_redirects=True) as http:
+            await http.get("/")
+            x = http.cookies.get("_xsrf")
+            await http.delete(f"/api/kernels/{kid}", headers={"X-XSRFToken": x} if x else {})
+    except Exception:
+        pass
+
+
 async def run(snippet: str, args: dict, timeout: float = 120) -> dict:
     """Run `snippet` with ARGS bound to `args`; the snippet prints ONE json line (its result). Returns that value, or
     {"error": …}. Serialised: one kernel, one request at a time."""
@@ -68,10 +84,10 @@ async def run(snippet: str, args: dict, timeout: float = 120) -> dict:
                             return
                 await asyncio.wait_for(drain(), timeout)
         except asyncio.TimeoutError:
-            _kernel = None          # a stalled kernel is never reused and queued behind
+            await _drop(h)          # a stalled kernel is shut down, never reused and queued behind
             return {"error": f"the box did not answer within {timeout:.0f}s"}
         except Exception as e:      # the box dark, Jupyter down: one plain line
-            _kernel = None
+            await _drop(h)
             return {"error": f"the ETL box is unreachable: {type(e).__name__}: {str(e)[:200]}"}
     if err:
         return {"error": "; ".join(err)[:500]}

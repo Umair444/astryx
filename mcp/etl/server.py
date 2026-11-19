@@ -216,7 +216,8 @@ try:
 except Exception as e:
     out["prefect_workers"] = f"unread: {e}"
 if ARGS["root"]:
-    g = lambda *a: subprocess.run([ARGS["git"], "-C", ARGS["root"]] + list(a), capture_output=True, text=True, timeout=60)
+    g = lambda *a: subprocess.run([ARGS["git"], "--no-optional-locks", "-C", ARGS["root"]] + list(a), capture_output=True,
+                                 text=True, timeout=60)
     st = g("status", "--porcelain", "--untracked-files=no").stdout.splitlines()
     out["repo"] = {"head": g("rev-parse", "HEAD").stdout.strip(), "branch": g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip(),
                    "modified_tracked": len(st), "files": [l[3:] for l in st[:20]]}
@@ -232,9 +233,15 @@ async def etl_box() -> dict:
 
 
 _TAIL = r'''
-import json, os
-root = os.path.realpath(ARGS["root"]); p = os.path.realpath(os.path.join(root, ARGS["path"]))
-if not root or not (p == root or p.startswith(root + os.sep)):
+import json, os, ntpath
+q = ARGS["path"]
+# checked as TEXT before anything touches it: realpath opens its path on Windows, and a UNC path (\\host\share) would
+# make the box authenticate to that host first (medic 14956). Relative, no drive, no '..' segment, or nothing
+bad = (not q or ntpath.isabs(q) or ntpath.splitdrive(q)[0] or q.startswith(("\\\\", "//"))
+       or any(s in (".", "..") for s in q.replace("/", "\\").split("\\")))
+root = os.path.realpath(ARGS["root"]) if not bad else ""
+p = os.path.realpath(os.path.join(root, q)) if not bad else ""
+if bad or not root or not (p == root or p.startswith(root + os.sep)):
     print(json.dumps({"error": "the path is outside the ETL root"}))
 elif not os.path.isfile(p):
     print(json.dumps({"error": "no such file"}))
@@ -258,12 +265,19 @@ async def etl_log_tail(path: str, lines: int = 100) -> dict:
 
 _TASK = r'''
 import subprocess, json
+import csv, io
 n, op = ARGS["name"], ARGS["op"]
-if not n.lower().startswith(ARGS["folder"].lower()):
+# the job must be one the folder's listing names, exactly: a prefix test alone would pass '<folder>..\\<any task>'
+# (medic 14956; schtasks refuses '..' today, but this doesn't rest on it)
+names = {(r[0] if r else "").lower(): r[0] for r in csv.reader(io.StringIO(subprocess.run(
+    ["schtasks", "/query", "/fo", "csv", "/nh"], capture_output=True, text=True, timeout=120).stdout)) if r}
+f = ARGS["folder"].lower()
+if not n.lower().startswith(f) or any(s in (".", "..") for s in n.split("\\")):
     print(json.dumps({"error": "the job is outside the ETL folder"}))
-elif subprocess.run(["schtasks", "/query", "/tn", n], capture_output=True, text=True).returncode != 0:
+elif n.lower() not in names:
     print(json.dumps({"error": "no such job"}))
 else:
+    n = names[n.lower()]
     argv = {"run": ["/run", "/tn", n], "stop": ["/end", "/tn", n], "enable": ["/change", "/tn", n, "/enable"],
             "disable": ["/change", "/tn", n, "/disable"]}[op]
     r = subprocess.run(["schtasks"] + argv, capture_output=True, text=True, timeout=60)
