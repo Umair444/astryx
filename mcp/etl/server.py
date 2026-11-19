@@ -388,8 +388,8 @@ async def etl_flow_run(deployment: str, params: dict | None = None) -> dict | st
         return f"error: no deployment named {deployment!r}"
     argv = ["deployment", "run", deployment] + (["--params", json.dumps(params)] if params else [])
     out = await box.run(_PREFECT, {"exe": PREFECT, "argv": argv}, timeout=150)
-    m = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", str(out.get("out", "")))
-    return dict(out, flow_run_id=m.group(0)) if m else out
+    m = re.search(r"UUID:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", str(out.get("out", "")))
+    return dict(out, flow_run_id=m.group(1)) if m else out          # the CLI prints the new run as "UUID: <id>"
 
 
 @mcp.tool()
