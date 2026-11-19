@@ -38,10 +38,13 @@ def arm(name: str, ok: bool, detail: str = "") -> None:
         FAILS.append(name)
 
 
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+def held_socket() -> socket.socket:
+    """A loopback socket bound to port 0 and HELD: the server is handed the socket itself, so no port is probed,
+    released and raced for."""
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", 0))
+    return s
 
 
 SEEN: list[dict] = []            # what the fake backend was asked for, one entry per handshake
@@ -78,16 +81,20 @@ def pending() -> int:
 
 
 async def main() -> None:
-    bport, fport = free_port(), free_port()
+    bsock, fsock = held_socket(), held_socket()
+    bport, fport = bsock.getsockname()[1], fsock.getsockname()[1]
+    # front._cog is REPLACED by a one-org table naming the fake backend before the front serves,
+    # so no registry (the host's or any other) is read; the front is served on a held port-0 socket
     front._cog = lambda: {"t": {"org": "t", "port": bport}}
     never: list[str] = []
     asyncio.get_running_loop().set_exception_handler(lambda _l, c: never.append(str(c.get("message"))))
     logging.getLogger("asyncio").addHandler(type("H", (logging.Handler,), {"emit": lambda s, r: never.append(r.getMessage())})())
 
+    # shared-on-purpose: an in-process front whose _cog is the fake one-org table above; it reads no registry
     srv = uvicorn.Server(uvicorn.Config(front.app, host="127.0.0.1", port=fport, log_level="warning", lifespan="off"))
-    async with websockets.serve(backend, "127.0.0.1", bport, process_request=process_request,
+    async with websockets.serve(backend, sock=bsock, process_request=process_request,
                                  select_subprotocol=lambda _c, offered: "binary" if "binary" in offered else None):
-        task = asyncio.create_task(srv.serve())
+        task = asyncio.create_task(srv.serve(sockets=[fsock]))
         for _ in range(100):
             if srv.started:
                 break

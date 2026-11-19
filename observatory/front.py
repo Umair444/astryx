@@ -413,12 +413,12 @@ async def _relay(org: str, path: str, request: Request):
 async def _vnc(ws: WebSocket, org: str, agent: str):
     """A byte pipe to org's own /api/hands/<agent>/vnc. The backend checks the key (it rides in the query, as a
     browser websocket can't send headers) and closes with its own code; the front adds nothing and widens nothing."""
-    r = _cog().get(org)
-    if r is None or r["port"] is None:
+    room = _cog().get(org)                              # an org the cog doesn't hold closes before accept (a 403)
+    if room is None or room["port"] is None:
         await ws.close(code=4404)
         return
     want = ["binary"] if "binary" in ws.headers.get("sec-websocket-protocol", "") else None
-    url = f"ws://127.0.0.1:{r['port']}/api/hands/{quote(agent, safe='')}/vnc" + (f"?{q}" if (q := ws.scope.get("query_string", b"").decode("latin-1")) else "")   # raw: ws.url re-parses a decoded ?
+    url = f"ws://127.0.0.1:{room['port']}/api/hands/{quote(agent, safe='')}/vnc" + (f"?{q}" if (q := ws.scope.get("query_string", b"").decode("latin-1")) else "")   # raw: ws.url re-parses a decoded ?
     try:
         up = await websockets.connect(url, subprotocols=want, max_size=None, open_timeout=10)
     except (OSError, websockets.InvalidHandshake, asyncio.TimeoutError):
@@ -461,11 +461,7 @@ async def vnc_pipe(ws: WebSocket, org: str, agent: str):
 
 @app.websocket("/api/hands/{agent}/vnc")
 async def vnc_chosen(ws: WebSocket, agent: str):
-    org = ws.headers.get("x-astryx-org") or ws.cookies.get("astryx_org") or ""
-    if org not in _cog():
-        await ws.close(code=4409)
-        return
-    await _vnc(ws, org, agent)
+    await _vnc(ws, ws.headers.get("x-astryx-org") or ws.cookies.get("astryx_org") or "", agent)
 
 
 # ?key= must never reach journald in clear (a3 #42085 F2), here as in the backends
