@@ -232,6 +232,23 @@ check("a group with every address routed: ONE mail, RCPT both, both in To",
       and f"To: {TO}, other@example.com" in gs[0]["data"].decode(errors="replace"), (grp[0]["status"], gs))
 check("a group with one unrouted address: refused whole, nobody mailed",
       grp[1]["status"] == "refused" and len(gs) == 1, (grp[1]["status"], grp[1]["delivery"]))
+E.TIER = root / "tier"                                      # an owner-only file: tier/ goes to the owner alone (medic 14397)
+E.TIER.mkdir()
+owners = E.TIER / "owner-only.csv"
+owners.write_text("for the owner\n")
+RAIL = {"chat": TO, "agent": "seed", "enabled": True, "counterpart": "owner"}
+tiered = [row(22, f"em:{TO}", f"Subject: Just you\nThe file. [[file:{owners}]]"),
+          row(23, f"em:{TO},other@example.com", f"Subject: Both of you\nThe numbers. [[file:{owners}]]")]
+nt = len(SMTP.mails)
+world(tiered)
+B.routes = lambda: Routes([RAIL, OTHER])
+for r_ in tiered:
+    asyncio.run(B.deliver(r_))
+ts_ = [m_["data"].decode(errors="replace") for m_ in SMTP.mails[nt:]]
+check("control: the owner's rail alone takes an owner-only file", len(ts_) == 2 and 'filename="owner-only.csv"' in ts_[0], ts_[:1])
+check("a group led by the owner's rail never takes it: refused and noted, the mail still goes to both",
+      len(ts_) == 2 and 'filename="owner-only.csv"' not in ts_[1] and tiered[1]["status"] == "delivered"
+      and "owner-only.csv was not attached" in (tiered[1]["delivery"].get("error") or ""), (tiered[1]["delivery"], ts_[1:]))
 capped = [row(9, f"em:{TO}", "one more")]
 n1 = len(SMTP.mails)
 world(capped, sent_today=3)
