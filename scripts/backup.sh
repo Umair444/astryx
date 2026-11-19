@@ -220,20 +220,7 @@ fi
 ASTRYX_DSN="$DSN" PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" timeout 600 "$ROOT/venv/bin/python" -m astryx.core.turns_retention --days "${TURNS_IMAGE_DAYS:-7}" \
   2>&1 | sed 's/^/backup: /' || echo "backup: turns retention failed — continuing with the dump" >&2
 
-# host pg_dump if present AND not older than the server, else the container's (mirrors init.sh's
-# psql/docker split). pg_dump refuses a newer server ("server version mismatch"), so a distro
-# client one major behind (Ubuntu 24.04 ships 16; the server runs 17/18) made EVERY backup fail
-# while the container's own client, always version-matched, sat unused.
-host_pg_ok() {
-  command -v "$1" >/dev/null || return 1
-  local cmaj smaj
-  cmaj=$("$1" --version 2>/dev/null | grep -oE '[0-9]+' | head -1)
-  # -w, </dev/null and a connect timeout: the probe fails fast, never waits on a prompt or a dead connect (medic #66298)
-  smaj=$(PGCONNECT_TIMEOUT=10 psql -w -Atq -d "$DSN" -c 'SHOW server_version_num' </dev/null 2>/dev/null \
-    || pg_exec psql -w -Atq -U "$(pg_dsn_user "$DSN")" -c 'SHOW server_version_num' </dev/null 2>/dev/null)
-  smaj=$(( ${smaj:-0} / 10000 ))
-  [ -n "$cmaj" ] && [ "$cmaj" -ge "$smaj" ]
-}
+# host pg_dump if present AND not older than the server, else the container's (host_pg_ok: scripts/pgcontainer.sh)
 if host_pg_ok pg_dump; then
   pg_dump -Fc "$DSN" > "$part"
 else
