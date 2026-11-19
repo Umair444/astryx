@@ -31,7 +31,15 @@ IMAGE=$(awk '$1=="image:"{print $2; exit}' infra/pg/docker-compose.yml)
 notrun() { echo "  ✗ restore-drill: NOT RUN: $1. The empty-data-dir restore path is UNPROVEN." >&2; exit 2; }
 command -v docker >/dev/null || notrun "no docker on this host"
 [ -n "$IMAGE" ] || notrun "no image: line in infra/pg/docker-compose.yml"
-docker image inspect "$IMAGE" >/dev/null 2>&1 || notrun "the declared image $IMAGE is not on this host"
+# the declared image absent (a host whose live postgres is not infra/pg's): drill on the image this host's postgres
+# container actually runs, the path a recovery here would take, and its initdb ✓ line names both (seed 14901).
+DECLARED=$IMAGE; FROM=""
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  IMAGE=$(docker inspect -f '{{.Config.Image}}' "$PG_CONTAINER" 2>/dev/null)
+  { [ -n "$IMAGE" ] && docker image inspect "$IMAGE" >/dev/null 2>&1; } \
+    || notrun "the declared image $DECLARED is not on this host, nor is the running postgres container's"
+  FROM=" (declared $DECLARED not on this host)"
+fi
 [ -x "$PY" ] || notrun "no venv python (psycopg is needed to observe logins)"
 command -v psql >/dev/null || notrun "no host psql (the row counts read through the synced role over TCP, as restore_verify does)"
 # The drill server carries THIS org's role and database names, read through the ONE resolver (plan-11324 S3a, a2 #58452):
@@ -44,7 +52,8 @@ DB=$(pg_dsn_db "$DSN")
 
 name="astryx-restore-drill-$$"
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/astryx-restore-drill.XXXXXX")
-cleanup() { docker rm -f "$name" >/dev/null 2>&1; docker volume rm -f "$name" >/dev/null 2>&1; rm -rf "$tmp"; }
+cleanup() { docker rm -f -v "$name" >/dev/null 2>&1;   # -v: an image whose VOLUME is below our mount (postgres:17's /data) makes an anonymous one
+  docker volume rm -f "$name" >/dev/null 2>&1; rm -rf "$tmp"; }
 trap cleanup EXIT
 placeholder="drill-placeholder-$RANDOM$RANDOM"   # the initdb stand-in: NOT a secret (a throwaway server's)
 
@@ -74,7 +83,7 @@ for _ in $(seq 1 90); do
   sleep 2
 done
 [ "$ready" = 1 ] || notrun "the drill server never accepted its initdb login within 180s"
-echo "  ✓ restore-drill: empty data dir initdb'd from $IMAGE (role $ROLE holds the placeholder; container $name)"
+echo "  ✓ restore-drill: empty data dir initdb'd from $IMAGE$FROM (role $ROLE holds the placeholder; container $name)"
 
 fail=0
 # the ROLES FIRST, before the password reconcile, so pg_role_sync is the LAST writer of the role's password (a1
