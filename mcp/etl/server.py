@@ -15,6 +15,7 @@ ETL_PREFECT (prefect.exe on the box), ETL_GIT (git.exe on the box), ETL_PF_KEY (
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -24,6 +25,7 @@ from mcp.server.fastmcp import FastMCP
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.append(str(REPO / "src"))
 import box  # noqa: E402
 
 mcp = FastMCP("etl")
@@ -149,13 +151,25 @@ _CAUSES = [("memory", r"MemoryError|Not enough space|Errno 12\\]|out of memory")
            ("monitor", r"error occurred while monitoring flow run"),
            ("exit", r"exited with status code")]
 _EXC = re.compile(r"^\s*((?:[A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt)|ERROR)\b.*)$")
-_SECRET = re.compile(r"://[^@\s/]*@")
+_URL_CRED = re.compile(r"://[^\s/]*@")              # up to the LAST @ before the host: a password may hold an @
+_KV_CRED = re.compile(r"""(?i)\b(password|passwd|pwd|secret|token|api_?key)(\s*[=:]\s*)(['"]?)[^\s'",;)]+\3""")
+
+
+def _mask(text: str) -> str:
+    """Credentials out of an error text, before it reaches the wire: a URL's user:pass@, key=value / key: 'value'
+    pairs (traceback source lines carry connect(..., password=...)), then every org secret in any of its forms."""
+    text = _KV_CRED.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}***{m.group(3)}", _URL_CRED.sub("://***@", text or ""))
+    try:
+        from astryx.security.secretset import redact
+        return redact(text)
+    except Exception:          # no org layer importable here: the two patterns above still hold
+        return text
 
 
 def _cause(text: str) -> tuple[str, str]:
     """(cause class, one line) for an error text: the class from the first matching pattern, the line the last
     exception line (a run.bat log ends with its banner, so the plain last line is rarely the error)."""
-    text = _SECRET.sub("://***@", text or "")
+    text = _mask(text)
     cause = next((c for c, rx in _CAUSES if re.search(rx, text)), "other")
     lines = [l.strip() for l in text.splitlines() if l.strip() and not set(l.strip()) <= set("=-~^ ")]
     exc = [m.group(1) for m in map(_EXC.match, lines) if m]
@@ -189,7 +203,7 @@ def etl_failures(hours: int = 24, detail: str = "") -> dict | str:
     except Exception as e:
         return f"error: Prefect's database: {type(e).__name__}: {str(e)[:300]}"
     if detail:
-        runs = [dict(r, kind=k, error=_SECRET.sub("://***@", r["error"] or "")) for k, rows in
+        runs = [dict(r, kind=k, error=_mask(r["error"])) for k, rows in
                 (("flow", flows), ("report", reports)) for r in rows if r["job"] == detail]
         return {"job": detail, "runs": runs[:10], "more": max(0, len(runs) - 10)} if runs else \
             f"error: no failure of {detail!r} in the last {h['h']}h (names as the digest lists them)"
@@ -377,7 +391,8 @@ async def etl_flow_run(deployment: str, params: dict | None = None) -> dict | st
         return no
     params = params or {}
     if not isinstance(params, dict) or len(params) > 20 or not all(
-            isinstance(k, str) and _PARAM.match(k) and (v is None or isinstance(v, (bool, int, float))
+            isinstance(k, str) and _PARAM.match(k) and (v is None or isinstance(v, (bool, int))
+                                                        or (isinstance(v, float) and math.isfinite(v))
                                                         or (isinstance(v, str) and len(v) <= 200))
             for k, v in params.items()):
         return "error: params is a flat object of at most 20 names to scalar values (strings up to 200 chars)"

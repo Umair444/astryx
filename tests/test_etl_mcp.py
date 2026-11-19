@@ -9,6 +9,7 @@ Windows path rules (ntpath) with spies on what it would open or run. Arms (medic
   A4 box.run: a kernel that stalls past its timeout is shut down (DELETE /api/kernels/<id>), not just forgotten
   A5 the job acts: a name must be in the folder's listing, exactly; '<folder>..\\<task>' is refused
   A6 etl_failures is a digest: one row per job, a cause class from the error's tail, secrets in URLs masked; detail= one job
+  A6b credential values in error tails (key=value, PWD=, quoted, a URL password holding @) are masked in both modes
   A7 etl_flow_run params: a flat object of scalars passes as --params json; anything else is refused before the box
 Seam: ETL_SERVER_SRC / ETL_BOX_SRC (a mutant copy). Exit 0 · 1.
 """
@@ -176,6 +177,26 @@ check("A6 causes are counted per job", d["causes"] == {"git": 1, "memory": 1}, s
 dd = srv.etl_failures(hours=24, detail="f/a")
 check("A6 detail= returns that job's runs, masked", len(dd["runs"]) == 2 and "tok" not in str(dd), str(dd)[:200])
 check("A6 detail= of an unknown job is a plain error", "no failure" in str(srv.etl_failures(detail="nope")))
+
+# ---- A6b: credentials in traceback source lines never reach the wire (medic 15179)
+V = "Zq7#secretval"
+leaks = ['  File "x.py", line 9, in c\n    con = connect(host=h, password="' + V + '")\nOperationalError: boom',
+         "Driver: PWD=" + V + ";UID=u\nDatabaseError: x",
+         "connection failed: password='" + V + "'\nRuntimeError: y",
+         "sqlalchemy.exc: postgresql://u:p@" + V + "@h/db\nOperationalError: z"]
+pf_rows = {"flow": [], "report": [{"job": f"L{i}", "at": "t", "exit_code": 1, "state": "FAILED", "error": e}
+                                  for i, e in enumerate(leaks)]}
+d = srv.etl_failures(hours=24)
+check("A6b no credential value in the digest", V not in str(d) and "secretval" not in str(d), str(d)[:300])
+dd = [srv.etl_failures(hours=24, detail=f"L{i}") for i in range(len(leaks))]
+check("A6b ...nor in any detail=", V not in str(dd) and "secretval" not in str(dd), str(dd)[:300])
+check("A6b the key name stays, readable", "password=" in str(dd[0]) and "***" in str(dd[0]), str(dd[0])[:200])
+check("A6b a plain password=password reads as itself or masked", srv._mask("password=password") in
+      ("password=password", "password=***"), srv._mask("password=password"))
+sent.clear()
+for bad in [{"x": float("nan")}, {"x": float("inf")}]:
+    check(f"A7 refused: {bad}", str(run(srv.etl_flow_run("a/b", bad))).startswith("error: params"))
+check("A7 ...non-finite floats never reach the box", sent == [], str(sent))
 
 # ---- A7: flow_run params
 sent.clear()
