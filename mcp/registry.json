@@ -157,5 +157,17 @@
     },
     "author": "seed",
     "who": "grant"
+  },
+  "etl": {
+    "command": "venv/bin/python",
+    "args": [
+      "mcp/etl/server.py"
+    ],
+    "env": {
+      "ASTRYX_AGENT": "$AGENT"
+    },
+    "author": "seed",
+    "who": "grant",
+    "about": "the ETL box as typed tools: Task Scheduler jobs, Prefect deployments/runs/logs, failures, box health; acts for the etl seats"
   }
 }
