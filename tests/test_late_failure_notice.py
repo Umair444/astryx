@@ -82,6 +82,8 @@ if dsn:
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute("EXPLAIN " + L.DEAD_SQL, (str(T0), L.SEND_WAIT, L.BATCH))
         arm("L11 DEAD_SQL plans against the live schema (EXPLAIN, read-only)", bool(cur.fetchall()))
+else:
+    print("  NOT RUN  L11: no ASTRYX_DSN in the environment (DEAD_SQL not planned against a schema)")
 
 print(f"{'FAIL' if fails else 'PASS'}: late failure notice ({fails} failing)")
 sys.exit(1 if fails else 0)
