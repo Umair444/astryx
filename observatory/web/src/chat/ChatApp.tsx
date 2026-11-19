@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import '@fontsource/instrument-serif/400.css'
 import '@fontsource/instrument-serif/400-italic.css'
@@ -716,6 +716,15 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
       className={phone ? '!w-[86vw] max-w-[340px]' : `max-md:hidden ${listHidden ? '!hidden' : ''}`} />
   )
   const home = view === 'thread' && !current
+  // EVERY PAGE OPENS AT ITS TOP (owner 14981: New chat from a thread opened at the END of home). The home, a project and
+  // the other views share this one scroller with the threads, so the scroll a thread left would carry over, clamped to
+  // the new page's bottom. One rule, here where the page changes: a page starts at 0. A conversation is the exception,
+  // and it keeps its own rule (Turns: it follows its end, or holds what I just sent at the top). Before paint, so the
+  // old position never shows
+  const page = view === 'thread' ? (current ? `thread:${current}` : 'home') : `route:${thread}`   // the route, not the view: project A → B resets too (medic 15020)
+  useLayoutEffect(() => {
+    if (!page.startsWith('thread:') && scrollRef.current) scrollRef.current.scrollTop = 0
+  }, [page])
   const layout: Layout = winW >= 1200 ? 'inline' : winW >= 768 ? 'sheet' : 'full'
   const canvasHere = (!!current || view === 'library' || view === 'project') && canvasOpen !== null && !workforce
   const showPanel = (!!current || view === 'library' || view === 'project') && panel.tabs.length > 0 && !workforce && !canvasHere
