@@ -234,7 +234,10 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   // agent's row landing in the same refresh can't hide it (medic 13703)
   const seen = useRef(last)
   const liveFrom = useRef<number | null>(null)     // the newest id when this conversation loaded: newer ones play (reveal.ts)
-  if (!loading && liveFrom.current === null) liveFrom.current = last
+  // a switch renders the OLD thread's rows once before `loading` (medic 14261): never key on those, set it from the
+  // first loaded render of THIS thread
+  if (loading) liveFrom.current = null
+  else if (liveFrom.current === null) liveFrom.current = last
   useEffect(() => {
     const mine = rows.some((m) => m.id > seen.current && m.from === me)
     seen.current = last
@@ -383,7 +386,7 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
   const flow = useMemo(() => revealParts(whole, n, textOf, (p, text) => ({ ...p, text })), [whole, n]) // eslint-disable-line react-hooks/exhaustive-deps
   const done = n === Infinity
   return (
-    <div className={`ws-turn ${cont ? 'mt-2.5 is-cont' : 'mt-5 first:mt-0'}`} data-turn>
+    <div className={`ws-turn ${cont ? 'mt-2.5 is-cont' : 'mt-5 first:mt-0'}`} data-turn data-revealing={done ? undefined : ''}>
       {cont && <TurnActions m={m} text={text} />}
       {!cont && (
         // the actions live IN the header row (iteration 10): they take their own room at its end, so the role
