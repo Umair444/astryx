@@ -1,4 +1,4 @@
-import { forwardRef, Fragment, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, Fragment, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { ApiError, apiSend, displayName } from '../../api'
 import AgentFace from '../../components/AgentFace'
 import { startDictation, stopDictation, useDictation } from '../dictate'
@@ -217,6 +217,7 @@ export default forwardRef<ComposerHandle, {
     }
     return []
   }, [slash?.[1], at?.[2], commands, skills, tools, roster, inChat, menuOff, text, picker, roles])  // eslint-disable-line react-hooks/exhaustive-deps
+  const room = useRoom(menu, items.length > 0)
   useEffect(() => setSel(0), [items.length, slash?.[1], at?.[2], picker])
   // the highlighted row stays in view as ↑/↓ move it (wrapping included): the list scrolls itself, never the page
   // (scrollIntoView would also scroll the conversation and, on a phone, the window under the keyboard)
@@ -345,7 +346,8 @@ export default forwardRef<ComposerHandle, {
         onDragLeave={() => setDrop(false)}
         onDrop={(e) => { setDrop(false); if (e.dataTransfer.files.length) { e.preventDefault(); addFiles(e.dataTransfer.files) } }}>
         {items.length > 0 && (
-          <ul ref={menu} role="listbox" aria-multiselectable={picker || undefined} aria-label={picker ? 'who works on this chat' : slash ? 'commands' : 'agents'} className="ws-menu absolute left-0 right-0 bottom-full mb-2 max-h-[340px] overflow-y-auto p-1 z-20">
+          <ul ref={menu} role="listbox" aria-multiselectable={picker || undefined} aria-label={picker ? 'who works on this chat' : slash ? 'commands' : 'agents'} className={`ws-menu absolute left-0 right-0 ${room.below ? 'top-full mt-2' : 'bottom-full mb-2'} overflow-y-auto overscroll-contain p-1 z-20`}
+            style={{ maxHeight: room.max }}>
             {picker && (
               <li role="presentation" className="sticky -top-1 z-10 bg-[var(--t-panel)] flex items-baseline gap-2 px-2.5 pt-2 pb-1.5">
                 <span className="text-[13px] font-medium text-ink">Who works on this?</span>
@@ -510,3 +512,41 @@ const DraftMirror = forwardRef<HTMLDivElement, { text: string; hero: boolean; ba
     </div>
   )
 })
+
+/* THE MENU'S ROOM (owner 14944: the agent picker ran off the top of the screen). The menu opens on the side of the
+   composer with room, as floating menus do (floating-ui's flip + size): above while there is room for it there, else
+   below where there is more; its height is the room on that side (never past MENU_MAX), and it scrolls inside. The room
+   is the part of the composer's scroller that is ON SCREEN (the scroller's box within the visual viewport), so a bar or
+   panel edge above it never covers the menu (medic 14968: a phone's 48px top bar hid the header). Measured before the
+   first paint (a layout effect: no frame on the wrong side) and again on every scroll, resize and keyboard change. */
+const MENU_MAX = 340, MENU_MIN = 160, MENU_GAP = 12
+function useRoom(menu: RefObject<HTMLElement | null>, open: boolean) {
+  const [room, setRoom] = useState({ below: false, max: MENU_MAX })
+  useLayoutEffect(() => {
+    if (!open) return
+    const measure = () => {
+      const anchor = menu.current?.parentElement
+      if (!anchor) return
+      const r = anchor.getBoundingClientRect(), vv = window.visualViewport
+      let top = vv ? vv.offsetTop : 0, bottom = vv ? vv.offsetTop + vv.height : window.innerHeight
+      for (let s = anchor.parentElement; s; s = s.parentElement) {      // the nearest scroller clips what can be seen
+        if (/auto|scroll/.test(getComputedStyle(s).overflowY)) {
+          const b = s.getBoundingClientRect(); top = Math.max(top, b.top); bottom = Math.min(bottom, b.bottom); break
+        }
+      }
+      const above = r.top - top - MENU_GAP, below = bottom - r.bottom - MENU_GAP
+      const flip = above < MENU_MIN && below > above
+      const max = Math.max(0, Math.min(MENU_MAX, Math.floor(flip ? below : above)))
+      setRoom((p) => (p.below === flip && p.max === max ? p : { below: flip, max }))
+    }
+    measure()
+    const vv = window.visualViewport
+    addEventListener('scroll', measure, true); addEventListener('resize', measure)
+    vv?.addEventListener('resize', measure); vv?.addEventListener('scroll', measure)
+    return () => {
+      removeEventListener('scroll', measure, true); removeEventListener('resize', measure)
+      vv?.removeEventListener('resize', measure); vv?.removeEventListener('scroll', measure)
+    }
+  }, [open, menu])
+  return room
+}
