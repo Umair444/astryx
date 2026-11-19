@@ -9,6 +9,7 @@ reader stubbed (no network).
   T5 that delivery is ONE rule for every surface (address.SURFACES' persons): the web chat's owner and a signed-in
      member get their forgotten reply as a WhatsApp sender does; an agent's message gets none, nor a federated peer's
      'owner' or 'wa-<n>' (medic 12607)
+  T8 a TEAM's ask (delivery.lead): the lead's forgotten reply is delivered; a helper's last words are not (owner 15007)
 Exit 0 · 1 · 77 (no database)."""
 # synthetic numbers, built rather than written whole so no phone or JID shape sits in the source (devtools/privacy_gate.sh (c))
 GROUP = "120363" + "000000000000"
@@ -100,6 +101,26 @@ def main():
             got = cur.execute("SELECT to_agent, thread, body FROM messages WHERE from_agent='seed' AND thread=%s", (thread,)).fetchall()
             arm(f"T5 {who} on {org} {thread.split(':')[0]}: " + ("its forgotten reply comes back to it on its thread" if owed_ else "auto-messages no one (an agent, or a peer's 'person')"),
                 got == ([(who, thread, f"answer for {who}")] if owed_ else []), got)
+        conn.rollback()
+        # T8 a TEAM's ask (owner 15007): the owner tags lead + helpers, each gets the same message with delivery {lead,
+        # team}. The lead's forgotten reply comes back; a helper's last words ("I'm not replying, the lead answers")
+        # stay off the thread
+        for agent_, lead_, expect in (("seed", "seed", True), ("medic", "seed", False)):
+            os.environ["ASTRYX_AGENT"] = agent_
+            cur.execute("""INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, status, delivered_at, delivery)
+                           VALUES ('owner', 'local', %s, 'chat:20261119-t8', 'chat', 'hello team', 'delivered', now(),
+                                   jsonb_build_object('lead', %s::text, 'team', jsonb_build_array('seed', 'medic')))
+                           RETURNING id""", (agent_, lead_))
+            m8 = cur.fetchone()[0]
+            with tempfile.TemporaryDirectory() as td:
+                tp = Path(td) / "t.jsonl"
+                tp.write_text(line("user", f'<channel source="astryx" from="owner" thread="chat:20261119-t8" intent="chat" msg_id="{m8}">hello team</channel>', "2026-11-19T07:00:00Z")
+                              + line("assistant", [{"type": "text", "text": f"last words of {agent_}"}], "2026-11-19T07:00:04Z", f"t8{agent_}", u))
+                S.handle_stop(cur, agent_, {"transcript_path": str(tp), "session_id": f"t8-{agent_}"})
+            got = [b for (b,) in cur.execute("SELECT body FROM messages WHERE from_agent=%s AND thread='chat:20261119-t8'", (agent_,)).fetchall()]
+            arm(f"T8 a team ask: {'the lead' if expect else 'a helper'} ({agent_}) " + ("gets its forgotten reply delivered" if expect else "posts nothing to the person"),
+                got == ([f"last words of {agent_}"] if expect else []), got)
+        os.environ["ASTRYX_AGENT"] = "seed"
         conn.rollback()
         # T6 a group member's message answered on its thread to the group ('owner', "@Ali …"), not to the member's own
         # name, is answered: the turn's last words are not posted to the group as a second message (owner 14225)
