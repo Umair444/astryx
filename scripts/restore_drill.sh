@@ -11,7 +11,7 @@
 #      a placeholder password;
 #   2. a temp passfile holding a random value (the "restored ~/.pgpass"), created 0600, never printed;
 #   3. PREMISE: `pg_role_sync check` FAILS (the placeholder is what the server holds), else the drill proves nothing;
-#   4. `pg_role_sync apply`, then `check` passes, and the placeholder is refused;
+#   4. `pg_role_sync apply`, then `check` passes, and the placeholder is refused (when the org's role held it);
 #   (the paired ROLES file, backup.sh's astryx-<ts>.roles.sql, is applied right after step 1 and BEFORE steps 3–4, so
 #      the password reconcile is the role's last writer; a file with password material is refused: a1 #45231. It
 #      makes the groups the dump's GRANTs name exist; without it pg_restore drops their grants, a1 #45221);
@@ -140,9 +140,16 @@ out=$("$PY" -m astryx.security.pg_role_sync apply 2>&1) || { echo "  ✗ restore
 out=$("$PY" -m astryx.security.pg_role_sync check 2>&1) \
   && echo "  ✓ restore-drill: after pg_role_sync apply the restored pgpass value logs in" \
   || { echo "  ✗ restore-drill: $out" >&2; fail=1; }
-printf '%s' "$placeholder" | login "$ROLE" "$DB" stdin >/dev/null 2>&1; rc=$?
-[ "$rc" = 3 ] && echo "  ✓ restore-drill: the initdb placeholder is refused" \
-  || { echo "  ✗ restore-drill: the placeholder was not refused (login rc $rc)" >&2; fail=1; }
+# the placeholder refusal means something only when the org's role is the one initdb gave it to; bootstrapped as the
+# provisioner, the org's role never held it, and a ✓ here would check nothing (seed 14909). The PREMISE above (no login
+# before the sync) and the check after it are what prove the sync, in both worlds.
+if [ "$BOOT" != "$ROLE" ]; then
+  echo "  ○ restore-drill: placeholder check n/a (the org's role never held it; bootstrap is $BOOT)"
+else
+  printf '%s' "$placeholder" | login "$ROLE" "$DB" stdin >/dev/null 2>&1; rc=$?
+  [ "$rc" = 3 ] && echo "  ✓ restore-drill: the initdb placeholder is refused" \
+    || { echo "  ✗ restore-drill: the placeholder was not refused (login rc $rc)" >&2; fail=1; }
+fi
 
 # the dump onto THAT server (its extensions must exist in the declared image, or this is where it shows)
 # stderr kept (never printed: it can quote the dump's DDL), and its ERROR-line COUNT reported, so a missing
