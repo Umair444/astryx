@@ -721,7 +721,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
   // the new page's bottom. One rule, here where the page changes: a page starts at 0. A conversation is the exception,
   // and it keeps its own rule (Turns: it follows its end, or holds what I just sent at the top). Before paint, so the
   // old position never shows
-  const page = home ? 'home' : view === 'thread' ? `thread:${current}` : view
+  const page = view === 'thread' ? (current ? `thread:${current}` : 'home') : `route:${thread}`   // the route, not the view: project A → B resets too (medic 15020)
   useLayoutEffect(() => {
     if (!page.startsWith('thread:') && scrollRef.current) scrollRef.current.scrollTop = 0
   }, [page])
