@@ -42,6 +42,7 @@ import time
 from collections import defaultdict, deque
 from http import HTTPMethod
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 import websockets
@@ -417,7 +418,7 @@ async def _vnc(ws: WebSocket, org: str, agent: str):
         await ws.close(code=4404)
         return
     want = ["binary"] if "binary" in ws.headers.get("sec-websocket-protocol", "") else None
-    url = f"ws://127.0.0.1:{r['port']}/api/hands/{agent}/vnc" + (f"?{ws.url.query}" if ws.url.query else "")
+    url = f"ws://127.0.0.1:{r['port']}/api/hands/{quote(agent, safe='')}/vnc" + (f"?{q}" if (q := ws.scope.get("query_string", b"").decode("latin-1")) else "")   # raw: ws.url re-parses a decoded ?
     try:
         up = await websockets.connect(url, subprotocols=want, max_size=None, open_timeout=10)
     except (OSError, websockets.InvalidHandshake, asyncio.TimeoutError):
@@ -445,6 +446,7 @@ async def _vnc(ws: WebSocket, org: str, agent: str):
     finally:
         for t in tasks:
             t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)     # a backend's abnormal close is retrieved, not logged
         await up.close()
         try:
             await ws.close()

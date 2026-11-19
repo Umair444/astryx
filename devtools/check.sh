@@ -550,6 +550,7 @@ run "trigger: the expand, normalize, guarded read, one-shots, the tool's naive p
 run "send: a malformed [[poll:]]/[[file:]] to a human surface is refused before the INSERT, in parity with the bridge grammar" node tests/test_send_embeds.mjs
 run "bridges: a [[file:]] embed is read only from the SENDER's roots (home, scratchpad, media/; tier/ to the owner alone), realpath + O_NOFOLLOW + /proc" "$PY" tests/test_embed_root.py
 run "bridges: every real [[file:]] ever sent to a human, through the root rule (933 /tmp + 19814 tier/-to-group + 2 home dot-path embeds refused)" "$PY" tests/test_embed_root.py --census
+run "cog front: hands' noVNC websocket is piped to the org's backend and widens nothing (owner 11-19, medic #67140)" "$PY" tests/test_front_vnc.py
 run "observatory pilot: one action catalog, matrix-gated executor, handler parity (plan-9000 S1)" "$PY" tests/test_pilot_s1.py
 run "observatory pilot: the owner-tap confirm under trusted input in chromium (plan-9000 S1 arms i-v)" node tests/pilot_browser_test.mjs
 run "concurrent browser gates: two pilots and two voice orbs 1 s apart, a squatter on the old ports, each gate's own vite cache (plan-10108)" "$PY" tests/test_gate_concurrency.py
