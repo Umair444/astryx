@@ -2,15 +2,17 @@
 """Oracle: email as a channel (owner 11-18, 13163; homes/seed/email-channel/DESIGN.md, medic 13172): one row in the
 channel table, a provider over src/astryx/mail.py, an outbound bridge.
 
-  A  ADDRESS   one form (lowercase, trimmed, one bare address): a list, brackets, a space or a CR is no address (D2)
-  S  SMTP      against a local fake server, the real bytes: RCPT TO is exactly the routed address; a subject carrying
+  A  ADDRESS   one form (lowercase, trimmed, one bare address): a list, brackets, a space or a CR is no address (D2);
+               a GROUP (consumer 14382) is addresses joined by commas, each in that form, no repeats, at most MAX_TO
+  S  SMTP      against a local fake server, the real bytes: RCPT TO is exactly the routed address (a group: exactly
+               its addresses, all in To; mail.send exact/one refuse a Cc, a Bcc or a list where one is due); a subject carrying
                "\\rBcc: x@evil" becomes one line and no Bcc rides in (D3); From names the agent; an attachment is there
                with its file name; a reply carries In-Reply-To
   B  BRIDGE    deliver() against fakes: an unrouted address is refused, nothing sent; a routed one is mailed, its
                receipt the Message-ID and "accepted by", never "arrived"; the subject from a "Subject:" first line, and
                the next mail on the thread "Re:" it with In-Reply-To; a file in the sender's home is attached, .env and
                another agent's home are refused and NOTED while the mail still goes; past EMAIL_DAILY_CAP refused; the
-               claim takes em: threads only
+               claim takes em: threads only; a group goes as ONE mail only when every address is routed
   C  CAP SQL   on the fixture DB: every delivered email counts, a refusal and another channel don't
 Hermetic: synthetic env, a fake SMTP server on loopback, temp roots for attachments. Exit 0 · 1 · 77."""
 import asyncio
@@ -106,6 +108,14 @@ for bad in ("a@b.com,c@d.com", "<person@example.com>", "per son@example.com", "p
             "person@example.com\r\nBcc: x@evil.example", "noat", "", None):
     check(f"{bad!r:.24} → no address", P.address(bad) is None, P.address(bad))
 
+G2 = "Second@Example.com, third@example.com"
+check("a group → its addresses, in the one form, in order", P.addresses(G2) == ["second@example.com", "third@example.com"],
+      P.addresses(G2))
+check("one address is a group of one", P.addresses(TO) == [TO])
+for bad in ("a@b.com,a@b.com", "a@b.com,,c@d.com", "a@b.com,<c@d.com>", "a@b.com;c@d.com", "a@b.com,c@d.com\r\nBcc: x@evil.example",
+            ",".join(f"p{i}@example.com" for i in range(P.MAX_TO + 1)), "", None):
+    check(f"{bad!r:.24} → no group", P.addresses(bad) is None, P.addresses(bad))
+
 print("S smtp (real bytes):")
 prov = P.EmailProvider()
 r = asyncio.run(prov.send(TO, "body line", subject="Report\rBcc: x@evil.example", sender="seed",
@@ -120,7 +130,24 @@ check("From names the agent", "From: seed <org@example.org>" in d, d[:300])
 check("the attachment is there, with its name", 'filename="q.csv"' in d, d[-400:])
 check("a reply carries In-Reply-To and References", "In-Reply-To: <prev@example.org>" in d and "References: <prev@example.org>" in d)
 r2 = asyncio.run(prov.send("a@b.com,c@d.com", "x"))
-check("a list as the destination: refused before any server", not r2.ok and "one email address" in (r2.error or ""), r2)
+m2 = SMTP.mails[-1]
+d2g = m2["data"].decode(errors="replace")
+check("a group: ONE mail, RCPT exactly its addresses, everyone in To",
+      r2.ok and m2["rcpt"] == ["a@b.com", "c@d.com"] and "To: a@b.com, c@d.com" in d2g and r2.handle == "email:a@b.com,c@d.com",
+      (r2, m2["rcpt"]))
+n_ = len(SMTP.mails)
+r3 = asyncio.run(prov.send("a@b.com,a@b.com", "x"))
+check("a repeated address: refused before any server", not r3.ok and len(SMTP.mails) == n_, r3)
+from astryx import mail as M  # noqa: E402
+for label, kw in (("exact with a Cc", dict(to="a@b.com", cc="x@evil.example", exact=True)),
+                  ("exact with a Bcc", dict(to="a@b.com", bcc="x@evil.example", exact=True)),
+                  ("exact with a bracketed address", dict(to="a@b.com, <x@evil.example>", exact=True)),
+                  ("one with a list", dict(to="a@b.com, c@d.com", one=True))):
+    try:
+        M.send(prov._env(), subject="s", body="b", **kw)
+        check(f"mail.send {label}: refused", False, "sent")
+    except ValueError:
+        check(f"mail.send {label}: refused, nothing sent", len(SMTP.mails) == n_)
 
 print("B bridge:")
 root = Path(tempfile.mkdtemp(prefix="emailtest."))
@@ -191,6 +218,20 @@ check(".env and another agent's home are refused and NOTED, and the mail still w
 d3 = sent[1]["data"].decode(errors="replace") if len(sent) > 1 else ""
 check("the next mail on the thread is 'Re:' the first, In-Reply-To its Message-ID",
       "Subject: Re: Weekly numbers" in d3 and f"In-Reply-To: {rows[1]['delivery']['message_id']}" in d3, d3[:400])
+OTHER = {"chat": "other@example.com", "agent": "seed", "enabled": True}
+grp = [row(20, f"em:{TO},other@example.com", "Subject: Daily IBFT\nThe numbers."),
+       row(21, f"em:{TO},stranger@example.com", "Subject: Daily IBFT\nThe numbers.")]
+ng = len(SMTP.mails)
+world(grp)
+B.routes = lambda: Routes([ROUTED, OTHER])
+for r_ in grp:
+    asyncio.run(B.deliver(r_))
+gs = SMTP.mails[ng:]
+check("a group with every address routed: ONE mail, RCPT both, both in To",
+      grp[0]["status"] == "delivered" and len(gs) == 1 and gs[0]["rcpt"] == [TO, "other@example.com"]
+      and f"To: {TO}, other@example.com" in gs[0]["data"].decode(errors="replace"), (grp[0]["status"], gs))
+check("a group with one unrouted address: refused whole, nobody mailed",
+      grp[1]["status"] == "refused" and len(gs) == 1, (grp[1]["status"], grp[1]["delivery"]))
 capped = [row(9, f"em:{TO}", "one more")]
 n1 = len(SMTP.mails)
 world(capped, sent_today=3)
