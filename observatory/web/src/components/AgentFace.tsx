@@ -9,12 +9,14 @@ import { focusBase, safeBase } from '../cog'
    no face is ever a bare letter. One component for every surface: a person looks the same
    in the sidebar, the wire, the network and the profile. */
 
-/* faces known to be missing, for THIS page load only. The server's miss (a 204) is HTTP-cached for five minutes, so a
-   reload asks again without reaching it, and a face an agent draws shows within those five minutes. A browser-stored
-   list on top of that kept a miss for six hours: three new seats drew their faces minutes after they were born and the
-   owner saw none of them all evening (owner 15017) */
-const missing = new Set<string>()
-function markMissing(k: string) { missing.add(k) }
+/* faces known to be missing, for five minutes: the same window as the server's 204 (max-age 300), so a face an agent
+   draws shows on the next mount after that, in a tab left open as after a reload (medic 15039). Kept in memory only: a
+   browser-stored list kept a miss for six hours, and three new seats' faces stayed hidden all evening (owner 15017) */
+const MISS_TTL = 5 * 60_000
+const missing = new Map<string, number>()
+const missingNow = (k: string) => { const t = missing.get(k); return t !== undefined && Date.now() - t < MISS_TTL }
+function markMissing(k: string) { missing.set(k, Date.now()) }
+try { localStorage.removeItem('ax_face_missing') } catch { /* the old six-hour list: nothing reads it now */ }
 const HUMAN = /^(owner|(wa|tg|dc|cv|canvas)-.+)$|@/
 
 const RING: Record<AvatarStatus, string> = { live: 'var(--t-good)', dormant: 'var(--t-mute)', retired: 'var(--t-warn)' }
@@ -42,7 +44,7 @@ export default function AgentFace({ name, size = 32, radius = '9999px', dim = fa
   // every org has a seed: a face missing in one room is not missing in another
   const room = base && safeBase(base) ? base : focusBase()   // in a cog the focused org's own base; one org: /
   const mk = room === '/' ? name : room + name
-  const [failed, setFailed] = useState(() => missing.has(mk))
+  const [failed, setFailed] = useState(() => missingNow(mk))
   const style = { width: size, height: size, borderRadius: radius, opacity: dim ? 0.55 : 1 }
   if (!name || HUMAN.test(name) || failed) {
     return (
