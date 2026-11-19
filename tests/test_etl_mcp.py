@@ -8,6 +8,8 @@ Windows path rules (ntpath) with spies on what it would open or run. Arms (medic
   A3 etl_log_tail: an absolute, drive, UNC or '..' path is refused BEFORE realpath (realpath opens it on Windows)
   A4 box.run: a kernel that stalls past its timeout is shut down (DELETE /api/kernels/<id>), not just forgotten
   A5 the job acts: a name must be in the folder's listing, exactly; '<folder>..\\<task>' is refused
+  A6 etl_failures is a digest: one row per job, a cause class from the error's tail, secrets in URLs masked; detail= one job
+  A7 etl_flow_run params: a flat object of scalars passes as --params json; anything else is refused before the box
 Seam: ETL_SERVER_SRC / ETL_BOX_SRC (a mutant copy). Exit 0 · 1.
 """
 import asyncio
@@ -154,6 +156,40 @@ acted, out = task("\\BI Jobs\\team\\nope", L)
 check("A5 a name not in the listing is refused", acted == [] and "no such job" in out, out)
 acted, out = task("\\BI JOBS\\TEAM\\DAILY_REPORT", L)
 check("A5 a listed name runs, as the listing spells it", acted == [["schtasks", "/run", "/tn", L[0]]], f"{acted} {out}")
+
+
+# ---- A6: the failure digest, pf stubbed
+ERR_RB = "Script: x.py\n====\nTraceback (most recent call last):\n  File \"y.py\", line 3\nMemoryError\n----\nScript completed\n===="
+ERR_GIT = "The existing repository at D:\\T\\etl_system-main does not match the configured repository https://u:tok@github.com/o/r"
+pf_rows = {"flow": [{"job": "f/a", "flow_run_id": "1", "state": "FAILED", "at": "t2", "error": ERR_GIT},
+                    {"job": "f/a", "flow_run_id": "2", "state": "FAILED", "at": "t1", "error": "exited with status code: 1"}],
+           "report": [{"job": "r1", "at": "t3", "exit_code": 1, "state": "FAILED", "error": ERR_RB}]}
+srv._rows = lambda sql, p: pf_rows["flow" if "flow_run" in sql else "report"]
+d = srv.etl_failures(hours=24)
+fa = d["flows"][0]
+check("A6 one row per job, counted", len(d["flows"]) == 1 and fa["fails"] == 2 and fa["first"] == "t1" and fa["last"] == "t2", str(d))
+check("A6 the cause comes from the latest failure", fa["cause"] == "git", str(fa))
+check("A6 a credential in a URL is masked", "tok" not in str(d) and "://***@" in fa["error"], fa["error"])
+r1 = d["reports"][0]
+check("A6 a run.bat log's exception line, not its banner", r1["cause"] == "memory" and r1["error"] == "MemoryError", str(r1))
+check("A6 causes are counted per job", d["causes"] == {"git": 1, "memory": 1}, str(d["causes"]))
+dd = srv.etl_failures(hours=24, detail="f/a")
+check("A6 detail= returns that job's runs, masked", len(dd["runs"]) == 2 and "tok" not in str(dd), str(dd)[:200])
+check("A6 detail= of an unknown job is a plain error", "no failure" in str(srv.etl_failures(detail="nope")))
+
+# ---- A7: flow_run params
+sent.clear()
+out = run(srv.etl_flow_run("a/b", {"run_date": "2026-11-15", "full": False}))
+check("A7 params pass as one --params json value",
+      sent and sent[-1]["argv"] == ["deployment", "run", "a/b", "--params", '{"run_date": "2026-11-15", "full": false}'], str(sent))
+sent.clear()
+for bad in [{"x": {"nested": 1}}, {"x": [1]}, {"--flag": 1}, {"a b": 1}, {"x": "y" * 201}, {f"k{i}": 1 for i in range(21)}, "run_date=1"]:
+    o = run(srv.etl_flow_run("a/b", bad))
+    check(f"A7 refused: {str(bad)[:40]}", str(o).startswith("error: params"), str(o))
+check("A7 ...and nothing reached the box", sent == [], str(sent))
+os.environ["ASTRYX_AGENT"] = "db"
+check("A7 params do not open the gate to other seats", str(run(srv.etl_flow_run("a/b", {"d": 1}))).startswith("refused"))
+os.environ["ASTRYX_AGENT"] = "etl-ops"
 
 print()
 print(f"FAILED ({len(fails)}): " + "; ".join(fails) if fails else "PASS: the etl server's guards hold without the box")
