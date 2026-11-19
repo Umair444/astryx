@@ -582,8 +582,9 @@ class Store:
         """Does the mirror hold exactly this standard's head (the working tree is the head: every write commits)?"""
         d = self.mirror_dir(PurePosixPath(e["name"]).suffix.lower()[1:])
         try:
-            return d is not None and (d / e["name"]).read_bytes() == (self.root / e["path"]).read_bytes()
-        except OSError:
+            m, h = d / e["name"], self.root / e["path"]       # sizes first: a listing reads bytes only when they match
+            return d is not None and m.stat().st_size == h.stat().st_size and m.read_bytes() == h.read_bytes()
+        except (OSError, TypeError):
             return False
 
     def mirror(self) -> None:
@@ -592,17 +593,20 @@ class Store:
         if self.media is None:
             return
         root = self.media / "standards"
+        if self.media.is_symlink() or root.is_symlink():
+            print("artifacts: the standards folder is a link; nothing is mirrored or removed through it", flush=True)
+            return
         idx, std = self.index(), self.standards()
         try:
             for d in (root.iterdir() if root.is_dir() else ()):
                 if d.is_dir() and not d.is_symlink():
                     keep = idx.get(std.get(d.name, ""), {}).get("name")
                     for f in d.iterdir():
-                        if f.name != keep:
+                        if f.name != keep and (f.is_symlink() or f.is_file()):
                             f.unlink()
             for ext, aid in std.items():
                 e = idx.get(aid)
-                if e and not self.mirrored(aid, e):
+                if e and not (root / ext).is_symlink() and not self.mirrored(aid, e):
                     atomic_write(root / ext / e["name"], (self.root / e["path"]).read_bytes(), mode=0o644)
         except OSError as err:
             print(f"artifacts: the standards mirror failed ({err}); the Library marks it stale", flush=True)

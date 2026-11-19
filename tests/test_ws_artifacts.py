@@ -461,6 +461,33 @@ def main():
     SS.set_standard(md["id"], True)
     SS.save(md["id"], "# layout v2\n")
     arm("an owner edit of the standard is mirrored too", (media / "standards" / "md" / "layout.md").read_text() == "# layout v2\n")
+    print("standards: links are never followed (medic 14406)")
+    lm = tmp / "linked-media"
+    lm.mkdir()
+    away = tmp / "away"
+    (away / "sub").mkdir(parents=True)
+    (away / "sub" / "x.txt").write_text("keep me")
+    (lm / "standards").symlink_to(away)
+    SL = A.Store(tmp / "store-link", max_bytes=1024 * 1024, media=lm)
+    dk = home / "Linked.pptx"
+    dk.write_bytes(b"PK linked")
+    la = A.import_source(SL, str(dk), T, "owner")
+    SL.set_standard(la["id"], True)
+    arm("(a) media/standards a link: nothing removed or written through it, and the standard shows stale",
+        (away / "sub" / "x.txt").is_file() and sorted(os.listdir(away)) == ["sub"]
+        and {a["id"]: a for a in SL.list_all()}[la["id"]]["stale"], sorted(os.listdir(away)))
+    lm2, away2 = tmp / "linked-media2", tmp / "away2"
+    (lm2 / "standards").mkdir(parents=True)
+    away2.mkdir()
+    (lm2 / "standards" / "pptx").symlink_to(away2)
+    SL2 = A.Store(tmp / "store-link2", max_bytes=1024 * 1024, media=lm2)
+    lb = A.import_source(SL2, str(dk), T, "owner")
+    SL2.set_standard(lb["id"], True)
+    arm("(b) a type folder that is a link: the pin writes nothing into it", os.listdir(away2) == [], os.listdir(away2))
+    (media / "standards" / "md" / "subdir").mkdir()
+    SS.save(md["id"], "# layout v3\n")
+    arm("(c) a stray subfolder never stops the mirror", (media / "standards" / "md" / "layout.md").read_text() == "# layout v3\n"
+        and not {a["id"]: a for a in SS.list_all()}[md["id"]]["stale"])
     import observatory.api.main as M
     arm("a member can't pin (the member allowlist has no PUT here)",
         not M.member_may("PUT", f"/api/ws/artifacts/{j['id']}/standard"), "member_may said yes")
