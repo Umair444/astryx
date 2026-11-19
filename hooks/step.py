@@ -1042,8 +1042,8 @@ def handle_stop(cur, agent, h, strip=None):
     # agent's answer to the HOOK ("that message needs no answer"), not to the person (medic 12441)
     if turn_id and input_msg_id and last_text and last_text.strip() and not h.get("stop_hook_active"):
         from astryx.core import address
-        src = cur.execute(f"SELECT from_agent, from_org, thread, {address.person_sql('from_agent', org='from_org')} "
-                          "FROM messages WHERE id=%s", (input_msg_id,)).fetchone()
+        src = cur.execute(f"SELECT from_agent, from_org, thread, {address.person_sql('from_agent', org='from_org')}, "
+                          "delivery->>'lead' FROM messages WHERE id=%s", (input_msg_id,)).fetchone()
         # Fire for a message from one of OUR people, on ANY surface: address.person_sql is the one rule (SURFACES, the
         # table of who is a person: the owner, a WhatsApp/Telegram/Discord sender, a signed-in member, a canvas user, a
         # frontend; never a federated peer's, whatever name its envelope gives), the same one owed.py's reminder reads,
@@ -1051,7 +1051,10 @@ def handle_stop(cur, agent, h, strip=None):
         # channel"; the web chat had been left out and its line said "reading your message" for good). Agent turns
         # and pulse triggers are no person, so they can't auto-message anyone. No bubble is fine: a bridge's deliver()
         # falls back to a fresh send. The reply goes BACK to that sender on that thread.
-        if src and src[3]:
+        # A TEAM's ask is answered by its LEAD: a helper's last words ("I'm not replying: the lead answers") are no
+        # reply, and posting them put the helpers' asides in front of the person (owner 15007). The same rule as
+        # owed.py's (coalesce(lead, agent) = agent): one rule for "who owes this person a reply"
+        if src and src[3] and (src[4] or agent) == agent:
             # a reply is a send to the sender, or to a PERSON on the sender's thread: in a group, an agent answers
             # "@Ali" to the group (to 'owner'), not to Ali's own name, and that is still the answer (owner 14225: a
             # second "I have sent Ali the stats" under every group reply). A hand-off to an agent on that thread is no
