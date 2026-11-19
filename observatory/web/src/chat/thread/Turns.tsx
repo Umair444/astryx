@@ -193,7 +193,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
       if (!el && anchor.current === 'mine' && held !== null) {   // my message between the outbox and its row: hold still
         const short = held - (box.scrollHeight - box.clientHeight)
         if (short > 0) box.style.paddingBottom = `${Math.ceil((parseFloat(box.style.paddingBottom) || 0) + short)}px`
-        if (box.scrollTop !== held) box.scrollTop = held
+        if (box.scrollTop !== held && performance.now() - gliding >= GLIDE) box.scrollTop = held   // a glide lands on its own
         return
       }
       if (el) {                                    // room below the anchor so it can sit at the top of the view
@@ -441,8 +441,10 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
   const n = useReveal(m.id, useMemo(() => totalText(whole, textOf), [whole]))   // eslint-disable-line react-hooks/exhaustive-deps
   const flow = useMemo(() => revealParts(whole, n, textOf, (p, text) => ({ ...p, text })), [whole, n]) // eslint-disable-line react-hooks/exhaustive-deps
   const done = n === Infinity
+  const arrived = m.id > useContext(LiveFrom)      // came while the reader was here: it fades in (opacity only, so the
+                                                   // anchor's measured top never moves)
   return (
-    <div className={`ws-turn ${cont ? 'mt-2.5 is-cont' : 'mt-5 first:mt-0'}`} data-turn data-reply={m.id} data-revealing={done ? undefined : ''}>
+    <div className={`ws-turn ${cont ? 'mt-2.5 is-cont' : 'mt-5 first:mt-0'}${arrived ? ' ws-fade' : ''}`} data-turn data-reply={m.id} data-revealing={done ? undefined : ''}>
       {cont && <TurnActions m={m} text={text} />}
       {!cont && (
         // the actions live IN the header row (iteration 10): they take their own room at its end, so the role
