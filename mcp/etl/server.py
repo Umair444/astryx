@@ -153,7 +153,7 @@ _CAUSES = [("memory", r"MemoryError|Not enough space|Errno 12\\]|out of memory")
 _EXC = re.compile(r"^\s*((?:[A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt)|ERROR)\b.*)$")
 _BEARER = re.compile(r"(?i)\bBearer\s+\S+")                  # a token runs to the next space
 _URL_CRED = re.compile(r"://[^\s/]*@")              # up to the LAST @ before the host: a password may hold an @
-_KV_CRED = re.compile(r"""(?im)(?<![A-Za-z])(password|passwd|pwd|secret|token|api_?key)(['"]?\s*[=:]\s*)(?:(['"])(?:(?!\3).)*(?:\3|$)|[^\s'",;)}]+)""")
+_KV_CRED = re.compile(r"""(?im)(?<![A-Za-z])([A-Za-z0-9_]*(?:password|passwd|pwd|secret|token|api_?key)[A-Za-z0-9_]*|[A-Za-z0-9]*_pass)(['"]?\s*(?:=(?!=)|:)\s*)(?:(['"])(?:(?!\3).)*(?:\3|$)|[^\s'",;)}]+)""")
 
 
 def _mask(text: str) -> str:

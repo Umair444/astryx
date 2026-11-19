@@ -191,7 +191,9 @@ leaks = ['  File "x.py", line 9, in c\n    con = connect(host=h, password="' + V
          '{"password": "a b, ' + V + '"}\nValueError: e',
          'con = connect(password="a b ' + V + '\nSyntaxError: unterminated string',
          "DB_PASSWORD=" + V + "\nKeyError: env",                                    # an env/config line
-         "Authorization: Bearer " + V + "\nHTTPError: 401"]                          # an HTTP error dump   # a quote cut off by the tail                           # json
+         "Authorization: Bearer " + V + "\nHTTPError: 401",
+         "SECRET_KEY=" + V + "\nKeyError: a", "aws_secret_access_key = " + V + "\nKeyError: b",   # a key with a suffix
+         "db_pass='" + V + "'\nKeyError: c"]                          # an HTTP error dump   # a quote cut off by the tail                           # json
 pf_rows = {"flow": [], "report": [{"job": f"L{i}", "at": "t", "exit_code": 1, "state": "FAILED", "error": e}
                                   for i, e in enumerate(leaks)]}
 d = srv.etl_failures(hours=24)
@@ -199,6 +201,9 @@ check("A6b no credential value in the digest", V not in str(d) and "secretval" n
 dd = [srv.etl_failures(hours=24, detail=f"L{i}") for i in range(len(leaks))]
 check("A6b ...nor in any detail=", V not in str(dd) and "secretval" not in str(dd), str(dd)[:300])
 check("A6b the key name stays, readable", "password=" in str(dd[0]) and "***" in str(dd[0]), str(dd[0])[:200])
+check("A6b ordinary code is left alone", all(srv._mask(s) == s for s in
+      ["bypass_cache=True", "compass=north", "passed=3 failed=1", "if password == stored:", "row['password']"]),
+      str([srv._mask(s) for s in ["bypass_cache=True", "if password == stored:"]]))
 check("A6b a plain password=password reads as itself or masked", srv._mask("password=password") in
       ("password=password", "password=***"), srv._mask("password=password"))
 sent.clear()
