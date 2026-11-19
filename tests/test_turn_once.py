@@ -117,6 +117,23 @@ def main():
         got = [b for (b,) in cur.execute("SELECT body FROM messages WHERE from_agent='seed' ORDER BY id").fetchall()]
         arm("T6 a group reply to the group answers the member: no second post of the turn's last words", got == ["@Ali 334"], got)
         conn.rollback()
+        # T7 a hand-off to an AGENT on the member's thread is no answer: the member still gets the forgotten reply
+        # (medic 14233: merchant passing Saad's question to consumer on the group thread)
+        cur.execute(f"""INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, status, delivered_at)
+                       VALUES ('wa-{N223}', 'whatsapp', 'seed', 'wa:{GROUP}@g.us', 'chat', 'active customers?', 'delivered', now())
+                       RETURNING id""")
+        m7 = cur.fetchone()[0]
+        cur.execute(f"""INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body)
+                       VALUES ('seed', 'local', 'consumer', 'wa:{GROUP}@g.us', 'chat', 'over to you')""")
+        with tempfile.TemporaryDirectory() as td:
+            tp = Path(td) / "t.jsonl"
+            tp.write_text(line("user", f'<channel source="astryx" from="wa-{N223}" thread="wa:{GROUP}@g.us" intent="chat" msg_id="{m7}">active customers?</channel>', "2026-11-16T08:00:00Z")
+                          + line("assistant", [{"type": "text", "text": "Not my area; I have passed it to consumer."}], "2026-11-16T08:00:04Z", "d1", u))
+            S.handle_stop(cur, "seed", {"transcript_path": str(tp), "session_id": "t7"})
+        got = cur.execute("SELECT to_agent, body FROM messages WHERE from_agent='seed' ORDER BY id").fetchall()
+        arm("T7 a hand-off to an agent on the member's thread is no answer: the member gets the forgotten reply",
+            got == [("consumer", "over to you"), (f"wa-{N223}", "Not my area; I have passed it to consumer.")], got)
+        conn.rollback()
         # T4 a turn that ends on a usage limit (StopFailure: no Stop runs) leaves one 'stopped' step in its own words,
         # in its turn's scope, so the chat's live line says why instead of a timer (owner 11-16)
         import io
