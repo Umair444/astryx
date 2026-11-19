@@ -73,10 +73,17 @@ compgen -G "$TOLD/*.jsonl" >/dev/null 2>&1 && mv "$TOLD"/*.jsonl "$ORGH/homes/$N
 [ -f "$ORGH/memory/context/$OLD.md" ] && mv "$ORGH/memory/context/$OLD.md" "$ORGH/memory/context/$NEW.md"
 [ -d "$ORGH/triggers/$OLD" ] && mv "$ORGH/triggers/$OLD" "$ORGH/triggers/$NEW"
 echo "  home, brief and trigger code moved"
+[ -n "${RENAME_AFTER_FILES:-}" ] && bash -c "$RENAME_AFTER_FILES"    # tests only: a pulse tick landing in this window
 
 # 4. the live rows, in one transaction: its triggers, its canvas threads, and wire not yet delivered to it
 psql "$DSN" -v ON_ERROR_STOP=1 -q -v old="$OLD" -v new="$NEW" <<'SQL' || die "moving the rows failed (files are moved; rerun the SQL by hand)"
 BEGIN;
+-- a pulse tick between the trigger code's move and this UPDATE reconciles triggers/<new>/x.py as a NEW row (<new>, x)
+-- while (<old>, x) still stands, and the UPDATE then breaks the (agent, name) key (medic 14880). The pre-check proved
+-- <new> owned no rows, so any such row is that tick's: drop it and keep the old row, with its state; the next tick
+-- rewrites its check_src to the new path
+DELETE FROM triggers n USING triggers o
+ WHERE n.agent = :'new' AND o.agent = :'old' AND n.name = o.name AND n.kind = 'python';
 UPDATE triggers SET agent = :'new' WHERE agent = :'old';
 UPDATE canvas_threads SET agent = :'new' WHERE agent = :'old';
 UPDATE canvases SET agent = :'new' WHERE agent = :'old';
