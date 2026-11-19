@@ -370,7 +370,7 @@
         },
         {
           "name": "etl_box",
-          "description": "The ETL box's health: free/total GB per drive, memory, boot time, and the Prefect worker processes alive."
+          "description": "The ETL box's health: free/total GB per drive, memory, boot time, the Prefect worker processes alive, and its ETL"
         },
         {
           "name": "etl_log_tail",
