@@ -58,7 +58,7 @@ def person_name(channel: str, chat: str) -> str:
     c = channels.BY_NAME[channel]
     local = chat.split("@")[0]
     digits = "".join(ch for ch in local if ch.isdigit())
-    if digits and digits == local.lstrip("+"):
+    if digits and digits == local.lstrip("+-") and (c.numbers or "@" not in chat):    # a number; an address is never one
         return f"{c.person}-{digits}"
     slug = re.sub(r"[^a-z0-9.]+", "-", local.lower()).strip("-.")[:24] or "x"
     return f"{c.person}-{slug}-{hashlib.sha256(chat.lower().encode()).hexdigest()[:6]}"
