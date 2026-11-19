@@ -87,8 +87,6 @@ K = 5
 fails = []
 # D2-b: the only places a wake may survive its check's failure. Each must dedup on the WIRE.
 DURABLE_DECLARED = {
-    "triggers/seed/wedge_watch.py": (1, "owner escalation: the out-of-band last-resort alarm; its dedup "
-                                        "(_esc_binds) reads the sent row, and owner wakes are never held (D-1)"),
     "src/astryx/pulse/shipped_triggers/connection_sweep.py": (1, "a connection's end notice: its DELETE … RETURNING "
                                         "commits first, so each notice must survive a later row's failure or the "
                                         "timeout; the deleted row is the dedup, never ctx.state (seed 14035)"),
