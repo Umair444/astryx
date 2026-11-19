@@ -195,6 +195,10 @@
           "description": "Append a directive to an agent's charter under a managed section. You may always"
         },
         {
+          "name": "rename_agent",
+          "description": "Give an agent a new name in one act (governance only). Moves its charter, home, boot brief, trigger code and"
+        },
+        {
           "name": "set_persona",
           "description": "Set your OWN persona: a profile picture and/or a short blurb. avatar_path is a path"
         }
@@ -345,5 +349,5 @@
       ]
     }
   ],
-  "total_tools": 65
+  "total_tools": 66
 }

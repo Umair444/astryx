@@ -245,6 +245,23 @@ def amend_charter(agent: str, directive: str, section: str = "Standing directive
 
 
 @mcp.tool()
+def rename_agent(old: str, new: str) -> str:
+    """Give an agent a new name in one act (governance only). Moves its charter, home, boot brief, trigger code and
+    trigger rows, canvas threads and undelivered wire to the new name, stops the old session and spawns the new one
+    fresh. Its history (messages, steps, turns) stays under the old name. The mechanics are scripts/rename.sh."""
+    me = _me()
+    if me not in GOVERNANCE:
+        return f"refused: {me} may not rename agents (governance-only)."
+    try:
+        cp = subprocess.run(["bash", str(REPO / "scripts/rename.sh"), (old or "").strip(), (new or "").strip()],
+                            capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        return "error: rename did not finish in 180s; check the agent's charter, home and tmux session by hand"
+    out = (cp.stdout + cp.stderr).strip()
+    return out if cp.returncode == 0 else f"error: {out[-1500:]}"
+
+
+@mcp.tool()
 def set_persona(avatar_path: str = "", blurb: str = "") -> str:
     """Set your OWN persona: a profile picture and/or a short blurb. avatar_path is a path
     to an image file, copied into your home as avatar.<ext> and served by the observatory at
