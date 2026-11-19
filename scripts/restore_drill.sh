@@ -49,6 +49,17 @@ DSN=$("$PY" src/astryx/config.py dsn --file 2>/dev/null || true)
 [ -n "$DSN" ] || notrun "no ASTRYX_DSN for this org (its settings, through astryx.config)"
 ROLE=$(pg_dsn_user "$DSN")
 DB=$(pg_dsn_db "$DSN")
+# the BOOTSTRAP superuser initdb makes. On a provisioned host (cog-rls) that is the provisioner, whose root-only DSN
+# restore_verify.sh also reads, and the org's role is a restricted login inside the cluster: initdb as the org's role
+# rehearsed a world we would never restore into, where the roles file can't even apply (medic 14904, seed 14905). Without
+# that file: the org's role, as before. Only its user is read, never printed beyond the name.
+BOOT=$ROLE
+SUPER_FILE=${ASTRYX_PG_SUPER_FILE:-/etc/astryx/pg-super.dsn}
+if [ -r "$SUPER_FILE" ]; then
+  BOOT=$(SUPER_FILE="$SUPER_FILE" "$PY" -c 'import os; from psycopg.conninfo import conninfo_to_dict
+print(conninfo_to_dict(open(os.environ["SUPER_FILE"]).read().strip()).get("user") or "")' 2>/dev/null)
+  [ -n "$BOOT" ] || notrun "the provisioner DSN file names no user"
+fi
 
 name="astryx-restore-drill-$$"
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/astryx-restore-drill.XXXXXX")
@@ -57,7 +68,7 @@ cleanup() { docker rm -f -v "$name" >/dev/null 2>&1;   # -v: an image whose VOLU
 trap cleanup EXIT
 placeholder="drill-placeholder-$RANDOM$RANDOM"   # the initdb stand-in: NOT a secret (a throwaway server's)
 
-docker run -d --name "$name" --cpu-shares 64 -e POSTGRES_USER="$ROLE" -e POSTGRES_PASSWORD="$placeholder" \
+docker run -d --name "$name" --cpu-shares 64 -e POSTGRES_USER="$BOOT" -e POSTGRES_PASSWORD="$placeholder" \
   -e POSTGRES_DB="$DB" -v "$name":/var/lib/postgresql -p "127.0.0.1::5432" "$IMAGE" >/dev/null 2>&1 \
   || notrun "docker run of $IMAGE failed"
 # the host port docker bound for us, read from docker, which owns it (plan-10108 D3; a probe-then-release here handed the
@@ -67,7 +78,7 @@ port=$(docker port "$name" 5432/tcp 2>/dev/null | sed -n 's/^127\.0\.0\.1:\([0-9
 
 # observe a login over TCP (the init phase's temp server listens on the socket only, so a TCP login means the real
 # server is up). Exit 0 logged in · 3 password refused · 4 other. The password, when given, comes on stdin.
-login() {  # login <db> [stdin-password]
+login() {  # login <user> <db> [stdin-password]
   "$PY" -c '
 import sys, psycopg
 pw = sys.stdin.read() if sys.argv[3] == "stdin" else None
@@ -75,15 +86,15 @@ try:
     psycopg.connect(host="127.0.0.1", port=int(sys.argv[1]), dbname=sys.argv[2], user=sys.argv[4], connect_timeout=5,
                     **({"password": pw} if pw is not None else {})).close()
 except psycopg.OperationalError as e:
-    sys.exit(3 if "password authentication failed" in str(e) else 4)' "$port" "$1" "${2:+stdin}" "$ROLE"
+    sys.exit(3 if "password authentication failed" in str(e) else 4)' "$port" "$2" "${3:+stdin}" "$1"
 }
 ready=0
 for _ in $(seq 1 90); do
-  printf '%s' "$placeholder" | login "$DB" stdin >/dev/null 2>&1 && { ready=1; break; }
+  printf '%s' "$placeholder" | login "$BOOT" "$DB" stdin >/dev/null 2>&1 && { ready=1; break; }
   sleep 2
 done
 [ "$ready" = 1 ] || notrun "the drill server never accepted its initdb login within 180s"
-echo "  ✓ restore-drill: empty data dir initdb'd from $IMAGE$FROM (role $ROLE holds the placeholder; container $name)"
+echo "  ✓ restore-drill: empty data dir initdb'd from $IMAGE$FROM (bootstrap superuser $BOOT holds the placeholder, the org's role is $ROLE; container $name)"
 
 fail=0
 # the ROLES FIRST, before the password reconcile, so pg_role_sync is the LAST writer of the role's password (a1
@@ -97,19 +108,21 @@ if [ -f "$roles_file" ] && grep -qE "PASSWORD '|SCRAM-SHA-256|md5[0-9a-f]{32}" "
   fail=1
 elif [ -f "$roles_file" ]; then
   nroles=$(grep -c '^CREATE ROLE ' "$roles_file")
-  grep -v -E "^CREATE ROLE \"?$ROLE\"?;\$" "$roles_file" \
-    | docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=0 -U "$ROLE" -d postgres >/dev/null 2>"$tmp/roles.err"
+  grep -v -E "^CREATE ROLE \"?$BOOT\"?;\$" "$roles_file" \
+    | docker exec -i "$name" psql -X -q -v ON_ERROR_STOP=0 -U "$BOOT" -d postgres >/dev/null 2>"$tmp/roles.err"
   rerr=$(grep -c 'ERROR:' "$tmp/roles.err" 2>/dev/null); rerr=${rerr:-0}
   # every role the file names must now EXIST on the server: an applied file with 0 errors that created nothing is
   # still a missing role (compared as sorted name lists, never printed)
   missing=$(comm -23 <(sed -n -E 's/^CREATE ROLE "?([^";]+)"?;$/\1/p' "$roles_file" | sort -u) \
-                     <(docker exec "$name" psql -X -tA -U "$ROLE" -d postgres -c "SELECT rolname FROM pg_roles" | sort -u) | wc -l)
+                     <(docker exec "$name" psql -X -tA -U "$BOOT" -d postgres -c "SELECT rolname FROM pg_roles" | sort -u) | wc -l)
   if [ "$rerr" = 0 ] && [ "$missing" = 0 ]; then
     echo "  ✓ restore-drill: the paired roles file applied ($nroles roles, 0 errors, every one present)"
   else echo "  ✗ restore-drill: roles file: $rerr error line(s), $missing named role(s) absent (text withheld)" >&2; fail=1; fi
 else
   roles_file=""
   echo "  ○ restore-drill: roles NOT VERIFIED: no ${dump##*/}'s .roles.sql paired (the dump predates roles capture)"
+  # the org's login must exist for the sync to give it a password (the roles file would have made it)
+  [ "$BOOT" = "$ROLE" ] || docker exec "$name" psql -X -q -U "$BOOT" -d postgres -c "CREATE ROLE \"$ROLE\" LOGIN" >/dev/null 2>&1
 fi
 
 # the "restored ~/.pgpass": a random value, written 0600 at create, never echoed
@@ -127,14 +140,14 @@ out=$("$PY" -m astryx.security.pg_role_sync apply 2>&1) || { echo "  ✗ restore
 out=$("$PY" -m astryx.security.pg_role_sync check 2>&1) \
   && echo "  ✓ restore-drill: after pg_role_sync apply the restored pgpass value logs in" \
   || { echo "  ✗ restore-drill: $out" >&2; fail=1; }
-printf '%s' "$placeholder" | login "$DB" stdin >/dev/null 2>&1; rc=$?
+printf '%s' "$placeholder" | login "$ROLE" "$DB" stdin >/dev/null 2>&1; rc=$?
 [ "$rc" = 3 ] && echo "  ✓ restore-drill: the initdb placeholder is refused" \
   || { echo "  ✗ restore-drill: the placeholder was not refused (login rc $rc)" >&2; fail=1; }
 
 # the dump onto THAT server (its extensions must exist in the declared image, or this is where it shows)
 # stderr kept (never printed: it can quote the dump's DDL), and its ERROR-line COUNT reported, so a missing
 # extension or a failed index is visible even while the four tables below have rows (a1 #45217 follow-up 2)
-nice -n19 ionice -c3 docker exec -i "$name" pg_restore --no-owner -U "$ROLE" -d "$DB" < "$dump" >/dev/null 2>"$tmp/restore.err"
+nice -n19 ionice -c3 docker exec -i "$name" pg_restore --no-owner -U "$BOOT" -d "$DB" < "$dump" >/dev/null 2>"$tmp/restore.err"
 prc=$?
 nerr=$(grep -c 'error:' "$tmp/restore.err" 2>/dev/null); nerr=${nerr:-0}
 if [ -z "$roles_file" ]; then
