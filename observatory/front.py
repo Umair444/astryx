@@ -27,7 +27,8 @@ Its one cookie is the session's (httpOnly, SameSite=Strict, Secure on an https o
 read it (relay.py, both directions). It has no PUBLIC_PATHS of its own to widen (every /o/ request is judged by the
 backend's).
 
-STATED LIMITS: websockets (hands' noVNC) are not piped through the front yet; reach a backend directly for those.
+STATED LIMITS: the one websocket piped through is hands' noVNC (/api/hands/<desk>/vnc, by /o/<org>/ or the chosen org);
+the backend still judges its key. No other websocket is relayed (owner 11-19: Join on desk-1 read "connection closed").
 Run: uvicorn front:app --host 0.0.0.0 --port 8090   (from observatory/), registry: ASTRYX_COG_REGISTRY or the default.
 """
 from __future__ import annotations
@@ -43,7 +44,8 @@ from http import HTTPMethod
 from pathlib import Path
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, Request
+import websockets
+from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -405,6 +407,63 @@ async def _relay(org: str, path: str, request: Request):
     out = StreamingResponse(resp.aiter_raw(), status_code=resp.status_code, background=done)
     out.raw_headers = relay.response_headers(resp.headers.raw, org)    # its own canvas cookie, or no Set-Cookie (N1)
     return out
+
+
+async def _vnc(ws: WebSocket, org: str, agent: str):
+    """A byte pipe to org's own /api/hands/<agent>/vnc. The backend checks the key (it rides in the query, as a
+    browser websocket can't send headers) and closes with its own code; the front adds nothing and widens nothing."""
+    r = _cog().get(org)
+    if r is None or r["port"] is None:
+        await ws.close(code=4404)
+        return
+    want = ["binary"] if "binary" in ws.headers.get("sec-websocket-protocol", "") else None
+    url = f"ws://127.0.0.1:{r['port']}/api/hands/{agent}/vnc" + (f"?{ws.url.query}" if ws.url.query else "")
+    try:
+        up = await websockets.connect(url, subprotocols=want, max_size=None, open_timeout=10)
+    except (OSError, websockets.InvalidHandshake, asyncio.TimeoutError):
+        await ws.close(code=4502)
+        return
+    except websockets.ConnectionClosed as e:
+        await ws.close(code=e.rcvd.code if e.rcvd else 4502)
+        return
+    await ws.accept(subprotocol=up.subprotocol)
+
+    async def down_():                                  # backend -> browser
+        async for m in up:
+            await (ws.send_bytes(m) if isinstance(m, bytes) else ws.send_text(m))
+
+    async def up_():                                    # browser -> backend
+        while True:
+            m = await ws.receive()
+            if m["type"] == "websocket.disconnect":
+                return
+            await up.send(m["bytes"] if m.get("bytes") is not None else m.get("text") or "")
+
+    tasks = [asyncio.create_task(down_()), asyncio.create_task(up_())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for t in tasks:
+            t.cancel()
+        await up.close()
+        try:
+            await ws.close()
+        except (RuntimeError, WebSocketDisconnect):
+            pass
+
+
+@app.websocket("/o/{org}/api/hands/{agent}/vnc")
+async def vnc_pipe(ws: WebSocket, org: str, agent: str):
+    await _vnc(ws, org, agent)
+
+
+@app.websocket("/api/hands/{agent}/vnc")
+async def vnc_chosen(ws: WebSocket, agent: str):
+    org = ws.headers.get("x-astryx-org") or ws.cookies.get("astryx_org") or ""
+    if org not in _cog():
+        await ws.close(code=4409)
+        return
+    await _vnc(ws, org, agent)
 
 
 # ?key= must never reach journald in clear (a3 #42085 F2), here as in the backends
