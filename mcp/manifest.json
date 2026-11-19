@@ -3,7 +3,6 @@
     {
       "server": "astryx",
       "who": "every",
-      "error": "rc 1: Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@modelcontextprotocol/sdk' imported from /home/astryx/astryx-rename/channel/server.mjs",
       "tools": [
         {
           "name": "send",
@@ -249,7 +248,7 @@
       "tools": [
         {
           "name": "browser_close",
-          "description": "Close the browser and all open tabs."
+          "description": "Close the page"
         },
         {
           "name": "browser_resize",
