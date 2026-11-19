@@ -289,15 +289,54 @@ with fixture_db() as d, psycopg.connect(d["url"], autocommit=True) as c, tempfil
     c.execute("INSERT INTO route (channel, chat, agent, purpose, person, opened_by, expires_at) VALUES "
               f"('whatsapp', '{N015}@s.whatsapp.net', 'seed', 'link', 'cv-pat.7', 'cv-pat.7', now() - interval '1 s')")
     c.execute("UPDATE route SET expires_at = now() - interval '1 s' WHERE chat=%s", (KUMAIL,))
-    def sql(q, a=None):                   # the pulse ctx's sql(): rows as dicts
+    from astryx.pulse import pulse_run
+    def sql(q, a=None):                   # the pulse ctx's sql(): rows as dicts, and its guard (a check never writes messages)
+        if pulse_run._WAKE_WRITE.search(pulse_run._COMMENT.sub(" ", str(q))):
+            raise PermissionError("checks don't write messages: ctx.say")
         cur = c.execute(q, a)
         return [dict(zip([x.name for x in cur.description], r)) for r in cur.fetchall()] if cur.description else []
-    S.connection_sweep(SimpleNamespace(sql=sql))
+    held = []
+    def write(w):
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES (%s, %s, %s, %s, %s)", w)
+    def say(to, body, *, thread=None, intent="trigger", from_agent="pulse", durable=False, **_k):
+        # as the pulse: a durable wake is written at once; any other only once the evaluation returns
+        (write if durable else held.append)((from_agent, to, thread, intent, body))
+    def evaluate(**over):                 # one pulse evaluation: its plain wakes are lost if it raises
+        held.clear()
+        try:
+            S.connection_sweep(SimpleNamespace(sql=sql, say=say))
+        except Exception as e:            # noqa: BLE001
+            return e
+        finally:
+            for k, v in over.items():
+                setattr(S, k, v)
+        for w in held:
+            write(w)
+        return None
+    e = evaluate()
+    if isinstance(e, PermissionError):
+        arm("the sweep queues its notices with ctx.say (the pulse's ctx.sql refuses a messages write)", False, e)
     gone = c.execute("SELECT count(*) FROM route WHERE expires_at <= now()").fetchone()[0]
     lend = c.execute("SELECT count(*) FROM messages WHERE to_agent='lending' AND body LIKE '[connect] your connection%%timed out%%'").fetchone()[0]
     pat = c.execute("SELECT count(*) FROM messages WHERE to_agent='cv-pat.7' AND body LIKE '[connect] the link%%lapsed%%'").fetchone()[0]
     arm("expired rows are gone; the agent is told it timed out; the link's asker is told it lapsed", gone == 0 and lend == 1 and pat == 1,
         (gone, lend, pat))
+    # a later row's failure must not drop an earlier row's notice: the DELETE has already committed (seed 14035)
+    c.execute("INSERT INTO route (channel, chat, agent, purpose, person, opened_by, expires_at) VALUES "
+              "('whatsapp', 'c6a@s.whatsapp.net', 'insurance', 'open', 'Ana', 'insurance', now() - interval '2 s'), "
+              "('whatsapp', 'c6b@s.whatsapp.net', 'merchant', 'open', 'Bo', 'merchant', now() - interval '1 s')")
+    real_notice, calls = S.notice, []
+    def flaky(r):
+        calls.append(r["agent"])
+        if len(calls) == 2:
+            raise RuntimeError("notice() failed on the second row")
+        return real_notice(r)
+    S.notice = flaky
+    e = evaluate(notice=real_notice)
+    told = {r[0] for r in c.execute("SELECT to_agent FROM messages WHERE to_agent IN ('insurance', 'merchant') "
+                                     "AND body LIKE '[connect] your connection%%'").fetchall()}
+    arm("C6b notice() raising on the second row: the first row's agent is still told (durable), the evaluation fails",
+        isinstance(e, RuntimeError) and len(calls) == 2 and len(told) == 1 and told <= {calls[0]}, (e, calls, told))
 
 print(f"\n{'ALL PASS' if not fails else f'FAILED ({len(fails)})'}: connect")
 sys.exit(1 if fails else 0)

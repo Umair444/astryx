@@ -33,6 +33,9 @@ def notice(r: dict) -> tuple[str, str]:
 def connection_sweep(ctx):
     for r in ctx.sql("DELETE FROM route WHERE expires_at <= now() RETURNING agent, channel, chat, purpose, person, opened_by"):
         to, body = notice(r)
-        ctx.sql("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES ('pulse', %s, NULL, 'chat', %s)",
-                (to, body))
+        # the pulse writes it (its ctx.sql refuses a messages write: the old INSERT raised after the DELETE had
+        # committed, so every expired connection went with no one told). DURABLE: the DELETE is already committed, so a
+        # later row's failure or the pulse's timeout must not drop the notices queued before it; the deleted row is the
+        # dedup (never ctx.state), so a notice can't repeat
+        ctx.say(to, body, intent="chat", durable=True)
     return None

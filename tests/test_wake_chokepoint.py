@@ -89,6 +89,9 @@ fails = []
 DURABLE_DECLARED = {
     "triggers/seed/wedge_watch.py": (1, "owner escalation: the out-of-band last-resort alarm; its dedup "
                                         "(_esc_binds) reads the sent row, and owner wakes are never held (D-1)"),
+    "src/astryx/pulse/shipped_triggers/connection_sweep.py": (1, "a connection's end notice: its DELETE … RETURNING "
+                                        "commits first, so each notice must survive a later row's failure or the "
+                                        "timeout; the deleted row is the dedup, never ctx.state (seed 14035)"),
 }
 
 
@@ -244,10 +247,10 @@ def o7_scan():
                 mods = [a.name for a in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
                 mods = [node.module]
-            for m in mods:
-                cand = REPO / (m.replace(".", "/") + ".py")
-                if cand.exists():
-                    todo.append(cand)
+            for m in mods:                # astryx.* lives under src/ (a shim's shipped trigger: medic 14035)
+                for cand in (REPO / (m.replace(".", "/") + ".py"), REPO / "src" / (m.replace(".", "/") + ".py")):
+                    if cand.exists():
+                        todo.append(cand)
     return hits, len(seen), durable
 
 
