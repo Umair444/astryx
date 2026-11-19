@@ -35,3 +35,6 @@ export function whoLabel(me: Me | null, fallback: string): string {
 /* THE ADMIN PANE's door: signed in as the owner or an admin of the org you are in (its backend's own answer, via
    /auth/me). The owner key alone opens no account panel: accounts are the front's, and a key is no account. */
 export const canAdmin = (me: Me | null) => ['owner', 'admin'].includes(hereOrg(me)?.role ?? '')
+
+/* the OWNER's own acts (the org's standards): signed in as its owner, or the key door (no account: only the owner holds the key) */
+export const isOwnerHere = (me: Me | null) => !me || hereOrg(me)?.role === 'owner'

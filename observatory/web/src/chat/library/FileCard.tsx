@@ -155,6 +155,7 @@ function Byline({ it, where }: { it: Item; where: boolean }) {
 }
 
 export function Badge({ it }: { it: Item }) {
+  if (it.standard) return <span className="ws-badge shrink-0" data-standard={it.stale ? 'stale' : 'on'} title={it.stale ? 'The org’s standard for this file type — its copy for agents is out of date' : 'The org’s standard for this file type: agents start from it'}>{it.stale ? 'Standard · out of date' : 'Standard'}</span>
   if (it.versions > 1) return <span className="ws-badge tabular-nums shrink-0" title={`${it.versions} versions`}>v{it.versions}</span>
   if (it.versions === 0) return <span className="ws-badge shrink-0 !border-dashed" title="Not opened yet: opening it starts its history">new</span>
   return null
