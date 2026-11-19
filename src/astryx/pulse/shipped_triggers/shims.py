@@ -68,6 +68,11 @@ the influence graph computed so the floor's influence view has something to draw
 `trigger action=retire name=influence_nightly` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
 from astryx.pulse.shipped_triggers.influence_nightly import influence_nightly  # noqa: F401
 ''',
+    'late_failure_notice': '''"""Live install of the shipped late failure notice (one writer: src/astryx/pulse/shipped_triggers/late_failure_notice.py): tells
+an agent when a message it sent failed after its send stopped waiting. To retire it:
+`trigger action=retire name=late_failure_notice` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
+from astryx.pulse.shipped_triggers.late_failure_notice import late_failure_notice  # noqa: F401
+''',
 }
 
 NAMES: dict[str, tuple[str, ...]] = {
@@ -81,6 +86,7 @@ NAMES: dict[str, tuple[str, ...]] = {
     'influence_nightly': ('influence_nightly',),
     'usage_idle': ('usage_idle',),
     'connection_sweep': ('connection_sweep',),
+    'late_failure_notice': ('late_failure_notice',),
 }
 
 
