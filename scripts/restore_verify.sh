@@ -53,7 +53,12 @@ newest=$(ls -1t "$BK"/astryx-*.dump 2>/dev/null | head -1)
 if command -v psql >/dev/null && command -v pg_restore >/dev/null; then MODE=host; else MODE=docker; fi
 q_live()    { if [ "$MODE" = host ]; then psql "$DSN" "$@"; else pg_exec psql -U "$(pg_dsn_user "$DSN")" -d "$(pg_dsn_db "$DSN")" "$@"; fi; }
 q_scratch() { if [ "$MODE" = host ]; then psql "$SCRATCH_DSN" "$@"; else pg_exec psql -U "$(pg_dsn_user "$DSN")" -d "$SCRATCH" "$@"; fi; }
-do_restore(){ if [ "$MODE" = host ]; then pg_restore --no-owner -d "$SCRATCH_DSN" "$newest"; else pg_exec pg_restore --no-owner -U "$(pg_dsn_user "$DSN")" -d "$SCRATCH" < "$newest"; fi; }
+# >>> restore client
+# by the same rule as backup.sh's dump: a host pg_restore older than the server can't read its dumps ("unsupported
+# version (1.16) in file header", 11-19: every table read "did NOT restore" from a sound dump)
+if [ "$MODE" = host ] && host_pg_ok pg_restore; then RMODE=host; else RMODE=docker; fi
+# <<< restore client
+do_restore(){ if [ "$RMODE" = host ]; then pg_restore --no-owner -d "$SCRATCH_DSN" "$newest"; else pg_exec pg_restore --no-owner -U "$(pg_dsn_user "$DSN")" -d "$SCRATCH" < "$newest"; fi; }
 
 # ALWAYS drop the scratch db, even on failure/interrupt — never leave it lying around
 cleanup() { q_live -c "DROP DATABASE IF EXISTS $SCRATCH" >/dev/null 2>&1 || true; }
@@ -65,7 +70,8 @@ q_live -c "CREATE DATABASE $SCRATCH" >/dev/null || { echo "restore-verify: canno
 
 # pg_restore can exit non-zero on IGNORABLE warnings, so the row-counts below are the
 # AUTHORITATIVE gate — a truly-broken dump leaves the core tables absent or empty.
-do_restore >/dev/null 2>&1 || echo "restore-verify: pg_restore reported issues — checking tables anyway" >&2
+rerr=$(do_restore 2>&1 >/dev/null) || { echo "restore-verify: pg_restore reported issues — checking tables anyway" >&2
+  printf '%s\n' "$rerr" | tail -3 | sed 's/^/  pg_restore: /' >&2; }
 
 # >>> verify row counts
 fail=0
