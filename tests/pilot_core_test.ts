@@ -122,11 +122,11 @@ arm('per-action latency is recorded', !!m.get_usage && m.get_usage.n >= 1 && typ
   const r = await makeHandlers({ ...base, freeDesks: () => ['desk-1'] }).open_desktop({ agent: 'Desk-1' })
   arm('open_desktop: a free desk named by the owner opens', opened.length === 1 && opened[0] === 'desk-1' && JSON.stringify(r) === '{"desktop":"desk-1"}')
   let threw = ''
-  try { await makeHandlers(base).open_desktop({ agent: 'desk-1' }) } catch (e) { threw = String(e) }
+  try { await makeHandlers({ ...base, freeDesks: () => ['desk-2'] }).open_desktop({ agent: 'desk-1' }) } catch (e) { threw = String(e) }
   arm('open_desktop: a desk that is not free is refused, nothing opens', /no agent or free desk/.test(threw) && opened.length === 1)
   let busy = ''
-  try { await makeHandlers({ ...base, freeDesks: () => ['desk-1'] }).open_desktop({ agent: 'forge' }) } catch (e) { busy = String(e) }
-  arm('open_desktop: an agent with no desktop is still refused (a free desk is not handed to an agent name)', /not using a desktop/.test(busy) && opened.length === 1)
+  try { await makeHandlers({ ...base, freeDesks: () => ['forge'] }).open_desktop({ agent: 'forge' }) } catch (e) { busy = String(e) }
+  arm('open_desktop: an agent with no desktop is still refused, even when a free desk shares its name', /not using a desktop/.test(busy) && opened.length === 1)
 }
 
 console.log(fails ? `FAIL (${fails})` : 'ALL PASS')

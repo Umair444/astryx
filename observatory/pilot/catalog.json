@@ -106,7 +106,7 @@
     {
       "name": "open_desktop",
       "class": "actuate",
-      "description": "Open the live view of the desktop an agent is using, where the owner can also act on it.",
+      "description": "Open the live view of the desktop an agent is using, or of a free desk by its name (e.g. desk-1), where the owner can also act on it.",
       "parameters": {
         "type": "object", "additionalProperties": false, "required": ["agent"],
         "properties": {"agent": {"type": "string", "minLength": 1, "maxLength": 64}}
