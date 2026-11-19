@@ -158,6 +158,13 @@
 
 /* the panel: its seam (1px, 3px on hover/drag), its tabs */
 .ws-artifact { animation: ws-panel-in 200ms var(--ws-ease); }
+/* arrivals (owner 14652/14797: "like real chat web interfaces do"): what appears in a conversation eases in. ws-rise
+   (my message as it is sent, the working line) fades up 8px; ws-fade (a reply arriving) fades only, as the view anchors
+   on its box. The reduced-motion rule in index.css stills both */
+.ws-rise { animation: ws-rise 200ms var(--ws-ease); }
+@keyframes ws-rise { from { opacity: 0; transform: translateY(8px); } }
+.ws-fade { animation: ws-fade 240ms var(--ws-ease); }
+@keyframes ws-fade { from { opacity: 0; } }
 @keyframes ws-panel-in { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
 .ws-seam { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; touch-action: none; }
 .ws-seam::after { content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px; background: transparent; transition: background-color 120ms, width 120ms, left 120ms; }

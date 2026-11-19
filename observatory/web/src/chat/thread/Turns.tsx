@@ -179,23 +179,41 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   // view off the end by hand unpins; reaching the end again re-pins. A jump to a message (win.jumping) never pins. One
   // rule for every thread.
   const following = useRef(true)
+  const GLIDE = 700                                // ms: a browser's smooth scroll is over by then, landed or not
   useEffect(() => {
     const box = end.current?.parentElement?.parentElement
     const content = end.current?.parentElement
     if (!box || !content) return
+    let glide = false, gliding = -Infinity, landing = 0
+    let held: number | null = null                 // where the anchor last put the view
+    const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches
     const pin = () => {
       if (win.jumping()) return
       const el = anchorEl(box)
+      if (!el && anchor.current === 'mine' && held !== null) {   // my message between the outbox and its row: hold still
+        const short = held - (box.scrollHeight - box.clientHeight)
+        if (short > 0) box.style.paddingBottom = `${Math.ceil((parseFloat(box.style.paddingBottom) || 0) + short)}px`
+        if (box.scrollTop !== held && performance.now() - gliding >= GLIDE) box.scrollTop = held   // a glide lands on its own
+        return
+      }
       if (el) {                                    // room below the anchor so it can sit at the top of the view
         const top = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 16
         const pad = parseFloat(box.style.paddingBottom) || 0
         const room = Math.max(0, Math.round(box.clientHeight - (box.scrollHeight - pad - top)))
         if (Math.abs(room - pad) > 1) box.style.paddingBottom = `${room}px`
-        if (anchor.current !== null) { if (Math.abs(box.scrollTop - top) > 1) box.scrollTop = top; return }
+        if (anchor.current !== null) {
+          const g = glide; glide = false; held = top
+          if (Math.abs(box.scrollTop - top) <= 1) return
+          if (g && !still()) { box.scrollTo({ top, behavior: 'smooth' }); gliding = performance.now(); landing = window.setTimeout(pin, GLIDE) }
+          else if (performance.now() - gliding >= GLIDE) box.scrollTop = top      // a glide under way lands on its own
+          return
+        }
       }
       if (following.current) box.scrollTop = box.scrollHeight     // let go (or nothing of mine): the end is followed
     }
-    const sent = () => { anchor.current = 'mine'; following.current = false; pin() }
+    // a send GLIDES my message up (owner 14653: the jump read as a jerk), once, by the browser's smooth scroll; the
+    // re-pins during it leave it alone and one after it lands any rest. Reduced motion jumps as before
+    const sent = () => { anchor.current = 'mine'; following.current = false; glide = true; pin() }
     // only the READER unpins, and only by MOVING the view off the end: a scroll that lands more than 80px from the end
     // within a moment of their wheel, swipe, key or scrollbar grab. The app's own glide fires scroll events too and
     // must never unpin itself mid-way (medic 12897); a trackpad's touch or bounce that leaves the view at the end
@@ -213,6 +231,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
       const byHand = performance.now() - hand < 600, down = box.scrollTop >= top
       const dist = box.scrollHeight - box.scrollTop - box.clientHeight
       top = box.scrollTop
+      if (held !== null && Math.abs(top - held) <= 1) gliding = -Infinity      // the glide has landed: pins write again at once
       if (byHand) anchor.current = null           // the reader took the view: nothing holds it any more
       if (byHand && !down && dist > 24) following.current = false
       else if (dist < 80 && (down || !byHand)) following.current = true
@@ -224,7 +243,9 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     const ro = new ResizeObserver(pin)
     const watch = () => { ro.disconnect(); ro.observe(box); ro.observe(content); for (const c of Array.from(box.children)) ro.observe(c) }
     watch()
-    const mo = new MutationObserver(watch)
+    // a child leaving (the outbox, once my message is delivered) resizes nothing that is watched, yet shortens the box:
+    // re-pin on it too, or the browser clamps the view down until the row arrives and pins it back up
+    const mo = new MutationObserver(() => { watch(); pin() })
     mo.observe(box, { childList: true })
     box.addEventListener('wheel', touch, { passive: true })
     box.addEventListener('touchmove', touch, { passive: true })
@@ -235,7 +256,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     pinRef.current = pin
     pin()
     return () => {
-      ro.disconnect(); mo.disconnect()
+      ro.disconnect(); mo.disconnect(); clearTimeout(landing)
       box.removeEventListener('wheel', touch); box.removeEventListener('touchmove', touch)
       box.removeEventListener('keydown', onKey); box.removeEventListener('scroll', onScroll)
       box.removeEventListener('mousedown', onGrab); box.removeEventListener('ws-sent', sent)
@@ -420,8 +441,10 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
   const n = useReveal(m.id, useMemo(() => totalText(whole, textOf), [whole]))   // eslint-disable-line react-hooks/exhaustive-deps
   const flow = useMemo(() => revealParts(whole, n, textOf, (p, text) => ({ ...p, text })), [whole, n]) // eslint-disable-line react-hooks/exhaustive-deps
   const done = n === Infinity
+  const arrived = m.id > useContext(LiveFrom)      // came while the reader was here: it fades in (opacity only, so the
+                                                   // anchor's measured top never moves)
   return (
-    <div className={`ws-turn ${cont ? 'mt-2.5 is-cont' : 'mt-5 first:mt-0'}`} data-turn data-reply={m.id} data-revealing={done ? undefined : ''}>
+    <div className={`ws-turn ${cont ? 'mt-2.5 is-cont' : 'mt-5 first:mt-0'}${arrived ? ' ws-fade' : ''}`} data-turn data-reply={m.id} data-revealing={done ? undefined : ''}>
       {cont && <TurnActions m={m} text={text} />}
       {!cont && (
         // the actions live IN the header row (iteration 10): they take their own room at its end, so the role

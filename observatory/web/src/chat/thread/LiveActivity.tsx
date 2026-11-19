@@ -80,7 +80,7 @@ export default function LiveActivity({ pending, onStop, onRemind }: { pending: P
   const stopped = pending.filter((p) => p.stopped)
   if (!pending.length) return null
   return (
-    <div aria-live="polite">
+    <div aria-live="polite" className="ws-rise">
       {working.length === 1 ? <Line p={working[0]} now={now} onStop={onStop} /> : working.length > 1 ? <Team pending={working} now={now} onStop={onStop} /> : null}
       {passed.map((p) => <Passed key={p.agent} p={p} onRemind={onRemind} />)}
       {stopped.map((p) => <Stopped key={p.agent} p={p} />)}
