@@ -60,6 +60,20 @@ WA_CLI = shlex.split(env("WA_CLI", "docker exec wacli-sync wacli"))
 DATA_HOST = env("WA_DATA_HOST")       # wacli store dir on the host (media on/off switch)
 DATA_CTR = env("WA_DATA_CTR", "/data")    # same dir as the wacli process sees it
 WA_DOCKER = WA_CLI[2] if WA_CLI[:2] == ["docker", "exec"] else ""
+# OUR OWN ids on WhatsApp: the linked number and its LID (a group tags us as either), comma-separated digits. A route
+# whose rule says "wake": "tagged" reaches its agent only when a message tags one of them or replies to our message
+WA_SELF_IDS = {x.strip() for x in env("WA_SELF_IDS", "").split(",") if x.strip().isdigit()}
+
+
+def tags_us(text: str, m: dict) -> bool:
+    """A message ADDRESSED to us on a mention-only surface: it @-tags our number or LID, or it replies to a message we
+    sent (wacli flattens the quote to ReplyToSenderJID). Without our ids configured nothing can be told apart: refuse."""
+    if not WA_SELF_IDS:
+        return False
+    if any(re.search(rf"@{i}(?!\d)", text or "") for i in WA_SELF_IDS):
+        return True
+    q = (jid_str(m.get("ReplyToSenderJID")) or "").split("@")[0].split(":")[0]
+    return q in WA_SELF_IDS
 from .common import signed as _signed  # noqa: E402  the sender label, one rule for every shared-identity channel
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
 from astryx.core import address, channels  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
@@ -387,6 +401,12 @@ async def hook(request: Request):
         return {"ok": True}                       # our own sends echo back; drop
 
     text = (m.get("Text") or "").strip()
+    # A MENTION-ONLY surface (rule "wake": "tagged"; owner 15092: a busy team group must not burn an agent's tokens on
+    # chatter): a message reaches the agent only when it tags us. Decided before any media is fetched or described; an
+    # event with no text yet (an undecryptable first copy) is decided below, once its text is known
+    quiet = route.get("wake") == "tagged"
+    if quiet and (text or (m.get("Media") or {}).get("Type") or m.get("MediaType")) and not tags_us(text, m):
+        return {"ok": True}
     # media rides as a nested object in the webhook payload: Media.Type
     media = ((m.get("Media") or {}).get("Type") or m.get("MediaType") or "").strip()
     if not media and msgid and not m.get("ReactionToID") and not m.get("ReactionEmoji") and not m.get("Revoked"):
@@ -400,7 +420,7 @@ async def hook(request: Request):
         # writes a later event for this id there BEFORE posting it). Fetch it from there. A reaction is
         # keyed on ReactionToID, not the emoji: a removal (or an undecryptable reaction) has none.
         text = await stored_text(chat, msgid)
-    if not text:
+    if not text or (quiet and not tags_us(text, m)):
         return {"ok": True}
     if msgid and msgid in seen_msgids:
         # re-checked AFTER the awaits above: wacli gives a POST 5s, so the store poll outlives it and the
