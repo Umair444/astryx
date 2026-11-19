@@ -54,10 +54,11 @@ def _login(env: dict) -> tuple[str, str] | None:
 
 
 def send(env: dict, to: str, subject: str, body: str, cc: str = "", bcc: str = "", one: bool = False, *,
-         sender: str = "", files: tuple = (), reply_to_id: str = "") -> EmailMessage:
+         exact: bool = False, sender: str = "", files: tuple = (), reply_to_id: str = "") -> EmailMessage:
     """Send a plain-text mail from MAIL_FROM. to/cc/bcc take comma-separated addresses; bcc never reaches a header.
     one=True: `to` is exactly one address and the mail goes to it alone (a code, a link, a channel's chat: never a
-    list). sender: the display name on From ("seed" → "seed <MAIL_FROM>"). files: (filename, bytes) attachments.
+    list). exact=True: the mail goes to the To addresses alone, each one bare address (a channel's group: everyone it
+    names sees the others in To, and nothing else rides in). sender: the display name on From ("seed" → "seed <MAIL_FROM>"). files: (filename, bytes) attachments.
     reply_to_id: the Message-ID this one answers (In-Reply-To / References), so a mail client keeps one conversation.
     Every header goes through EmailMessage's default policy, which refuses a CR or LF in a header value."""
     host, port = _server(env, "MAIL_SMTP", 25)
@@ -76,7 +77,10 @@ def send(env: dict, to: str, subject: str, body: str, cc: str = "", bcc: str = "
     rcpt = [a.strip() for a in ",".join((to, cc, bcc)).split(",") if a.strip()]
     if not rcpt:
         raise ValueError("no recipient")
-    if one and (rcpt != [to.strip()] or any(c in to for c in ',;<>"\r\n')):
+    named = [a.strip() for a in to.split(",") if a.strip()]
+    if (one or exact) and (rcpt != named or any(c in a for a in named for c in ';<>" \r\n')):
+        raise ValueError("an exact send goes to its To addresses alone, each one bare address")
+    if one and len(named) != 1:
         raise ValueError("one=True sends to exactly one bare address")
     sec = security(env, port, 465, 587)
     with (smtplib.SMTP_SSL if sec == "ssl" else smtplib.SMTP)(host, port, timeout=TIMEOUT) as s:

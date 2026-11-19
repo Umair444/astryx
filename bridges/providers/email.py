@@ -1,8 +1,10 @@
 """Email provider — the org's mail server (src/astryx/mail.py, the ONE mail client) behind the channel protocol.
 
 One address is one chat: `email:<address>`, in ONE form (lowercase, trimmed, one bare address), the form routes, the
-door and the thread all use (medic 13172 D2). A send is one plain-text mail to exactly that address (mail.send
-one=True: the RCPT list can't widen; every header through EmailMessage's policy, which refuses CR/LF: D3). The
+door and the thread all use (medic 13172 D2). A GROUP is its addresses joined by commas (`a@x,b@y`, consumer 14382:
+one report, everyone in To), each in that form, no repeats, at most MAX_TO. A send is one plain-text mail to exactly
+those addresses (mail.send exact=True: the RCPT list is the To list and can't widen; every header through
+EmailMessage's policy, which refuses CR/LF: D3). The
 server's acceptance is the receipt, not arrival: the person's mail client is the only proof of that.
 
 Reads: a typed address is itself (so the rail can route one); there is no directory to search and no chat list.
@@ -16,12 +18,20 @@ from ..common import env
 from .base import ChannelProvider, Chat, Contact, NotSupported, Poll, SendResult
 
 ADDRESS = re.compile(r"[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+")
+MAX_TO = 10                                        # a group mail names at most this many people
 
 
 def address(dest: str) -> str | None:
     """`dest` as the one address form (lowercase, trimmed), or None when it is not exactly one bare address."""
     a = str(dest or "").strip().lower()
     return a if ADDRESS.fullmatch(a) else None
+
+
+def addresses(dest: str) -> list[str] | None:
+    """`dest` as a chat's addresses: one, or a group joined by commas, each in the one form, no repeats, at most MAX_TO;
+    None when any part is not an address."""
+    out = [address(a) for a in str(dest or "").split(",")]
+    return out if None not in out and len(set(out)) == len(out) <= MAX_TO else None
 
 
 class EmailProvider(ChannelProvider):
@@ -52,11 +62,11 @@ class EmailProvider(ChannelProvider):
     # ---- write -----------------------------------------------------------------
     async def send(self, dest: str, text: str | None = None, *, files: tuple = (), poll: Poll | None = None,
                    subject: str = "", sender: str = "", reply_to_id: str = "") -> SendResult:
-        """One mail to `dest`. `files` are (filename, bytes) pairs a bridge has already checked (embed_root)."""
-        to = address(dest)
-        handle = f"{self.NAME}:{to or dest}"
+        """One mail to `dest`'s addresses. `files` are (filename, bytes) pairs a bridge has already checked (embed_root)."""
+        to = addresses(dest)
+        handle = f"{self.NAME}:{','.join(to) if to else dest}"
         if not to:
-            return SendResult(self.NAME, False, handle, error="not one email address")
+            return SendResult(self.NAME, False, handle, error="not an email address, or a group of them")
         if not (text or "").strip() and not files:
             return SendResult(self.NAME, False, handle, error="nothing to send")
         if not self.configured():
@@ -64,7 +74,7 @@ class EmailProvider(ChannelProvider):
         subj = " ".join((subject or "astryx").split())[:200]   # every CR, LF and run of space folds to one space (D3)
         from astryx import mail
         try:
-            msg = await asyncio.to_thread(mail.send, self._env(), to, subj, text or "", one=True, sender=sender,
+            msg = await asyncio.to_thread(mail.send, self._env(), ", ".join(to), subj, text or "", exact=True, sender=sender,
                                           files=tuple(files), reply_to_id=reply_to_id)
         except Exception as e:  # noqa: BLE001 — a send reports its failure, never raises
             return SendResult(self.NAME, False, handle, error=f"{type(e).__name__}: {e}"[:300])

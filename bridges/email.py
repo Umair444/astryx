@@ -13,6 +13,8 @@ Platform translation ONLY; everything shared lives in common.py:
             a refused one is noted on the receipt and the mail still goes
   door      only an address with an email route (the owner's rail, or an agent's connect) is mailed; the THREAD's
             address is the destination, never a name decoded into one (medic 13172 D2)
+  group     em:<a>,<b>,… is one mail with everyone in To (consumer 14382), sent only when EVERY address has a route;
+            one unrouted address refuses the whole mail
 
 EMAIL_DAILY_CAP (default 50) bounds what the org mails in a PKT day, counted from the wire's own delivered rows. The
 receipt says the server ACCEPTED it: arrival is the recipient's to confirm.
@@ -30,7 +32,7 @@ from fastapi import FastAPI
 
 from .common import Book, Outcome, cap_spent, door_org_ok, door_refuse, env, listen, released, split_files, split_polls
 from .embed_root import Refused, owner_only, read_checked
-from .providers.email import EmailProvider, address
+from .providers.email import EmailProvider, addresses
 from astryx.core import address as wire_address, channels  # noqa: E402  reaches_sql: a linked person answered on this channel
 
 PROVIDER = EmailProvider()
@@ -77,12 +79,13 @@ async def deliver(row):
             await door_refuse(pool, row, "email", "email takes no tier release")
         return
     thread = row["thread"] or ""
-    chat = address(thread[3:]) if thread.startswith("em:") else None
-    if not chat:
-        await door_refuse(pool, row, "email", "email goes to one address on an em:<address> thread")
+    chats = addresses(thread[3:]) if thread.startswith("em:") else None
+    if not chats:
+        await door_refuse(pool, row, "email", "email goes to an em:<address> thread (a group: em:<a>,<b>,…)")
         return
-    if not await door_org_ok(pool, row, "email", routes(), chat):
-        return                                     # refused at the door: only a declared route is mailed
+    for chat in chats:
+        if not await door_org_ok(pool, row, "email", routes(), chat):
+            return                                 # refused at the door: only declared routes are mailed, every one
     if await cap_spent(pool, row, "email", CAP):
         return
     agent = row["from_agent"]
@@ -91,7 +94,7 @@ async def deliver(row):
     out = Outcome()
     for _q in polls:
         out.noted("poll", "an email carries no poll; it was not sent")
-    route = routes().chat(chat)
+    route = routes().chat(chats[0]) if len(chats) == 1 else None   # a group is never the owner alone
     attached = []
     for f in files:
         try:
@@ -101,7 +104,7 @@ async def deliver(row):
     last = _json(await pool.fetchval(LAST, row["thread"]))       # the thread's last mail: its Message-ID and subject
     previous = ((last.get("rendered") or "").partition("\n")[0].partition(":")[2]).strip()
     subject, body = subject_of(text, previous, agent)
-    res = await PROVIDER.send(chat, body, files=tuple(attached), subject=subject, sender=agent,
+    res = await PROVIDER.send(",".join(chats), body, files=tuple(attached), subject=subject, sender=agent,
                               reply_to_id=last.get("message_id") or "")
     if res.ok:
         out.sent(res.message_id)
