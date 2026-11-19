@@ -57,6 +57,10 @@ NOT_SECRET = frozenset({
     # token in it, and every seat names that same host:port in its jupyter_* calls (db 13307: guarding it blocked them)
     "SMS_JUPYTER", "SMS_ETL_DIR", "SMS_DB", "SMS_SHORTCODE", "SMS_IPADDRESS", "SMS_TABLE", "SMS_DAILY_CAP",
     "EMAIL_DAILY_CAP",
+    # etl (mcp/etl): the ETL box's repo path, its Task Scheduler folder, where prefect.exe and git.exe live, and the creds
+    # KEY (a name) of Prefect's database; locations, none grants anything. Guarding the repo path refused every seat's
+    # jupyter_run that named it (etl-architect 14945)
+    "ETL_ROOT", "ETL_TASK_FOLDER", "ETL_PREFECT", "ETL_GIT", "ETL_PF_KEY",
 })
 
 

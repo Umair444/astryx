@@ -215,14 +215,20 @@ try:
     out["prefect_workers"] = [{"pid": x["ProcessId"], "cmd": (x.get("CommandLine") or "")[-160:]} for x in w]
 except Exception as e:
     out["prefect_workers"] = f"unread: {e}"
+if ARGS["root"]:
+    g = lambda *a: subprocess.run([ARGS["git"], "-C", ARGS["root"]] + list(a), capture_output=True, text=True, timeout=60)
+    st = g("status", "--porcelain", "--untracked-files=no").stdout.splitlines()
+    out["repo"] = {"head": g("rev-parse", "HEAD").stdout.strip(), "branch": g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip(),
+                   "modified_tracked": len(st), "files": [l[3:] for l in st[:20]]}
 print(json.dumps(out))
 '''
 
 
 @mcp.tool()
 async def etl_box() -> dict:
-    """The ETL box's health: free/total GB per drive, memory, boot time, and the Prefect worker processes alive."""
-    return await box.run(_BOX, {}, timeout=120)
+    """The ETL box's health: free/total GB per drive, memory, boot time, the Prefect worker processes alive, and its ETL
+    repo: HEAD, branch, and the tracked files modified on the box (a pull is fast-forward only: edits there block it)."""
+    return await box.run(_BOX, {"git": GIT, "root": ROOT}, timeout=180)
 
 
 _TAIL = r'''
