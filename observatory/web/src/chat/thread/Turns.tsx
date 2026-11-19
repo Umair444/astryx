@@ -183,7 +183,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     const box = end.current?.parentElement?.parentElement
     const content = end.current?.parentElement
     if (!box || !content) return
-    const pin = () => { if (following.current && !win.jumping()) box.scrollTop = box.scrollHeight }
+    const pin = () => { if (following.current && !win.jumping()) toEnd(box) }
     // only the READER unpins, and only by MOVING the view off the end: a scroll that lands more than 80px from the end
     // within a moment of their wheel, swipe, key or scrollbar grab. The app's own glide fires scroll events too and
     // must never unpin itself mid-way (medic 12897); a trackpad's touch or bounce that leaves the view at the end
@@ -201,6 +201,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
       const byHand = performance.now() - hand < 600, down = box.scrollTop >= top
       const dist = box.scrollHeight - box.scrollTop - box.clientHeight
       top = box.scrollTop
+      if (byHand) released.current = newest.current       // the reader took the view: a held reply lets go
       if (byHand && !down && dist > 24) following.current = false
       else if (dist < 80 && (down || !byHand)) following.current = true
       else if (byHand && dist >= 80) following.current = false
@@ -238,6 +239,19 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
   // first loaded render of THIS thread
   if (loading) liveFrom.current = null
   else if (liveFrom.current === null) liveFrom.current = last
+  // A REPLY IS READ FROM ITS FIRST LINE (owner 14414: "a person is reading it; but as it ends the scroll moves to the end
+  // of page"): following the end never carries the view past the top of the newest reply that arrived while the reader
+  // was here; a reply taller than the view holds there as it grows. The reader's own scroll releases it (from then on
+  // the end is followed as before)
+  const tail = rows.at(-1)
+  const newest = useRef<number | null>(null)
+  newest.current = tail && liveFrom.current !== null && tail.id > liveFrom.current && !isHuman(tail.from) ? tail.id : null
+  const released = useRef<number | null>(null)
+  const toEnd = (box: HTMLElement) => {
+    const r = newest.current !== null && newest.current !== released.current ? box.querySelector<HTMLElement>(`[data-reply="${newest.current}"]`) : null
+    const top = r ? r.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 16 : Infinity
+    box.scrollTop = Math.min(top, box.scrollHeight)
+  }
   useEffect(() => {
     const mine = rows.some((m) => m.id > seen.current && m.from === me)
     seen.current = last
@@ -246,7 +260,7 @@ export default function Turns({ rows, work, pending, roster, roles, onOpenFile, 
     // straight to the end, never a smooth glide: Safari doesn't cancel a glide when the pin sets scrollTop, so the glide
     // landed on the end as it was when it started, short of the reply or "working" line laid out after it (member 13399)
     const box = end.current?.parentElement?.parentElement
-    if (box) box.scrollTop = box.scrollHeight
+    if (box) toEnd(box)
   }, [last]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return (
@@ -386,7 +400,7 @@ function Theirs({ m, turn, cont, role, onOpenFile }: { m: Msg; turn: WTurn | nul
   const flow = useMemo(() => revealParts(whole, n, textOf, (p, text) => ({ ...p, text })), [whole, n]) // eslint-disable-line react-hooks/exhaustive-deps
   const done = n === Infinity
   return (
-    <div className={`ws-turn ${cont ? 'mt-2.5 is-cont' : 'mt-5 first:mt-0'}`} data-turn data-revealing={done ? undefined : ''}>
+    <div className={`ws-turn ${cont ? 'mt-2.5 is-cont' : 'mt-5 first:mt-0'}`} data-turn data-reply={m.id} data-revealing={done ? undefined : ''}>
       {cont && <TurnActions m={m} text={text} />}
       {!cont && (
         // the actions live IN the header row (iteration 10): they take their own room at its end, so the role
