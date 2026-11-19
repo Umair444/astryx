@@ -3,6 +3,7 @@
     {
       "server": "astryx",
       "who": "every",
+      "error": "rc 1: Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@modelcontextprotocol/sdk' imported from /home/astryx/astryx-rename/channel/server.mjs",
       "tools": [
         {
           "name": "send",
@@ -195,6 +196,10 @@
           "description": "Append a directive to an agent's charter under a managed section. You may always"
         },
         {
+          "name": "rename_agent",
+          "description": "Give an agent a new name in one act (governance only). Moves its charter, home, boot brief, trigger code and"
+        },
+        {
           "name": "set_persona",
           "description": "Set your OWN persona: a profile picture and/or a short blurb. avatar_path is a path"
         }
@@ -244,7 +249,7 @@
       "tools": [
         {
           "name": "browser_close",
-          "description": "Close the page"
+          "description": "Close the browser and all open tabs."
         },
         {
           "name": "browser_resize",
@@ -345,5 +350,5 @@
       ]
     }
   ],
-  "total_tools": 65
+  "total_tools": 66
 }
