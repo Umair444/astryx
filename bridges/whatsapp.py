@@ -134,6 +134,12 @@ def _under(p: Path, root: Path) -> bool:
         return False
 
 
+def _partial(name: str) -> bool:
+    """wacli's download in progress (`.wacli-download-<n>`: still encrypted or short) shares the message's dir with the
+    finished file for a moment; taking it delivered an unreadable voice note (owner 14855, 11-19). Wait past it."""
+    return name.startswith(".wacli-download-")
+
+
 async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
     """Inbound attachment -> host Path (or an excuse string). sync
     --download-media already saves every file under store/media/<chat>/<msgid>/,
@@ -149,7 +155,7 @@ async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
             # ANY file under the message's dir: wacli names a photo message-*, but a document keeps
             # its own filename (store/media/<chat>/<msgid>/document/resume.pdf, msg 62886)
             files = [p for p in base.rglob("*") if p.is_file() and os.access(p, os.R_OK)
-                     and _under(p, base)]
+                     and _under(p, base) and not _partial(p.name)]
         except PermissionError:
             files = []
         if files:
@@ -160,7 +166,7 @@ async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
                     "docker", "exec", WA_DOCKER, "find", f"{DATA_CTR}/{rel}", "-type", "f",
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
                 out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-                ctr_path = (out.decode().splitlines() or [""])[0].strip()
+                ctr_path = next((l.strip() for l in out.decode().splitlines() if not _partial(Path(l.strip()).name)), "")
                 if ctr_path:
                     MEDIA_DIR.mkdir(exist_ok=True)
                     dst = MEDIA_DIR / f"{msgid}-{Path(ctr_path).name}"   # two resume.pdf never collide
