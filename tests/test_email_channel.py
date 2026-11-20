@@ -258,7 +258,7 @@ check("past EMAIL_DAILY_CAP: refused with the cap named, nothing mailed",
       capped[0]["delivery"])
 check("the claim takes em: threads and em- names (to refuse them); which rows exactly is the C arm's, on real SQL",
       "thread LIKE 'em:%'" in B.CLAIM and "to_agent LIKE 'em-%'" in B.CLAIM, B.CLAIM)
-named = [row(10, "", "hi"), row(11, "sms:923000000000", "hi")]
+named = [row(10, "", "hi"), row(11, "sms:555034", "hi")]
 named[0]["to_agent"] = named[1]["to_agent"] = "em-" + TO.replace("@", ".at.")   # the ROUTED address, encoded (medic 13178)
 n2 = len(SMTP.mails)
 world(named)
@@ -280,8 +280,8 @@ try:
         from bridges import sms as SB
         ids = {}
         for name, to, thread in (("em-owner", "owner", f"em:{TO}"), ("em-bare", "em-x", None), ("em-on-wa", "em-x", "wa:1@g.us"),
-                                 ("sms-bare", "sms-923000000000", None), ("sms-on-wa", "sms-923000000000", "wa:1@g.us"),
-                                 ("sms-owner", "owner", "sms:923000000000")):
+                                 ("sms-bare", "sms-555034", None), ("sms-on-wa", "sms-555034", "wa:1@g.us"),
+                                 ("sms-owner", "owner", "sms:555034")):
             ids[name] = c.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body, status) "
                                   "VALUES ('seed','local',%s,'local',%s,'chat','m','pending') RETURNING id", (to, thread)).fetchone()[0]
         sel = lambda claim: {k for k, i in ids.items() if c.execute(  # noqa: E731

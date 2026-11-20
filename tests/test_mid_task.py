@@ -49,7 +49,7 @@ const out = {
   m3: await midTask(owner, { pool: pool(tool, true), agent: 'seed' }),
   m4: await midTask(owner, { pool: pool({ kind: 'tool', meta: {} }, false), agent: 'seed' }),
   m5agent: await midTask({ id: 901, from_agent: 'db', from_org: 'local', thread: 't-x' }, { pool: pool(tool, false), agent: 'seed' }),
-  m5wa: await midTask({ id: 902, from_agent: 'wa-923000000000', from_org: 'whatsapp', thread: 'wa:C' }, { pool: pool(tool, false), agent: 'seed' }),
+  m5wa: await midTask({ id: 902, from_agent: 'wa-555034', from_org: 'whatsapp', thread: 'wa:C' }, { pool: pool(tool, false), agent: 'seed' }),
   m6: await midTask(owner, { pool: pool(tool, false, true), agent: 'seed' }),
 }
 console.log(JSON.stringify(out))

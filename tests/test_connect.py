@@ -347,9 +347,9 @@ arm("C10 an email address: no '@' in its wire name, its local part kept, never o
     names)
 arm("C10 two addresses never share a name (same local part, other domain included)", len(set(names)) == len(names), names)
 arm("C10 a phone or a numeric id keeps its digits, as the bridges mint it",
-    pn("whatsapp", "923001112223@s.whatsapp.net") == "wa-923001112223" and pn("telegram", "4242") == "tg-4242"
+    pn("whatsapp", "555012@s.whatsapp.net") == "wa-555012" and pn("telegram", "4242") == "tg-4242"
     and pn("email", "SYED.Zafar@x.example") == pn("email", "syed.zafar@x.example"),
-    (pn("whatsapp", "923001112223@s.whatsapp.net"), pn("telegram", "4242")))
+    (pn("whatsapp", "555012@s.whatsapp.net"), pn("telegram", "4242")))
 arm("C10 two numeric mailboxes on two domains never share a name (medic 14313 R1)",
     pn("email", "12345@a.pk") != pn("email", "12345@b.pk"), (pn("email", "12345@a.pk"), pn("email", "12345@b.pk")))
 arm("C10 a Telegram group id keeps its digits, as before (medic 14313 R2)", pn("telegram", "-1001234567") == "tg-1001234567",
