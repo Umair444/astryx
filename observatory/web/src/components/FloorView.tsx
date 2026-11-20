@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
-import { RoomOrb } from '../ui/kit'
+import { LiveDot, RoomOrb } from '../ui/kit'
 import { useStore } from '../store'
 import { api, displayName, fmtAgo } from '../api'
 import type { AgentRow, Msg, Presence } from '../types'
@@ -328,9 +328,9 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
     <div className="h-full flex flex-col">
       <div className="h-12 shrink-0 flex items-center gap-4 px-5 border-b border-line text-[13px]">
         <span className="font-semibold text-ink">The Floor</span>
-        <span className="flex items-center gap-1.5 text-ink-dim"><i className="w-2 h-2 rounded-full bg-cyan animate-pulse" />{working} working</span>
-        <span className="flex items-center gap-1.5 text-ink-dim"><i className="w-2 h-2 rounded-full bg-good" />{awake} awake</span>
-        <span className="text-ink-mute">{agents.length - awake} asleep</span>
+        <span className="flex items-center gap-1.5 text-ink-dim"><LiveDot state="working" />{working} working</span>
+        <span className="flex items-center gap-1.5 text-ink-dim"><LiveDot state="awake" />{awake} awake</span>
+        <span className="flex items-center gap-1.5 text-ink-mute"><LiveDot state="asleep" />{agents.length - awake} asleep</span>
         {overview && <span className="text-ink-mute hidden md:inline">· {overview.messages_24h} messages today</span>}
         {cross.length > 0 && <span className="text-ink-mute hidden md:inline" title="messages between this org and the other rooms of its cog in the last 14 days: the lines in the companion hue">
           · {cross.reduce((s, t) => s + t.n, 0)} across the cog</span>}
@@ -350,7 +350,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
               <button key={k.kind} onClick={() => toggleKind(k.kind)} aria-pressed={kinds.has(k.kind)}
                 title={k.measured ? `${KIND_LABEL[k.kind]}: measured on ${Math.floor((k.coverage ?? 0) * 100)}% of its domain`
                   : `${KIND_LABEL[k.kind]}: UNMEASURED, coverage ${k.coverage == null ? 'none' : Math.floor(k.coverage * 100) + '%'} is under the 50% floor; drawn dashed, never counted`}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 ${kinds.has(k.kind) ? 'border-line-2 text-ink-dim' : 'border-line text-ink-mute opacity-60'}`}>
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 ${kinds.has(k.kind) ? 'border-line-2 text-ink-dim' : 'border-dashed border-line text-ink-mute'}`}>
                 <i className="w-2 h-2 rounded-full" style={{ background: KIND_HUE[k.kind] }} />
                 {KIND_LABEL[k.kind]}{!k.measured && <span className="text-ink-mute"> · unmeasured{k.coverage != null && ` ${Math.floor(k.coverage * 100)}%`}</span>}
               </button>
@@ -467,7 +467,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
               <div className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5 z-10" style={{ left: scx, top: ring.cy }}>
                 <span className="text-[13px] font-medium text-ink">{r.org ?? r.name} <span className="text-ink-mute font-normal">· same cog</span></span>
                 <span className="text-[10.5px] text-ink-mute font-mono">{r.name}
-                  {d?.badge && <span className="opacity-70" title="the org's Ed25519 identity, from its gateway"> · {d.badge}</span>}
+                  {d?.badge && <span title="the org's Ed25519 identity, from its gateway"> · {d.badge}</span>}
                 </span>
                 {status}
                 <span className="flex items-center gap-2">
@@ -523,7 +523,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
           </div>
           <span className="text-[10px] text-ink-mute">
             {rooms.length > 1 && <>cog · {rooms.length} orgs · </>}org {rooms[me]?.name ?? overview?.org}
-            {(homeBadge ?? rooms[me]?.badge) && <span className="font-mono opacity-70" title="the org's Ed25519 identity, from its gateway"> · {homeBadge ?? rooms[me].badge}</span>}
+            {(homeBadge ?? rooms[me]?.badge) && <span className="font-mono" title="the org's Ed25519 identity, from its gateway"> · {homeBadge ?? rooms[me].badge}</span>}
           </span>
         </div>
 

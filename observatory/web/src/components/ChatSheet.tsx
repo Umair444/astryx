@@ -6,6 +6,7 @@ import { isHuman, type Msg } from '../types'
 import { canvasBase } from '../cog'
 import { moodOf, nowLine } from '../ui/life'
 import { GlyphStack } from '../ui/glyphs'
+import { LiveDot } from '../ui/kit'
 import { chatsByAgent, glyphsByAgent, useRoutes } from '../ui/routes'
 import AgentFace from './AgentFace'
 import Md from './Md'
@@ -172,10 +173,9 @@ export default function ChatSheet({ name, onClose, onProfile }: { name: string; 
 }
 
 function StateWord({ mood }: { mood: 'working' | 'awake' | 'asleep' }) {
-  const c = mood === 'working' ? 'var(--t-accent)' : mood === 'awake' ? 'var(--t-good)' : 'var(--t-mute)'
   return (
     <span className="inline-flex items-center gap-1.5 font-medium text-ink">
-      <span className={`w-2 h-2 rounded-full ${mood === 'working' ? 'animate-pulse' : ''}`} style={{ background: mood === 'asleep' ? 'transparent' : c, boxShadow: `inset 0 0 0 1.5px ${c}` }} />
+      <LiveDot state={mood} />
       {mood === 'working' ? 'Working' : mood === 'awake' ? 'Here' : 'Asleep'}
     </span>
   )

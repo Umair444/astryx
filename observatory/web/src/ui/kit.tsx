@@ -133,11 +133,15 @@ export function Skeleton({ className = '' }: { className?: string }) {
 
 export type LiveState = 'working' | 'awake' | 'asleep'
 
+/* A state is a SHAPE as well as a colour (owner 15584: "don't let status depend on colour alone"): working pulses,
+   awake is a solid dot, asleep is a hollow ring. The chat's pip (workspace.css .ws-pip) draws the same three, plus "!"
+   for down. */
 export function LiveDot({ state, className = '' }: { state: LiveState; className?: string }) {
-  const c = state === 'working' ? 'bg-cyan' : state === 'awake' ? 'bg-good' : 'bg-ink-mute/40'
+  if (state === 'asleep') return <span className={`inline-flex w-2 h-2 rounded-full border-[1.5px] border-ink-mute ${className}`} aria-hidden />
+  const c = state === 'working' ? 'bg-cyan' : 'bg-good'
   return (
-    <span className={`relative inline-flex w-2 h-2 ${className}`}>
-      {state !== 'asleep' && <span className={`absolute inset-0 rounded-full ${c} opacity-60 animate-ping`} style={{ animationDuration: state === 'working' ? '1.4s' : '2.8s' }} />}
+    <span className={`relative inline-flex w-2 h-2 ${className}`} aria-hidden>
+      {state === 'working' && <span className={`absolute inset-0 rounded-full ${c} opacity-60 animate-ping`} style={{ animationDuration: '1.4s' }} />}
       <span className={`relative w-2 h-2 rounded-full ${c}`} />
     </span>
   )

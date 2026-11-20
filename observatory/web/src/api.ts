@@ -124,10 +124,11 @@ export async function fetchWhoami(): Promise<WhoAmI> {
 /* The filename stem is the canonical name (wire id, home, tmux); the dashboard
    shows it prettified — separators to spaces, each word capitalized. So
    'abstractor-1' -> 'Abstractor 1', 'seed' -> 'Seed'. Display-only. */
+const ACRONYMS = new Set(['etl', 'db'])   // owner 15584: "ETL", not "Etl"
 export function displayName(name: string): string {
   return (name || '')
     .replace(/[-_]+/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .replace(/\b\w+/g, (w) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
 }
 
 /* ANY party as the viewer reads it (11-15, one rule for every label): 'You' for the viewer's own handle (`me`, the
