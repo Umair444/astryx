@@ -348,11 +348,11 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
             </span>
             {inf.kinds.filter(k => KIND_LABEL[k.kind]).map(k => (
               <button key={k.kind} onClick={() => toggleKind(k.kind)} aria-pressed={kinds.has(k.kind)}
-                title={k.measured ? `${KIND_LABEL[k.kind]}: measured on ${Math.round((k.coverage ?? 0) * 100)}% of its domain`
-                  : `${KIND_LABEL[k.kind]}: UNMEASURED, coverage ${k.coverage == null ? 'none' : Math.round(k.coverage * 100) + '%'} is under the 50% floor; drawn dashed, never counted`}
+                title={k.measured ? `${KIND_LABEL[k.kind]}: measured on ${Math.floor((k.coverage ?? 0) * 100)}% of its domain`
+                  : `${KIND_LABEL[k.kind]}: UNMEASURED, coverage ${k.coverage == null ? 'none' : Math.floor(k.coverage * 100) + '%'} is under the 50% floor; drawn dashed, never counted`}
                 className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 ${kinds.has(k.kind) ? 'border-line-2 text-ink-dim' : 'border-line text-ink-mute opacity-60'}`}>
                 <i className="w-2 h-2 rounded-full" style={{ background: KIND_HUE[k.kind] }} />
-                {KIND_LABEL[k.kind]}{!k.measured && <span className="text-ink-mute"> · unmeasured{k.coverage != null && ` ${Math.round(k.coverage * 100)}%`}</span>}
+                {KIND_LABEL[k.kind]}{!k.measured && <span className="text-ink-mute"> · unmeasured{k.coverage != null && ` ${Math.floor(k.coverage * 100)}%`}</span>}
               </button>
             ))}
             <span className="inline-flex rounded-lg border border-line overflow-hidden" role="group" aria-label="window">
