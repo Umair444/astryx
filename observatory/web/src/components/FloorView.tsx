@@ -119,8 +119,9 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
     api<Influence>(`/influence?window=${win}`).then(j => {
       if (!live) return
       setInf(j)
-      // an UNMEASURED kind starts OFF (and stays marked so when it's switched on), never hidden (seed #60095)
-      setKinds(k => k ?? new Set(j.kinds.filter(x => x.measured).map(x => x.kind)))
+      // every drawable kind starts ON; an UNMEASURED one is drawn dashed and marked so on its pill, never counted
+      // (seed #60095). Starting it OFF left the floor bare when every kind sat under the 50% floor (owner 15477)
+      setKinds(k => k ?? new Set(j.kinds.filter(x => KIND_LABEL[x.kind]).map(x => x.kind)))
     }).catch(() => {})
     return () => { live = false }
   }, [who.owner, win])
