@@ -133,12 +133,17 @@ export function Skeleton({ className = '' }: { className?: string }) {
 
 export type LiveState = 'working' | 'awake' | 'asleep'
 
+/* A state is a SHAPE as well as a colour (owner 15584: "don't let status depend on colour alone"), and the shape holds
+   with motion off (index.css stills every animation under reduced motion): working is a bullseye (ring and centre)
+   that also pulses, awake a solid dot, asleep a hollow ring. The chat's pip (workspace.css .ws-pip) draws the same
+   three, plus "!" for down. */
 export function LiveDot({ state, className = '' }: { state: LiveState; className?: string }) {
-  const c = state === 'working' ? 'bg-cyan' : state === 'awake' ? 'bg-good' : 'bg-ink-mute/40'
+  if (state === 'asleep') return <span className={`inline-flex w-2 h-2 rounded-full border-[1.5px] border-ink-mute ${className}`} aria-hidden />
+  if (state === 'awake') return <span className={`inline-flex w-2 h-2 rounded-full bg-good ${className}`} aria-hidden />
   return (
-    <span className={`relative inline-flex w-2 h-2 ${className}`}>
-      {state !== 'asleep' && <span className={`absolute inset-0 rounded-full ${c} opacity-60 animate-ping`} style={{ animationDuration: state === 'working' ? '1.4s' : '2.8s' }} />}
-      <span className={`relative w-2 h-2 rounded-full ${c}`} />
+    <span className={`relative inline-flex w-2 h-2 ${className}`} aria-hidden>
+      <span className="absolute inset-0 rounded-full bg-cyan opacity-60 animate-ping motion-reduce:hidden" style={{ animationDuration: '1.4s' }} />
+      <span className="relative w-2 h-2 rounded-full border-[1.5px] border-cyan grid place-items-center"><span className="w-[3px] h-[3px] rounded-full bg-cyan" /></span>
     </span>
   )
 }
