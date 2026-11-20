@@ -113,6 +113,7 @@ export default forwardRef<ComposerHandle, {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [sel, setSel] = useState(0)
+  const keyed = useRef(false)          // ↑/↓ moved the highlight: only then does the list scroll to it
   const [menuOff, setMenuOff] = useState(false)
   const [picker, setPicker] = useState(false)          // the agent picker (switch), over the box like the @ menu
   const menu = useRef<HTMLUListElement>(null)
@@ -220,9 +221,14 @@ export default forwardRef<ComposerHandle, {
   const room = useRoom(menu, items.length > 0)
   useEffect(() => setSel(0), [items.length, slash?.[1], at?.[2], picker])
   // the highlighted row stays in view as ↑/↓ move it (wrapping included): the list scrolls itself, never the page
-  // (scrollIntoView would also scroll the conversation and, on a phone, the window under the keyboard)
+  // (scrollIntoView would also scroll the conversation and, on a phone, the window under the keyboard). Only a key
+  // moves it: a row the pointer passes over while the list scrolls must not pull the list back (owner 15362: a
+  // trackpad scroll snapped up on release). The highlight is data-hi, not aria-selected, which in the picker means
+  // "ticked" and pinned every move to the first ticked row.
   useEffect(() => {
-    const ul = menu.current, li = ul?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (!keyed.current) return
+    keyed.current = false
+    const ul = menu.current, li = ul?.querySelector<HTMLElement>('[data-hi]')
     if (!ul || !li) return
     // the sticky heading above and the key hints below sit OVER the list (owner 11-15: "when I move down the
     // explainers hide it"): the row is kept clear of both, not of the list's bare edges
@@ -320,8 +326,8 @@ export default forwardRef<ComposerHandle, {
   }
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (items.length) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => (s + 1) % items.length); return }
-      if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => (s - 1 + items.length) % items.length); return }
+      if (e.key === 'ArrowDown') { e.preventDefault(); keyed.current = true; setSel((s) => (s + 1) % items.length); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); keyed.current = true; setSel((s) => (s - 1 + items.length) % items.length); return }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); items[sel]?.apply(); return }
       if (e.key === 'Escape') { e.preventDefault(); if (picker) setPicker(false); else setMenuOff(true); return }
     }
@@ -357,7 +363,7 @@ export default forwardRef<ComposerHandle, {
             {items.map((it, i) => (
               <Fragment key={it.key}>
               {slash && it.group && it.group !== items[i - 1]?.group && <li role="presentation" className="ws-menu-group">{it.group}</li>}
-              <li role="option" aria-selected={it.pick ? it.pick.on : i === sel} onMouseDown={(e) => { e.preventDefault(); it.apply() }} onMouseEnter={() => setSel(i)}
+              <li role="option" aria-selected={it.pick ? it.pick.on : i === sel} data-hi={i === sel || undefined} onMouseDown={(e) => { e.preventDefault(); it.apply() }} onMouseEnter={() => setSel(i)}
                 className={`group flex items-center gap-2.5 rounded-[9px] px-2.5 py-1.5 cursor-pointer ${i === sel ? 'bg-[color-mix(in_srgb,var(--t-fg)_7%,transparent)]' : ''}`}>
                 {it.pick && <span className="ws-check" data-on={it.pick.on || undefined} aria-hidden>{it.pick.on ? '✓' : ''}</span>}
                 {it.kind === 'agent' && <AgentFace name={it.key.slice(1)} size={20} />}
