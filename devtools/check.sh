@@ -802,6 +802,8 @@ run "init.sh trigger installs: by NAME through the helper, never over a retireme
 # Mutants: tests/mutants_org_home_*.py. With no registry (this host), nothing they test changes a byte.
 run "org home: each org process binds its own HOME, DSN and law; the backup is the org's; one org is unchanged" "$PY" tests/test_org_home.py
 run "restore row counts: an empty table restores as empty only where live is empty (seed 61553)" "$PY" tests/test_restore_counts.py
+# doctor: only a restore stamp that reads OK is green; root's 0600 FAILED stamp read as empty went green (medic 11-20)
+run "doctor restore stamp: a FAILED, unreadable or unknown stamp is red" "$PY" tests/test_doctor_restore_stamp.py
 run "etl server: acts are the etl seats', a tail path is refused before it is opened, a stalled kernel is shut down, a job must be listed (medic 14956)" "$PY" tests/test_etl_mcp.py
 run "whatsapp mention-only route: a group with \"wake\": \"tagged\" wakes its agent only when a message tags us (owner 15092)" "$PY" tests/test_wa_tagged.py
 run "restore-verify runs as the provisioner when its root-only DSN is readable (medic 11-16)" "$PY" tests/test_restore_super.py

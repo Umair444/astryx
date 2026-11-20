@@ -1469,21 +1469,29 @@ if [ "${1:-}" = "doctor" ]; then
   # restore-verify: a fresh dump that won't pg_restore is backup THEATER — this asserts
   # the newest dump was proven-restorable recently (weekly), so a silently-unrestorable
   # backup goes RED instead of freshness-green. Reads the stamp only (never restores here).
+  # >>> restore stamp
   if [ -f "$ORGH/backups/.last-restore-ok" ]; then
     # Read the OUTCOME first, then the age. A stamp whose freshness was the only thing
     # checked reported "proven-restorable" for 8 days after verification began failing,
-    # because a failing run left the previous success's stamp untouched. Unknown content
-    # falls through to RED — detector polarity: a stamp we cannot interpret is not evidence.
-    if [ "$(cut -d" " -f1 "$ORGH/backups/.last-restore-ok")" = "FAILED" ]; then
-      bad "backup restore-verify FAILED on its last run ($(cut -d" " -f2 "$ORGH/backups/.last-restore-ok")) — the newest dump does NOT restore"
+    # because a failing run left the previous success's stamp untouched. Only a stamp that
+    # reads OK is green: a FAILED one, one we cannot read (root's 0600 stamp read by a
+    # non-root doctor read as empty, and went green over a FAILED run, 11-20) or any other
+    # content is not evidence — detector polarity.
+    stamp=$(cat "$ORGH/backups/.last-restore-ok" 2>/dev/null) \
+      || stamp="UNREADABLE as $(id -un) (written by $(stat -c %U "$ORGH/backups/.last-restore-ok"))"
+    if [ "${stamp%% *}" = "FAILED" ]; then
+      bad "backup restore-verify FAILED on its last run (${stamp#FAILED }) — the newest dump does NOT restore"
+    elif [ "${stamp%% *}" != "OK" ]; then
+      bad "backup restore-verify outcome unknown: backups/.last-restore-ok reads '${stamp:0:80}' — not proof the dump restores"
     elif [ "$(( $(date +%s) - $(stat -c %Y "$ORGH/backups/.last-restore-ok") ))" -gt 691200 ]; then
       bad "backup restore-verify STALE (>8d): a dump may have stopped restoring (scripts/restore_verify.sh)"
     else
-      ok "backup restore-verified ($(cat "$ORGH/backups/.last-restore-ok"), <8d — proven-restorable)"
+      ok "backup restore-verified ($stamp, <8d — proven-restorable)"
     fi
   elif [ -n "$newest_bk" ]; then
     warn "backup never restore-verified — run scripts/restore_verify.sh (a dump you can't restore is a hope, not a backup)"
   fi
+  # <<< restore stamp
   # A2A card (plan-20): assert the SERVED /.well-known/agent-card.json exposes EXACTLY the
   # public roster (== the fail-closed tier oracle) with zero tier-private agents, signed with
   # the introduce key. Runs against the live gateway on the SERVED bytes — the grade-1 check

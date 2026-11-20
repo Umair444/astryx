@@ -157,8 +157,10 @@ esac
 # A stamp, a cache, a state row, a green tick — each inherits NONE of the check's safety.
 if [ "$fail" -ne 0 ]; then
   echo "FAILED $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BK/.last-restore-ok"
+  chmod 644 "$BK/.last-restore-ok"   # an outcome and a time, no secret: doctor (non-root) must read it, not guess
   echo "restore-verify: FAILED — the newest backup does NOT restore cleanly. Fix the backup BEFORE trusting it." >&2
   exit 1
 fi
 echo "OK $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BK/.last-restore-ok"
+chmod 644 "$BK/.last-restore-ok"
 echo "restore-verify: OK — ${newest##*/} restores into a working DB; stamped backups/.last-restore-ok"
