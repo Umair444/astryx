@@ -157,6 +157,10 @@ export function influenceLine(agent: string, inf: Influence, kinds: Set<string>)
   }
   const top = Object.entries(kindN).sort((a, b) => b[1] - a[1])[0]?.[0]
   const th = Object.entries(threads).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([t]) => t)
+  // counts drawn from an UNMEASURED kind are not facts: the caption says so, as the line is dashed (medic 15483)
+  const measured = new Set(inf.kinds.filter(k => k.measured).map(k => k.kind))
+  const rough = Object.keys(kindN).filter(k => !measured.has(k)).length
+  const mark = !rough ? null : rough === Object.keys(kindN).length ? 'unmeasured' : 'partly unmeasured'
   return [`relied on by ${by.size}`, `relies on ${on.size}`, top && `mostly ${KIND_LABEL[top] ?? top}s`,
-    th.length ? `top threads ${th.join(', ')}` : null].filter(Boolean).join(' · ')
+    th.length ? `top threads ${th.join(', ')}` : null, mark].filter(Boolean).join(' · ')
 }
