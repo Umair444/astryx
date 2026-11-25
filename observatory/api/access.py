@@ -91,8 +91,9 @@ async def maker_of(request: Request, thread: str) -> str | None:
         u = None
     if u:
         return u
-    first = await pool.fetchval(f"SELECT from_agent FROM messages WHERE thread = $1 AND {_ws.human_sql('from_agent')} "
-                                "ORDER BY id LIMIT 1", thread)
+    first = await pool.fetchval(   # the first person on it: who wrote first, or whom an agent opened it with (medic 16394)
+        f"SELECT CASE WHEN {_ws.human_sql('from_agent')} THEN from_agent ELSE to_agent END FROM messages WHERE thread = $1 "
+        f"AND ({_ws.human_sql('from_agent')} OR {_ws.human_sql('to_agent')}) ORDER BY id LIMIT 1", thread)
     return _canvas_name(first) if first else None
 
 

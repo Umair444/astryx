@@ -417,6 +417,17 @@ def main(tmp: Path, url: str):
     r = share(ALICE, ["8@fxcog"], "cv:20990101-acct")
     arm("CS10 ...and she shares the one she made", r.status_code == 200, (r.status_code, r.text[:120]))
 
+    with psycopg.connect(url, autocommit=True) as c:      # db opened this chat with alice; she never wrote on it
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+                  "('db','cv-alice.7','chat:20990101-ag','chat','db starts a chat with alice')")
+    r = share(ALICE, ["8@fxcog"], "chat:20990101-ag")
+    arm("CS11 a chat an agent opened with alice is hers to share (medic 16394 nit 3)", r.status_code == 200, (r.status_code, r.text[:120]))
+    share(ALICE, [], "chat:20990101-ag")
+    arm("CS12 the live feed: an event TO bob on a registered chat he isn't shared on doesn't reopen it (nit 2)",
+        not scope.message_ok(type("R", (), {"state": type("S", (), {"reach": {"db"}, "me": "cv-bob.8", "role": "member",
+                                                                     "open": set(), "registered": {SH}})()})(),
+                             {"from": "db", "to": "cv-bob.8", "thread": SH}))
+
     print("R3 a reply names only a message the sender may read (medic 12990)")
     with psycopg.connect(url, autocommit=True) as c:
         own = c.execute("SELECT id FROM messages WHERE thread = 'chat:20990101-o' AND from_agent = 'medic' ORDER BY id LIMIT 1").fetchone()[0]
