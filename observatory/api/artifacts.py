@@ -675,7 +675,7 @@ async def _run(fn, *args):
 class Open(BaseModel):
     path: str = Field(max_length=4096)
     thread: str = Field(max_length=200)
-    author: str | None = None
+    author: str | None = Field(None, max_length=64)
     label: str | None = Field(None, max_length=120)
     msg_id: int | None = Field(None, ge=1)          # the message whose embed carried the bytes (provenance)
     msg_ts: str | None = Field(None, max_length=40)
@@ -685,7 +685,7 @@ class Create(BaseModel):
     thread: str = Field(max_length=200)
     name: str = Field(max_length=200)
     text: str
-    author: str = Field(max_length=41)
+    author: str = Field(max_length=64)
     msg_id: int | None = Field(None, ge=1)
     msg_ts: str | None = Field(None, max_length=40)
 
