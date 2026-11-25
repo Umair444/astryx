@@ -102,7 +102,7 @@ TEXT_TYPES = {"csv": "text/csv", "tsv": "text/tab-separated-values", "md": "text
 FILE_EMBED = re.compile(r"\[\[file:([^\]\n]+)\]\](?: \(([^)\n]{1,120})\))?")
 ID_RE = re.compile(r"[0-9a-f]{16}")
 REV_RE = re.compile(r"[0-9a-f]{4,40}")
-AUTHOR_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,40}")
+AUTHOR_RE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")   # an agent, owner, or a person: cv-<name>.<n>, wa-<n>
 
 
 def bind(get_pool, estate: Path) -> None:
@@ -524,7 +524,7 @@ class Store:
         if not valid_thread(thread):
             raise StoreError(400, "a thread is required")
         if not AUTHOR_RE.fullmatch(author or ""):
-            raise StoreError(400, "author must be an agent name or owner")
+            raise StoreError(400, "author must be an agent, owner or a person's id")
         if not (text or "").strip():
             raise StoreError(400, "there is no text to keep")
         data = text.encode()
@@ -639,7 +639,7 @@ def import_source(store: Store, path: str, thread: str, author: str = OWNER, lab
     if not valid_thread(thread):
         raise StoreError(400, "a thread is required")
     if not AUTHOR_RE.fullmatch(author or ""):
-        raise StoreError(400, "author must be an agent name or owner")
+        raise StoreError(400, "author must be an agent, owner or a person's id")
     p = _chat.readable(path or "")
     if p is None:
         raise StoreError(403, "that file can't be opened here")
@@ -675,7 +675,7 @@ async def _run(fn, *args):
 class Open(BaseModel):
     path: str = Field(max_length=4096)
     thread: str = Field(max_length=200)
-    author: str | None = None
+    author: str | None = Field(None, max_length=64)
     label: str | None = Field(None, max_length=120)
     msg_id: int | None = Field(None, ge=1)          # the message whose embed carried the bytes (provenance)
     msg_ts: str | None = Field(None, max_length=40)
@@ -685,7 +685,7 @@ class Create(BaseModel):
     thread: str = Field(max_length=200)
     name: str = Field(max_length=200)
     text: str
-    author: str = Field(max_length=41)
+    author: str = Field(max_length=64)
     msg_id: int | None = Field(None, ge=1)
     msg_ts: str | None = Field(None, max_length=40)
 
