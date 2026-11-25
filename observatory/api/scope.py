@@ -72,6 +72,8 @@ async def load(pool, request) -> set[str]:
         # A REGISTERED conversation (canvas_threads: it has a maker) is open to its maker and whom it is shared with,
         # never to someone only because they wrote on it: unsharing a chat (or a canvas) takes it back (access-core 2).
         # The party rule stays for a chat with no registry row (who wrote on it is all that is known).
+        request.state.registered = {r["thread"] for r in await pool.fetch(   # the live feed's: never opened by an event
+            "SELECT thread FROM canvas_threads WHERE thread LIKE 'chat:%' OR thread LIKE 'cv:%'")}
         for r in await pool.fetch("SELECT thread, user_name, canvas_id, shared_with FROM canvas_threads "
                                   "WHERE thread = ANY($1::text[]) OR shared_with @> ARRAY[$2]::text[]",
                                   sorted(out), acct or ""):
@@ -80,8 +82,8 @@ async def load(pool, request) -> set[str]:
                 out.add(r["thread"])
             elif not ok:
                 out.discard(r["thread"])
-    except Exception:                               # noqa: BLE001 — no column yet (or a blip): the party rule alone
-        pass
+    except Exception:                               # noqa: BLE001 — a blip: closed, as above (medic 16394: the party
+        out = set()                                 # rule alone would reopen a chat its maker unshared)
     out |= projects                                 # a project's chats: whoever sees the project
     try:                                            # a canvas's conversation: whoever sees the canvas (cv.sees)
         out |= {_wc.thread_of(r["id"]) for r in await pool.fetch(
@@ -139,8 +141,8 @@ def message_ok(request, d: dict) -> bool:
     opened = getattr(request.state, "open", None)
     if opened is None:
         opened = request.state.open = set()
-    if mine:
-        opened.add(th)
+    if mine and th not in getattr(request.state, "registered", set()):
+        opened.add(th)                              # a chat with no registry row: writing on it makes it hers
     return th in opened
 
 
