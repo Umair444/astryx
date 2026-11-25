@@ -500,10 +500,15 @@ async def ws_threads(request: Request, scope: str = "mine", open: str = ""):
             sorted(listed))}
     except Exception:                               # noqa: BLE001 — no column yet: no sharing shows
         shares = {}
+    mine_keys = {k for k in (canvas_user(me), acct or "") if k}
     for r in rows:                                  # who it's shared with, and whether it's this viewer's to share
         s = shares.get(r["thread"]) or {}
         r["shared"] = list(s.get("shared_with") or [])
         r["shared_with_me"] = bool(acct) and acct in r["shared"]
+        maker = s.get("user_name") or canvas_user(r.get("by") or "owner")
+        r["shareable"] = shareable(r["thread"])
+        r["yours"] = r["shareable"] and (me == "owner" or maker in mine_keys)   # the Sharing card's: its maker or the owner
+        r["by_member"] = maker != "owner"
     if open and valid_thread(open) and not _scoped(request) \
             and not any(r["thread"] == open for r in rows):   # not the viewer's own: listed too (a scoped member: theirs only, as `everyone`)
         opened = [a for a in aggs if a["thread"] == open] or [

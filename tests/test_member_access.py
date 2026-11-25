@@ -372,6 +372,10 @@ def main(tmp: Path, url: str):
     lb = mine(BOB)
     arm("CS2 bob's chat list has it, marked shared with him", SH in lb and lb[SH].get("shared_with_me") is True, sorted(lb))
     arm("CS2 ...alice's list shows whom it is shared with", mine(ALICE).get(SH, {}).get("shared") == ["8@fxcog"], mine(ALICE).get(SH))
+    la = mine(ALICE).get(SH, {})
+    arm("CS2 the Share button's flags: alice's chat is hers to share; bob's copy is shared with him, not his",
+        la.get("shareable") and la.get("yours") and la.get("by_member") and lb[SH].get("yours") is False,
+        ({k: la.get(k) for k in ("shareable", "yours", "by_member")}, lb[SH].get("yours")))
     arm("CS3 bob reads it", any("alice's chat to share" in b_ for b_ in bodies(BOB)), bodies(BOB))
     arm("CS3 ...and the file db sent on it", get(BOB, shf) == 200, get(BOB, shf))
     code = cl.get("/api/ws/artifacts", params={"thread": SH}, headers=BOB()).status_code

@@ -23,6 +23,7 @@ import {
 import AgentRail, { Presence } from './shell/AgentRail'
 import ConversationList from './shell/ConversationList'
 import TopBar from './shell/TopBar'
+import ChatShare from './thread/ChatShare'
 import ConnStatus from './shell/ConnStatus'
 import { Keys, Palette } from './shell/Dialogs'
 import Composer, { type Command, type ComposerHandle } from './thread/Composer'
@@ -858,6 +859,7 @@ export default function ChatApp({ thread, go: nav }: { thread: string | null; go
             onWorkforce={() => setWorkforce((w) => !w)} onMedia={() => setFilesOpen((f) => !f)}
             onMenu={() => setDrawer(true)} onAgent={openAgent} names={names} lines={lines}
             more={<MoreMenu onExport={() => exportConversation(rows, title, current, names)} onSearch={() => setPalette(true)} />}
+            share={currentRow?.shareable && (currentRow.yours || currentRow.shared_with_me) ? <ChatShare row={currentRow} onShared={() => void reload()} /> : null}
             canvas={threadCanvas ? { version: canvases?.find((c) => c.id === threadCanvas)?.version ?? 0, open: canvasOpen === threadCanvas,
               onToggle: () => { setWorkforce(false); setCanvasOpen((o) => (o === threadCanvas ? null : threadCanvas)) } } : null} />
         )}

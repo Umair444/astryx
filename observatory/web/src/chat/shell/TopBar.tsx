@@ -13,7 +13,7 @@ import '../canvas/canvas.css'
    media drawer, with the conversation's file count) and the workforce toggle (⌘J). On a phone it also opens the conversation drawer.
    Hovering the strip (or clicking it, which pins it; ⌘⇧M) opens the LIVE TEAM MAP beneath it (shell/TeamMap.tsx). */
 
-export default function TopBar({ onProject, title, canRename, surface, project, agents, status, workforce, files, media, onRename, onWorkforce, onMedia, onMenu, onAgent, names, lines, more, canvas = null }: {
+export default function TopBar({ onProject, title, canRename, surface, project, agents, status, workforce, files, media, onRename, onWorkforce, onMedia, onMenu, onAgent, names, lines, more, share, canvas = null }: {
   canvas?: { version: number; open: boolean; onToggle: () => void } | null   // a canvas's conversation: its page
   names: string[]
   lines: Record<string, string>
@@ -33,6 +33,7 @@ export default function TopBar({ onProject, title, canRename, surface, project, 
   onMenu: () => void
   onAgent: (a: string) => void
   more?: React.ReactNode                      // the "more" menu (iteration 9: export, notifications, install)
+  share?: React.ReactNode                     // who can see this chat (access-core 2: a chat's Share, as a canvas's)
 }) {
   const [edit, setEdit] = useState(false)
   const [v, setV] = useState(title)
@@ -90,6 +91,7 @@ export default function TopBar({ onProject, title, canRename, surface, project, 
         </button>
         <button className="ws-icon max-lg:hidden" onClick={onWorkforce} aria-pressed={workforce} title="The workforce (⌘J)" aria-label="the workforce">{I.side()}</button>
         <CallButton variant="icon" className="md:hidden" />
+        {share}
         {more}
       </div>
     </header>
