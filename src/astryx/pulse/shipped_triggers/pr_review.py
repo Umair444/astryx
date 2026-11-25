@@ -68,6 +68,10 @@ def _open_items() -> list[str] | None:
     # its patch, so a replayed branch drops out and a partly landed one counts only what's left.
     items = []
     for b in out.split():
+        # medic/up-* is medic's copy for the UPSTREAM repo (homes/medic/craft.md), reviewed there, never merged into
+        # main: listed here it re-woke seed for work this protocol must not do (11-25, two up- branches, msg 16416).
+        if b.startswith("medic/up-"):
+            continue
         cherry = _run(["git", "cherry", "main", b])
         if cherry is None:
             items.append(f"branch {b} (unobserved: git cherry failed)")

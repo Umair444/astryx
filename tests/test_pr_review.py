@@ -64,6 +64,8 @@ try:
     git("checkout", "-q", "main")
     commit("more", "m\n")                       # main moves FIRST, so the pick is a real replay (medic #61499: a pick onto
     git("cherry-pick", "medic/half~1")           # its own parent in the same second is the SAME sha, a fast-forward)
+    git("checkout", "-q", "-b", "medic/up-open", "main")
+    commit("u", "u\n")                          # an upstream copy: unlanded on main by design
     git("checkout", "-q", "main")
 
     real_run = m._run
@@ -79,6 +81,8 @@ try:
     check("a partly landed branch counts only what's left (1 of 2), though rev-list still counts both",
           "branch medic/half (1 commits not on main" in joined
           and git("rev-list", "--count", "main..medic/half").strip() == "2", joined)
+    check("an upstream copy (medic/up-*) is not main's review work, though main lacks its patch",
+          "medic/up-open" not in joined and git("cherry", "main", "medic/up-open").startswith("+"), joined)
     # medic #61499 A1: a branch git can't answer for is listed as UNOBSERVED, never dropped
     m.REPO = td
     m._run = lambda cmd, timeout=15: None if cmd[0] == "gh" or cmd[:2] == ["git", "cherry"] else real_run(cmd, timeout)
