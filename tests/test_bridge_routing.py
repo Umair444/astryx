@@ -33,7 +33,12 @@ message is read), staged with fixture charters, so agent_exists() answers from t
   R15 a REACTION doesn't count (abstractor-2 #33265): the owner reacts to an OLD canopus message
       after readycash posted, then a bare reply → readycash, the last agent message he saw
   R12 a non-owner human (wa-…) is a human too: an agent speaking to them gets their reply
-PRECEDENCE: explicit mention on THIS message > the newest agent-bearing row (counting polls) >
+  R16 a REPLY to an agent's message goes to that agent, not the newest speaker (owner 15960; msg 15937 quoted
+      lending's 15914 and reached insurance): canopus posts, readycash posts, the reply quotes canopus → canopus
+  R17 a quoted id from ANOTHER thread is not honoured (a reply can't reach across threads) → the newest speaker
+  R18 a quoted id we never stored (a progress bubble, an old message) → the newest speaker, as before
+  R19 an @mention on the reply still wins over the quoted message
+PRECEDENCE: explicit mention on THIS message > the agent whose message it replies to > the newest agent-bearing row (counting polls) >
 the surface default.
 """
 import asyncio
@@ -95,7 +100,7 @@ try:
     fx = _fx.__enter__()
 except Exception as e:  # noqa: BLE001
     skip(f"the fixture database couldn't be built ({type(e).__name__}: {e})")
-URL = re.sub(r"/[^/?]+(\?|$)", f"/{fx['dbname']}\\1", ADMIN, count=1)
+URL = fx["url"]     # the fixture's own role (the admin DSN's role has no CONNECT on a fixture database)
 
 stage = Path(tempfile.mkdtemp(prefix="route-"))
 try:
@@ -118,6 +123,15 @@ try:
                    "body) VALUES (%s,%s,%s,%s,%s,%s,'(placeholder)')",
                    (frm, forg, to, torg, thread, intent))
 
+    def sent(thread, frm, to, platform_id):          # an agent's send the bridge delivered, with its platform id
+        db.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body, delivery) "
+                   "VALUES (%s,'local',%s,'local',%s,'chat','(placeholder)',%s)",
+                   (frm, to, thread, '{"message_id": "%s"}' % platform_id))
+
+    # R16-R19: canopus posts (id Q16), readycash posts after; Q17 lives on another thread.
+    sent("wa:r16", "canopus", "owner", "Q16")
+    sent("wa:r16", "readycash", "owner", "Q16b")
+    sent("wa:r17other", "canopus", "owner", "Q17")
     # R1: the incident's shape (owner → seed chat, then canopus → owner chat).
     row("dc:r1", "owner", "discord", "seed", "local")
     row("dc:r1", "canopus", "local", "owner", "local")
@@ -178,6 +192,10 @@ try:
                 "r11": await rt(conn, "dc:r11", "yes", "seed"),
                 "r12": await rt(conn, "wa:r12", "thanks", "seed"),
                 "r8": await rt(conn, "wa:grp", "@insurance what does the policy cover", "seed"),
+                "r16": await rt(conn, "wa:r16", "what about last week?", "seed", "Q16"),
+                "r17": await rt(conn, "wa:r16", "and this?", "seed", "Q17"),
+                "r18": await rt(conn, "wa:r16", "and this?", "seed", "NEVER-STORED"),
+                "r19": await rt(conn, "wa:r16", "@forge check this", "seed", "Q16"),
             }
         finally:
             await conn.close()
@@ -209,6 +227,12 @@ try:
           who["r11"] == "canopus", who["r11"])
     check("R12 a wa- human is a human: canopus spoke to them → canopus", who["r12"] == "canopus",
           who["r12"])
+    check("R16 a reply to canopus's message goes to canopus, though readycash spoke after (owner 15960)",
+          who["r16"] == "canopus", who["r16"])
+    check("R17 a quoted id from another thread is not honoured → the newest speaker (readycash)",
+          who["r17"] == "readycash", who["r17"])
+    check("R18 a quoted id we never stored → the newest speaker (readycash)", who["r18"] == "readycash", who["r18"])
+    check("R19 an @mention on the reply still wins → forge", who["r19"] == "forge", who["r19"])
     check("R8 an explicit @mention ALWAYS wins: @insurance where readycash spoke last → insurance",
           who["r8"] == "insurance", who["r8"])
     check("R8 ...and the mention token is KEPT in the delivered text (the agent sees it was addressed by name)",

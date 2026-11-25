@@ -239,7 +239,7 @@ async def wire_chat(pool, who: str, org: str, default: str, thread: str, text: s
         except R.GrantError:
             tiered = True
     if len(team) < 2 or tiered:
-        agent, text = await route_target(pool, thread, text, default)
+        agent, text = await route_target(pool, thread, text, default, (meta or {}).get("reply_to_id") or "")
         await wire_insert(pool, who, org, agent, thread, "chat", text, meta, route=route, said=said)
         return [agent]
     stamp = team_stamp(team)
@@ -258,13 +258,16 @@ async def wire_chat(pool, who: str, org: str, default: str, thread: str, text: s
 ANSWER_INTENTS = frozenset({"poll"})
 
 
-async def route_target(pool, thread: str, text: str, default: str) -> tuple[str, str]:
+async def route_target(pool, thread: str, text: str, default: str, reply_to: str = "") -> tuple[str, str]:
     """Resolve which agent an inbound message routes to, and clean the text.
 
     PRECEDENCE (seed #33255/#33256/#33262):
       1. an explicit @mention on THIS message, always. It routes only the message that
          carries it; it does NOT stick;
-      2. otherwise the newest thing an agent put in front of the human, which is either
+      2. otherwise, when the message REPLIES to an agent's message on this thread (`reply_to`, the platform id of the
+         quoted message, matched against the delivery.message_id we stored when we sent it), that agent (owner
+         15960: "when someone replies to a message, that agent should be called and not the recent one");
+      3. otherwise the newest thing an agent put in front of the human, which is either
            - an agent's message TO THE HUMAN (ANY intent: chat, poll, receipt, permission…),
              counted as its from_agent, or
            - the human's ANSWER to an agent (ANSWER_INTENTS: a poll vote), counted as its
@@ -275,7 +278,7 @@ async def route_target(pool, thread: str, text: str, default: str) -> tuple[str,
          Newest wins, so a past @mention still can't pull the next plain reply away from an
          agent that spoke to the human since. Reactions (which can point at any old message)
          don't count;
-      3. otherwise `default` (the surface's own agent).
+      4. otherwise `default` (the surface's own agent).
     "To the human" means to a non-agent: the registry of agents is the one authority, so
     'owner' and every wa-/dc-/tg- person qualify with no name typed here. That's also what
     lets an agent that STARTS a thread get the first reply.
@@ -288,10 +291,16 @@ async def route_target(pool, thread: str, text: str, default: str) -> tuple[str,
     agent, cleaned = address_agent(text, "")
     if agent:                                    # 1. explicit @mention on this message
         return agent, cleaned
+    if reply_to:                                 # 2. a reply to an agent's message on THIS thread
+        r = await pool.fetchrow(
+            "SELECT from_agent FROM messages WHERE thread=$1 AND from_org='local' "
+            "AND delivery->>'message_id'=$2 ORDER BY id DESC LIMIT 1", thread, str(reply_to))
+        if r and agent_exists(r["from_agent"]):
+            return r["from_agent"], text
     rows = await pool.fetch(
         "SELECT from_org, from_agent, to_agent, intent FROM messages WHERE thread=$1 "
         "ORDER BY id DESC LIMIT 50", thread)
-    for r in rows:                               # 2. newest first
+    for r in rows:                               # 3. newest first
         if r["from_org"] != "local":             # the human's own message: an ANSWER, or a chat
             if r["intent"] not in ANSWER_INTENTS and r["intent"] != "chat":  # a reaction: no
                 continue
@@ -302,7 +311,7 @@ async def route_target(pool, thread: str, text: str, default: str) -> tuple[str,
             continue
         if agent_exists(who):
             return who, text
-    return default, text                         # 3.
+    return default, text                         # 4.
 
 
 # ---------------------------------------------------------------------- embeds
