@@ -46,6 +46,12 @@ def _run(cmd: list[str], timeout: int = 15) -> str | None:
         return None
 
 
+# medic's copies for the UPSTREAM repo (homes/medic/craft.md): pushed to origin as same-repo PRs or kept as local
+# branches, reviewed upstream, never merged into main. On either path they are not this protocol's work (11-25, msg
+# 16416: two up- branches woke seed for a merge it must not do; medic 16524: the gh path leaked the same way).
+UPSTREAM_PREFIX = "medic/up-"
+
+
 def _open_items() -> list[str] | None:
     """Open PRs (preferred) or unreviewed medic/* branches. None = cannot observe."""
     out = _run(["gh", "pr", "list", "--state", "open",
@@ -55,7 +61,8 @@ def _open_items() -> list[str] | None:
             # a PR from a FORK is an outsider's code: never this protocol's "run check.sh, merge". It is
             # upstream_prs's, triaged by medic as text until seed decides (goal 10224 S6).
             return [f"PR #{p['number']} ({p['headRefName']}): {p['title'][:80]}"
-                    for p in json.loads(out) if not p.get("isCrossRepository")]
+                    for p in json.loads(out)
+                    if not p.get("isCrossRepository") and not p["headRefName"].startswith(UPSTREAM_PREFIX)]
         except Exception:
             return None
     # no gh / no remote: medic branches ahead of main are the review queue
@@ -68,9 +75,7 @@ def _open_items() -> list[str] | None:
     # its patch, so a replayed branch drops out and a partly landed one counts only what's left.
     items = []
     for b in out.split():
-        # medic/up-* is medic's copy for the UPSTREAM repo (homes/medic/craft.md), reviewed there, never merged into
-        # main: listed here it re-woke seed for work this protocol must not do (11-25, two up- branches, msg 16416).
-        if b.startswith("medic/up-"):
+        if b.startswith(UPSTREAM_PREFIX):
             continue
         cherry = _run(["git", "cherry", "main", b])
         if cherry is None:

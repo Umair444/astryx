@@ -21,5 +21,7 @@ MUTANTS = {
         ('            items.append(f"branch {b} (unobserved: git cherry failed)")\n            continue',
          "            continue"),
     "R4 an upstream copy is review work again (medic/up-* re-wakes seed for a branch main must never take)":
-        ('        if b.startswith("medic/up-"):\n            continue\n', ""),
+        ('        if b.startswith(UPSTREAM_PREFIX):\n            continue\n', ""),
+    "R5 the gh path lists upstream PRs again (a same-repo medic/up-* PR asks seed to merge it into main)":
+        (' and not p["headRefName"].startswith(UPSTREAM_PREFIX)]', "]"),
 }

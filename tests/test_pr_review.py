@@ -5,6 +5,7 @@ so rev-list counted every landed branch as "N commits ahead" forever: on 10-20 t
 landed. Hermetic: a throwaway git repo, gh made to fail so the fallback runs. Exit 0 pass · 1 fail · 77 no git.
 """
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -90,6 +91,14 @@ try:
     m._run = real_run
     check("a branch whose `git cherry` fails is listed as unobserved, never dropped",
           any("unobserved" in i and "medic/open" in i for i in (blind or [])), str(blind))
+    # medic 16524: the gh path (preferred) lists same-repo PRs, and upstream_pr.py opens medic/up-* PRs on origin
+    prs = json.dumps([{"number": 1, "title": "up", "headRefName": "medic/up-x", "isCrossRepository": False},
+                      {"number": 2, "title": "fix", "headRefName": "medic/fix", "isCrossRepository": False}])
+    m._run = lambda cmd, timeout=15: prs if cmd[0] == "gh" else real_run(cmd, timeout)
+    gh_items = m._open_items()
+    m._run = real_run
+    check("on the gh path an upstream PR (medic/up-*) is not listed; a same-repo fix PR is",
+          gh_items == ["PR #2 (medic/fix): fix"], str(gh_items))
     check("the fixture is what it claims (medic/half's tip is the unlanded commit)", bool(half_left))
 finally:
     shutil.rmtree(td, ignore_errors=True)
