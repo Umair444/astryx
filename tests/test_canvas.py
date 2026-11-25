@@ -226,6 +226,22 @@ def api(url):
             all(c["id"] != s_id for c in who("guest").get(f"{A}/canvases").json())
             and who("guest").get(f"{A}/canvases/{s_id}/render").status_code == 404
             and who("guest").get(f"{A}/canvases/{s_id}/data").status_code == 404)
+        # owner 16104: a canvas's side chat sat blank for a viewer who wasn't its maker (its thread read 404)
+        with psycopg_conn(url) as pc:
+            pc.execute("INSERT INTO canvas_threads (thread, user_name, agent, title, canvas_id) "
+                       "VALUES (%s, 'owner', 'painter', 'Shared', %s) ON CONFLICT DO NOTHING", (f"cv:canvas-{s_id}", s_id))
+            pc.commit()
+        arm("...nor its chat: the thread of a canvas not shared with them reads 404",
+            who("guest").get(f"{A}/threads/cv:canvas-{s_id}/messages").status_code == 404)
+        with psycopg_conn(url) as pc:
+            pc.execute("UPDATE canvases SET shared_with = ARRAY['7@fx'] WHERE id=%s", (s_id,))
+            pc.commit()
+        sh = who("guest").get(f"{A}/threads/cv:canvas-{s_id}/messages")
+        arm("a member a canvas IS shared with reads its chat, though someone else made it (owner 16104)",
+            sh.status_code == 200 and isinstance(sh.json().get("messages"), list), sh.status_code)
+        with psycopg_conn(url) as pc:
+            pc.execute("UPDATE canvases SET shared_with = '{}' WHERE id=%s", (s_id,))
+            pc.commit()
         with psycopg_conn(url) as pc:                  # a session an old invite left behind is no one
             pc.execute("INSERT INTO canvas_sessions (token_hash, user_name) VALUES (%s, 'oldguest')", (b._h("old"),))
             pc.commit()

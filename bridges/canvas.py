@@ -558,9 +558,14 @@ async def _own_thread(v: Viewer, thread: str):
 
 @app.get("/api/threads/{thread}/messages")
 async def thread_messages(thread: str, request: Request):
-    t = await _own_thread(V(request), thread)
+    v = V(request)
+    t = await _own_thread(v, thread)
     if not t:
-        return deny(404, "no such conversation")
+        # a canvas's thread is read by everyone who sees the canvas, as its live rows already reach them (claim);
+        # gated on its maker alone, a shared viewer's side chat sat blank (owner 16104, Arsalan on canvas 6)
+        t = await pool.fetchrow("SELECT * FROM canvas_threads WHERE thread=$1", thread)
+        if not t or not t["canvas_id"] or not await _canvas_for(v, int(t["canvas_id"])):
+            return deny(404, "no such conversation")
     # a canvas's own thread also shows the page's rows (to/from canvas-<id>) wherever they were threaded
     page = f"canvas-{int(t['canvas_id'])}" if t["canvas_id"] else ""
     rows = await pool.fetch(
