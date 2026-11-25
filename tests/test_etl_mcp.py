@@ -11,6 +11,7 @@ Windows path rules (ntpath) with spies on what it would open or run. Arms (medic
   A6 etl_failures is a digest: one row per job, a cause class from the error's tail, secrets in URLs masked; detail= one job
   A6b credential values in error tails (key=value, PWD=, quoted, a URL password holding @) are masked in both modes
   A7 etl_flow_run params: a flat object of scalars passes as --params json; anything else is refused before the box
+  A8 etl_jobs: name_like matches the name, command or start-in dir; no filter gives counts per folder and state
 Seam: ETL_SERVER_SRC / ETL_BOX_SRC (a mutant copy). Exit 0 · 1.
 """
 import asyncio
@@ -225,6 +226,38 @@ os.environ["ASTRYX_AGENT"] = "db"
 check("A7 params do not open the gate to other seats", str(run(srv.etl_flow_run("a/b", {"d": 1}))).startswith("refused"))
 os.environ["ASTRYX_AGENT"] = "etl-ops"
 
+# ---- A8: etl_jobs matches a name OR a path part, and with no filter returns counts, not every row
+import csv as _csv, io as _io, json as _json, subprocess as _sp
+_cols = ["TaskName", "Scheduled Task State", "Status", "Next Run Time", "Last Run Time", "Last Result",
+         "Run As User", "Task To Run", "Start In", "Schedule Type", "Start Time", "Days", "Repeat: Every"]
+_buf = _io.StringIO(); _w = _csv.writer(_buf); _w.writerow(_cols)
+_w.writerow(["\\BI Jobs\\Daily Scoll Summary DAT Report", "Enabled", "Ready", "", "", "0", "SYSTEM",
+             "D:\\ETL\\ADHOC\\PESCO FTP\\run_scroll_report.bat", "D:\\ETL\\ADHOC\\PESCO FTP", "Daily", "9:01", "", ""])
+_w.writerow(["\\BI Jobs\\team\\lending", "Disabled", "Ready", "", "", "0", "SYSTEM", "run.bat", "D:\\ETL\\L", "Daily", "9:40", "", ""])
+_w.writerow(["\\Other\\x", "Enabled", "Ready", "", "", "0", "SYSTEM", "D:\\PESCO FTP\\x.bat", "", "Daily", "1:00", "", ""])
+_real_run = _sp.run
+
+
+def jobs_snippet(like):
+    out = _io.StringIO()
+    _sp.run = lambda *a, **k: types.SimpleNamespace(stdout=_buf.getvalue(), returncode=0)
+    real_stdout, sys.stdout = sys.stdout, out
+    try:
+        exec(srv._JOBS, {"ARGS": {"folder": "\\BI Jobs\\", "like": like}})
+    finally:
+        sys.stdout, _sp.run = real_stdout, _real_run
+    return _json.loads(out.getvalue())
+
+
+hit = jobs_snippet("pesco ftp")
+check("A8 a path part finds the task (its name doesn't say PESCO FTP); the folder still bounds it",
+      [j["name"] for j in hit.get("jobs", [])] == ["\\BI Jobs\\Daily Scoll Summary DAT Report"], str(hit)[:200])
+summ = jobs_snippet("")
+check("A8 no filter: counts per folder and state, no rows",
+      "jobs" not in summ and summ.get("count") == 2 and {(r["folder"], r["state"], r["jobs"]) for r in summ["by_folder_state"]}
+      == {("\\BI Jobs\\", "Enabled", 1), ("\\BI Jobs\\team\\", "Disabled", 1)}, str(summ)[:300])
+
 print()
 print(f"FAILED ({len(fails)}): " + "; ".join(fails) if fails else "PASS: the etl server's guards hold without the box")
 sys.exit(1 if fails else 0)
+

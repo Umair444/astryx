@@ -234,21 +234,33 @@ r = subprocess.run(["schtasks", "/query", "/fo", "csv", "/v"], capture_output=Tr
 jobs = {}
 for row in csv.DictReader(io.StringIO(r.stdout)):
     n = row.get("TaskName") or ""
-    if n == "TaskName" or not n.lower().startswith(ARGS["folder"].lower()) or ARGS["like"].lower() not in n.lower():
+    hay = " ".join((n, row.get("Task To Run") or "", row.get("Start In") or "")).lower()
+    if n == "TaskName" or not n.lower().startswith(ARGS["folder"].lower()) or ARGS["like"].lower() not in hay:
         continue
     j = jobs.setdefault(n, {"name": n, "state": row.get("Scheduled Task State"), "status": row.get("Status"),
         "next_run": row.get("Next Run Time"), "last_run": row.get("Last Run Time"), "last_result": row.get("Last Result"),
         "run_as": row.get("Run As User"), "task_to_run": row.get("Task To Run"), "start_in": row.get("Start In"),
         "schedules": []})
     j["schedules"].append({k: row.get(k) for k in ("Schedule Type", "Start Time", "Days", "Repeat: Every") if row.get(k)})
-print(json.dumps({"jobs": sorted(jobs.values(), key=lambda j: j["name"]), "rc": r.returncode}))
+if not ARGS["like"]:  # no filter: counts, not 600 rows
+    by = {}
+    for j in jobs.values():
+        k = (j["name"].rsplit("\\", 1)[0] + "\\", j["state"])
+        by[k] = by.get(k, 0) + 1
+    print(json.dumps({"count": len(jobs), "by_folder_state": [{"folder": f, "state": s, "jobs": c}
+                      for (f, s), c in sorted(by.items())], "hint": "pass name_like (a name or a path part) for rows",
+                      "rc": r.returncode}))
+else:
+    print(json.dumps({"jobs": sorted(jobs.values(), key=lambda j: j["name"]), "rc": r.returncode}))
 '''
 
 
 @mcp.tool()
 async def etl_jobs(name_like: str = "") -> dict:
-    """The Task Scheduler jobs under the ETL folder (ETL_TASK_FOLDER), one row each: state (Enabled/Disabled), status,
-    next and last run, last result (0 = success), the command it runs, its start-in dir and its schedule(s)."""
+    """The Task Scheduler jobs under the ETL folder (ETL_TASK_FOLDER) whose name, command or start-in dir contains
+    name_like, one row each: state (Enabled/Disabled), status, next and last run, last result (0 = success; run.bat
+    drops python's exit code, so read reporting_logs too), the command, its start-in dir and its schedule(s).
+    With no name_like: counts per folder and state only."""
     return await box.run(_JOBS, {"folder": FOLDER, "like": name_like or ""}, timeout=200)
 
 
