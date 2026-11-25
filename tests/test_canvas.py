@@ -250,6 +250,7 @@ def api(url):
             sh.status_code == 200 and isinstance(sh.json().get("messages"), list), sh.status_code)
         arm("...and opens a file the canvas's agent posted in it (medic 16109: _message_file shares the rule)",
             who("guest").get(f"{A}/file?msg={fid}&n=0").status_code == 200)
+        cfile.unlink(missing_ok=True)
         with psycopg_conn(url) as pc:
             pc.execute("UPDATE canvases SET shared_with = '{}' WHERE id=%s", (s_id,))
             pc.commit()
