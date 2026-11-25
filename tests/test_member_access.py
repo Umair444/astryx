@@ -251,6 +251,27 @@ def main(tmp: Path, url: str):
     arm("P8 /api/agents: db's last line for alice is hers to read; the owner's is the newest",
         last(ALICE) == "db says hers" and "privately" in (last(lambda: O) or ""), (last(ALICE), last(lambda: O)))
 
+    print("A a thing's contents follow the thing (access-core, owner 11-25)")
+    af = estate / "media" / "alice-sheet.csv"
+    af.write_text("a,b\n1,2\n")
+    with psycopg.connect(url, autocommit=True) as c:
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+                  "('cv-alice.7','db','chat:20990101-s','chat',%s)", (f"my sheet [[file:{af}]]",))
+    op = lambda h, author="cv-alice.7": cl.post("/api/ws/artifacts/open", headers=h(), json={  # noqa: E731
+        "path": str(af), "thread": "chat:20990101-s", "author": author, "label": "alice-sheet.csv"})
+    r = op(ALICE)
+    arm("A1 alice opens the file she sent into the Library, as its author (Kumail's attachments, 11-25)",
+        r.status_code == 200, (r.status_code, r.text[:160]))
+    r = op(lambda: O)
+    arm("A1 ...and the owner opens a member's attachment, the member as its author", r.status_code == 200,
+        (r.status_code, r.text[:160]))
+    r = op(BOB)
+    arm("A2 bob, not a party of alice's chat, can't open it", r.status_code in (403, 404), (r.status_code, r.text[:160]))
+    arts = lambda h: {a_.get("name") for a_ in cl.get("/api/ws/artifacts", params={"thread": "chat:20990101-s"}, headers=h()).json()}  # noqa: E731
+    arm("A3 the opened file is in alice's Library for her chat", "alice-sheet.csv" in arts(ALICE), arts(ALICE))
+    code = cl.get("/api/ws/artifacts", params={"thread": "chat:20990101-s"}, headers=BOB()).status_code
+    arm("A3 ...and bob can't list her chat's Library", code in (403, 404), code)
+
     print("R3 a reply names only a message the sender may read (medic 12990)")
     with psycopg.connect(url, autocommit=True) as c:
         own = c.execute("SELECT id FROM messages WHERE thread = 'chat:20990101-o' AND from_agent = 'medic' ORDER BY id LIMIT 1").fetchone()[0]
