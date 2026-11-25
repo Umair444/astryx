@@ -556,16 +556,23 @@ async def _own_thread(v: Viewer, thread: str):
     return t
 
 
+async def _read_thread(v: Viewer, thread: str):
+    """A thread the viewer may READ: their own, or a canvas's thread when they see the canvas, as its live rows
+    already reach them (claim). Gated on its maker alone, a shared viewer's side chat sat blank (owner 16104)."""
+    t = await _own_thread(v, thread)
+    if t:
+        return t
+    t = await pool.fetchrow("SELECT * FROM canvas_threads WHERE thread=$1", thread)
+    if not t or not t["canvas_id"] or not await _canvas_for(v, int(t["canvas_id"])):
+        return None
+    return t
+
+
 @app.get("/api/threads/{thread}/messages")
 async def thread_messages(thread: str, request: Request):
-    v = V(request)
-    t = await _own_thread(v, thread)
+    t = await _read_thread(V(request), thread)
     if not t:
-        # a canvas's thread is read by everyone who sees the canvas, as its live rows already reach them (claim);
-        # gated on its maker alone, a shared viewer's side chat sat blank (owner 16104, Arsalan on canvas 6)
-        t = await pool.fetchrow("SELECT * FROM canvas_threads WHERE thread=$1", thread)
-        if not t or not t["canvas_id"] or not await _canvas_for(v, int(t["canvas_id"])):
-            return deny(404, "no such conversation")
+        return deny(404, "no such conversation")
     # a canvas's own thread also shows the page's rows (to/from canvas-<id>) wherever they were threaded
     page = f"canvas-{int(t['canvas_id'])}" if t["canvas_id"] else ""
     rows = await pool.fetch(
@@ -666,11 +673,11 @@ def _never_served(path: Path) -> bool:
 
 async def _message_file(v, msg: int, n: int) -> Path | None:
     """The n-th file a message embeds ([[file:/abs/path]]), if the viewer may see that message:
-    they own its thread, or they are its sender/recipient. Only a path the message names."""
+    they may read its thread (_read_thread), or they are its sender/recipient. Only a path the message names."""
     row = await pool.fetchrow("SELECT thread, body, to_agent, from_agent FROM messages WHERE id=$1", msg)
     if not row:
         return None
-    t = await _own_thread(v, row["thread"] or "") if row["thread"] else None
+    t = await _read_thread(v, row["thread"] or "") if row["thread"] else None
     if not t and not (row["to_agent"] == v.wire or row["from_agent"] == v.wire):
         return None
     paths = [(a or b).strip() for a, b in _ANY_FILE.findall(row["body"])]
