@@ -570,19 +570,13 @@ MEMBER_FILE = ("/api/chat/file", "/api/chat/preview")
 
 async def member_file(request: Request) -> bool:
     """/api/chat/file (and /preview) for a member: only a file some message on the wire ATTACHED ([[file:<path>]]), never any path
-    under the homes (chat.roots() spans whole agent homes; the personal tier binds every user, DESIGN Phase 2)."""
+    under the homes (chat.roots() spans whole agent homes; the personal tier binds every user, DESIGN Phase 2). The rule
+    is access.path_ok: only the system attaches (an agent, the owner) or an upload (medic 16376 H5, 16380 HX1)."""
     path = request.query_params.get("path", "")
     if not path or pool is None:
         return False
-    if _scope.of(request) is None:  # else a member: only a file a message THEY may read attached
-        return bool(await pool.fetchval("SELECT 1 FROM messages WHERE strpos(body, $1) > 0 LIMIT 1", f"[[file:{path}]]"))
-    await _scope.load(pool, request)
-    # Her OWN message attaches only what she uploaded (media/upload/<uuid>: unguessable, so hers or shown to her):
-    # naming any other path in a message of hers granted her its bytes (medic 16376, H5: an agent home, others' media).
-    own = _chat.MEDIA is not None and os.path.realpath(path).startswith(os.path.realpath(_chat.MEDIA / "upload") + os.sep)
-    return bool(await pool.fetchval(f"SELECT 1 FROM messages WHERE strpos(body, $1) > 0 AND {_scope.sql('$2', '$3', '$4')} "
-                                    "AND (from_agent IS DISTINCT FROM $3 OR $5) LIMIT 1",
-                                    f"[[file:{path}]]", *_scope.args(request), own))
+    from observatory.api import access as _access_core
+    return await _access_core.path_ok(request, path)
 
 
 

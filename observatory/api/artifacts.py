@@ -725,17 +725,14 @@ async def msg_headline(request: Request, msg_id: int | None, thread: str) -> str
     return (_ws.headline(row["body"], HEADLINE_MAX) or None) if row else None
 
 
-NOT_AUTHOR = JSONResponse({"error": "sign a version as yourself, or as the agent whose file it is"}, status_code=403)
+NOT_ATTACHED = JSONResponse({"error": "open a file that was sent in this conversation, or one you uploaded"},
+                            status_code=403)
 
 
-async def _say_ok(request: Request, thread: str, author: str | None = None) -> JSONResponse | None:
-    """A Library write on `thread`: the viewer says on it (access.may), signing as someone they may sign as."""
+async def _say_ok(request: Request, thread: str) -> JSONResponse | None:
+    """A Library write on `thread`: the viewer says on it (access.may)."""
     from observatory.api import access
-    if not await access.may(request, "say", thread):
-        return NOT_YOURS
-    if author is not None and not access.author_ok(request, author):
-        return NOT_AUTHOR
-    return None
+    return None if await access.may(request, "say", thread) else NOT_YOURS
 
 
 def _signer(request: Request) -> str:
@@ -746,18 +743,28 @@ def _signer(request: Request) -> str:
 
 @router.post("/api/ws/artifacts/open")
 async def art_open(body: Open, request: Request):
-    if (no := await _say_ok(request, body.thread, body.author or _signer(request))) is not None:
+    """A member opens only a file sent on THIS conversation by someone else, or her own upload sent on it (access.path_ok),
+    and its version is by the agent that sent it, else by her (access.file_author); the owner as before."""
+    from observatory.api import access
+    if (no := await _say_ok(request, body.thread)) is not None:
         return no
+    author = body.author or OWNER
+    if access.scoped(request):
+        if not await access.path_ok(request, body.path, body.thread):
+            return NOT_ATTACHED
+        author = await access.file_author(request, body.path, body.thread)
     subject = await msg_headline(request, body.msg_id, body.thread)
-    return await _run(import_source, store(), body.path, body.thread, body.author or _signer(request), body.label,
+    return await _run(import_source, store(), body.path, body.thread, author, body.label,
                       _msg(body.msg_id, body.msg_ts), subject)
 
 
 @router.post("/api/ws/artifacts/create")
 async def art_create(body: Create, request: Request):
-    if (no := await _say_ok(request, body.thread, body.author)) is not None:
+    from observatory.api import access
+    if (no := await _say_ok(request, body.thread)) is not None:
         return no
-    return await _run(store().create, body.thread, body.name, body.text, body.author, _msg(body.msg_id, body.msg_ts))
+    author = await access.message_author(request, body.msg_id, body.thread) if access.scoped(request) else body.author
+    return await _run(store().create, body.thread, body.name, body.text, author, _msg(body.msg_id, body.msg_ts))
 
 
 def _pool_of(request: Request):

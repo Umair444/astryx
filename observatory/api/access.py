@@ -12,11 +12,17 @@ workspace.project_visible (projects); this module is the one door readers ask, s
 
   await threads(request, ts)       the threads of `ts` this viewer reads
   await may(request, verb, thread) one thread, one verb
-  author_ok(request, author)       a name a viewer may sign a Library version with: anyone for the unscoped; a
-                                   member her own handle or an agent's (the file's sender), never 'owner' or another
-                                   person
+  await path_ok(request, path, thread=None)   a file path a member may name: one the SYSTEM attached ([[file:<path>]]
+                                   in a message she may read, on `thread` when given, written by an agent of this org
+                                   or the owner), or an upload (media/upload/<uuid>, unguessable) sent where she reads.
+                                   A person's typed [[file:]] is text, never an attachment: hers, another handle of
+                                   hers, a colleague's, a WhatsApp sender's (medic 16376 H5, 16380 HX1).
+  await file_author(request, path, thread)    who a Library version of that file is by: the agent that attached it on
+                                   that thread, else the viewer. Derived on the server; a client's name never decides.
 """
 from __future__ import annotations
+
+import os
 
 from fastapi import Request
 
@@ -66,8 +72,44 @@ async def may(request: Request, verb: str, thread: str) -> bool:
     return False                                   # share/manage: the maker's (chat sharing, step 2)
 
 
-def author_ok(request: Request, author: str) -> bool:
+def _own_upload(path: str) -> bool:
+    from observatory.api import chat as _chat
+    return _chat.MEDIA is not None and os.path.realpath(path).startswith(os.path.realpath(_chat.MEDIA / "upload") + os.sep)
+
+
+async def path_ok(request: Request, path: str, thread: str | None = None) -> bool:
+    from observatory.api import scope
+    if not path:
+        return False
+    pool = _pool(request)
     if not scoped(request):
-        return True
+        return bool(await pool.fetchval("SELECT 1 FROM messages WHERE strpos(body, $1) > 0 LIMIT 1", f"[[file:{path}]]"))
     from observatory.api import workspace as _ws
-    return author == handle(request) or author in set(_ws._roster())
+    await scope.load(pool, request)
+    return bool(await pool.fetchval(
+        f"SELECT 1 FROM messages WHERE strpos(body, $1) > 0 AND {scope.sql('$2', '$3', '$4')} "
+        "AND ($5 OR (coalesce(from_org, 'local') = 'local' AND (from_agent = ANY($6::text[]) OR from_agent = 'owner'))) "
+        "AND ($7::text IS NULL OR thread = $7) LIMIT 1",
+        f"[[file:{path}]]", *scope.args(request), _own_upload(path), sorted(set(_ws._roster())), thread))
+
+
+async def file_author(request: Request, path: str, thread: str) -> str:
+    from observatory.api import workspace as _ws
+    roster = sorted(set(_ws._roster()))
+    a = await _pool(request).fetchval(
+        "SELECT from_agent FROM messages WHERE thread = $1 AND strpos(body, $2) > 0 AND from_agent = ANY($3::text[]) "
+        "AND coalesce(from_org, 'local') = 'local' ORDER BY id DESC LIMIT 1", thread, f"[[file:{path}]]", roster)
+    return a or handle(request) or "owner"
+
+
+async def message_author(request: Request, msg_id: int | None, thread: str) -> str:
+    """Who words taken from a message are by (a turn opened as a document): that message's agent when it is on the
+    thread, else the viewer."""
+    from observatory.api import workspace as _ws
+    if msg_id:
+        a = await _pool(request).fetchval(
+            "SELECT from_agent FROM messages WHERE id = $1 AND thread = $2 AND coalesce(from_org, 'local') = 'local'",
+            msg_id, thread)
+        if a and a in set(_ws._roster()):
+            return a
+    return handle(request) or "owner"

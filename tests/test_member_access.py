@@ -73,6 +73,7 @@ def main(tmp: Path, url: str):
     CH.roster = lambda *a, **k: list(names)
     estate = tmp / "estate"
     (estate / "media").mkdir(parents=True)
+    os.environ["ASTRYX_WS_STORE"] = str(tmp / "ws-store")   # the Library under test is this run's own, never a shared one
     W.bind(lambda: obs.pool, estate, roster=lambda: set(names))
     chat.bind(lambda: obs.pool, estate, estate / "media", REPO, roster=lambda: set(names))
     obs._pilot_voice.persona = lambda agent: (f"{agent}'s line", "") if agent in names else None
@@ -252,11 +253,9 @@ def main(tmp: Path, url: str):
         last(ALICE) == "db says hers" and "privately" in (last(lambda: O) or ""), (last(ALICE), last(lambda: O)))
 
     print("A a thing's contents follow the thing (access-core, owner 11-25)")
-    af = estate / "media" / "alice-sheet.csv"
-    af.write_text("a,b\n1,2\n")
-    with psycopg.connect(url, autocommit=True) as c:
-        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
-                  "('cv-alice.7','db','chat:20990101-s','chat',%s)", (f"my sheet [[file:{af}]]",))
+    upa = cl.post("/api/chat/upload", params={"name": "alice-sheet.csv"}, headers=ALICE(), content=b"a,b\n1,2\n")
+    af = upa.json()["path"]                        # a member's file is one she uploads (media/upload/<uuid>)
+    cl.post("/api/messages", headers=ALICE(), json={"to": "db", "thread": "chat:20990101-s", "body": f"my sheet [[file:{af}]]"})
     op = lambda h, author="cv-alice.7": cl.post("/api/ws/artifacts/open", headers=h(), json={  # noqa: E731
         "path": str(af), "thread": "chat:20990101-s", "author": author, "label": "alice-sheet.csv"})
     r = op(ALICE)
@@ -272,12 +271,11 @@ def main(tmp: Path, url: str):
     code = cl.get("/api/ws/artifacts", params={"thread": "chat:20990101-s"}, headers=BOB()).status_code
     arm("A3 ...and bob can't list her chat's Library", code in (403, 404), code)
 
-    r = op(ALICE, "owner")
-    arm("A4 a member can't sign a version as the owner", r.status_code == 403, (r.status_code, r.text[:120]))
-    r = op(ALICE, "cv-carol.9")
-    arm("A4 ...nor as another person", r.status_code == 403, (r.status_code, r.text[:120]))
-    r = op(ALICE, "db")
-    arm("A4 ...as the agent whose file it is, she may", r.status_code == 200, (r.status_code, r.text[:120]))
+    by = lambda r: r.json()["versions"][-1]["author"] if r.status_code == 200 else r.status_code  # noqa: E731 — v1's author
+    for claim in ("owner", "cv-carol.9", "db"):
+        r = op(ALICE, claim)
+        arm(f"A4 a member's claimed author {claim!r} never decides: her own file's version is by her (medic 16376 H4)",
+            by(r) == "cv-alice.7", (r.status_code, r.text[:160]))
     art = op(ALICE).json()
     txt_ = cl.post("/api/ws/artifacts/create", headers=ALICE(), json={"thread": "chat:20990101-s", "name": "notes",
                                                                        "text": "v1\n", "author": "cv-alice.7"})
@@ -313,6 +311,47 @@ def main(tmp: Path, url: str):
     arm("H5 ...an agent's attachment on her chat opens", get(ALICE, dbf) == 200, get(ALICE, dbf))
     arm("H5 ...and the owner reads all three", all(get(lambda: O, p_) == 200 for p_ in (secret, upath, dbf)))
     arm("H5 bob reads none of them (not a party of her chat:…-h)", all(get(BOB, p_) == 403 for p_ in (secret, dbf)), [get(BOB, p_) for p_ in (secret, dbf)])
+
+    print("HX1 a person's typed [[file:]] is text, never an attachment (medic 16380)")
+    planted = estate / "media" / "planted.csv"
+    planted.write_text("k\n1\n")
+    with psycopg.connect(url, autocommit=True) as c:
+        for frm, org in (("cv-alice", "local"), ("wa-923001234567", "local"), ("cv-carol.9", "local"), ("db", "peer.example")):
+            c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body, from_org) VALUES "
+                      "(%s,'cv-alice.7','chat:20990101-h','chat',%s,%s)", (frm, f"see [[file:{planted}]]", org))
+    arm("HX1 a path typed by her canvas handle, a WhatsApp sender, a colleague or a federated peer's 'db' gives alice nothing",
+        get(ALICE, planted) == 403, get(ALICE, planted))
+    r = cl.post("/api/ws/artifacts/open", headers=ALICE(), json={"path": str(planted), "thread": "chat:20990101-h"})
+    arm("HX1 ...and doesn't open into her Library", r.status_code == 403, (r.status_code, r.text[:120]))
+    arm("HX1 the owner still reads it (unscoped)", get(lambda: O, planted) == 200, get(lambda: O, planted))
+
+    print("H1/H2/H4 the Library opens only what was sent on that conversation (medic 16376)")
+    own_only = estate / "media" / "owner-only.csv"
+    own_only.write_text("p,q\n1,2\n")
+    never = estate / "media" / "never-sent.csv"
+    never.write_text("z\n1\n")
+    with psycopg.connect(url, autocommit=True) as c:
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+                  "('owner','medic','chat:20990101-o','chat',%s)", (f"mine [[file:{own_only}]]",))
+    opn = lambda h, p_, th="chat:20990101-h", au=None: cl.post("/api/ws/artifacts/open", headers=h(), json={  # noqa: E731
+        "path": str(p_), "thread": th, **({"author": au} if au else {})})
+    r = opn(ALICE, own_only)
+    arm("H1 alice can't open into her Library a file sent only on the owner's chat", r.status_code == 403, (r.status_code, r.text[:120]))
+    r = opn(ALICE, never)
+    arm("H2 ...nor a file no message ever sent", r.status_code == 403, (r.status_code, r.text[:120]))
+    r = opn(ALICE, secret)
+    arm("H2 ...nor one she only named in her own message", r.status_code == 403, (r.status_code, r.text[:120]))
+    r = opn(ALICE, dbf)
+    arm("H4 db's attachment on her chat opens, as db's work", by(r) == "db", (r.status_code, r.text[:160]))
+    r = opn(ALICE, upath)
+    arm("H4 her own upload sent on her chat opens, as hers", by(r) == "cv-alice.7", (r.status_code, r.text[:160]))
+    r = opn(ALICE, dbf, th="chat:20990101-s")
+    arm("H1 ...but db's file sent on ANOTHER chat of hers doesn't open into this one", r.status_code == 403, (r.status_code, r.text[:120]))
+    r = opn(lambda: O, own_only, th="chat:20990101-o", au="owner")
+    arm("H1 the owner opens his own file as before", r.status_code == 200, (r.status_code, r.text[:120]))
+    cr = cl.post("/api/ws/artifacts/create", headers=ALICE(), json={"thread": "chat:20990101-h", "name": "n2", "text": "w\n",
+                                                                    "author": "db"})
+    arm("H4 create: a member's claimed author never decides (no message named: hers)", by(cr) == "cv-alice.7", (cr.status_code, cr.text[:160]))
 
     print("R3 a reply names only a message the sender may read (medic 12990)")
     with psycopg.connect(url, autocommit=True) as c:
