@@ -487,7 +487,7 @@ class Store:
             self.mirror()
             return self.artifact(aid)
 
-    def save(self, aid: str, text: str, message: str | None = None) -> dict:
+    def save(self, aid: str, text: str, message: str | None = None, author: str = OWNER) -> dict:
         e = self.entry(aid)
         if kind_of(e["name"]) not in EDITABLE:
             raise StoreError(415, "only text, table and code artifacts are edited here")
@@ -496,12 +496,12 @@ class Store:
             raise StoreError(413, f"the file is over {self.max_bytes // (1024 * 1024)} MB")
         with self.lock:
             atomic_write(self.root / e["path"], data)
-            if not self.commit([e["path"]], (message or "").strip()[:200] or "edit", OWNER):
+            if not self.commit([e["path"]], (message or "").strip()[:200] or "edit", author):
                 raise StoreError(409, "unchanged")
             self.mirror()
             return self.artifact(aid)
 
-    def restore(self, aid: str, rev: str, message: str | None = None) -> dict:
+    def restore(self, aid: str, rev: str, message: str | None = None, author: str = OWNER) -> dict:
         """A new commit by owner holding `rev`'s bytes; `message` names why (a revert of an agent's change says whose),
         else `restore <short> (v<N>)`."""
         e = self.entry(aid)
@@ -510,7 +510,7 @@ class Store:
             data = self.git("show", f"{v['rev']}:{e['path']}").stdout
             atomic_write(self.root / e["path"], data)
             subject = re.sub(r"\s+", " ", message or "").strip()[:200] or f"restore {v['short']} (v{v['n']})"
-            if not self.commit([e["path"]], subject, OWNER):
+            if not self.commit([e["path"]], subject, author):
                 raise StoreError(409, "unchanged")
             self.mirror()
             return self.artifact(aid)
@@ -619,7 +619,7 @@ class Store:
             items = []
         return {"etag": etag(p), "items": items if isinstance(items, list) else []}
 
-    def put_annotations(self, aid: str, raw, if_match: str) -> dict:
+    def put_annotations(self, aid: str, raw, if_match: str, author: str = OWNER) -> dict:
         e = self.entry(aid)
         items = clean_annotations(raw)
         rel = e["path"] + ANN
@@ -628,7 +628,7 @@ class Store:
                 raise StoreError(412, "the annotations changed since you loaded them")
             text = json.dumps(items, indent=1, ensure_ascii=False) + "\n"
             atomic_write(self.root / rel, text, mode=0o640)
-            self.commit([rel], "annotate", OWNER)
+            self.commit([rel], "annotate", author)
             return self.annotations(aid)
 
 
@@ -725,44 +725,60 @@ async def msg_headline(request: Request, msg_id: int | None, thread: str) -> str
     return (_ws.headline(row["body"], HEADLINE_MAX) or None) if row else None
 
 
+NOT_ATTACHED = JSONResponse({"error": "open a file that was sent in this conversation, or one you uploaded"},
+                            status_code=403)
+
+
+async def _say_ok(request: Request, thread: str) -> JSONResponse | None:
+    """A Library write on `thread`: the viewer says on it (access.may)."""
+    from observatory.api import access
+    return None if await access.may(request, "say", thread) else NOT_YOURS
+
+
+def _signer(request: Request) -> str:
+    """Who a version made by THIS viewer is by: a member her own handle, the owner (and an unbound app) owner."""
+    from observatory.api import access
+    return (access.handle(request) or OWNER) if access.scoped(request) else OWNER
+
+
 @router.post("/api/ws/artifacts/open")
 async def art_open(body: Open, request: Request):
+    """A member opens only a file sent on THIS conversation by someone else, or her own upload sent on it (access.path_ok),
+    and its version is by the agent that sent it, else by her (access.file_author); the owner as before."""
+    from observatory.api import access
+    if (no := await _say_ok(request, body.thread)) is not None:
+        return no
+    author = body.author or OWNER
+    if access.scoped(request):
+        if not await access.path_ok(request, body.path, body.thread):
+            return NOT_ATTACHED
+        author = await access.file_author(request, body.path, body.thread)
     subject = await msg_headline(request, body.msg_id, body.thread)
-    return await _run(import_source, store(), body.path, body.thread, body.author or OWNER, body.label,
+    return await _run(import_source, store(), body.path, body.thread, author, body.label,
                       _msg(body.msg_id, body.msg_ts), subject)
 
 
 @router.post("/api/ws/artifacts/create")
-async def art_create(body: Create):
-    return await _run(store().create, body.thread, body.name, body.text, body.author, _msg(body.msg_id, body.msg_ts))
+async def art_create(body: Create, request: Request):
+    from observatory.api import access
+    if (no := await _say_ok(request, body.thread)) is not None:
+        return no
+    author = await access.message_author(request, body.msg_id, body.thread) if access.scoped(request) else body.author
+    return await _run(store().create, body.thread, body.name, body.text, author, _msg(body.msg_id, body.msg_ts))
 
 
 def _pool_of(request: Request):
     return _get_pool() if _get_pool else request.app.state.pool
 
 
-def _project_ok(request: Request, thread: str) -> bool:
-    """A project's knowledge (thread project:<id>) is for those who see the project (workspace.project_visible)."""
-    from observatory.api import workspace as _ws
-    if not thread.startswith("project:"):
-        return True
-    return any(p.get("id") == thread[8:] for p in _ws._projects(_ws.account(request)))   # nobody: none
-
-
 async def _threads_ok(request: Request, threads) -> set[str]:
-    """The threads this viewer reads: a project's knowledge (project:<id>, no wire of its own) when they see the
-    project; any other, scope.py's rule (a member: the threads whose every message is theirs to read)."""
-    from observatory.api import scope
-    want = {t for t in threads if t}
-    proj = {t for t in want if t.startswith("project:") and _project_ok(request, t)}
-    rest = {t for t in want if not t.startswith("project:")}
-    if rest and scope.of(request) is not None:
-        rest = await scope.threads_ok(_pool_of(request), request, rest)
-    return proj | rest
+    from observatory.api import access
+    return await access.threads(request, threads)
 
 
 async def _thread_ok(request: Request, thread: str) -> bool:
-    return thread in await _threads_ok(request, [thread])
+    from observatory.api import access
+    return await access.may(request, "read", thread)
 
 
 async def _aid_ok(request: Request, aid: str) -> bool:
@@ -827,8 +843,20 @@ async def thread_titles(request: Request, threads: set[str]) -> dict[str, str]:
     return out
 
 
+async def _aid_say(request: Request, aid: str) -> JSONResponse | None:
+    try:
+        thread = (await asyncio.to_thread(store().entry, aid))["thread"]
+    except StoreError as e:                         # no such artifact: the handler's own 404 says so
+        return None if e.status == 404 else NOT_YOURS
+    except Exception:                               # noqa: BLE001 — anything else: closed
+        return NOT_YOURS
+    return await _say_ok(request, thread)
+
+
 @router.post("/api/ws/artifacts/{aid}/export")
-async def art_export(aid: str):
+async def art_export(aid: str, request: Request):
+    if (no := await _aid_say(request, aid)) is not None:
+        return no
     if _chat.MEDIA is None:
         return JSONResponse({"error": "no media dir"}, status_code=503)
     return await _run(store().export, aid, _chat.MEDIA)
@@ -860,13 +888,17 @@ async def art_content(aid: str, request: Request, rev: str | None = None):
 
 
 @router.post("/api/ws/artifacts/{aid}/save")
-async def art_save(aid: str, body: Save):
-    return await _run(store().save, aid, body.text, body.message)
+async def art_save(aid: str, body: Save, request: Request):
+    if (no := await _aid_say(request, aid)) is not None:
+        return no
+    return await _run(store().save, aid, body.text, body.message, _signer(request))
 
 
 @router.post("/api/ws/artifacts/{aid}/restore")
-async def art_restore(aid: str, body: Restore):
-    return await _run(store().restore, aid, body.rev, body.message)
+async def art_restore(aid: str, body: Restore, request: Request):
+    if (no := await _aid_say(request, aid)) is not None:
+        return no
+    return await _run(store().restore, aid, body.rev, body.message, _signer(request))
 
 
 class Standard(BaseModel):
@@ -896,7 +928,9 @@ async def art_annotations_put(aid: str, request: Request):
         raw = json.loads(await request.body() or b"null")
     except ValueError:
         return JSONResponse({"error": "the body is not JSON"}, status_code=400)
-    got = await _run(store().put_annotations, aid, raw, tag)
+    if (no := await _aid_say(request, aid)) is not None:
+        return no
+    got = await _run(store().put_annotations, aid, raw, tag, _signer(request))
     if isinstance(got, Response):
         return got
     return JSONResponse(got, headers={"ETag": f'"{got["etag"]}"'})

@@ -554,11 +554,13 @@ MEMBER_GET = ("/api/ws/threads", "/api/ws/thread-titles", "/api/ws/search", "/ap
               "/api/ws/briefing", "/api/ws/media", "/api/ws/artifacts", "/api/chat/", "/api/presence",
               "/api/steps", "/api/pulse", "/api/me/channels")
 _MEMBER_AGENT_GET = re.compile(r"^/api/agents/[^/]+/(profile|charter)$")
-_MEMBER_POST = re.compile(r"^/api/ws/canvases/\d+/share$")   # a canvas's maker shares it (ws_canvas: maker or owner)
+_MEMBER_POST = re.compile(r"^/api/ws/canvases/\d+/share$"   # a canvas's maker shares it (ws_canvas: maker or owner)
+                          r"|^/api/ws/artifacts/(open|create|[^/]+/(save|restore|export))$")   # access.may(say, thread)
+_MEMBER_PUT = re.compile(r"^/api/ws/artifacts/[^/]+/annotations$")   # … the same (the org standard stays the owner's)
 
 
 def member_may(m: str, p: str) -> bool:
-    return ((m, p) in MEMBER or (m == "POST" and bool(_MEMBER_POST.match(p)))
+    return ((m, p) in MEMBER or (m == "POST" and bool(_MEMBER_POST.match(p))) or (m == "PUT" and bool(_MEMBER_PUT.match(p)))
             or (m == "GET" and (p.startswith(MEMBER_GET) or bool(_MEMBER_AGENT_GET.match(p))) and p not in MEMBER_FILE))
 
 
@@ -568,15 +570,13 @@ MEMBER_FILE = ("/api/chat/file", "/api/chat/preview")
 
 async def member_file(request: Request) -> bool:
     """/api/chat/file (and /preview) for a member: only a file some message on the wire ATTACHED ([[file:<path>]]), never any path
-    under the homes (chat.roots() spans whole agent homes; the personal tier binds every user, DESIGN Phase 2)."""
+    under the homes (chat.roots() spans whole agent homes; the personal tier binds every user, DESIGN Phase 2). The rule
+    is access.path_ok: only the system attaches (an agent, the owner) or an upload (medic 16376 H5, 16380 HX1)."""
     path = request.query_params.get("path", "")
     if not path or pool is None:
         return False
-    if _scope.of(request) is None:  # else a member: only a file a message THEY may read attached
-        return bool(await pool.fetchval("SELECT 1 FROM messages WHERE strpos(body, $1) > 0 LIMIT 1", f"[[file:{path}]]"))
-    await _scope.load(pool, request)
-    return bool(await pool.fetchval(f"SELECT 1 FROM messages WHERE strpos(body, $1) > 0 AND {_scope.sql('$2', '$3', '$4')} "
-                                    "LIMIT 1", f"[[file:{path}]]", *_scope.args(request)))
+    from observatory.api import access as _access_core
+    return await _access_core.path_ok(request, path)
 
 
 
