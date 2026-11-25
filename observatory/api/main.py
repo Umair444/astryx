@@ -577,8 +577,12 @@ async def member_file(request: Request) -> bool:
     if _scope.of(request) is None:  # else a member: only a file a message THEY may read attached
         return bool(await pool.fetchval("SELECT 1 FROM messages WHERE strpos(body, $1) > 0 LIMIT 1", f"[[file:{path}]]"))
     await _scope.load(pool, request)
+    # Her OWN message attaches only what she uploaded (media/upload/<uuid>: unguessable, so hers or shown to her):
+    # naming any other path in a message of hers granted her its bytes (medic 16376, H5: an agent home, others' media).
+    own = _chat.MEDIA is not None and os.path.realpath(path).startswith(os.path.realpath(_chat.MEDIA / "upload") + os.sep)
     return bool(await pool.fetchval(f"SELECT 1 FROM messages WHERE strpos(body, $1) > 0 AND {_scope.sql('$2', '$3', '$4')} "
-                                    "LIMIT 1", f"[[file:{path}]]", *_scope.args(request)))
+                                    "AND (from_agent IS DISTINCT FROM $3 OR $5) LIMIT 1",
+                                    f"[[file:{path}]]", *_scope.args(request), own))
 
 
 

@@ -294,6 +294,25 @@ def main(tmp: Path, url: str):
         arm(f"A6 bob can't {verb} a document in alice's chat", code in (403, 404), code)
     code = cl.put(f"/api/ws/artifacts/{art.get('id')}/standard", headers=ALICE(), json={"on": True}).status_code
     arm("A7 a member can't pin an org standard (the owner's)", code == 403, code)
+    print("H a member's own message attaches only what she uploaded (medic 16376 H5)")
+    secret = estate / "media" / "someone-elses.csv"
+    secret.write_text("x,y\n1,2\n")
+    dbf = estate / "media" / "db-sent.csv"
+    dbf.write_text("a\n1\n")
+    up = cl.post("/api/chat/upload", params={"name": "mine.csv"}, headers=ALICE(), content=b"m,n\n1,2\n")
+    upath = up.json().get("path", "") if up.status_code == 200 else ""
+    for body in (f"look [[file:{secret}]]", f"mine [[file:{upath}]]"):
+        cl.post("/api/messages", headers=ALICE(), json={"to": "db", "thread": "chat:20990101-h", "body": body})
+    with psycopg.connect(url, autocommit=True) as c:
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+                  "('db','cv-alice.7','chat:20990101-h','chat',%s)", (f"here [[file:{dbf}]]",))
+    get = lambda h, p_: cl.get("/api/chat/file", params={"path": str(p_)}, headers=h()).status_code  # noqa: E731
+    arm("H5 naming a path in her own message doesn't give alice its bytes", get(ALICE, secret) == 403, get(ALICE, secret))
+    arm("H5 ...her own upload, attached by her, opens", up.status_code == 200 and get(ALICE, upath) == 200,
+        (up.status_code, get(ALICE, upath) if upath else None))
+    arm("H5 ...an agent's attachment on her chat opens", get(ALICE, dbf) == 200, get(ALICE, dbf))
+    arm("H5 ...and the owner reads all three", all(get(lambda: O, p_) == 200 for p_ in (secret, upath, dbf)))
+    arm("H5 bob reads none of them (not a party of her chat:…-h)", all(get(BOB, p_) == 403 for p_ in (secret, dbf)), [get(BOB, p_) for p_ in (secret, dbf)])
 
     print("R3 a reply names only a message the sender may read (medic 12990)")
     with psycopg.connect(url, autocommit=True) as c:
