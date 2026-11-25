@@ -38,6 +38,15 @@ def personal_sql(col: str = "thread") -> str:
 PERSONAL_SQL = personal_sql()
 
 
+class _Every(frozenset):
+    """A set that holds every thread: the live feed's registry when the registry can't be read (medic 16400)."""
+    def __contains__(self, _):                      # noqa: D105
+        return True
+
+
+_EVERY = _Every()
+
+
 def of(request) -> tuple[list[str] | None, str] | None:
     reach = getattr(request.state, "reach", set())
     if reach is None and getattr(request.state, "role", None) not in MEMBER_ROLES:
@@ -68,6 +77,7 @@ async def load(pool, request) -> set[str]:
     from observatory.api import ws_canvas as _wc
     acct = getattr(request.state, "uid", None)
     keys = {k for k in (_ws.canvas_user(me) if me else "", acct or "") if k}   # who she is to a registry row: both shapes
+    request.state.registered = _EVERY            # until the registry answers, every chat counts as registered (closed)
     try:
         # A REGISTERED conversation (canvas_threads: it has a maker) is open to its maker and whom it is shared with,
         # never to someone only because they wrote on it: unsharing a chat (or a canvas) takes it back (access-core 2).
