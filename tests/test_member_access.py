@@ -272,6 +272,29 @@ def main(tmp: Path, url: str):
     code = cl.get("/api/ws/artifacts", params={"thread": "chat:20990101-s"}, headers=BOB()).status_code
     arm("A3 ...and bob can't list her chat's Library", code in (403, 404), code)
 
+    r = op(ALICE, "owner")
+    arm("A4 a member can't sign a version as the owner", r.status_code == 403, (r.status_code, r.text[:120]))
+    r = op(ALICE, "cv-carol.9")
+    arm("A4 ...nor as another person", r.status_code == 403, (r.status_code, r.text[:120]))
+    r = op(ALICE, "db")
+    arm("A4 ...as the agent whose file it is, she may", r.status_code == 200, (r.status_code, r.text[:120]))
+    art = op(ALICE).json()
+    txt_ = cl.post("/api/ws/artifacts/create", headers=ALICE(), json={"thread": "chat:20990101-s", "name": "notes",
+                                                                       "text": "v1\n", "author": "cv-alice.7"})
+    arm("A5 alice creates a document in her chat's Library", txt_.status_code == 200, (txt_.status_code, txt_.text[:120]))
+    did_ = txt_.json().get("id")
+    sv = cl.post(f"/api/ws/artifacts/{did_}/save", headers=ALICE(), json={"text": "v2\n"})
+    arm("A5 her saved version is by her, not by 'owner'", sv.status_code == 200 and sv.json()["versions"][0]["author"] == "cv-alice.7",
+        (sv.status_code, sv.text[:160]))
+    for verb, call in (("save", lambda h: cl.post(f"/api/ws/artifacts/{did_}/save", headers=h(), json={"text": "x\n"})),
+                       ("restore", lambda h: cl.post(f"/api/ws/artifacts/{did_}/restore", headers=h(), json={"rev": "HEAD"})),
+                       ("export", lambda h: cl.post(f"/api/ws/artifacts/{did_}/export", headers=h())),
+                       ("annotate", lambda h: cl.put(f"/api/ws/artifacts/{did_}/annotations", headers=h(), json=[]))):
+        code = call(BOB).status_code
+        arm(f"A6 bob can't {verb} a document in alice's chat", code in (403, 404), code)
+    code = cl.put(f"/api/ws/artifacts/{art.get('id')}/standard", headers=ALICE(), json={"on": True}).status_code
+    arm("A7 a member can't pin an org standard (the owner's)", code == 403, code)
+
     print("R3 a reply names only a message the sender may read (medic 12990)")
     with psycopg.connect(url, autocommit=True) as c:
         own = c.execute("SELECT id FROM messages WHERE thread = 'chat:20990101-o' AND from_agent = 'medic' ORDER BY id LIMIT 1").fetchone()[0]

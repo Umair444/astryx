@@ -554,11 +554,13 @@ MEMBER_GET = ("/api/ws/threads", "/api/ws/thread-titles", "/api/ws/search", "/ap
               "/api/ws/briefing", "/api/ws/media", "/api/ws/artifacts", "/api/chat/", "/api/presence",
               "/api/steps", "/api/pulse", "/api/me/channels")
 _MEMBER_AGENT_GET = re.compile(r"^/api/agents/[^/]+/(profile|charter)$")
-_MEMBER_POST = re.compile(r"^/api/ws/canvases/\d+/share$")   # a canvas's maker shares it (ws_canvas: maker or owner)
+_MEMBER_POST = re.compile(r"^/api/ws/canvases/\d+/share$"   # a canvas's maker shares it (ws_canvas: maker or owner)
+                          r"|^/api/ws/artifacts/(open|create|[^/]+/(save|restore|export))$")   # access.may(say, thread)
+_MEMBER_PUT = re.compile(r"^/api/ws/artifacts/[^/]+/annotations$")   # … the same (the org standard stays the owner's)
 
 
 def member_may(m: str, p: str) -> bool:
-    return ((m, p) in MEMBER or (m == "POST" and bool(_MEMBER_POST.match(p)))
+    return ((m, p) in MEMBER or (m == "POST" and bool(_MEMBER_POST.match(p))) or (m == "PUT" and bool(_MEMBER_PUT.match(p)))
             or (m == "GET" and (p.startswith(MEMBER_GET) or bool(_MEMBER_AGENT_GET.match(p))) and p not in MEMBER_FILE))
 
 
