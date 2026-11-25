@@ -813,6 +813,7 @@ CREATE TABLE IF NOT EXISTS canvas_threads (
   archived    boolean NOT NULL DEFAULT false
 );
 ALTER TABLE canvas_threads ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT 'astryx';
+ALTER TABLE canvas_threads ADD COLUMN IF NOT EXISTS shared_with text[] NOT NULL DEFAULT '{}';   -- a chat shared with members, by account (access-core 2: a canvas's own shape)
 CALL pg_temp.widen_key('canvas_threads', 'canvas_threads_pkey', 'p', '{tenant,thread}');
 CREATE INDEX IF NOT EXISTS canvas_threads_user ON canvas_threads (user_name, updated_at DESC);
 CREATE TABLE IF NOT EXISTS canvases (

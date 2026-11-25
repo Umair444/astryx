@@ -22,6 +22,11 @@ export interface WsThread {
   project: string | null
   by?: string | null             // who started it: 'owner', or a member's handle (cog-who)
   switches?: Switch[]            // the owner SWITCHED this chat's agents (oldest first); `agents` is then the last one's
+  shared?: string[]              // the members it is shared with, by account (access-core 2: a canvas's shape)
+  shared_with_me?: boolean       // someone else's chat, shared with this viewer
+  shareable?: boolean            // a chat (not a desk, not a canvas's)
+  yours?: boolean                // its maker or the owner: theirs to share (server-set)
+  by_member?: boolean            // a member made it
 }
 /* a switch (PUT /api/ws/threads/meta {switch_to}): from `ts` on, the chat is with `agents`; what was said before it
    never reaches them (each agent only reads the rows sent to it), so the thread draws a boundary there */
@@ -57,6 +62,8 @@ export const loadWsThreads = (scope: Scope = 'mine', open = '') => {
   return api<{ etag: string; threads: WsThread[] }>(`/ws/threads${q ? `?${q}` : ''}`)
 }
 export const loadWsAgents = () => api<WsAgent[]>('/ws/agents')
+export const shareChat = (thread: string, shared: string[]) =>
+  apiSend<{ thread: string; shared: string[] }>('POST', '/ws/chats/share', { thread, shared })
 export const saveThreadMeta = (thread: string, patch: { title?: string; pinned?: boolean; switch_to?: string[]; deleted?: boolean }) =>
   apiSend<{ thread: string; title?: string; pinned?: boolean; switches?: Switch[] }>('PUT', '/ws/threads/meta', { thread, ...patch })
 

@@ -4,7 +4,7 @@
 A thing is a conversation (a thread) for now: a chat, a canvas's chat, a project's knowledge (project:<id>), a desk.
 Everything INSIDE a thread follows the thread: its messages, the files sent on it, its Library artifacts, the work on it.
 Verbs: read (see it and what is inside), say (add to it: talk, open a file into its Library, save a version), share and
-manage (the maker's: chat sharing, step 2). A shared thread's reader may also say (canvas parity, owner 11-17).
+manage (its maker's, and the owner's: maker_of). A shared thread's reader may also say (canvas parity, owner 11-17).
 
 The viewer is the session's (privacy_gate: request.state), never a name the client sent. The owner and the agents
 (no member role) are unscoped. A person's rule today lives in scope.py (the people's own chats, their reach) and
@@ -69,7 +69,31 @@ async def may(request: Request, verb: str, thread: str) -> bool:
         return True
     if verb in ("read", "say"):
         return thread in await threads(request, [thread])
-    return False                                   # share/manage: the maker's (chat sharing, step 2)
+    from observatory.api import workspace as _ws
+    me, acct = handle(request), _ws.account(request)
+    mine = {k for k in (_canvas_name(me) if me else "", acct or "") if k}   # a registry row names her either way
+    return await maker_of(request, thread) in mine                         # share/manage: the maker's
+
+
+def _canvas_name(me: str) -> str:
+    from observatory.api import workspace as _ws
+    return _ws.canvas_user(me)
+
+
+async def maker_of(request: Request, thread: str) -> str | None:
+    """Who made a conversation, in canvas_threads' shape ('owner' or a cv-<x>'s <x>): its registry row's user_name;
+    a chat with no row, the first person who wrote on it (one maker, never two)."""
+    from observatory.api import workspace as _ws
+    pool = _pool(request)
+    try:
+        u = await pool.fetchval("SELECT user_name FROM canvas_threads WHERE thread = $1", thread)
+    except Exception:                               # noqa: BLE001 — an estate without canvas_threads: the wire decides
+        u = None
+    if u:
+        return u
+    first = await pool.fetchval(f"SELECT from_agent FROM messages WHERE thread = $1 AND {_ws.human_sql('from_agent')} "
+                                "ORDER BY id LIMIT 1", thread)
+    return _canvas_name(first) if first else None
 
 
 def _own_upload(path: str) -> bool:

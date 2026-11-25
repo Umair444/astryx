@@ -112,7 +112,8 @@ def main(tmp: Path, url: str):
     arm("S1 caps are each role's default: a member dictates, the owner has everything",
         wb["caps"] == {"dictate": None} and wa["caps"] == {"dictate": None} and wo["caps"] == {"dictate": None, "call": None},
         (wb["caps"], wo["caps"]))
-    send = lambda h, to, team=None: cl.post("/api/messages", headers=h(), json={"to": to, "body": "hi", "thread": "chat:20990101-s", **({"team": team} if team else {})}).status_code  # noqa: E731
+    # each person posts on her own chat: since access-core 2 a chat's id is no key to someone else's
+    send = lambda h, to, team=None: cl.post("/api/messages", headers=h(), json={"to": to, "body": "hi", "thread": "chat:20990101-b0" if h is BOB else "chat:20990101-s", **({"team": team} if team else {})}).status_code  # noqa: E731
     arm("S2 bob may message db", send(BOB, "db") == 200, send(BOB, "db"))
     arm("S2 ...not medic", send(BOB, "medic") == 403)
     arm("S2 ...nor tag medic onto a team", send(BOB, "db", ["db", "medic"]) == 403)
@@ -352,6 +353,69 @@ def main(tmp: Path, url: str):
     cr = cl.post("/api/ws/artifacts/create", headers=ALICE(), json={"thread": "chat:20990101-h", "name": "n2", "text": "w\n",
                                                                     "author": "db"})
     arm("H4 create: a member's claimed author never decides (no message named: hers)", by(cr) == "cv-alice.7", (cr.status_code, cr.text[:160]))
+
+    print("CS chat sharing: a canvas's rule and shape for a chat; what is inside follows (owner 11-25)")
+    SH = "chat:20990101-sh"
+    shf = estate / "media" / "db-on-shared.csv"
+    shf.write_text("r\n1\n")
+    cl.post("/api/messages", headers=ALICE(), json={"to": "db", "thread": SH, "body": "alice's chat to share"})
+    with psycopg.connect(url, autocommit=True) as c:
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+                  "('db','cv-alice.7',%s,'chat',%s)", (SH, f"the sheet [[file:{shf}]]"))
+    share = lambda h, users, th=SH: cl.post("/api/ws/chats/share", headers=h(), json={"thread": th, "shared": users})  # noqa: E731
+    bodies = lambda h, th=SH: [m_["body"][:24] for m_ in cl.get("/api/messages", params={"thread": th}, headers=h()).json()]  # noqa: E731
+    mine = lambda h: {r_["thread"]: r_ for r_ in cl.get("/api/ws/threads", headers=h()).json()["threads"]}  # noqa: E731
+    arm("CS0 before sharing, bob reads none of alice's chat", bodies(BOB) == [], bodies(BOB))
+    r = share(ALICE, ["8@fxcog"])
+    arm("CS1 alice, its maker, shares her chat with bob by account", r.status_code == 200 and r.json()["shared"] == ["8@fxcog"],
+        (r.status_code, r.text[:160]))
+    lb = mine(BOB)
+    arm("CS2 bob's chat list has it, marked shared with him", SH in lb and lb[SH].get("shared_with_me") is True, sorted(lb))
+    arm("CS2 ...alice's list shows whom it is shared with", mine(ALICE).get(SH, {}).get("shared") == ["8@fxcog"], mine(ALICE).get(SH))
+    la = mine(ALICE).get(SH, {})
+    arm("CS2 the Share button's flags: alice's chat is hers to share; bob's copy is shared with him, not his",
+        la.get("shareable") and la.get("yours") and la.get("by_member") and lb[SH].get("yours") is False,
+        ({k: la.get(k) for k in ("shareable", "yours", "by_member")}, lb[SH].get("yours")))
+    arm("CS3 bob reads it", any("alice's chat to share" in b_ for b_ in bodies(BOB)), bodies(BOB))
+    arm("CS3 ...and the file db sent on it", get(BOB, shf) == 200, get(BOB, shf))
+    code = cl.get("/api/ws/artifacts", params={"thread": SH}, headers=BOB()).status_code
+    arm("CS3 ...and its Library", code == 200, code)
+    po = cl.post("/api/messages", headers=BOB(), json={"to": "db", "thread": SH, "body": "bob joins"})
+    arm("CS4 bob talks in it (canvas parity)", po.status_code == 200, (po.status_code, po.text[:120]))
+    arm("CS5 carol, not shared, reads none of it", bodies(CAROL) == [] and get(CAROL, shf) == 403, (bodies(CAROL), get(CAROL, shf)))
+    po = cl.post("/api/messages", headers=CAROL(), json={"to": "db", "thread": SH, "body": "carol barges in"})
+    arm("CS5 ...nor can she talk in it (a chat's id is no key)", po.status_code == 403, (po.status_code, po.text[:120]))
+    r = share(BOB, ["8@fxcog", "9@fxcog"])
+    arm("CS6 bob, shared but not its maker, can't share it on", r.status_code == 403, (r.status_code, r.text[:120]))
+    r = share(ALICE, ["8@fxcog", "99@elsewhere"])
+    arm("CS6 ...alice can't share with a non-member", r.status_code == 400, (r.status_code, r.text[:120]))
+    for th, why in (("obs:db", "a desk"), ("cv:canvas-1", "a canvas's chat")):
+        r = share(lambda: O, ["8@fxcog"], th)
+        arm(f"CS7 {why} isn't shared as a chat", r.status_code == 400, (r.status_code, r.text[:120]))
+    r = share(lambda: O, ["8@fxcog", "7@fxcog"], "chat:20990101-pb")
+    arm("CS7 the owner shares any chat", r.status_code == 200, (r.status_code, r.text[:120]))
+    r = share(ALICE, [])
+    arm("CS8 alice unshares it: bob reads none of it again", r.status_code == 200 and bodies(BOB) == [] and get(BOB, shf) == 403,
+        (r.status_code, bodies(BOB), get(BOB, shf)))
+    po = cl.post("/api/messages", headers=ALICE(), json={"to": "medic", "thread": "chat:20990101-o", "body": "let me in"})
+    arm("CS9 posting on the owner's chat doesn't make alice a party of it any more", po.status_code == 403
+        and not any(m_["thread"] == "chat:20990101-o" for m_ in cl.get("/api/messages", params={"limit": 500}, headers=ALICE()).json()),
+        (po.status_code, po.text[:120]))
+    po = cl.post("/api/messages", headers=ALICE(), json={"to": "db", "thread": "chat:20990101-new", "body": "a new chat"})
+    arm("CS9 ...a new chat of her own she starts as ever", po.status_code == 200, (po.status_code, po.text[:120]))
+
+    with psycopg.connect(url, autocommit=True) as c:      # the registry names makers both ways (live: '14@…' and 'kumail-…')
+        c.execute("INSERT INTO canvas_threads (thread, user_name, agent) VALUES ('cv:20990101-acct','7@fxcog','db'), "
+                  "('cv:20990101-carol','carol.9','db')")
+        c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
+                  "('cv-alice.7','db','cv:20990101-acct','chat','alice on her cv chat'), "
+                  "('cv-alice.7','db','cv:20990101-carol','chat','alice wrote on carol''s')")
+    arm("CS10 a chat registered under its maker's ACCOUNT opens to her (Kumail's cv chats are stored that way)",
+        any("alice on her cv chat" in b_ for b_ in bodies(ALICE, "cv:20990101-acct")), bodies(ALICE, "cv:20990101-acct"))
+    arm("CS10 a registered chat she only wrote on is not hers (its maker is carol)", bodies(ALICE, "cv:20990101-carol") == [],
+        bodies(ALICE, "cv:20990101-carol"))
+    r = share(ALICE, ["8@fxcog"], "cv:20990101-acct")
+    arm("CS10 ...and she shares the one she made", r.status_code == 200, (r.status_code, r.text[:120]))
 
     print("R3 a reply names only a message the sender may read (medic 12990)")
     with psycopg.connect(url, autocommit=True) as c:
