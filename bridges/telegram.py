@@ -132,6 +132,7 @@ async def deliver(row):
                                     files={field: (name, data)}, timeout=300)
                 if not r.json().get("ok"):
                     raise RuntimeError(str(r.json().get("description", "sendfile not ok"))[:120])
+                out.sent((r.json().get("result") or {}).get("message_id"))   # a reply quoting the file finds its agent
             except Exception as e:
                 out.failed("file", e)
                 await tg("sendMessage", chat_id=int(chat),

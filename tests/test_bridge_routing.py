@@ -38,11 +38,15 @@ message is read), staged with fixture charters, so agent_exists() answers from t
   R17 a quoted id from ANOTHER thread is not honoured (a reply can't reach across threads) → the newest speaker
   R18 a quoted id we never stored (a progress bubble, an old message) → the newest speaker, as before
   R19 an @mention on the reply still wins over the quoted message
+  R20 (medic 15971) a reply quoting the FILE of a text+file message (delivery.message_ids [text, file]) → its agent
+  R21 a file-only message (message_id null, message_ids [file]) → its agent
+  R22 Outcome keeps every part's id in message_ids (the first stays message_id) and the receipt carries them
 PRECEDENCE: explicit mention on THIS message > the agent whose message it replies to > the newest agent-bearing row (counting polls) >
 the surface default.
 """
 import asyncio
 import importlib
+import json
 import os
 import re
 import shutil
@@ -123,15 +127,20 @@ try:
                    "body) VALUES (%s,%s,%s,%s,%s,%s,'(placeholder)')",
                    (frm, forg, to, torg, thread, intent))
 
-    def sent(thread, frm, to, platform_id):          # an agent's send the bridge delivered, with its platform id
+    def sent(thread, frm, to, platform_id, ids=None):   # an agent's send the bridge delivered, with its platform ids
+        d = {"message_id": platform_id, **({"message_ids": ids} if ids is not None else {})}
         db.execute("INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body, delivery) "
                    "VALUES (%s,'local',%s,'local',%s,'chat','(placeholder)',%s)",
-                   (frm, to, thread, '{"message_id": "%s"}' % platform_id))
+                   (frm, to, thread, json.dumps(d)))
 
     # R16-R19: canopus posts (id Q16), readycash posts after; Q17 lives on another thread.
     sent("wa:r16", "canopus", "owner", "Q16")
     sent("wa:r16", "readycash", "owner", "Q16b")
     sent("wa:r17other", "canopus", "owner", "Q17")
+    # R20/R21: canopus sends text+file, then a file only; readycash speaks after both.
+    sent("wa:r20", "canopus", "owner", "T20", ["T20", "F20"])
+    sent("wa:r20", "canopus", "owner", None, ["F21"])
+    sent("wa:r20", "readycash", "owner", "Q20b", ["Q20b"])
     # R1: the incident's shape (owner → seed chat, then canopus → owner chat).
     row("dc:r1", "owner", "discord", "seed", "local")
     row("dc:r1", "canopus", "local", "owner", "local")
@@ -196,6 +205,8 @@ try:
                 "r17": await rt(conn, "wa:r16", "and this?", "seed", "Q17"),
                 "r18": await rt(conn, "wa:r16", "and this?", "seed", "NEVER-STORED"),
                 "r19": await rt(conn, "wa:r16", "@forge check this", "seed", "Q16"),
+                "r20": await rt(conn, "wa:r20", "why is this column empty?", "seed", "F20"),
+                "r21": await rt(conn, "wa:r20", "and this chart?", "seed", "F21"),
             }
         finally:
             await conn.close()
@@ -233,6 +244,13 @@ try:
           who["r17"] == "readycash", who["r17"])
     check("R18 a quoted id we never stored → the newest speaker (readycash)", who["r18"] == "readycash", who["r18"])
     check("R19 an @mention on the reply still wins → forge", who["r19"] == "forge", who["r19"])
+    check("R20 a reply quoting the file of a text+file message → canopus", who["r20"] == "canopus", who["r20"])
+    check("R21 a reply quoting a file-only message → canopus", who["r21"] == "canopus", who["r21"])
+    o = common.Outcome()
+    o.sent("T"); o.sent(None); o.sent("F")
+    rc = json.loads(o.receipt("h", None))
+    check("R22 Outcome: message_id is the first id, message_ids holds every part's id, the receipt carries both",
+          o.message_id == "T" and rc["message_id"] == "T" and rc.get("message_ids") == ["T", "F"], rc)
     check("R8 an explicit @mention ALWAYS wins: @insurance where readycash spoke last → insurance",
           who["r8"] == "insurance", who["r8"])
     check("R8 ...and the mention token is KEPT in the delivered text (the agent sees it was addressed by name)",

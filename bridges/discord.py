@@ -170,8 +170,11 @@ async def deliver(row):
                 await ch.send(f"(file {p.name} was NOT sent — {e})")
                 continue
             try:                                   # webhook so media carries the agent's name
-                if not (hook and await hook_file(hook, agent, name, data)):
-                    await ch.send(file=discord.File(io.BytesIO(data), filename=name))
+                fid = await hook_file(hook, agent, name, data) if hook else None
+                if not fid:
+                    m = await ch.send(file=discord.File(io.BytesIO(data), filename=name))
+                    fid = str(getattr(m, "id", "") or "")
+                out.sent(fid)                      # a reply quoting the file finds its agent (medic 15971)
             except Exception as e:
                 out.failed("file", e)
                 await ch.send(f"(file {p.name} failed to send)")

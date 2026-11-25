@@ -294,7 +294,8 @@ async def route_target(pool, thread: str, text: str, default: str, reply_to: str
     if reply_to:                                 # 2. a reply to an agent's message on THIS thread
         r = await pool.fetchrow(
             "SELECT from_agent FROM messages WHERE thread=$1 AND from_org='local' "
-            "AND delivery->>'message_id'=$2 ORDER BY id DESC LIMIT 1", thread, str(reply_to))
+            "AND (delivery->>'message_id'=$2 OR delivery->'message_ids' ? $2) ORDER BY id DESC LIMIT 1",
+            thread, str(reply_to))
         if r and agent_exists(r["from_agent"]):
             return r["from_agent"], text
     rows = await pool.fetch(
@@ -463,11 +464,15 @@ class Outcome:
 
     def __init__(self):
         self.message_id: str | None = None
+        self.message_ids: list[str] = []             # every part's platform id (text parts, files), in order
         self._entries: list[tuple[bool, str]] = []   # (is_failure, text), in order
         self._kinds: list[str] = []                  # each FAILURE as "part: ExceptionType" (no platform text)
 
     def sent(self, message_id=None) -> None:
-        """A part succeeded; keep the first real platform id (the text's) for the row."""
+        """A part succeeded; keep the first real platform id (the text's) for the row, and every id in message_ids, so
+        a reply quoting ANY part (a file, a later chunk) finds its agent (medic 15971)."""
+        if message_id:
+            self.message_ids.append(str(message_id))
         if message_id and not self.message_id:
             self.message_id = str(message_id)
 
@@ -522,6 +527,8 @@ class Outcome:
         # `classified` (a released row): `error` carries part and exception type only, never the platform's text.
         r = {"ok": self.ok, "handle": handle, "message_id": self.message_id, "rendered": rendered,
              "error": self.classified if classified else self.error}
+        if self.message_ids:
+            r["message_ids"] = self.message_ids
         if door:
             r["door"] = door
         return json.dumps(r)
