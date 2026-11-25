@@ -11,7 +11,8 @@ make asks THIS module, in its POSITIVE form, and a message passes both arms:
   OWN    it is not on a person's own chat (PERSONAL: a normal chat, a canvas chat), or that chat is open to them: they
          are a party of it (they wrote or were written to on it: workspace.party's rule), or it belongs to a project
          they see (workspace.project_visible), or it is the conversation of a canvas they see (cv.sees: its maker and
-         whom it is shared with, owner 11-17 12979). A desk (obs:<agent>) is shared: whoever opens the agent reads it.
+         whom it is shared with, owner 11-17 12979), or a chat its maker shared with them (canvas_threads.shared_with,
+         by account; access-core 2). A desk (obs:<agent>) is shared: whoever opens the agent reads it.
 The owner and the agents themselves (no member role) are unscoped.
 
   of(request)              None (unscoped) or (reach | None, me)
@@ -60,12 +61,29 @@ async def load(pool, request) -> set[str]:
             out = {r["thread"] for r in await pool.fetch(
                 "SELECT DISTINCT thread FROM messages WHERE (from_agent = $1 OR to_agent = $1) "
                 f"AND {PERSONAL_SQL}", me)}
-        out |= {t for p in _ws._projects(_ws.account(request)) for t in (p.get("threads") or []) if isinstance(t, str)}
+        projects = {t for p in _ws._projects(_ws.account(request)) for t in (p.get("threads") or []) if isinstance(t, str)}
     except Exception:                               # noqa: BLE001 — closed, as the docstring says
-        out = set()
+        out, projects = set(), set()
     from astryx.core import canvas as _cv
     from observatory.api import ws_canvas as _wc
+    acct = getattr(request.state, "uid", None)
+    keys = {k for k in (_ws.canvas_user(me) if me else "", acct or "") if k}   # who she is to a registry row: both shapes
     try:
+        # A REGISTERED conversation (canvas_threads: it has a maker) is open to its maker and whom it is shared with,
+        # never to someone only because they wrote on it: unsharing a chat (or a canvas) takes it back (access-core 2).
+        # The party rule stays for a chat with no registry row (who wrote on it is all that is known).
+        for r in await pool.fetch("SELECT thread, user_name, canvas_id, shared_with FROM canvas_threads "
+                                  "WHERE thread = ANY($1::text[]) OR shared_with @> ARRAY[$2]::text[]",
+                                  sorted(out), acct or ""):
+            ok = r["user_name"] in keys or bool(keys & set(r["shared_with"] or ()))
+            if ok and r["canvas_id"] is None:
+                out.add(r["thread"])
+            elif not ok:
+                out.discard(r["thread"])
+    except Exception:                               # noqa: BLE001 — no column yet (or a blip): the party rule alone
+        pass
+    out |= projects                                 # a project's chats: whoever sees the project
+    try:                                            # a canvas's conversation: whoever sees the canvas (cv.sees)
         out |= {_wc.thread_of(r["id"]) for r in await pool.fetch(
             f"SELECT id FROM canvases WHERE {_cv.sees_sql('$1', '$2')}", *_wc.keys(request))}
     except Exception:                               # noqa: BLE001 — no canvas tables (or a blip): no canvas opens

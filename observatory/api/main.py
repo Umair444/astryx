@@ -540,6 +540,7 @@ _WIRE_WRITE = re.compile(r"^/api/(messages|ws/agents/[^/]+/interrupt|federation/
 # pulse, an agent's profile and charter) are reads a member makes as the owner does (11-15): each handler asks sees()
 # per agent, so the personal tier stays the owner's.
 MEMBER = {("POST", "/api/messages"), ("POST", "/api/thread/read"), ("POST", "/api/chat/upload"),
+          ("POST", "/api/ws/chats/share"),   # a chat's maker shares it (workspace: access.may share)
           ("PUT", "/api/ws/threads/meta"), ("PUT", "/api/chat/projects"),
           ("POST", "/api/chat/calc"),
           ("POST", "/api/me/channels"),   # a person links THEIR OWN account (identity-channels P3)
@@ -1981,6 +1982,12 @@ async def owner_send(m: OwnerMsg, request: Request):
     if out:                                    # a member scoped to part of the tree writes to that part only (11-17)
         return JSONResponse({"error": f"you can't message {', '.join(out)}: it is outside the agents you were given"},
                             status_code=403)
+    if _scope.of(request) is not None and _scope.personal(m.thread) and await pool.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM messages WHERE thread = $1)", m.thread):
+        # a member talks in a person's chat only if it is open to her (hers, shared with her, a project's or a canvas's
+        # she sees): posting made her a party, so knowing a chat's id was a key to all of it (access-core 2)
+        if m.thread not in await _scope.load(pool, request):
+            return JSONResponse({"error": "that conversation isn't shared with you"}, status_code=403)
     stamp = {"team": team, "lead": team[0]} if len(team) > 1 else {}
     if (rl := _ws.REPLY_LINE.match(m.body.strip())):
         # A REPLY names a message (owner 11-17): only one the SENDER may read, by its own author, is a reference; the

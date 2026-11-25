@@ -45,7 +45,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from observatory.api.hostfile import Conflict, atomic_write, etag
 from observatory.api import scope as _scope   # what a member may read (steps_sql: the briefing's own words)
@@ -486,6 +486,24 @@ async def ws_threads(request: Request, scope: str = "mine", open: str = ""):
         canvas = {}
     meta, projects, roster = read_meta(), _projects(account(request)), set(_roster())
     rows = build_rows(aggs, meta, projects, roster, canvas, me=me, everyone=everyone)
+    acct, listed = account(request), {r["thread"] for r in rows}
+    try:                                            # chats shared with her account join her list (access-core 2)
+        for r in await pool.fetch("SELECT thread FROM canvas_threads WHERE canvas_id IS NULL AND shared_with @> ARRAY[$1]::text[]",
+                                  acct or ""):
+            if r["thread"] not in listed:
+                got = [{**dict(a), "last_ts": a["last_ts"].isoformat() if a["last_ts"] else None}
+                       for a in await pool.fetch(THREADS_SQL, me, True, r["thread"])]
+                rows += build_rows(got, meta, projects, roster, canvas, me=me, everyone=True)
+                listed.add(r["thread"])
+        shares = {r["thread"]: dict(r) for r in await pool.fetch(
+            "SELECT thread, user_name, shared_with FROM canvas_threads WHERE thread = ANY($1::text[]) AND canvas_id IS NULL",
+            sorted(listed))}
+    except Exception:                               # noqa: BLE001 — no column yet: no sharing shows
+        shares = {}
+    for r in rows:                                  # who it's shared with, and whether it's this viewer's to share
+        s = shares.get(r["thread"]) or {}
+        r["shared"] = list(s.get("shared_with") or [])
+        r["shared_with_me"] = bool(acct) and acct in r["shared"]
     if open and valid_thread(open) and not _scoped(request) \
             and not any(r["thread"] == open for r in rows):   # not the viewer's own: listed too (a scoped member: theirs only, as `everyone`)
         opened = [a for a in aggs if a["thread"] == open] or [
@@ -493,6 +511,47 @@ async def ws_threads(request: Request, scope: str = "mine", open: str = ""):
             for r in await pool.fetch(THREADS_SQL, me, True, open)]               # older than the list's 400
         rows += build_rows(opened, meta, projects, roster, canvas, me=me, everyone=True)
     return {"etag": etag(meta_file()), "scope": "everyone" if everyone else "mine", "threads": rows}
+
+
+class ChatShare(BaseModel):
+    thread: str = Field(max_length=200)
+    shared: list[str] = Field(default_factory=list, max_length=200)   # accounts (members.uid), as a canvas's
+
+
+def shareable(thread: str) -> bool:
+    """A person's own chat (chat:, or a cv: chat that is no canvas's): a canvas shares from its own panel, a desk is
+    everyone's already."""
+    return valid_thread(thread) and (thread.startswith("chat:") or (thread.startswith("cv:") and not thread.startswith("cv:canvas-")))
+
+
+@router.post("/api/ws/chats/share")
+async def ws_chat_share(body: ChatShare, request: Request):
+    """Its maker or the owner shares a chat with the org's members (owner 11-25: "just like canvas share ... same format;
+    same inheritance"): the same rule as a canvas (cv.share_set: members only, by account), the same shape
+    (canvas_threads.shared_with), and what is inside follows (access.py: its messages, files, Library, work)."""
+    from astryx.core import canvas as cv
+    from observatory.api import access, members
+    pool = _pool(request)
+    th = body.thread
+    if not shareable(th):
+        return JSONResponse({"error": "only a chat is shared here (a canvas shares from its own panel)"}, status_code=400)
+    row = await pool.fetchrow("SELECT user_name, agent, title, canvas_id, shared_with FROM canvas_threads WHERE thread = $1", th)
+    if row and row["canvas_id"]:
+        return JSONResponse({"error": "that is a canvas's chat: share the canvas"}, status_code=400)
+    if not await access.may(request, "share", th):
+        return JSONResponse({"error": "only the chat's maker or the owner shares it"}, status_code=403)
+    users, why = cv.share_set(body.shared, (row["shared_with"] if row else None) or [],
+                              [r["uid"] for r in await members.rows(pool)], "org")
+    if why:
+        return JSONResponse({"error": why}, status_code=400)
+    maker = await access.maker_of(request, th) or canvas_user(_me(request) or "owner")
+    agent = (row["agent"] if row else None) or await pool.fetchval(
+        f"SELECT to_agent FROM messages WHERE thread = $1 AND {human_sql('from_agent')} ORDER BY id LIMIT 1", th) or "seed"
+    await pool.execute(
+        "INSERT INTO canvas_threads (thread, user_name, agent, title, shared_with) VALUES ($1, $2, $3, $4, $5) "
+        "ON CONFLICT (tenant, thread) DO UPDATE SET shared_with = EXCLUDED.shared_with, updated_at = now()",
+        th, maker, agent, (row["title"] if row else None), users)
+    return {"thread": th, "shared": users}
 
 
 class Meta(BaseModel):
