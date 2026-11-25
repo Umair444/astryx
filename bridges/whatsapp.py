@@ -228,10 +228,16 @@ async def send_files(chat: str, files: list[str], out: Outcome | None = None, *,
         dst = outbox / f"{int(time.time())}-{name}"
         try:
             dst.write_bytes(data)
-            await wacli("send", "file", "--to", chat,
-                        "--file", f"{DATA_CTR}/astryx-outbox/{dst.name}")
+            res = await wacli("--json", "send", "file", "--to", chat,
+                              "--file", f"{DATA_CTR}/astryx-outbox/{dst.name}")
         except Exception as e:
             _fail(e)
+            continue
+        if out is not None:                    # its id, so a reply quoting the file reaches its agent (medic 15971)
+            try:
+                out.sent(find_id(json.loads(res)))
+            except ValueError:
+                out.sent()
 
 
 # ---------------------------------------------------------------------- polls
