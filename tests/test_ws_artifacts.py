@@ -98,6 +98,7 @@ def main():
     src = home / "report.md"
     src.write_bytes(b"# Q3\nrevenue up\n")
     a1 = A.import_source(S, str(src), T, "db")
+    arm("a file a member sent opens, by their id", code_of(A.import_source, S, str(src), T, "cv-kumail-abbas1.14") != 400)
     arm("import -> v1", len(a1["versions"]) == 1 and a1["versions"][0]["n"] == 1, a1["versions"])
     arm("v1 authored by the agent", a1["versions"][0]["author"] == "db")
     arm("artifact shape", set(a1) == {"id", "thread", "name", "kind", "path_in_store", "size", "head", "versions"}
@@ -209,8 +210,12 @@ def main():
     other = S2.create(T2, "Q3 answer", "# Q3\nrevenue up\n", "seed")
     arm("the same words from ANOTHER author are not that document", other["id"] != c1["id"], other["name"])
     for label, args in (("empty text", (T2, "x", "  ", "db")), ("no thread", ("", "x", "t", "db")),
-                        ("a bad author", (T2, "x", "t", "../db"))):
+                        ("a bad author", (T2, "x", "t", "../db")), ("a path author", (T2, "x", "t", "a/b")),
+                        ("a spaced author", (T2, "x", "t", "a b"))):
         arm(f"{label} -> 400", code_of(S2.create, *args) == 400)
+    mem = S2.create(T2, "member note", "kumail's words\n", "cv-kumail-abbas1.14")
+    arm("a signed-in member's id is an author (owner 11-25: Kumail's attachments would not open)",
+        mem["versions"][0]["author"] == "cv-kumail-abbas1.14", mem["versions"][0])
     arm("oversize -> 413", code_of(S2.create, T2, "big", "x" * (1024 * 1024 + 1), "db") == 413)
     arm("a hostile name is reduced", "/" not in S2.create(T2, "../../etc/passwd", "p\n", "db")["path_in_store"].split("/", 1)[1])
 
