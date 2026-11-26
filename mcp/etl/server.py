@@ -432,26 +432,95 @@ async def etl_flow_cancel(flow_run_id: str) -> dict | str:
     return await box.run(_PREFECT, {"exe": PREFECT, "argv": ["flow-run", "cancel", flow_run_id]}, timeout=150)
 
 
-_PULL = r'''
+_HEAD = r"""
 import subprocess, json
+g = lambda *a: subprocess.run([ARGS["git"], "--no-optional-locks", "-C", ARGS["root"]] + list(a), capture_output=True,
+                             text=True, timeout=60)
+st = g("status", "--porcelain", "--untracked-files=no").stdout.splitlines()
+print(json.dumps({"head": g("rev-parse", "HEAD").stdout.strip(), "branch": g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip(),
+                  "dirty": [l[3:] for l in st]}))
+"""
+
+_PULL = r"""
+import base64, hashlib, json, os, subprocess, tempfile
 g = lambda *a: subprocess.run([ARGS["git"], "-C", ARGS["root"]] + list(a), capture_output=True, text=True, timeout=180)
-before = g("rev-parse", "HEAD").stdout.strip()
-r = g("pull", "--ff-only")
-after = g("rev-parse", "HEAD").stdout.strip()
-print(json.dumps({"before": before, "after": after, "rc": r.returncode, "out": (r.stdout + r.stderr).strip()[-1500:]}))
-'''
+out = {"before": g("rev-parse", "HEAD").stdout.strip()}
+data = base64.b64decode(ARGS["bundle"])
+path = os.path.join(tempfile.gettempdir(), "etl_box_pull_" + ARGS["sha256"][:12] + ".bundle")  # outside the ETL tree
+try:
+    if out["before"] != ARGS["expect_before"]:
+        out["error"] = "the box moved since it was read: nothing changed"
+    elif hashlib.sha256(data).hexdigest() != ARGS["sha256"]:
+        out["error"] = "the bundle arrived damaged (sha256 differs): nothing changed"
+    else:
+        with open(path, "wb") as f:
+            f.write(data)
+        r = g("fetch", "--no-tags", path, "+refs/remotes/origin/main:refs/remotes/bundle/main")
+        if r.returncode:
+            out["error"] = "fetch from the bundle failed: " + (r.stdout + r.stderr).strip()[-500:]
+        else:
+            r = g("merge", "--ff-only", ARGS["target"])
+            out["merge"] = (r.stdout + r.stderr).strip()[-800:]
+            if r.returncode:
+                out["error"] = "merge --ff-only refused: nothing changed"
+finally:
+    if os.path.exists(path):
+        os.remove(path)
+    out["bundle_removed"] = not os.path.exists(path)
+out["after"] = g("rev-parse", "HEAD").stdout.strip()
+out["ok"] = "error" not in out and out["after"] == ARGS["target"]
+print(json.dumps(out))
+"""
+LOCAL = Path(CFG.get("ETL_LOCAL_REPO") or REPO / "homes" / "etl-architect" / "etl_system")
+BUNDLE_MAX = 20 * 2**20
+
+
+def _git(*a: str, binary: bool = False):
+    import subprocess
+    return subprocess.run(["git", "-C", str(LOCAL), *a], capture_output=True, text=not binary, timeout=180)
 
 
 @mcp.tool()
 async def etl_box_pull() -> dict | str:
-    """Deploy merged code: `git pull --ff-only` in the box's ETL repo (ETL_ROOT). Returns the head before and after.
-    A deploy follows a second etl seat's PASS (local.md). etl seats only."""
+    """Deploy merged code: bring the box's ETL repo (ETL_ROOT) to GitHub's main, fast-forward only. The box has no
+    GitHub credential, so main travels as a git bundle built here from origin/main (never a branch or a working tree),
+    checked by sha256 on arrival, fetched, `merge --ff-only`, then deleted. Refuses a diverged box, and a box whose
+    local edits touch a file the deploy changes; other local edits are kept and listed. Returns the head before and
+    after. A deploy follows a second etl seat's PASS (local.md). etl seats only."""
+    import base64
+    import hashlib
     no = _refuse()
     if no:
         return no
     if not ROOT:
         return "error: ETL_ROOT is not configured"
-    return await box.run(_PULL, {"git": GIT, "root": ROOT}, timeout=240)
+    box_ = await box.run(_HEAD, {"git": GIT, "root": ROOT}, timeout=120)
+    if "error" in box_:
+        return box_
+    if box_["branch"] != "main":
+        return {"error": f"the box is on '{box_['branch']}', not main: nothing changed", **box_}
+    f = _git("fetch", "--no-tags", "origin", "main")
+    if f.returncode:
+        return {"error": "fetching origin/main here failed: " + (f.stdout + f.stderr).strip()[-300:]}
+    target = _git("rev-parse", "origin/main").stdout.strip()
+    base = {"before": box_["head"], "target": target, "local_edits": box_["dirty"]}
+    if box_["head"] == target:
+        return {**base, "after": target, "ok": True, "note": "already at main"}
+    if _git("merge-base", "--is-ancestor", box_["head"], target).returncode:
+        return {**base, "error": "the box's head is not in main's history (diverged): nothing changed"}
+    changed = set(_git("diff", "--name-only", box_["head"], target).stdout.split("\n")) - {""}
+    clash = sorted(changed & set(box_["dirty"]))
+    if clash:
+        return {**base, "error": "the box's local edits touch files this deploy changes: nothing changed", "clash": clash}
+    b = _git("bundle", "create", "-", f"{box_['head']}..refs/remotes/origin/main", binary=True)
+    if b.returncode or not b.stdout:
+        return {**base, "error": "bundle create failed: " + (b.stderr or b"").decode(errors="replace")[-300:]}
+    if len(b.stdout) > BUNDLE_MAX:
+        return {**base, "error": f"the bundle is {len(b.stdout) >> 20} MB, over {BUNDLE_MAX >> 20} MB: nothing sent"}
+    res = await box.run(_PULL, {"git": GIT, "root": ROOT, "bundle": base64.b64encode(b.stdout).decode(),
+                                "sha256": hashlib.sha256(b.stdout).hexdigest(), "target": target,
+                                "expect_before": box_["head"]}, timeout=300)
+    return {**base, **res, "changed_files": len(changed)}
 
 
 if __name__ == "__main__":

@@ -257,6 +257,73 @@ check("A8 no filter: counts per folder and state, no rows",
       "jobs" not in summ and summ.get("count") == 2 and {(r["folder"], r["state"], r["jobs"]) for r in summ["by_folder_state"]}
       == {("\\BI Jobs\\", "Enabled", 1), ("\\BI Jobs\\team\\", "Disabled", 1)}, str(summ)[:300])
 
+# ---- A9: etl_box_pull deploys main as a bundle, on real git repos (origin, the local clone, the box), the box side
+# executed here: a box already at main, a fast-forward with an unrelated local edit kept, a clash, a diverged box,
+# a damaged bundle, and the bundle always removed
+import base64 as _b64, contextlib as _cl, tempfile as _tf
+from pathlib import Path as _P
+_t = _P(_tf.mkdtemp())
+G = lambda d, *a: _real_run(["git", "-C", str(d), *a], capture_output=True, text=True, check=True).stdout.strip()
+_real_run(["git", "init", "-q", "--bare", "-b", "main", str(_t / "origin.git")], check=True)
+for _d in ("seed", "local", "boxr"):
+    _real_run(["git", "clone", "-q", str(_t / "origin.git"), str(_t / _d)], check=True, capture_output=True)
+    G(_t / _d, "config", "user.email", "t@t"); G(_t / _d, "config", "user.name", "t")
+
+
+def commit(msg, **files):
+    for k, v in files.items():
+        (_t / "seed" / k).write_text(v)
+    G(_t / "seed", "add", "-A"); G(_t / "seed", "commit", "-qm", msg); G(_t / "seed", "push", "-q", "origin", "HEAD:main")
+
+
+commit("c1", a="1\n", b="1\n")
+G(_t / "boxr", "pull", "-q", "origin", "main")
+srv.LOCAL, srv.ROOT, srv.GIT = _t / "local", str(_t / "boxr"), "git"
+tamper = {"on": False}
+
+
+async def box_here(snippet, args, timeout=120):
+    a = dict(args)
+    if tamper["on"] and "bundle" in a:
+        a["bundle"] = _b64.b64encode(_b64.b64decode(a["bundle"])[:-7]).decode()   # an upload cut short
+    buf = _io.StringIO()
+    with _cl.redirect_stdout(buf):
+        exec(snippet, {"ARGS": a})
+    return _json.loads(buf.getvalue().splitlines()[-1])
+
+srv.box.run = box_here
+r = run(srv.etl_box_pull())
+check("A9 a box already at main: ok, nothing sent", r.get("ok") and r.get("note") == "already at main", str(r)[:200])
+commit("c2", a="2\n")
+(_t / "boxr" / "b").write_text("box edit\n")
+r = run(srv.etl_box_pull())
+check("A9 fast-forward to main; the unrelated local edit is kept and listed",
+      r.get("ok") and r["after"] == G(_t / "seed", "rev-parse", "HEAD") and r["local_edits"] == ["b"]
+      and (_t / "boxr" / "b").read_text() == "box edit\n" and r.get("bundle_removed"), str(r)[:300])
+commit("c3", b="3\n")
+before = G(_t / "boxr", "rev-parse", "HEAD")
+r = run(srv.etl_box_pull())
+check("A9 a local edit on a file the deploy changes: refused, box unchanged",
+      "clash" in r and r["clash"] == ["b"] and G(_t / "boxr", "rev-parse", "HEAD") == before
+      and (_t / "boxr" / "b").read_text() == "box edit\n", str(r)[:300])
+G(_t / "boxr", "checkout", "-q", "--", "b")
+tamper["on"] = True
+r = run(srv.etl_box_pull())
+check("A9 a damaged upload: refused by sha256, box unchanged, no bundle left",
+      "damaged" in r.get("error", "") and G(_t / "boxr", "rev-parse", "HEAD") == before and r.get("bundle_removed")
+      and not list(_P(_tf.gettempdir()).glob("etl_box_pull_*.bundle")), str(r)[:300])
+tamper["on"] = False
+(_t / "boxr" / "z").write_text("z\n"); G(_t / "boxr", "add", "z"); G(_t / "boxr", "commit", "-qm", "box-only")
+r = run(srv.etl_box_pull())
+check("A9 a diverged box (a commit main doesn't have): refused before anything is sent",
+      "diverged" in r.get("error", "") and "bundle_removed" not in r, str(r)[:300])
+G(_t / "boxr", "reset", "-q", "--hard", "HEAD~1")
+r = run(srv.etl_box_pull())
+check("A9 the clean box then deploys main", r.get("ok") and r["after"] == G(_t / "seed", "rev-parse", "HEAD"), str(r)[:300])
+os.environ["ASTRYX_AGENT"] = "db"
+check("A9 other seats are refused", str(run(srv.etl_box_pull())).startswith("refused"))
+os.environ["ASTRYX_AGENT"] = "etl-ops"
+
 print()
 print(f"FAILED ({len(fails)}): " + "; ".join(fails) if fails else "PASS: the etl server's guards hold without the box")
 sys.exit(1 if fails else 0)
