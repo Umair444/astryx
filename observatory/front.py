@@ -1255,11 +1255,12 @@ async def chosen_ws(ws: WebSocket, path: str):
 
 async def _relay_ws(org: str, path: str, ws: WebSocket):
     import websockets
+    from urllib.parse import quote
     r = _cog().get(org)
     if r is None or r["port"] is None:
         await ws.close(code=4404)
         return
-    q = ws.url.query
+    q = ws.scope.get("query_string", b"").decode("latin-1")    # raw: ws.url re-parses the decoded path, so a ? in it leaks in
     headers = [(k, v) for k, v in relay.headers(
         ws.headers.items(), host=ws.headers.get("host", ""), proto="https" if ws.url.scheme == "wss" else "http",
         cookies={relay.canvas_cookie(org)},
@@ -1267,7 +1268,7 @@ async def _relay_ws(org: str, path: str, ws: WebSocket):
         if k.lower() not in ("origin", "content-length")]     # websockets sends its own Origin-less handshake
     protos = [p.strip() for p in ws.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
     try:
-        up = await websockets.connect(f"ws://127.0.0.1:{r['port']}/{path}" + (f"?{q}" if q else ""),
+        up = await websockets.connect(f"ws://127.0.0.1:{r['port']}/{quote(path, safe='/')}" + (f"?{q}" if q else ""),
                                       additional_headers=headers, subprotocols=protos or None,
                                       max_size=None, open_timeout=10)
     except websockets.InvalidStatus as e:          # the backend refused the handshake (a 403 is its key check)

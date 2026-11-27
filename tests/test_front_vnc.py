@@ -113,7 +113,8 @@ async def main() -> None:
         # 1 + 2 + 7
         SEEN.clear()
         c, err = await opened("/o/t/api/hands/desk-1/vnc?key=k1&x=2", subprotocols=["binary"],
-                              additional_headers={"Cookie": "astryx_session=s; astryx_org=t", "X-Astryx-Org": "t"})
+                              additional_headers={"Cookie": "astryx_session=s; astryx_org=t", "X-Astryx-Org": "t",
+                                                  "X-Astryx-Front-Client": "6.6.6.6"})
         if c is None:
             for n in ("bytes pass both ways, subprotocol echoed", "the query reaches the backend intact",
                       "no Cookie and no x-astryx-* header reach the backend"):
@@ -125,8 +126,11 @@ async def main() -> None:
                 f"{got!r} {c.subprotocol!r}")
             s = SEEN[-1] if SEEN else {"path": "", "headers": {}}
             arm("the query reaches the backend intact", s["path"] == "/api/hands/desk-1/vnc?key=k1&x=2", s["path"])
-            leaked = [k for k in s["headers"] if k == "cookie" or k.startswith("x-astryx")]
-            arm("no Cookie and no x-astryx-* header reach the backend", not leaked, str(leaked))
+            # the front's own client header is its claim (it overwrites a caller's); nothing else of the caller's passes
+            leaked = [k for k in s["headers"] if k == "cookie" or (k.startswith("x-astryx") and k != "x-astryx-front-client")]
+            mine = s["headers"].get("x-astryx-front-client")
+            arm("no Cookie and no x-astryx-* header reach the backend", not leaked and mine == "127.0.0.1",
+                f"{leaked} front-client={mine!r}")
             # 5
             n0 = len(CLOSED)
             await c.close()
