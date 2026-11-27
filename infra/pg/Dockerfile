@@ -18,10 +18,13 @@
 
 # the BASE is pinned by digest too: the tag moves (it moved on this host on 10-10)
 FROM postgres:18-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c AS agebuild
+# the dev headers are pinned to the base's OWN server version ($PG_VERSION, set by the postgres image): unpinned, apt
+# installed newer 18.x headers than the pinned 18.6 server, and age.so then failed every load with
+# "undefined symbol: heap_datum_check" (found on a fresh build, 11-23)
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        git ca-certificates build-essential postgresql-server-dev-18 \
+        git ca-certificates build-essential "postgresql-server-dev-18=$PG_VERSION" \
         bison flex zlib1g-dev libreadline-dev; \
     rm -rf /var/lib/apt/lists/*
 # PINNED (seed #42759, steward F4): the PG18 line's 1.8.0 tag, PG18/v1.8.0-rc0, resolved to its commit. It is the only
