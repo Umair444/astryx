@@ -13,6 +13,10 @@ over one cryptographically signed wire.
 [![PostgreSQL](https://img.shields.io/badge/postgres-for%20everything-7c5cff)](docs/architecture.md)
 [![No frameworks](https://img.shields.io/badge/frameworks-none-0b1020)](docs/harness.md)
 
+<a href="assets/astryx-product-video.mp4"><img src="assets/astryx-product-video.jpg" alt="Watch the ASTRYX product video (2 min)" width="70%" /></a>
+
+▶ [Watch the product video](assets/astryx-product-video.mp4) (2 min)
+
 [Install](#install) · [Quick start](#quick-start) · [How it works](#how-it-works) · [The principles](#the-principles) · [FAQ](#faq)
 
 </div>
