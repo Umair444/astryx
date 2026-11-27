@@ -28,6 +28,23 @@ DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file 2>/dev/nul
 # DROPping it: two orgs' weekly verifies would drop each other's restore mid-check
 SCRATCH="$(pg_dsn_db "$DSN")_restorecheck"
 SCRATCH_DSN="${DSN%/*}/$SCRATCH"
+# >>> super dsn
+# cog-rls slice 2: a provisioned org's DSN is org_<key>, which can't CREATE DATABASE and counts only the rows its
+# row-level security shows, while the dump (backup.sh's) holds every row. The verify is the PROVISIONER's, as the dump
+# is: the root-only superuser file, on the same database (backup.sh's switch). Readable only under sudo/root; otherwise
+# the org DSN is used and CREATE DATABASE fails LOUD below, never a partial verify.
+SUPER_FILE=${ASTRYX_PG_SUPER_FILE:-/etc/astryx/pg-super.dsn}
+if [ -r "$SUPER_FILE" ]; then
+  # the DSNs ride the environment, never argv (ps shows argv to every user); a URL stays a URL, key=value stays key=value
+  # one DSN per line: a key=value DSN holds spaces
+  { read -r DSN && read -r SCRATCH_DSN; } < <(ORG_DSN="$DSN" SUPER_FILE="$SUPER_FILE" SCRATCH="$SCRATCH" "$ROOT/venv/bin/python" -c 'import os; from urllib.parse import quote, urlsplit
+from psycopg.conninfo import make_conninfo, conninfo_to_dict
+s = open(os.environ["SUPER_FILE"]).read().strip(); db = conninfo_to_dict(os.environ["ORG_DSN"]).get("dbname")
+on = lambda d: urlsplit(s)._replace(path="/" + quote(d, safe="")).geturl() if "://" in s else make_conninfo(s, dbname=d)
+print(on(db) if db else s); print(on(os.environ["SCRATCH"]))') \
+    || { echo "restore-verify: the provisioner DSN file is unreadable as a DSN" >&2; exit 1; }
+fi
+# <<< super dsn
 
 newest=$(ls -1t "$BK"/astryx-*.dump 2>/dev/null | head -1)
 [ -n "$newest" ] || { echo "restore-verify: no backup to verify (run scripts/backup.sh first)" >&2; exit 1; }
@@ -36,7 +53,12 @@ newest=$(ls -1t "$BK"/astryx-*.dump 2>/dev/null | head -1)
 if command -v psql >/dev/null && command -v pg_restore >/dev/null; then MODE=host; else MODE=docker; fi
 q_live()    { if [ "$MODE" = host ]; then psql "$DSN" "$@"; else pg_exec psql -U "$(pg_dsn_user "$DSN")" -d "$(pg_dsn_db "$DSN")" "$@"; fi; }
 q_scratch() { if [ "$MODE" = host ]; then psql "$SCRATCH_DSN" "$@"; else pg_exec psql -U "$(pg_dsn_user "$DSN")" -d "$SCRATCH" "$@"; fi; }
-do_restore(){ if [ "$MODE" = host ]; then pg_restore --no-owner -d "$SCRATCH_DSN" "$newest"; else pg_exec pg_restore --no-owner -U "$(pg_dsn_user "$DSN")" -d "$SCRATCH" < "$newest"; fi; }
+# >>> restore client
+# by the same rule as backup.sh's dump: a host pg_restore older than the server can't read its dumps ("unsupported
+# version (1.16) in file header", 11-19: every table read "did NOT restore" from a sound dump)
+if [ "$MODE" = host ] && host_pg_ok pg_restore; then RMODE=host; else RMODE=docker; fi
+# <<< restore client
+do_restore(){ if [ "$RMODE" = host ]; then pg_restore --no-owner -d "$SCRATCH_DSN" "$newest"; else pg_exec pg_restore --no-owner -U "$(pg_dsn_user "$DSN")" -d "$SCRATCH" < "$newest"; fi; }
 
 # ALWAYS drop the scratch db, even on failure/interrupt — never leave it lying around
 cleanup() { q_live -c "DROP DATABASE IF EXISTS $SCRATCH" >/dev/null 2>&1 || true; }
@@ -48,7 +70,8 @@ q_live -c "CREATE DATABASE $SCRATCH" >/dev/null || { echo "restore-verify: canno
 
 # pg_restore can exit non-zero on IGNORABLE warnings, so the row-counts below are the
 # AUTHORITATIVE gate — a truly-broken dump leaves the core tables absent or empty.
-do_restore >/dev/null 2>&1 || echo "restore-verify: pg_restore reported issues — checking tables anyway" >&2
+rerr=$(do_restore 2>&1 >/dev/null) || { echo "restore-verify: pg_restore reported issues — checking tables anyway" >&2
+  printf '%s\n' "$rerr" | tail -3 | sed 's/^/  pg_restore: /' >&2; }
 
 # >>> verify row counts
 fail=0
@@ -134,8 +157,10 @@ esac
 # A stamp, a cache, a state row, a green tick — each inherits NONE of the check's safety.
 if [ "$fail" -ne 0 ]; then
   echo "FAILED $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BK/.last-restore-ok"
+  chmod 644 "$BK/.last-restore-ok"   # an outcome and a time, no secret: doctor (non-root) must read it, not guess
   echo "restore-verify: FAILED — the newest backup does NOT restore cleanly. Fix the backup BEFORE trusting it." >&2
   exit 1
 fi
 echo "OK $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BK/.last-restore-ok"
+chmod 644 "$BK/.last-restore-ok"
 echo "restore-verify: OK — ${newest##*/} restores into a working DB; stamped backups/.last-restore-ok"

@@ -71,6 +71,479 @@ def ledger_meta(tool, tool_input, response=None):
         return None
 
 
+# TURN SCOPE (owner 11-15: a chat's live progress is for everyone in it; owner 11-18, 13154: progress follows the
+# REQUEST, not the turn, homes/seed/progress-requests/DESIGN.md). Which requests a step serves. steps.turn_id is
+# back-filled only at Stop, so a live reader (a bridge's progress line) couldn't tell a step that serves this chat's
+# ask from one serving another thread (medic 12159). Each step carries meta.turn_msgs (and, when it applies, waiting /
+# acked / many / since), from a small state machine over the session's own transcript, which the hook is handed
+# anyway. A cache per agent keeps the offset already read and the state, so a call reads only what the session wrote
+# since. Never raises: an unknown is [] (no scope, so a scoped reader shows nothing rather than everything).
+#
+#   a wake (a user line whose channel tags carry msg_ids)  cur = its ids (on 2+ threads: many, content-free for each)
+#   an AGENT's message while a PERSON's request is in hand  queued mid-turn: noted, never waiting, so answering it
+#                                                           can't move the person's work; opening a turn within NUDGE
+#                                                           of the last step while that request is still out (not
+#                                                           answered, or background work out): the request stays cur.
+#                                                           An interruption is not a new request (owner 13865: "the
+#                                                           hooks shouldn't be disturbed by it … fine if some steps of
+#                                                           db also shows in bubble"; medic 13872)
+#   a background notice (<tool-use-id>T) opening a turn     the scope that launched T, else unknown
+#   any other user line (a typed prompt)                    unknown
+#   a person's message QUEUED into the running turn         same chat: joins cur; another chat: waits (cur unchanged)
+#   the agent's send to a waiting request's chat            switches cur to it once cur is ANSWERED (a send to cur's
+#                                                           chat since cur began) or unknown; before that it only
+#                                                           marks it acked (an early "on it" never moves A's work to B)
+#   the agent's send to cur's chat while others wait        many (what follows can't be told apart)
+#   an Agent call whose brief names msg_id=N of cur/waiting  that helper serves N alone
+#   a run_in_background call                                its scope is kept for its notice
+# Ids are read only from a channel tag's own attributes, and only from tags that open the text or follow a closed tag,
+# never from a person's words (medic 13157 R3).
+TURN_DIR = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", f"astryx-turn-{os.getuid()}")   # 0700, ours
+TURN_CACHE = os.path.join(TURN_DIR, "{agent}.json")
+TURN_SCAN = 1 << 20                      # a cold start scans back from the end this many bytes at a time
+COMPACT_LEAD = "This session is being continued from a previous conversation"
+SEND_TOOL = "mcp__astryx__send"
+BG_TTL = 12 * 3600                       # a background launch whose notice never came is forgotten after this
+NUDGE = 30 * 60                          # an agent-only wake keeps the request in hand if work on it went on this recently
+_TAG = re.compile(r'\s*<channel source="astryx"([^>]*)>')
+_ATTR = re.compile(r'(\w+)="([^"]*)"')
+_NOTICE = re.compile(r"<task-notification>.*?<tool-use-id>([^<]+)</tool-use-id>", re.S)
+_BRIEF_ID = re.compile(r"msg_id=\"?(\d+)")
+# A typed "</channel>" followed by a typed tag is text-indistinguishable from a real batch boundary, so a tag's id
+# counts only when it is a real message to this agent on the thread the tag names (medic 13157 R3). main() sets CHECK
+# from its database connection; None (a hook with no database, the oracle's pure arms) takes the tags as written.
+CHECK = None
+
+
+def _fresh(since=0.0) -> dict:
+    return {"cur": [], "many": False, "since": since, "waiting": [], "acked": [], "served": [], "answered": False,
+            "th": {}, "bg": {}, "bind": {}, "seen": since, "pp": []}
+
+
+def _tags(text: str) -> list:
+    """[(msg_id, thread)] of the channel tags that open `text` or follow a closed tag (a wake's own wrappers), each a
+    real message to this agent on that thread (CHECK): a tag a person typed, even after a typed close, adds nothing."""
+    out, pos = [], 0
+    while True:
+        m = _TAG.match(text, pos)
+        if not m:
+            break
+        a = dict(_ATTR.findall(m.group(1)))
+        if a.get("msg_id", "").isdigit():
+            out.append((int(a["msg_id"]), a.get("thread", "")))
+        close = text.find("</channel>", m.end())
+        if close < 0:
+            break
+        pos = close + len("</channel>")
+    return _real(out[:20])
+
+
+def _who(text: str) -> dict:
+    """{msg_id: from a PERSON?} for the channel tags opening `text` (the owner, a channel's people: address.PERSONS).
+    A tag that names no sender, or a hook that can't read the table, counts as a person: doubt never keeps a scope."""
+    try:
+        from astryx.core import address
+        person = lambda n: not n or address.surface_of(n) in address.PERSONS    # noqa: E731
+    except Exception:
+        person = lambda n: True                                                # noqa: E731
+    out, pos = {}, 0
+    while True:
+        m = _TAG.match(text, pos)
+        if not m:
+            return out
+        a = dict(_ATTR.findall(m.group(1)))
+        if a.get("msg_id", "").isdigit():
+            out[int(a["msg_id"])] = person(a.get("from", "").split("@")[0])
+        close = text.find("</channel>", m.end())
+        if close < 0:
+            return out
+        pos = close + len("</channel>")
+
+
+def _held(st) -> bool:
+    """Is the request in hand a PERSON's? Keyed on cur's own ids (pp: the ids that came from people), so a resume and a
+    switch to a waiting request carry it (medic 13874)."""
+    return any(i in st.get("pp", []) for i in st.get("cur") or [])
+
+
+def _real(tags: list) -> list:
+    """The tags whose (id, thread) is a real message to this agent (CHECK), in order; all of them when unchecked."""
+    if CHECK is None or not tags:
+        return tags
+    try:
+        ok = CHECK(tags)
+        return [t for t in tags if t in ok]
+    except Exception:
+        return []
+
+
+def _text(c) -> str:
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "\n".join(x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text")
+    return ""
+
+
+def _threads(st, ids) -> set:
+    return {st["th"].get(str(i), "") for i in ids}
+
+
+def _snap(st, ids=None) -> dict:
+    ids = st["cur"] if ids is None else ids
+    return {"cur": list(ids), "many": st["many"] if ids is st["cur"] else False,
+            "since": st["since"], "at": datetime.now().timestamp(),
+            "th": {str(i): st["th"].get(str(i), "") for i in ids}, "pp": [i for i in ids if i in st.get("pp", [])]}
+
+
+def _resume(st, snap) -> None:
+    st["th"].update(snap.get("th") or {})
+    st["pp"] = list(dict.fromkeys(st.get("pp", []) + list(snap.get("pp") or [])))
+    st.update(cur=list(snap.get("cur") or []), many=bool(snap.get("many")), since=snap.get("since") or 0.0)
+
+
+def _opens(e) -> bool:
+    """Does this transcript entry open a new turn (a user line that is no tool result and no compaction summary)?"""
+    if e.get("type") != "user":
+        return False
+    c = (e.get("message") or {}).get("content")
+    if is_tool_result(c) or e.get("isCompactSummary"):
+        return False
+    return not _text(c).lstrip().startswith(COMPACT_LEAD)
+
+
+def _apply(st, e) -> dict:
+    """One transcript entry's effect on the scope state (see the table above). Returns st (mutated)."""
+    now = datetime.now().timestamp()
+    for k, v in _fresh(now).items():                # a state cached by an older hook lacks a newer key: never a KeyError
+        st.setdefault(k, v)                         # (one wedged line replays forever: medic 13878 R1)
+    if _opens(e):
+        text = _text((e.get("message") or {}).get("content"))
+        bg = st["bg"]
+        n = _NOTICE.search(text)
+        tags = _tags(text)
+        new = _fresh(now)
+        new["bg"] = {k: v for k, v in bg.items() if now - (v.get("at") or 0) < BG_TTL}
+        who = _who(text)
+        out = not st.get("answered") or any(set(v.get("cur") or []) & set(st.get("cur") or []) for v in bg.values())
+        if tags and _held(st) and out and not st.get("many") \
+                and now - (st.get("seen") or 0) < NUDGE and not any(who.get(i, True) for i, _ in tags):
+            st["seen"] = now                       # an agent's nudge while a person's request is still out: it stays
+            return st
+        if tags:                                   # a wake
+            new["th"] = {str(i): t for i, t in tags}
+            new["cur"] = [i for i, _ in tags]
+            new["pp"] = [i for i, _ in tags if who.get(i, True)]
+            new["many"] = len({t for _, t in tags}) > 1
+        elif n:                                    # a background notice opening a turn: its launch's scope, else unknown
+            snap = new["bg"].pop(n.group(1).strip(), None)
+            if snap:
+                _resume(new, snap)
+        st.clear()
+        st.update(new)
+        return st
+    if e.get("type") == "attachment" and (e.get("attachment") or {}).get("type") == "queued_command":
+        text = str((e.get("attachment") or {}).get("prompt") or "")
+        n = _NOTICE.search(text)
+        if n:                                      # a background notice inside the turn: that work is in hand too
+            snap = st["bg"].pop(n.group(1).strip(), None)
+            if snap and set(snap.get("cur") or []) - set(st["cur"]):
+                st["th"].update(snap.get("th") or {})
+                st["pp"] += [i for i in snap.get("pp") or [] if i not in st["pp"]]   # as _resume (medic 13878 R2)
+                st["waiting"] += [i for i in snap["cur"] if i not in st["waiting"] and i not in st["cur"]]
+            return st
+        cur_th = _threads(st, st["cur"])
+        who, held = _who(text), _held(st)
+        for i, t in _tags(text):
+            st["th"][str(i)] = t
+            if who.get(i, True) and i not in st["pp"]:
+                st["pp"].append(i)
+            nudge = held and not who.get(i, True)
+            if st["cur"] and t in cur_th:
+                st["cur"].append(i)                # the same chat writing again: the same work
+            elif nudge:
+                pass                               # an agent's message while a person's request is in hand: answering
+                                                   # it never moves that request's work (owner 13865, medic 13872 R1)
+            elif i not in st["waiting"]:
+                st["waiting"].append(i)            # another chat: it waits; the agent is still on cur
+        return st
+    if e.get("type") != "assistant":
+        return st
+    st["seen"] = now                               # work went on (an agent-only wake within NUDGE keeps this scope)
+    for c in (e.get("message") or {}).get("content") or []:
+        if not isinstance(c, dict) or c.get("type") != "tool_use":
+            continue
+        name, ti, tid = c.get("name") or "", c.get("input") or {}, str(c.get("id") or "")
+        if name == SEND_TOOL and ti.get("thread"):
+            t = ti["thread"]
+            if t in _threads(st, st["cur"]):
+                st["answered"] = True
+                if st["waiting"]:
+                    st["many"] = True
+                continue
+            pool_ids = st["waiting"] + st["acked"] + st["served"]
+            ids = [i for i in pool_ids if st["th"].get(str(i)) == t]
+            if not ids:
+                continue
+            if st["answered"] or not st["cur"] or st["many"]:
+                st["served"] = [i for i in st["served"] + st["cur"] if i not in ids]
+                st["waiting"] = [i for i in st["waiting"] if i not in ids]
+                st["acked"] = [i for i in st["acked"] if i not in ids]
+                st.update(cur=ids, many=False, answered=False, since=now)
+            else:
+                st["acked"] += [i for i in ids if i not in st["acked"]]
+        elif name in ("Agent", "Task"):
+            named = [int(x) for x in _BRIEF_ID.findall(str(ti.get("prompt") or ""))]
+            mine = [i for i in named if i in st["cur"] or i in st["waiting"] or i in st["acked"]]
+            if mine:
+                st["bind"][tid] = mine
+                st["waiting"] = [i for i in st["waiting"] if i not in mine]
+                st["acked"] = [i for i in st["acked"] if i not in mine]
+            if ti.get("run_in_background"):
+                st["bg"][tid] = _snap(st, mine or None)
+        elif ti.get("run_in_background"):
+            st["bg"][tid] = _snap(st)
+    return st
+
+
+def turn_state(path, agent) -> dict:
+    """The scope state for the session at `path` (see the table above): read incrementally, cached per agent."""
+    try:
+        if not path or not os.path.isfile(path):
+            return _fresh()
+        size = os.path.getsize(path)
+        cache_f = TURN_CACHE.format(agent=re.sub(r"[^a-z0-9_-]", "", agent))
+        d = os.path.dirname(cache_f)
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        lst = os.lstat(d)                         # a dir someone else made, or a link, is not ours: no cache, no scope
+        if lst.st_uid != os.getuid() or not os.path.isdir(d) or os.path.islink(d):
+            return _fresh()
+        try:
+            with open(cache_f) as f:
+                c = json.load(f)
+        except Exception:
+            c = {}
+        st, off = c.get("st") or _fresh(), c.get("off", 0)
+        with open(path, "rb") as f:
+            if c.get("path") != path or off > size or "st" not in c:   # a new session: from its last turn's opening
+                st, off, pos, tail = _fresh(), 0, size, b""
+                while pos > 0:
+                    step = min(TURN_SCAN, pos)
+                    pos -= step
+                    f.seek(pos)
+                    tail = f.read(step) + tail
+                    lines = tail.split(b"\n")
+                    at, k = None, len(lines) - 1
+                    while k >= (1 if pos else 0):
+                        try:
+                            if _opens(json.loads(lines[k].decode("utf-8", "replace"))):
+                                at = k
+                                break
+                        except Exception:
+                            pass
+                        k -= 1
+                    if at is not None:
+                        off = pos + sum(len(x) + 1 for x in lines[:at])
+                        break
+                    tail = lines[0] if pos else b""
+            f.seek(off)
+            chunk = f.read(size - off)
+            end = chunk.rfind(b"\n") + 1             # only whole lines; a half-written one is read next time
+            for l in chunk[:end].split(b"\n"):
+                try:
+                    e = json.loads(l.decode("utf-8", "replace"))
+                except Exception:
+                    continue
+                if isinstance(e, dict):
+                    _apply(st, e)
+            off += end
+        tmp = cache_f + ".tmp"
+        with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600), "w") as f:
+            json.dump({"path": path, "off": off, "st": st}, f)
+        os.replace(tmp, cache_f)
+        return st
+    except Exception:
+        return _fresh()
+
+
+def turn_msgs(path, agent) -> list:
+    """The requests a step serves now: cur, or [] while the agent's work can't be told apart (many)."""
+    st = turn_state(path, agent)
+    return [] if st.get("many") else list(st.get("cur") or [])
+
+
+def turn_end(st, continues: bool) -> dict:
+    """The response step's meta: the requests whose background work is still out (pending), the ones still waiting or
+    only acked, and whether the turn goes on (an owed-reply block). bridges/progress.py closes every other job."""
+    end = {"pending": sorted({i for v in (st.get("bg") or {}).values() for i in (v.get("cur") or [])}),
+           "waiting": list(st.get("waiting") or []), "acked": list(st.get("acked") or [])}
+    end = {k: v for k, v in end.items() if v}
+    if continues:
+        end["continues"] = True
+    return end
+
+
+def scope_extra(st) -> dict:
+    """What a step carries beside turn_msgs for the chats that are not being served: waiting, acked, many, since."""
+    out = {}
+    if st.get("many"):
+        out["many"] = list(dict.fromkeys(st["cur"] + st["waiting"] + st["acked"]))
+    if st.get("waiting"):
+        out["waiting"] = list(st["waiting"])
+    if st.get("acked"):
+        out["acked"] = list(st["acked"])
+    if out:
+        out["since"] = int(st.get("since") or 0)
+    return out
+
+
+# SUB-AGENTS (owner 11-15: "agents use forks and sub-agents … it should also appear in chat"). Measured on this host the
+# same day: a sub-agent's tool events carry agent_id/agent_type and the PARENT's transcript_path, and the parent's
+# PostToolUse(Agent) response carries the same id as `agentId`. Reading the transcript for a sub-agent's step would give
+# the parent's CURRENT turn, wrong for a background helper that outlives the turn that launched it, so each helper is
+# BOUND, at its launch, to the turn that launched it (one file per helper beside the turn cache); an unbound helper
+# takes the launch still in flight (a foreground helper runs inside its Agent call), and nothing otherwise.
+SUB_TTL = 24 * 3600                     # a binding (or a launch left open) older than this is forgotten
+
+
+def _subs_dir(agent, kind):
+    """<cache>/<agent>.<kind>/: ONE FILE PER HELPER (kind "subs", by agent_id) or per launch in flight (kind "launch",
+    by the Agent call's tool_use_id). One writer per file: parallel launches in one message each write their own
+    (medic 12186: a shared dict lost 13 of 60 bindings to concurrent read-modify-write)."""
+    d = os.path.join(os.path.dirname(TURN_CACHE.format(agent="x")), re.sub(r"[^a-z0-9_-]", "", agent) + "." + kind)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return d
+
+
+def _key(s):
+    return re.sub(r"[^A-Za-z0-9_-]", "", str(s))[:64] or "x"
+
+
+def _put(path, obj):
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "w") as f:
+        json.dump(obj, f)
+    os.replace(tmp, path)
+
+
+def _prune(d):
+    try:
+        now = datetime.now().timestamp()
+        for n in os.listdir(d):
+            p = os.path.join(d, n)
+            if now - os.lstat(p).st_mtime > SUB_TTL:
+                os.unlink(p)
+    except Exception:
+        pass
+
+
+def launch_open(agent, tool_use_id, msgs):
+    """PreToolUse(Agent): a helper is being launched from the turn `msgs` opened (until its PostToolUse)."""
+    try:
+        d = _subs_dir(agent, "launch")
+        _put(os.path.join(d, _key(tool_use_id)), {"msgs": msgs})
+        _prune(d)
+    except Exception:
+        pass
+
+
+def launch_scope(agent, tool_use_id):
+    """The scope captured when this launch opened (None when there is no such launch)."""
+    try:
+        with open(os.path.join(_subs_dir(agent, "launch"), _key(tool_use_id))) as f:
+            return json.load(f).get("msgs") or []
+    except Exception:
+        return None
+
+
+def launch_close(agent, tool_use_id=None):
+    """Close one launch, or (no id: the turn ended) every launch still open: a launch whose PostToolUse never came (an
+    interrupted Agent call) can't be inherited later (medic 12189)."""
+    try:
+        d = _subs_dir(agent, "launch")
+        for n in ([_key(tool_use_id)] if tool_use_id else os.listdir(d)):
+            try:
+                os.unlink(os.path.join(d, n))
+            except FileNotFoundError:
+                pass
+    except Exception:
+        pass
+
+
+def bind_sub(agent, aid, msgs, desc, kind):
+    """The parent launched helper `aid` from the turn `msgs` opened: remember it, in a file of its own."""
+    try:
+        d = _subs_dir(agent, "subs")
+        _put(os.path.join(d, _key(aid)), {"msgs": msgs, "desc": (desc or "")[:80], "type": (kind or "")[:40]})
+        _prune(d)
+    except Exception:
+        pass
+
+
+def _bound(agent, aid):
+    try:
+        with open(os.path.join(_subs_dir(agent, "subs"), _key(aid))) as f:
+            b = json.load(f)
+        return b if isinstance(b, dict) else None
+    except Exception:
+        return None
+
+
+def _launching(agent):
+    """The scope of the launches in flight, when they agree (one turn); else [] (unknown is nothing)."""
+    try:
+        d = _subs_dir(agent, "launch")
+        now, seen = datetime.now().timestamp(), []
+        for n in os.listdir(d):
+            p = os.path.join(d, n)
+            if n.endswith(".tmp") or now - os.lstat(p).st_mtime > SUB_TTL:
+                continue
+            with open(p) as f:
+                seen.append(json.load(f).get("msgs") or [])
+        return seen[0] if seen and all(x == seen[0] for x in seen) else []
+    except Exception:
+        return []
+
+
+def scope(h, agent):
+    """(turn_msgs, sub, extra) for one hook event: the parent's own, or a helper's. A helper is scoped by what LAUNCHED
+    it: its binding (the turn's scope, or the one request its brief named), else (a foreground helper, or a first call
+    that raced its launch's PostToolUse) the launch still in flight. Never by the parent's CURRENT scope, which may be
+    another thread's by now (medic 12186): with neither, the scope is [] and a scoped reader shows nothing. `extra` is
+    the parent's waiting / acked / many / since (a helper serves one scope and carries none)."""
+    aid = h.get("agent_id")
+    if not aid:
+        st = turn_state(h.get("transcript_path"), agent)
+        msgs = [] if st.get("many") else list(st.get("cur") or [])
+        tid = str(h.get("tool_use_id") or "")
+        if tid and tid in (st.get("bind") or {}):      # an Agent call naming one request: that is the launch's scope
+            msgs = list(st["bind"][tid])
+        return msgs, None, scope_extra(st)
+    b = _bound(agent, aid)
+    sub = {"id": str(aid)[:12], "type": (h.get("agent_type") or (b or {}).get("type") or "")[:40]}
+    if b and b.get("desc"):
+        sub["desc"] = b["desc"]
+    return (b.get("msgs", []) if b else _launching(agent)), sub, {}
+
+
+def step_meta(base, msgs, sub=None, extra=None):
+    """steps.meta: the ledger's (a Jsonb or None) plus the requests the step serves (turn_msgs), for a helper's step
+    who it is, and the scope's other chats (waiting / acked / many / since, scope_extra)."""
+    if not msgs and not sub and not extra:
+        return base
+    try:
+        from psycopg.types.json import Jsonb
+        d = dict(base.obj) if base is not None else {}
+        if msgs:
+            d["turn_msgs"] = msgs
+        if sub:
+            d["sub"] = sub
+        d.update(extra or {})
+        return Jsonb(d)
+    except Exception:
+        return base
+
+
 def wall_label(cmd) -> str:
     """The public label for a description-less Bash call. It must never raise, and it must never
     fall back to the command itself."""
@@ -148,21 +621,32 @@ def parse_source(prompt):
     return src, (int(mid.group(1)) if mid else None)
 
 
-def usage_snapshot(cur):
+def _credential_of(agent):
+    """(name, token) of the vault login this agent runs on, or (None, None) (astryx.core.vault.login_of)."""
+    try:
+        from astryx import paths
+        from astryx.core import vault
+        return vault.login_of(paths.estate(__file__), agent)
+    except Exception:
+        return None, None
+
+
+def usage_snapshot(cur, agent=None):
     """Throttled, wire-safe account-usage snapshot for this turn -> Jsonb | None.
 
     THROTTLE on the last snapshot's age across the whole org (any state counts, so a down
     endpoint is not retried every turn either). Any failure returns None so the turn still
     writes — usage telemetry must never cost an agent its turn record."""
     try:
-        cur.execute("SELECT ended_at FROM turns WHERE usage_snapshot IS NOT NULL "
-                    "ORDER BY ended_at DESC LIMIT 1")
+        cred, token = _credential_of(agent) if agent else (None, None)
+        cur.execute("SELECT ended_at FROM turns WHERE usage_snapshot IS NOT NULL "          # throttled PER LOGIN
+                    "AND usage_snapshot->>'credential' IS NOT DISTINCT FROM %s ORDER BY ended_at DESC LIMIT 1", (cred,))
         row = cur.fetchone()
         if row and row[0]:
             if (datetime.now(timezone.utc) - row[0]).total_seconds() < USAGE_THROTTLE_S:
                 return None
         from nucleus.usage_refresh import snapshot
-        snap = snapshot(timeout=4)
+        snap = snapshot(timeout=4, token=token, credential=cred) if cred else snapshot(timeout=4)
         if not snap:
             return None
         from psycopg.types.json import Jsonb
@@ -478,7 +962,7 @@ def handle_stop(cur, agent, h, strip=None):
         stored_prompt = input_prompt
 
     from psycopg.types.json import Jsonb
-    usnap = usage_snapshot(cur)          # throttled /api/oauth/usage; None most turns
+    usnap = usage_snapshot(cur, agent)   # throttled /api/oauth/usage, per login; None most turns
     # ECONOMY ATTRIBUTION: which goal did this turn serve? Derived from the opening
     # message's thread (plan-<id>/goal-<id>) — the value-flow edge verified budgets
     # propagate back over. NULL when the turn served no goal thread; never guessed.
@@ -491,15 +975,27 @@ def handle_stop(cur, agent, h, strip=None):
             goal_id = r[0] if r else None
         except Exception:
             goal_id = None
-    row = cur.execute(
-        """INSERT INTO turns (agent, session_id, started_at, ended_at, duration_ms, source,
-             input_prompt, input_msg_id, num_responses, num_tools, char_count,
-             tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id)
-           VALUES (%s,%s,%s::timestamptz, now(), %s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-           RETURNING id""",
-        (agent, h.get("session_id"), started_at, duration_ms, source,
-         stored_prompt, input_msg_id, num_responses, num_tools, char_count,
-         tin, tout, model, stop_reason, Jsonb(payload), usnap, goal_id)).fetchone()
+    # ONE TURN, ONE ROW: a turn is (agent, session, the prompt that opened it). A Stop hook that blocks (owed replies)
+    # makes the same turn go on and stop again; that Stop rewrites the turn's row with the whole turn's figures,
+    # never a second row double-counting it (medic 12441)
+    same = cur.execute("SELECT id FROM turns WHERE agent=%s AND session_id IS NOT DISTINCT FROM %s AND started_at=%s::timestamptz "
+                       "ORDER BY id DESC LIMIT 1", (agent, h.get("session_id"), started_at)).fetchone() if started_at else None
+    run_on = os.environ.get("ASTRYX_RUN_ON") or None   # the key this session runs on (spawn stamps it), NULL: the org's
+    vals = (duration_ms, source, stored_prompt, input_msg_id, num_responses, num_tools, char_count,
+            tin, tout, model, stop_reason, Jsonb(payload), usnap, goal_id, run_on)
+    if same:                                   # updated IN PLACE: what the first Stop stamped with its id stays its
+        row = cur.execute(
+            """UPDATE turns SET ended_at=now(), duration_ms=%s, source=%s, input_prompt=%s, input_msg_id=%s,
+                 num_responses=%s, num_tools=%s, char_count=%s, tokens_in=%s, tokens_out=%s, model=%s,
+                 stop_reason=%s, raw_payload=%s, usage_snapshot=%s, goal_id=%s, run_on=%s
+               WHERE id=%s RETURNING id""", (*vals, same[0])).fetchone()
+    else:
+        row = cur.execute(
+            """INSERT INTO turns (agent, session_id, started_at, ended_at, duration_ms, source,
+                 input_prompt, input_msg_id, num_responses, num_tools, char_count,
+                 tokens_in, tokens_out, model, stop_reason, raw_payload, usage_snapshot, goal_id, run_on)
+               VALUES (%s,%s,%s::timestamptz, now(), %s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               RETURNING id""", (agent, h.get("session_id"), started_at, *vals)).fetchone()
     turn_id = row[0] if row else None
 
     # The nudge hook labels a prompt before its turn exists; claim its classification rows the
@@ -542,19 +1038,31 @@ def handle_stop(cur, agent, h, strip=None):
     # to OWNER-triggered turns so an internal/cron turn never auto-messages him. NO double
     # send: the back-fill above stamped this turn's real sends with turn_id, so a turn that
     # DID reply to the owner shows already>0 and is skipped.
-    if turn_id and input_msg_id and last_text and last_text.strip():
-        src = cur.execute("SELECT from_agent, from_org, thread FROM messages WHERE id=%s",
-                          (input_msg_id,)).fetchone()
-        # Fire for a HUMAN channel message — the owner OR anyone on wa/tg/discord. A person
-        # whose trusted_jid is off arrives as 'wa-<num>' (not 'owner') and shows NO progress
-        # bubble, so guarding on 'owner' would strand exactly them; guard on from_org being a
-        # channel instead. Internal ('local') agent turns and pulse triggers never match, so
-        # they can't auto-message anyone. No bubble is fine — deliver() falls back to a fresh
-        # send. Reply goes BACK to that same sender on that same surface (to_agent + thread).
-        if src and src[1] in ("whatsapp", "telegram", "discord"):
+    # a turn going on after a Stop hook's block (stop_hook_active) delivers nothing by itself: its last words are the
+    # agent's answer to the HOOK ("that message needs no answer"), not to the person (medic 12441)
+    if turn_id and input_msg_id and last_text and last_text.strip() and not h.get("stop_hook_active"):
+        from astryx.core import address
+        src = cur.execute(f"SELECT from_agent, from_org, thread, {address.person_sql('from_agent', org='from_org')}, "
+                          "delivery->>'lead' FROM messages WHERE id=%s", (input_msg_id,)).fetchone()
+        # Fire for a message from one of OUR people, on ANY surface: address.person_sql is the one rule (SURFACES, the
+        # table of who is a person: the owner, a WhatsApp/Telegram/Discord sender, a signed-in member, a canvas user, a
+        # frontend; never a federated peer's, whatever name its envelope gives), the same one owed.py's reminder reads,
+        # so a new channel is one row there and inherits this (owner 11-16: "a standard … we can't patch it by each
+        # channel"; the web chat had been left out and its line said "reading your message" for good). Agent turns
+        # and pulse triggers are no person, so they can't auto-message anyone. No bubble is fine: a bridge's deliver()
+        # falls back to a fresh send. The reply goes BACK to that sender on that thread.
+        # A TEAM's ask is answered by its LEAD: a helper's last words ("I'm not replying: the lead answers") are no
+        # reply, and posting them put the helpers' asides in front of the person (owner 15007). The same rule as
+        # owed.py's (coalesce(lead, agent) = agent): one rule for "who owes this person a reply"
+        if src and src[3] and (src[4] or agent) == agent:
+            # a reply is a send to the sender, or to a PERSON on the sender's thread: in a group, an agent answers
+            # "@Ali" to the group (to 'owner'), not to Ali's own name, and that is still the answer (owner 14225: a
+            # second "I have sent Ali the stats" under every group reply). A hand-off to an agent on that thread is no
+            # answer (medic 14233)
             already = cur.execute(
-                "SELECT count(*) FROM messages WHERE turn_id=%s AND to_agent=%s",
-                (turn_id, src[0])).fetchone()[0]
+                "SELECT count(*) FROM messages WHERE turn_id=%s AND (to_agent=%s OR (thread=%s AND "
+                f"{address.person_sql('to_agent', org='to_org')}))",
+                (turn_id, src[0], src[2])).fetchone()[0]
             if not already:
                 lbl, why = _label(agent)
                 if lbl or why:
@@ -597,10 +1105,31 @@ def main():
     import psycopg
     with psycopg.connect(dsn(), connect_timeout=3) as conn:
         cur = conn.cursor()
+        global CHECK
+
+        def CHECK(tags):                                # noqa: F811 — see CHECK above
+            rows = conn.execute("SELECT id, thread FROM messages WHERE id = ANY(%s) AND to_agent = %s",
+                                ([i for i, _ in tags], agent)).fetchall()
+            return {(i, t) for i, t in rows}
 
         if ev == "PreToolUse":
             tool = h.get("tool_name", "?")
             ti = h.get("tool_input") or {}
+            # A KEY'S DAILY CAP, MID-TURN (medic 12506): a session on a metered key (spawn's ASTRYX_RUN_ON) whose day,
+            # this turn included, has reached its cap runs no more tools; it finishes in words. A spend that can't be
+            # read is never under the cap
+            key, cap_denied = os.environ.get("ASTRYX_RUN_ON"), ""
+            if key and not denied:
+                try:
+                    from astryx.econ import energy as _energy
+                    cap_denied = _energy.capped(conn, key, h.get("transcript_path"))[0]
+                except Exception:  # noqa: BLE001
+                    cap_denied = f"{key}'s spend today can't be read: finish in words, no more tools"
+                if cap_denied:
+                    denied = cap_denied
+                    print(json.dumps({"hookSpecificOutput": {
+                        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                        "permissionDecisionReason": cap_denied}}), flush=True)
             # NEVER the raw command: steps are public and memory's nightly drain feeds them
             # into RAG, and a command's arguments are where a secret lands (an inlined DSN, a
             # PGPASSWORD=… prefix). A description-less Bash call shows WHAT ran (its registry
@@ -613,10 +1142,13 @@ def main():
             if strip:                          # S1d: a description, a path, a target are the session's text
                 detail = f"[{MARK}]"
             if denied:
-                detail = f"DENIED, {'child spawn' if strip and denied.startswith('a ' + MARK) else 'secret holder'}: " \
-                         f"{brief(detail, 200)}"
+                why = "daily cap" if cap_denied else "child spawn" if strip and denied.startswith('a ' + MARK) else "secret holder"
+                detail = f"DENIED, {why}: {brief(detail, 200)}"
+            msgs, sub, extra = scope(h, agent)
+            if tool in ("Agent", "Task"):                      # a helper is being launched from this scope
+                launch_open(agent, h.get("tool_use_id"), msgs)
             cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool',%s,%s)",
-                        (agent, f"{tool}: {brief(detail)}", ledger_meta(tool, ti)))
+                        (agent, f"{tool}: {brief(detail)}", step_meta(ledger_meta(tool, ti), msgs, sub, extra)))
             if guard_err:
                 cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'error',%s)",
                             (agent, guard_err))
@@ -624,7 +1156,14 @@ def main():
         elif ev == "PostToolUse":
             tool = h.get("tool_name", "?")
             r = h.get("tool_response")
-            meta = ledger_meta(tool, h.get("tool_input") or {}, r if r is not None else "")
+            msgs, sub, extra = scope(h, agent)
+            meta = step_meta(ledger_meta(tool, h.get("tool_input") or {}, r if r is not None else ""), msgs, sub, extra)
+            if tool in ("Agent", "Task"):
+                if isinstance(r, dict) and r.get("agentId"):   # a helper launched: bind it, then close the launch
+                    ti2 = h.get("tool_input") or {}
+                    at = launch_scope(agent, h.get("tool_use_id"))   # the scope AT launch, not recomputed now (12189)
+                    bind_sub(agent, r["agentId"], msgs if at is None else at, ti2.get("description"), ti2.get("subagent_type"))
+                launch_close(agent, h.get("tool_use_id"))
             err = r.get("error") or ("" if r.get("success", True) else "failed") \
                 if isinstance(r, dict) else ""
             if err:
@@ -636,20 +1175,81 @@ def main():
             else:
                 cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'tool_done',%s,%s)",
                             (agent, f"{tool} done", meta))
+            # EFFORT, FELT (owner 11-15: "agents should know they are consuming too much through econ to stop. no switch
+            # or threshold"): at each doubling of its usual turn the agent is told what this turn has taken and how the
+            # org feels; it decides. The step is committed first, so nothing here can cost it. Fail-open.
+            conn.commit()
+            if not sub and not strip and h.get("transcript_path"):
+                try:
+                    from astryx.econ import energy as _energy
+                    said = _energy.during(conn, agent, h["transcript_path"], _subs_dir(agent, "effort"))
+                    key = os.environ.get("ASTRYX_RUN_ON")   # …and a key nearing its daily cap, once a day
+                    near = _energy.capped(conn, key, h["transcript_path"], _subs_dir(agent, "cap"))[1] if key else ""
+                    said = " · ".join(x for x in (said, near) if x)
+                    if said:
+                        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                                                 "additionalContext": said}}), flush=True)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        elif ev == "StopFailure":
+            # THE TURN ENDED ON AN API ERROR (owner 11-16: "limit message should also come … users can't wait
+            # forever"): a usage limit, an overload, a server error. No Stop runs, so nothing else would say it: one
+            # 'stopped' step in the turn's scope carries Claude Code's own words ("You've hit your session limit ·
+            # resets 2:50pm"), and the chat's live line shows it instead of a timer. A limit's turn resumes on its
+            # own when the limit resets ("Your claude.ai usage limit has reset. Continue …"), and its steps follow.
+            launch_close(agent)
+            msgs, sub, extra = scope(h, agent)
+            said = "" if strip else (h.get("last_assistant_message") or "").strip()   # S1d: a stripped session's text stays out
+            said = said or f"stopped: {h.get('error') or 'unknown error'}"
+            from psycopg.types.json import Jsonb
+            cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'stopped',%s,%s)",
+                        (agent, brief(said, 300), step_meta(Jsonb({"error": str(h.get("error") or "unknown")[:40]}), msgs, sub, extra)))
 
         elif ev == "Stop":
+            launch_close(agent)                        # the turn ended: no launch of it is still in flight
+            try:                                       # …and the next turn feels its own doublings afresh (energy.claim)
+                from astryx.econ import energy as _energy
+                _energy.rest(_subs_dir(agent, "effort"))
+            except Exception:  # noqa: BLE001
+                pass
             res = handle_stop(cur, agent, h, strip)
+            # A REPLY OWED (owner 11-15: "you never replied, so the counter ran for 20 minutes … agents can forget"):
+            # a person's message that reached this agent since its last turn, with nothing from it on that thread
+            # since (astryx.core.owed), keeps it from going idle: it is told once per message and decides. Decided
+            # BEFORE the response step is written (medic 13157), so that step can say the turn goes on (`continues`)
+            # and a chat's bubble is not closed under work that continues. The turn row is written first. Fail-open.
+            block = None
+            if res and not h.get("stop_hook_active"):      # one block per stop chain: the second stop ends the turn
+                conn.commit()
+                try:
+                    from astryx.core import owed as _owed
+                    cur.execute("SELECT ended_at FROM turns WHERE agent=%s ORDER BY id DESC OFFSET 1 LIMIT 1", (agent,))
+                    prev = cur.fetchone()
+                    rows = _owed.owed(cur, agent, prev[0] if prev else None)
+                    fresh = set(_owed.told(_subs_dir(agent, "owed"), [r[0] for r in rows]))
+                    if fresh:
+                        block = _owed.reminder([r for r in rows if r[0] in fresh])
+                except Exception:  # noqa: BLE001
+                    conn.rollback()
+            # the turn's end, for a chat's bubble: which of its requests still have background work out (pending),
+            # which still wait or were only acked, and whether the turn goes on (bridges/progress.py closes the rest)
+            end = turn_end(turn_state(h.get("transcript_path"), agent), bool(block))
+            from psycopg.types.json import Jsonb
             # short response step for the wall/status line (full text lives in turns)
             if res:
                 turn_id, last_text, tin, tout = res
                 cur.execute(
-                    "INSERT INTO steps (agent, kind, content, turn_id, tokens_in, tokens_out) "
-                    "VALUES (%s,'response',%s,%s,%s,%s)",
+                    "INSERT INTO steps (agent, kind, content, turn_id, tokens_in, tokens_out, meta) "
+                    "VALUES (%s,'response',%s,%s,%s,%s,%s)",
                     (agent, (f"[{MARK}: {len(last_text.encode())} bytes]" if strip
-                             else (last_text[:2000] or "(tool-only turn)")), turn_id, tin, tout))
+                             else (last_text[:2000] or "(tool-only turn)")), turn_id, tin, tout, Jsonb(end) if end else None))
             else:
-                cur.execute("INSERT INTO steps (agent, kind, content) VALUES (%s,'response',%s)",
-                            (agent, "(turn unreadable)"))
+                cur.execute("INSERT INTO steps (agent, kind, content, meta) VALUES (%s,'response',%s,%s)",
+                            (agent, "(turn unreadable)", Jsonb(end) if end else None))
+            if block:
+                conn.commit()
+                print(json.dumps({"decision": "block", "reason": block}), flush=True)
 
 
 if __name__ == "__main__":

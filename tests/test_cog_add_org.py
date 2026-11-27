@@ -291,17 +291,17 @@ def main():
             print("\nA8 ITS SHIPPED TRIGGERS: ONE SOURCE, INSTALLED, RECONCILED DEFERENTIALLY")
             from astryx.pulse.shipped_triggers import shims
             trig = 'from astryx import trigger\n\n\n@trigger("*/5 * * * *", note="x")\ndef {}(ctx):\n    return None\n'
-            four = {"context_compact", "pr_review", "agent_heal", "org_backup"}
+            four = {"context_compact", "pr_review", "agent_heal", "org_backup", "influence_nightly", "usage_idle", "connection_sweep", "late_failure_notice"}
             sd2 = h2 / "triggers" / "seed"
             got2 = {f.stem: f.read_text() for f in sd2.glob("*.py")} if sd2.is_dir() else {}
-            check("A2's new HOME: triggers/seed holds context_compact, pr_review, agent_heal, org_backup (no Windows "
+            check("A2's new HOME: triggers/seed holds context_compact, pr_review, agent_heal, org_backup, influence_nightly, usage_idle, connection_sweep, late_failure_notice (no Windows "
                   "container named), each the one source's text", set(got2) == four
                   and all(got2[s] == shims.SHIMS[s] for s in got2), str(sorted(got2)))
             before = {f.name: (f.read_bytes(), f.stat().st_mtime_ns) for f in sd2.glob("*.py")}
             rc, out = run("--reconcile", key, "--registry", str(o2))
             outs.append(out)
             check("--reconcile on A2's org: rc 0, every shim stands down (installed), no file changes (idempotent)",
-                  rc == 0 and out.count("stand down trigger") == 4 and "install trigger" not in out
+                  rc == 0 and out.count("stand down trigger") == len(four) and "install trigger" not in out
                   and {f.name: (f.read_bytes(), f.stat().st_mtime_ns) for f in sd2.glob("*.py")} == before, out[-500:])
             sd3 = h3 / "triggers"
 
@@ -322,7 +322,7 @@ def main():
             rc, out = run("--reconcile", key, "--registry", str(o3), path=f"{dshim}:{os.environ['PATH']}",
                           windows="fxwin")
             outs.append(out)
-            check("no triggers, a Windows container here: all FIVE go in (every state read before any write)",
+            check("no triggers, a Windows container here: all SIX go in (every state read before any write)",
                   rc == 0 and seed3() == four | {"windows_idle_stop"}, f"{sorted(seed3())} {out[-300:]}")
             clear()
             (sd3 / "steward").mkdir(parents=True)
@@ -332,8 +332,8 @@ def main():
             rc, out = run("--reconcile", key, "--registry", str(o3))
             outs.append(out)
             check("another agent's agent_heal stands its shim down, and org_backup stands down on EITHER name "
-                  "(run_backup owned, run_restore_verify not): only context_compact and pr_review go in",
-                  rc == 0 and seed3() == {"context_compact", "pr_review"} and "stand down trigger org_backup" in out
+                  "(run_backup owned, run_restore_verify not): only context_compact, pr_review, influence_nightly, usage_idle, connection_sweep and late_failure_notice go in",
+                  rc == 0 and seed3() == {"context_compact", "pr_review", "influence_nightly", "usage_idle", "connection_sweep", "late_failure_notice"} and "stand down trigger org_backup" in out
                   and "run_backup installed" in out, f"{sorted(seed3())} {out[-400:]}")
             clear()
             (sd3 / "x").mkdir(parents=True)

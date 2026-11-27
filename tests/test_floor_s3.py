@@ -80,6 +80,7 @@ def main(tmp: Path, url: str):
             return httpx.Response(200, json={"ok": True, "result": {"id": 42, "username": "astryx_bot"}})
         return httpx.Response(200, json={"id": "987654321012345678", "username": "astryx"})
     obs._PROBE_TRANSPORT = httpx.MockTransport(upstream)
+    real_bridge = obs._bridge            # the unstubbed reader, for the no-systemd arm below
     obs._bridge = lambda ch: {"unit": f"astryx-{ch}.service", "active": True, "started": time.time() - 3600,
                               "health": {"ok": True, "connected": True}}
     cl = TestClient(obs.app)
@@ -168,6 +169,38 @@ def main(tmp: Path, url: str):
     j = {x["channel"]: x for x in cl.get("/api/channels", headers=O).json()}
     arm("E7: a bridge never started: ACTIVATION NEEDED, the deploy-and-enable command",
         j["telegram"]["state"] == "activation-needed" and "enable --now astryx-telegram.service" in j["telegram"]["activate"], j["telegram"])
+
+    # THE CHANNEL RAIL (owner 11-15: "I treat chat as a channel … infinite channels"): the list carries the built-ins,
+    # marked fixed with what they show in words, after the bridges
+    fixed = {x["channel"]: x for x in cl.get("/api/channels", headers=O).json() if x.get("fixed")}
+    arm("RAIL: web chat, canvas and the terminal are channels: fixed, each saying what it shows",
+        set(fixed) == {"web", "canvas", "terminal"} and all(x.get("shows") for x in fixed.values())
+        and "not mirrored" in fixed["terminal"]["shows"], fixed)
+    # NO SYSTEMD (a container): systemctl answers nothing, and the bridge's OWN port (this org's) still says it's healthy
+    import http.server, subprocess as sp, threading
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200); self.end_headers(); self.wfile.write(b'{"ok": true, "routes": 4}')
+        def log_message(self, *a):
+            pass
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    run0, port0 = sp.run, obs.orgs.port
+    def no_systemd(argv, *a, **k):
+        if argv and argv[0] == "systemctl":
+            raise FileNotFoundError("systemctl")
+        return run0(argv, *a, **k)
+    try:
+        sp.run, obs.orgs.port = no_systemd, (lambda stem, *a, **k: srv.server_address[1])
+        b = real_bridge("whatsapp")
+        arm("RAIL: with no systemd, the bridge's own /health on this org's port is its health (never 'one step left' for a live bridge)",
+            b["health"] == {"ok": True, "routes": 4} and b["active"] is True, b)
+        obs.orgs.port = lambda stem, *a, **k: 1          # nothing listens there
+        b = real_bridge("whatsapp")
+        arm("RAIL: ...and a port nothing answers on stays unknown (not connected)", b["health"] is None and b["active"] is False, b)
+    finally:
+        sp.run, obs.orgs.port = run0, port0
+        srv.shutdown()
 
     arm("E6: after the replace, the discord connect and the status reads: neither token in messages or steps",
         wire_clean(TG2) and wire_clean(DC))

@@ -5,7 +5,7 @@ import { api, apiSend, agentColor, displayName, fmtAgo, fmtTime, fmtTokens, shor
 import { useStore } from '../store'
 import type { Profile, Step, Turn } from '../types'
 import TurnPeek from './TurnPeek'
-import RuntimeEditor from './RuntimeEditor'
+import AgentConnection from './harness/AgentConnection'
 import { Count, Empty, LiveDot, Panel, Skeleton, Spark, Tabs, useNow } from '../ui/kit'
 import { moodOf, nowLine, surfaceLabel, type Mood } from '../ui/life'
 import { canvasBase } from '../cog'
@@ -302,7 +302,7 @@ export default function AgentDrawer({ name, onClose, onTalk }: { name: string; o
           )
         )}
 
-        {who.owner && tab === 'runtime' && <RuntimeEditor name={name} live={!!row?.alive} />}
+        {who.owner && tab === 'runtime' && <AgentConnection name={name} />}
       </div>
       <style>{`.ax-drawer-bob { animation: ax-drawer-bob 2.4s ease-in-out infinite } @keyframes ax-drawer-bob { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-3px) } } @media (prefers-reduced-motion: reduce) { .ax-drawer-bob { animation: none } }`}</style>
       <TurnPeek turnId={peek} onClose={() => setPeek(null)} />

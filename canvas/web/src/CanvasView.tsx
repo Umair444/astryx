@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
-import { del, get, post } from './api'
-import { go } from './nav'
+import { del, get, peopleHere, post } from './api'
+import { go, workspaceHref } from './nav'
 import { getState, loadPresence, loadThread, onCanvas, refreshLists, useStore } from './store'
 import { canvasVars, type Theme } from './themes'
 import type { Canvas, Presence } from './types'
@@ -59,7 +59,7 @@ export function CanvasView({ id }: { id: number }) {
   const progress = useStore(s => s.progress[thread])
   const presence = useStore(s => s.presence)
   const bubble = useStore(s => s.bubble)
-  const owns = !!c && (c.user === me.name || me.owner)
+  const owns = !!c && (!!c.yours || me.owner)
 
   const current = () => frames.current.get(shownKey.current)
   const send = (m: object, f = current()) => f?.contentWindow?.postMessage({ astryx: 1, ...m }, '*')
@@ -227,10 +227,10 @@ export function CanvasView({ id }: { id: number }) {
             <h1 className="font-medium truncate">{c?.title ?? '…'}</h1>
             {c?.tier === 'personal' && <span className="text-[10px] uppercase tracking-wider text-warn border border-warn/30 rounded-full px-2 py-0.5">personal</span>}
           </div>
-          {c && <CrewStrip crew={crew} keeper={c.agent} presence={presence} surface={surface} canSummon={owns} onRemove={release}
+          {c && <CrewStrip crew={crew} keeper={c.agent} presence={presence} surface={surface} canSummon={!!c} onRemove={release}
             onSummon={a => ask(`You're joining canvas #${id} "${c.title}". Take a look and say hello to the viewer in one line; wait for a request.`, a)} />}
           <div className="ml-auto flex items-center gap-1">
-            {painted && owns && (
+            {painted && (
               <button onClick={() => { setPicked(null); setPicking(p => !p) }} title="Point at something to change it (E)"
                 className={`flex items-center gap-1.5 text-[13px] px-2.5 py-1.5 rounded-lg transition ${picking ? 'sig' : 'text-fg-dim hover:text-fg hover:bg-fg/[.06]'}`}>
                 <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4l7 17 2.5-7.5L21 11z" /></svg>
@@ -258,11 +258,12 @@ export function CanvasView({ id }: { id: number }) {
                 </AnimatePresence>
               </div>
             )}
-            {me.owner && c?.tier === 'org' && <IconBtn title="Share" onClick={() => setShare(true)}>{I.share()}</IconBtn>}
+            {owns && c?.tier === 'org' && <IconBtn title="Share" onClick={() => setShare(true)}>{I.share()}</IconBtn>}
             <span className="hidden sm:contents">
               <IconBtn title="Full screen" onClick={() => stage.current?.requestFullscreen?.()}>{I.expand()}</IconBtn>
               {owns && <IconBtn title="Archive" onClick={archive}>{I.archive()}</IconBtn>}
             </span>
+            <IconBtn title="Open its conversation in the workspace" onClick={() => { location.href = workspaceHref(`/chat/cv:canvas-${id}`) }}>{I.chat()}</IconBtn>
             <IconBtn title="Conversation" onClick={() => setSide(s => !s)} on={side}>{I.side()}</IconBtn>
           </div>
         </header>
@@ -312,7 +313,7 @@ export function CanvasView({ id }: { id: number }) {
             )}
           </AnimatePresence>
 
-          {painted && c && owns && !picked && (
+          {painted && c && !picked && (
             <AskBar agent={c.agent} picking={picking} onPick={() => setPicking(true)} onSend={t => ask(t)} />
           )}
         </div>
@@ -329,7 +330,7 @@ export function CanvasView({ id }: { id: number }) {
               <button onClick={() => setSide(false)} className="ml-auto p-2 rounded-lg hover:bg-fg/[.06] text-fg-dim">{I.x()}</button>
             </div>
             {msgs ? <Messages thread={thread} msgs={msgs} compact /> : <div className="flex-1" />}
-            {owns && <div className="p-3 shrink-0"><Composer onSend={(t, a) => ask([t, ...a].join('\n'))} placeholder={`Talk to ${c.agent} about this canvas…`} /></div>}
+            <div className="p-3 shrink-0"><Composer onSend={(t, a) => ask([t, ...a].join('\n'))} placeholder={`Talk to ${c.agent} about this canvas…`} /></div>
           </motion.aside>
         )}
       </AnimatePresence>
@@ -517,26 +518,30 @@ function IconBtn({ children, onClick, title, on }: { children: React.ReactNode; 
   return <button title={title} onClick={onClick} className={`p-2 rounded-lg transition ${on ? 'bg-fg/[.08] text-fg' : 'text-fg-dim hover:text-fg hover:bg-fg/[.06]'}`}>{children}</button>
 }
 
+/* WHO SEES IT (owner 11-17, 12979): the org's MEMBERS, by account (the members table, named as the org knows them: the
+   front's /auth/people, the projects' picker). The server judges the list (cv.share_set). */
 function ShareDialog({ c, onClose }: { c: Canvas; onClose: () => void }) {
-  const [users, setUsers] = useState<{ name: string; revoked: boolean }[]>([])
+  const [people, setPeople] = useState<{ uid: string; name: string }[] | null>(null)
   const [sel, setSel] = useState<string[]>(c.shared_with)
   const [err, setErr] = useState('')
-  useEffect(() => { get<{ name: string; revoked: boolean }[]>('/users').then(u => setUsers(u.filter(x => !x.revoked))).catch(() => {}) }, [])
+  useEffect(() => { peopleHere().then(setPeople) }, [])
+  const pick = (k: string, on: boolean) => setSel(s => on ? [...s, k] : s.filter(x => x !== k))
   return createPortal(
     <motion.div className="fixed inset-0 z-50 grid place-items-center p-4 bg-black/50 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
       onMouseDown={e => e.target === e.currentTarget && onClose()}>
       <div className="w-full max-w-sm solid rounded-3xl p-6 shadow-2xl">
         <h2 className="font-serif text-3xl tracking-tight mb-1">Share</h2>
-        <p className="text-sm text-fg-dim mb-4">Invitees you pick can watch “{c.title}” live.</p>
-        {users.length === 0 && <p className="text-sm text-fg-mute">No invitees yet — add people first.</p>}
-        <div className="space-y-1">
-          {users.map(u => (
-            <label key={u.name} className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-fg/[.04] cursor-pointer">
-              <input type="checkbox" checked={sel.includes(u.name)} onChange={e => setSel(s => e.target.checked ? [...s, u.name] : s.filter(x => x !== u.name))} />
-              <Avatar name={`cv-${u.name}`} size={24} /> {u.name}
-            </label>
-          ))}
-        </div>
+        <p className="text-sm text-fg-dim mb-4">Members you pick work on “{c.title}” with you: they see it and ask its agent.</p>
+        {people === null ? <p className="px-3 text-sm text-fg-mute">Loading…</p>
+          : people.length === 0 ? <p className="px-3 text-sm text-fg-mute">Sign in to astryx to share with members.</p>
+          : <div className="space-y-1 max-h-[40vh] overflow-y-auto">
+            {people.filter(p => p.uid !== c.user).map(p => (
+              <label key={p.uid} className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-fg/[.04] cursor-pointer">
+                <input type="checkbox" checked={sel.includes(p.uid)} onChange={e => pick(p.uid, e.target.checked)} />
+                <Avatar name={`cv-${p.name}`} size={24} /> {p.name}
+              </label>
+            ))}
+          </div>}
         {err && <p className="text-bad text-sm mt-3">{err}</p>}
         <button onClick={async () => { try { await post(`/canvases/${c.id}/share`, { users: sel }); onClose() } catch (e) { setErr(e instanceof Error ? e.message : 'refused') } }}
           className="w-full mt-5 sig rounded-2xl py-2.5 font-medium">Save</button>

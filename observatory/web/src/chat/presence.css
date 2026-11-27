@@ -1,0 +1,101 @@
+/* ── iteration 6: "the team is present" + polish (homes/seed/chat-rebuild/DESIGN.md, Motion + wow 1, 2, 6) ──────────
+   Stop, the handoff payload, the replay timeline, the live team map, unread marks, the list's seam and the palette.
+   Same rules as workspace.css: theme tokens only, colour carries agent identity, motion ≤ 220ms ease-out, and
+   prefers-reduced-motion turns every loop off. */
+@layer components {
+
+/* Stop: a quiet text button that only warms to "bad" on intent */
+.ws-stop { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border-radius: 8px; font-size: 12px;
+  color: var(--t-dim); border: 1px solid var(--t-line); background: color-mix(in srgb, var(--t-panel) 80%, transparent);
+  transition: color 120ms ease-out, border-color 120ms ease-out, background-color 120ms ease-out; }
+.ws-stop:hover:not(:disabled) { color: var(--t-bad); border-color: color-mix(in srgb, var(--t-bad) 45%, var(--t-line)); }
+.ws-stop:disabled { opacity: .6; cursor: progress; }
+.ws-stop.is-go { color: var(--t-on, #fff); background: var(--t-bad); border-color: transparent; font-weight: 500; }
+.ws-stop.is-go:hover { filter: brightness(1.06); color: var(--t-on, #fff); }
+.ws-stop-ask { animation: ws-fade-in 160ms var(--ws-ease); }
+@keyframes ws-fade-in { from { opacity: 0; transform: translateX(4px); } to { opacity: 1; transform: none; } }
+
+/* the handoff: hairline in the two agents' colours, meeting at the pill */
+.ws-handoff-wrap .ws-handoff::before { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ws-from) 45%, var(--t-line))); }
+.ws-handoff-wrap .ws-handoff::after { background: linear-gradient(90deg, color-mix(in srgb, var(--ws-to) 45%, var(--t-line)), transparent); }
+.ws-handoff-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 4px; border-radius: 9999px; font-size: 12px;
+  border: 1px solid var(--t-line); background: var(--t-bg); transition: border-color 120ms ease-out; white-space: nowrap; max-width: 100%; }
+.ws-handoff:hover .ws-handoff-pill, .ws-handoff[aria-expanded="true"] .ws-handoff-pill { border-color: var(--t-line2); }
+.ws-handoff-arrow { color: var(--t-mute); }
+.ws-payload { border-left: 2px solid color-mix(in srgb, var(--ws-from) 50%, var(--t-line)); padding: 2px 0 2px 14px; animation: ws-fade-in 180ms var(--ws-ease); }
+.ws-payload .ws-prose { font-size: 13.5px; line-height: 1.55; color: var(--t-dim); }
+
+/* a SWITCH of the chat's agents: a boundary, not a passing of work. The handoff's hairline fades at both ends; this
+   rule is solid edge to edge in the new agent's colour, the pill tinted with it, so the eye reads "a new part" */
+.ws-switch { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+.ws-switch::before, .ws-switch::after { content: ""; flex: 1; height: 1.5px; border-radius: 2px;
+  background: color-mix(in srgb, var(--ws-to) 55%, var(--t-line)); }
+.ws-switch-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 11px 3px 4px; border-radius: 9999px; white-space: nowrap;
+  max-width: 100%; overflow: hidden; border: 1px solid color-mix(in srgb, var(--ws-to) 50%, var(--t-line));
+  background: color-mix(in srgb, var(--ws-to) 9%, var(--t-bg)); }
+
+/* replay: a spine in the agent's colour, a dot-icon per step, a duration bar on the turn's own scale */
+.ws-replay { position: relative; margin: 6px 0 10px 1px; padding: 2px 0; display: flex; flex-direction: column; animation: ws-fade-in 180ms var(--ws-ease); }
+.ws-replay::before { content: ""; position: absolute; left: 10px; top: 10px; bottom: 10px; width: 1.5px; border-radius: 2px;
+  background: color-mix(in srgb, var(--ws-agent) 30%, var(--t-line)); }
+.ws-replay-row { position: relative; display: flex; align-items: center; gap: 10px; min-height: 26px; padding: 1px 6px 1px 0; border-radius: 8px; }
+.ws-replay-row:hover { background: color-mix(in srgb, var(--t-fg) 3.5%, transparent); }
+.ws-replay-ico { position: relative; z-index: 1; flex-shrink: 0; width: 21px; height: 21px; border-radius: 9999px; display: grid; place-items: center;
+  color: color-mix(in srgb, var(--ws-agent) 75%, var(--t-fg)); background: var(--t-bg);
+  box-shadow: inset 0 0 0 1.25px color-mix(in srgb, var(--ws-agent) 38%, var(--t-line)); font-size: 11px; }
+.ws-replay-ico[data-k="think"], .ws-replay-ico[data-k="mark"] { color: var(--t-mute); box-shadow: inset 0 0 0 1.25px var(--t-line); }
+.ws-replay-row.is-err .ws-replay-ico { color: var(--t-bad); box-shadow: inset 0 0 0 1.25px color-mix(in srgb, var(--t-bad) 50%, transparent); }
+.ws-replay-row.is-fold .ws-replay-ico { box-shadow: none; color: var(--t-mute); }
+.ws-replay-bar { flex-shrink: 0; width: 64px; height: 4px; border-radius: 4px; background: color-mix(in srgb, var(--t-fg) 5%, transparent); overflow: hidden; }
+.ws-replay-bar > span { display: block; height: 100%; border-radius: 4px; background: var(--ws-agent); }
+@media (max-width: 640px) { .ws-replay-bar { width: 36px; } }
+
+/* the live team map: a popover under the presence strip */
+.ws-map { width: 420px; max-width: calc(100vw - 24px); }
+.ws-map-node { transition: opacity 200ms ease-out; }
+.ws-map-node[data-dim="true"] { opacity: .62; }
+.ws-map-node > span:last-child { text-shadow: 0 0 3px var(--t-panel), 0 0 2px var(--t-panel), 0 0 1px var(--t-panel); }
+.ws-map-edge { fill: none; stroke-linecap: round; }
+.ws-map-flow { fill: none; stroke-linecap: round; stroke-dasharray: 2 9; animation: ws-flow 1.1s linear infinite; }
+@keyframes ws-flow { to { stroke-dashoffset: -11; } }
+.ws-map-breathe { transform-box: fill-box; transform-origin: center; animation: ws-breathe 2s cubic-bezier(.45,0,.55,1) infinite; }
+.ws-pop-in { animation: ws-pop 180ms var(--ws-ease); transform-origin: top right; }
+@keyframes ws-pop { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+
+/* the handoff ring travelling down the rail (AgentRail.useHandoffRing) */
+.ws-handoff-ring { position: absolute; top: 0; width: 34px; height: 34px; border-radius: 9999px; pointer-events: none; z-index: 2;
+  box-shadow: 0 0 0 2px var(--ws-agent), 0 0 14px -2px var(--ws-agent); }
+
+/* unread: a dot in the accent, and the title in full ink */
+.ws-unread { width: 7px; height: 7px; border-radius: 9999px; background: var(--t-accent); flex-shrink: 0; box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 16%, transparent); }
+
+/* the conversation list's seam (drag 220–340; double-click resets) */
+.ws-list-seam { position: relative; width: 0; flex-shrink: 0; z-index: 6; }
+.ws-list-seam > div { position: absolute; left: -4px; top: 0; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; }
+.ws-list-seam > div::after { content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px; transition: background-color 120ms, width 120ms, left 120ms; }
+.ws-list-seam > div:hover::after, .ws-list-seam > div:active::after { left: 2px; width: 3px; background: color-mix(in srgb, var(--t-accent) 55%, transparent); }
+
+/* the docked media drawer: a column beside the panel, a hairline between */
+.ws-dock { animation: ws-dock-in 200ms var(--ws-ease); }
+.ws-dock .ws-drawer { box-shadow: none; background: color-mix(in srgb, var(--t-bg2) 88%, transparent); }
+@keyframes ws-dock-in { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+
+/* the artifact panel enters FROM the chip that opened it: a short slide out of the chat, scaling up from the chip's
+   height on its leading edge (FileChip.originFrom sets --ws-from-y) */
+.ws .ws-artifact { animation: ws-panel-from 210ms var(--ws-ease); transform-origin: 0 var(--ws-from-y, 40%); }
+@keyframes ws-panel-from { from { opacity: 0; transform: translateX(-18px) scale(.965); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 640px) { .ws-stop { height: 36px; padding: 0 12px; } }
+
+/* the composer's hint line steps aside when the chat is narrow (the panel and the drawer open beside it) */
+.ws-composer { container-type: inline-size; }
+@container (max-width: 520px) { .ws-composer-hint { display: none !important; } }
+
+/* ⌘K: 640px at 20% from the top */
+.ws-palette { animation: ws-pop 160ms var(--ws-ease); transform-origin: top center; }
+.ws-palette mark { background: transparent; color: var(--t-fg); font-weight: 600; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--t-accent) 60%, transparent); text-underline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ws .ws-artifact, .ws-stop-ask, .ws-payload, .ws-replay, .ws-map-flow, .ws-map-breathe, .ws-pop-in, .ws-dock, .ws-palette { animation: none; }
+}
+}

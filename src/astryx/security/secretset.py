@@ -42,7 +42,8 @@ NOT_SECRET = frozenset({
     "GROWBOT_BODY_URL", "ASTRYX_NODE",
     # hearing (plan-8674 S1): switches and tuning for the ear; none is a credential
     "EAR_ENABLED", "EAR_ROOM", "EAR_STT_BACKEND", "EAR_STT_MODEL", "EAR_STT_BEAM", "EAR_TTL_DAYS", "EAR_QUEUE_MAX",
-    "GMAIL_ADDRESS",        # an identifier (tier question, not a credential): see plan-5497 BC-b
+    # mail (src/astryx/mail.py): the address and the servers are identifiers and locations; MAIL_PASSWORD stays secret
+    "MAIL_FROM", "MAIL_USER", "MAIL_SMTP", "MAIL_IMAP", "MAIL_SECURITY",
     # distribution (plan-10224): which repo is upstream and whether this org IS it, the federation relay's
     # public URL, and the docker bridge address; switches and public locations, none grants anything
     "ASTRYX_UPSTREAM", "ASTRYX_UPSTREAM_ROLE", "ASTRYX_RELAY", "ASTRYX_DOCKER_HOST_IP",
@@ -52,6 +53,17 @@ NOT_SECRET = frozenset({
     # a URL query value is secret by default; these name ONE parameter ("<KEY>:<param>") whose
     # value is an ordinary word (it appears in the tree's own code) and grants nothing
     "AUTOREMOTE_GETLOC_URL:message",
+    # sms (bridges/providers/sms.py): where the gateway queue lives and how much a day; the Jupyter host:port has no
+    # token in it, and every seat names that same host:port in its jupyter_* calls (db 13307: guarding it blocked them)
+    "SMS_JUPYTER", "SMS_ETL_DIR", "SMS_DB", "SMS_SHORTCODE", "SMS_IPADDRESS", "SMS_TABLE", "SMS_DAILY_CAP",
+    "EMAIL_DAILY_CAP",
+    # etl (mcp/etl): the ETL box's repo path, its Task Scheduler folder, where prefect.exe and git.exe live, and the creds
+    # KEY (a name) of Prefect's database; locations, none grants anything. Guarding the repo path refused every seat's
+    # jupyter_run that named it (etl-architect 14945)
+    "ETL_ROOT", "ETL_TASK_FOLDER", "ETL_PREFECT", "ETL_GIT", "ETL_PF_KEY",
+    # whatsapp (bridges/whatsapp.py): our own linked number and LID, the ids a group tags us by; public identities
+    # (owner 11-15: our users' numbers and jids are not secret), and every agent's group messages carry them
+    "WA_SELF_IDS",
 })
 
 

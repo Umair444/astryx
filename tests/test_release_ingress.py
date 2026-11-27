@@ -145,16 +145,25 @@ print("pairing:")
 # the route it arrived on, so a tier route can never be bypassed by one site; the pulse-witness row (from 'local')
 # and the reaction signal (common.py, no route in scope: it quotes stored bodies, markers on a tier route) are not
 for f, ch in (("whatsapp.py", "whatsapp"), ("discord.py", "discord"), ("telegram.py", "telegram")):
+    # an insert is wire_insert itself or wire_chat (common.py: the human's chat, routed or fanned out, checked below)
     calls = [n for n in ast.walk(ast.parse((REPO / "bridges" / f).read_text()))
-             if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "wire_insert"
+             if isinstance(n, ast.Call) and getattr(n.func, "id", None) in ("wire_insert", "wire_chat")
              and len(n.args) > 2 and isinstance(n.args[2], ast.Constant) and n.args[2].value == ch]
     bare = [n.lineno for n in calls if not any(k.arg == "route" for k in n.keywords)]
     check(f"{f}: all {len(calls)} of its own-channel inserts pass route=", calls and not bare, f"bare at {bare}")
     tree = ast.parse((REPO / "bridges" / f).read_text())
-    targets = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "route_target"]
+    targets = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+               and getattr(n.func, "id", None) in ("route_target", "wire_chat")]
     saids = [n for n in calls if any(k.arg == "said" for k in n.keywords)]
     check(f"{f}: each route_target'd insert passes said= (a tier route stores the text as typed)",
           targets and len(saids) == len(targets), f"route_target {len(targets)}, said= {len(saids)}")
+
+# wire_chat, the one path a bridge's human chat takes: every insert in it carries the route and the text as typed
+wc = next(n for n in ast.walk(ast.parse((REPO / "bridges" / "common.py").read_text()))
+          if isinstance(n, ast.AsyncFunctionDef) and n.name == "wire_chat")
+ins = [n for n in ast.walk(wc) if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "wire_insert"]
+check(f"common.py wire_chat: all {len(ins)} of its inserts pass route= and said=",
+      ins and all({"route", "said"} <= {k.arg for k in n.keywords} for n in ins), [n.lineno for n in ins])
 
 try:
     import asyncpg

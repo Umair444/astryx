@@ -1,30 +1,19 @@
 import { useEffect, useState } from 'react'
+import MindView from './MindView'
 import type { ReactNode } from 'react'
 import { ScrollArea, Tooltip } from '@mantine/core'
 import { api, agentColor, displayName, fmtTime, fmtTokens } from '../api'
 import AgentFace from './AgentFace'
 import { Count, Empty, LiveDot, Panel, Skeleton, Spark, Tabs, ViewHeader } from '../ui/kit'
-import type { Economy, EconDissipative, EconLatest, EconTriggerTfp } from '../types'
+import type { Economy } from '../types'
+import { StatCard } from './econ/kit'
+import { EconSystem, MindLoop, type Sys } from './econ/SystemTabs'
 
 const BILL = 'var(--t-accent)'
 const OUTC = 'var(--t-accent2)'
 const GREEN = 'var(--t-good)'
 const ROSE = 'var(--t-bad)'
 
-/* a headline number. `value` is a node so a still-loading figure can be a skeleton (kit Count),
-   never a "0" that reads as truth; `spark` draws the series behind it when there is one. */
-function StatCard({ label, value, sub, spark, tone }: {
-  label: string; value: ReactNode; sub?: ReactNode; spark?: number[]; tone?: 'accent' | 'accent2' | 'good' | 'warn' | 'bad'
-}) {
-  return (
-    <Panel className="p-4 overflow-hidden min-h-[104px]">
-      <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">{label}</div>
-      <div className="relative z-[1] mt-2 text-[26px] font-semibold tracking-tight text-ink leading-none tabular-nums">{value}</div>
-      {sub && <div className="relative z-[1] mt-2 text-[11.5px] text-ink-mute leading-snug">{sub}</div>}
-      {spark && spark.length > 1 && <Spark data={spark} tone={tone} className="absolute right-0 bottom-0 w-[58%] h-12 opacity-70" />}
-    </Panel>
-  )
-}
 
 /* Usage-Monitor-style gauge: a labelled bar against a ceiling */
 function Gauge({ label, pct, right, color }: { label: string; pct: number; right: string; color?: string }) {
@@ -82,36 +71,10 @@ function prettyModel(id: string): string {
 
 /* ── dissipative-layer helpers ─────────────────────────────────────────────────────── */
 
-/* K is bytes of compressed self-description */
-function fmtBytes(n: number | null | undefined): string {
-  if (n == null) return '—'
-  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'GB'
-  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'MB'
-  if (n >= 1e3) return (n / 1e3).toFixed(0) + 'KB'
-  return n + 'B'
-}
 
-/* G rides a ×1e9 scale (per-GB·tok); playground α reshapes it by orders of magnitude */
-function fmtG(v: number | null | undefined): string {
-  if (v == null) return '—'
-  if (v === 0) return '0'
-  const a = Math.abs(v)
-  if (a >= 0.01 && a < 1e6) return Number(v.toPrecision(3)).toString()
-  return v.toExponential(2)
-}
 
-function fmtPct(v: number | null | undefined, dp = 1): string {
-  return v == null ? '—' : (v * 100).toFixed(dp) + '%'
-}
 
-/* '+' green / '−' rose, for P&L nets */
-function fmtSigned(v: number): string {
-  return (v < 0 ? '−' : '+') + fmtTokens(Math.abs(v))
-}
 
-/* calendar-day index — the x-axis of every gap-aware chart. A missing day is a GAP
-   (the org was dark), never a zero. */
-const dayNum = (day: string) => Math.round(+new Date(day + 'T00:00:00Z') / 864e5)
 
 /* the two live %-series over the last 6h. Fixed 0–100 axis with gridlines + area fill +
    per-sample dots + end labels, so a nearly-flat line reads as a LEVEL ("62%"), not a
@@ -517,764 +480,36 @@ function UsageTab({ econ }: { econ: Economy | null }) {
   )
 }
 
-/* ── gap-aware daily charts — x is CALENDAR time; a missing day breaks the line
-   (the org was dark), it is never drawn as zero ─────────────────────────────────────── */
+/* ── the tabbed Economy panel: the base is two rules (energy, the mind); every tab is a view over them ─────────── */
 
-type DayPt = { day: string; v: number | null }
-
-/* split a daily series into runs of CONSECUTIVE calendar days with values */
-function daySegments(pts: DayPt[]): { day: string; v: number }[][] {
-  const segs: { day: string; v: number }[][] = []
-  let cur: { day: string; v: number }[] = []
-  let prev = Number.NEGATIVE_INFINITY
-  for (const p of pts) {
-    const dn = dayNum(p.day)
-    if (p.v == null) {
-      if (cur.length) segs.push(cur)
-      cur = []
-      prev = Number.NEGATIVE_INFINITY
-      continue
-    }
-    if (dn !== prev + 1 && cur.length) {
-      segs.push(cur)
-      cur = []
-    }
-    cur.push({ day: p.day, v: p.v })
-    prev = dn
-  }
-  if (cur.length) segs.push(cur)
-  return segs
-}
-
-function GapLine({ pts, color, fmt, height = 96 }: {
-  pts: DayPt[]
-  color: string
-  fmt?: (v: number) => string
-  height?: number
-}) {
-  const have = pts.filter((p) => p.v != null)
-  if (!have.length) return <div className="text-xs text-ink-mute py-4 text-center">no data yet</div>
-  const f = fmt ?? ((v: number) => v.toFixed(2))
-  const W = 1060, H = height, padL = 54, padR = 10, padT = 8, padB = 14
-  const plotW = W - padL - padR, plotH = H - padT - padB
-  const d0 = dayNum(pts[0].day), d1 = dayNum(pts[pts.length - 1].day)
-  const span = Math.max(1, d1 - d0)
-  const x = (day: string) => padL + ((dayNum(day) - d0) / span) * plotW
-  const vMax = Math.max(...have.map((p) => p.v as number))
-  const top = vMax > 0 ? vMax * 1.08 : 1
-  const y = (v: number) => padT + (1 - v / top) * plotH
-  const segs = daySegments(pts)
-  return (
-    <svg width="100%" viewBox={`0 0 ${W} ${H}`} height={H} preserveAspectRatio="none" className="block">
-      {[0, 0.5, 1].map((g) => (
-        <g key={g}>
-          <line x1={padL} y1={y(g * top)} x2={W - padR} y2={y(g * top)} stroke="var(--t-line)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          <text x={padL - 5} y={y(g * top) + 3} textAnchor="end" fontSize={9} fill="var(--t-mute)" fontFamily="monospace">{f(g * top)}</text>
-        </g>
-      ))}
-      {segs.map((seg, i) => {
-        const line = seg.map((p, j) => `${j === 0 ? 'M' : 'L'}${x(p.day).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')
-        const area = `${line} L${x(seg[seg.length - 1].day).toFixed(1)},${y(0).toFixed(1)} L${x(seg[0].day).toFixed(1)},${y(0).toFixed(1)} Z`
-        return (
-          <g key={i}>
-            {seg.length > 1 && <path d={area} fill={color} opacity={0.08} />}
-            {seg.length > 1 && <path d={line} fill="none" stroke={color} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />}
-            {seg.map((p) => (
-              <circle key={p.day} cx={x(p.day)} cy={y(p.v)} r={2} fill={color}>
-                <title>{`${p.day} — ${f(p.v)}`}</title>
-              </circle>
-            ))}
-          </g>
-        )
-      })}
-      <text x={padL} y={H - 3} fontSize={8} fill="var(--t-mute)" fontFamily="monospace">{pts[0].day}</text>
-      <text x={W - padR} y={H - 3} textAnchor="end" fontSize={8} fill="var(--t-mute)" fontFamily="monospace">{pts[pts.length - 1].day}</text>
-    </svg>
-  )
-}
-
-/* daily bars on a calendar axis — absent days simply have no bar (a gap) */
-function GapBars({ pts, color, fmt, height = 96 }: {
-  pts: DayPt[]
-  color: string
-  fmt?: (v: number) => string
-  height?: number
-}) {
-  const have = pts.filter((p) => p.v != null)
-  if (!have.length) return <div className="text-xs text-ink-mute py-4 text-center">no data yet</div>
-  const f = fmt ?? fmtTokens
-  const W = 1060, H = height, padL = 54, padR = 10, padT = 8, padB = 14
-  const plotW = W - padL - padR, plotH = H - padT - padB
-  const d0 = dayNum(pts[0].day), d1 = dayNum(pts[pts.length - 1].day)
-  const span = Math.max(1, d1 - d0)
-  const x = (day: string) => padL + ((dayNum(day) - d0) / span) * plotW
-  const vMax = Math.max(...have.map((p) => p.v as number), 1)
-  const bw = Math.max(2, Math.min(18, plotW / (span + 1) - 2))
-  return (
-    <svg width="100%" viewBox={`0 0 ${W} ${H}`} height={H} preserveAspectRatio="none" className="block">
-      {[0.5, 1].map((g) => (
-        <g key={g}>
-          <line x1={padL} y1={padT + (1 - g) * plotH} x2={W - padR} y2={padT + (1 - g) * plotH} stroke="var(--t-line)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          <text x={padL - 5} y={padT + (1 - g) * plotH + 3} textAnchor="end" fontSize={9} fill="var(--t-mute)" fontFamily="monospace">{f(g * vMax)}</text>
-        </g>
-      ))}
-      {have.map((p) => {
-        const h = Math.max(1, ((p.v as number) / vMax) * plotH)
-        return (
-          <rect key={p.day} x={x(p.day) - bw / 2} y={padT + plotH - h} width={bw} height={h} fill={color} opacity={0.85} rx={1.5}>
-            <title>{`${p.day} — ${f(p.v as number)}`}</title>
-          </rect>
-        )
-      })}
-      <text x={padL} y={H - 3} fontSize={8} fill="var(--t-mute)" fontFamily="monospace">{pts[0].day}</text>
-      <text x={W - padR} y={H - 3} textAnchor="end" fontSize={8} fill="var(--t-mute)" fontFamily="monospace">{pts[pts.length - 1].day}</text>
-    </svg>
-  )
-}
-
-/* ── Thermo — the org as a dissipative structure ───────────────────────────────────── */
-
-/* cubic-bezier ribbon between two vertical edges */
-function ribbon(x0: number, y0: number, h0: number, x1: number, y1: number, h1: number): string {
-  const mx = (x0 + x1) / 2
-  return `M${x0},${y0} C${mx},${y0} ${mx},${y1} ${x1},${y1} L${x1},${y1 + h1} C${mx},${y1 + h1} ${mx},${y0 + h0} ${x0},${y0 + h0} Z`
-}
-
-/* energy flow: Φ in → per-agent split → { W work (verified), Q heat }. Widths ∝ tokens.
-   With W=0 nearly everything flows to heat — rendered honestly, that IS the point. */
-function EnergyFlow({ latest }: { latest: EconLatest }) {
-  const t = latest.thermo
-  const sorted = [...latest.pnl].filter((p) => p.burned > 0).sort((a, b) => b.burned - a.burned)
-  const top = sorted.slice(0, 8)
-  const rest = sorted.slice(8)
-  const nodes = top.map((p) => ({ name: p.agent, burn: p.burned, color: agentColor(p.agent) }))
-  if (rest.length) nodes.push({ name: `others (${rest.length})`, burn: rest.reduce((a, p) => a + p.burned, 0), color: 'var(--t-mute)' })
-  const total = nodes.reduce((a, n) => a + n.burn, 0)
-  if (!total) return <div className="text-xs text-ink-mute py-4 text-center">no flux on {latest.day}</div>
-
-  const heatFrac = t.phi > 0 ? Math.min(1, t.heat_instant_phi / t.phi) : 1
-  const workFrac = Math.max(0, 1 - heatFrac)
-
-  const W = 1060
-  const H = Math.max(240, nodes.length * 32 + 40)
-  const NW = 12 // node bar width
-  const xL = 96, xM = 470, xR = 880
-  const gap = 7
-  const plotH = H - 24 - gap * Math.max(0, nodes.length - 1)
-  const scale = plotH / total
-
-  // left node — one bar, the whole flux
-  const hL = total * scale
-  const yL = (H - hL) / 2
-
-  // middle nodes — stacked with gaps
-  let cy = (H - (total * scale + gap * (nodes.length - 1))) / 2
-  const mids = nodes.map((n) => {
-    const m = { ...n, y: cy, h: n.burn * scale }
-    cy += m.h + gap
-    return m
-  })
-
-  // right sinks — W (green) then Q (rose)
-  const hW = total * workFrac * scale
-  const hQ = total * heatFrac * scale
-  const sinkGap = 16
-  const yW = (H - (hW + hQ + sinkGap)) / 2
-  const yQ = yW + Math.max(hW, 2) + sinkGap
-
-  // ribbons: track cursors on every edge
-  let lCur = yL
-  const wCur = { y: yW }
-  const qCur = { y: yQ }
-
-  return (
-    <div className="overflow-x-auto">
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="block" style={{ minWidth: 760 }}>
-        {/* Φ → agents */}
-        {mids.map((m) => {
-          const p = ribbon(xL + NW, lCur, m.h, xM, m.y, m.h)
-          lCur += m.h
-          return <path key={`l-${m.name}`} d={p} fill={m.color} opacity={0.28} />
-        })}
-        {/* agents → sinks */}
-        {mids.map((m) => {
-          const hw = m.h * workFrac
-          const hq = m.h * heatFrac
-          const yw = wCur.y
-          const yq = qCur.y
-          if (hw > 0.4) wCur.y += hw
-          if (hq > 0.4) qCur.y += hq
-          return (
-            <g key={`s-${m.name}`}>
-              {hw > 0.4 && <path d={ribbon(xM + NW, m.y, hw, xR, yw, hw)} fill={GREEN} opacity={0.3} />}
-              {hq > 0.4 && <path d={ribbon(xM + NW, m.y + hw, hq, xR, yq, hq)} fill={ROSE} opacity={0.26} />}
-            </g>
-          )
-        })}
-        {/* node bars + labels */}
-        <rect x={xL} y={yL} width={NW} height={hL} rx={2} fill={BILL} opacity={0.9} />
-        <text x={xL - 8} y={yL + hL / 2 - 4} textAnchor="end" fontSize={11} fill="var(--t-dim)" fontFamily="monospace">Φ flux in</text>
-        <text x={xL - 8} y={yL + hL / 2 + 10} textAnchor="end" fontSize={10} fill="var(--t-mute)" fontFamily="monospace">{fmtTokens(t.phi)}</text>
-        {mids.map((m) => (
-          <g key={`n-${m.name}`}>
-            <rect x={xM} y={m.y} width={NW} height={Math.max(m.h, 1.5)} rx={2} fill={m.color} opacity={0.9} />
-            <text x={xM + NW + 8} y={m.y + Math.max(m.h, 1.5) / 2 + 3} fontSize={10} fill="var(--t-dim)" fontFamily="monospace">
-              {m.name} · {fmtTokens(m.burn)}
-            </text>
-          </g>
-        ))}
-        <rect x={xR} y={yW} width={NW} height={Math.max(hW, 2)} rx={2} fill={GREEN} opacity={0.9} />
-        <text x={xR + NW + 8} y={yW + Math.max(hW, 2) / 2 + 3} fontSize={10} fill={GREEN} fontFamily="monospace">
-          W work (verified) · {fmtTokens(t.W)}
-        </text>
-        <rect x={xR} y={yQ} width={NW} height={Math.max(hQ, 2)} rx={2} fill={ROSE} opacity={0.9} />
-        <text x={xR + NW + 8} y={yQ + Math.max(hQ, 2) / 2 + 3} fontSize={10} fill={ROSE} fontFamily="monospace">
-          Q heat · {fmtTokens(t.heat_instant_phi)}
-        </text>
-      </svg>
-    </div>
-  )
-}
-
-function ThermoTab({ d }: { d: EconDissipative }) {
-  // headline reads TODAY (live, recomputed per request) so shipping a goal moves the needle
-  // now; falls back to the last completed rollup only when the live compute is unavailable.
-  const L = d.today ?? d.latest
-  const today = d.today
-  const live = !!d.today
-  const noWEver = d.series.length > 0 && d.series.every((p) => !p.W)
-  const pt = (key: 'eta' | 'heat_frac' | 'phi' | 'K') => d.series.map((p) => ({ day: p.day, v: p[key] }))
-
-  return (
-    <div className="space-y-3">
-      {/* hero: the one law, with live values substituted */}
-      <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
-        <div className="ax-panel rounded-2xl p-4 col-span-2">
-          <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">
-            G · dissipative yield {L ? <span className="text-ink-mute normal-case tracking-normal">· {L.day}</span> : null}
-            {live ? <span className="ml-1.5 normal-case tracking-normal text-good">● live</span> : null}
-          </div>
-          <div className="text-3xl font-bold text-ink mt-1 font-mono">{fmtG(L?.G)}</div>
-          <div className="text-[11px] text-ink-dim mt-1.5 font-mono">G = W / (Φ · K)</div>
-          {L && (
-            <div className="text-[11px] text-ink-mute font-mono">
-              = {fmtTokens(L.thermo.W)} / ({fmtTokens(L.thermo.phi)} · {fmtBytes(L.K.compressed)})
-            </div>
-          )}
-          <div className="text-[10px] text-ink-mute mt-1">value-tokens earned per token burned per byte of self · ×1e9 scale</div>
-        </div>
-        <StatCard label="η · efficiency" value={fmtPct(L?.thermo.eta)} sub="W-attributable share of Φ — value enters only at the boundary" />
-        <StatCard
-          label="Q · heat"
-          value={fmtPct(L?.thermo.heat_instant_frac)}
-          sub={`${fmtTokens(L?.thermo.heat_instant_phi)} flux produced no boundary value`}
-        />
-      </div>
-
-      {/* today so far — the day is still open */}
-      {today && (
-        <div className="ax-panel rounded-2xl p-4">
-          <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">
-            Today, incomplete <span className="text-ink-mute">· {today.day}</span>
-          </div>
-          <div className="flex flex-wrap gap-x-8 gap-y-1 text-[12px] font-mono">
-            <span className="text-ink-dim">Φ so far <span className="text-ink">{fmtTokens(today.thermo.phi)}</span></span>
-            <span className="text-ink-dim">turns <span className="text-ink">{today.thermo.turns}</span></span>
-            <span className="text-ink-dim">W <span className="text-ink">{fmtTokens(today.thermo.W)}</span></span>
-            <span className="text-ink-dim">heat so far <span className="text-ink">{fmtTokens(today.thermo.heat_instant_phi)}</span>{today.thermo.heat_instant_frac != null ? ` (${fmtPct(today.thermo.heat_instant_frac, 0)})` : ''}</span>
-            <span className="text-ink-dim">goals shipped <span className="text-ink">{today.thermo.goals_shipped}</span></span>
-          </div>
-        </div>
-      )}
-
-      {/* the energy flow: Φ → agents → { W, Q } */}
-      <div className="ax-panel rounded-2xl p-4">
-        <div className="flex items-baseline gap-3 mb-1">
-          <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">Energy flow {L ? `· ${L.day}` : ''}</div>
-          <div className="flex gap-4 ml-auto text-[10px] text-ink-mute">
-            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: GREEN }} /> W work</span>
-            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: ROSE }} /> Q heat</span>
-          </div>
-        </div>
-        <div className="text-[10px] text-ink-mute mb-2 font-mono">first law: Φ = W-attributable + Q</div>
-        {L ? <EnergyFlow latest={L} /> : <div className="text-xs text-ink-mute py-4 text-center">no daily reading yet</div>}
-      </div>
-
-      {noWEver && (!today || !today.thermo.W) && (
-        <div className="ax-panel rounded-2xl p-4 text-[11px] text-ink-mute leading-relaxed">
-          no FUNDED goal has verified since instrumentation — W enters only when a budgeted goal ships
-          (goals.done_at). Everything is heat until the boundary pays.
-        </div>
-      )}
-
-      {/* the daily series — gaps are days the org was dark */}
-      <div className="ax-panel rounded-2xl p-4">
-        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-1">η · efficiency over time</div>
-        <GapLine pts={pt('eta')} color={GREEN} fmt={(v) => fmtPct(v, 0)} />
-      </div>
-      <div className="ax-panel rounded-2xl p-4">
-        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-1">heat fraction over time</div>
-        <GapLine pts={pt('heat_frac')} color={ROSE} fmt={(v) => fmtPct(v, 0)} />
-      </div>
-      <div className="ax-panel rounded-2xl p-4">
-        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-1">Φ · daily billable flux</div>
-        <GapBars pts={pt('phi')} color={BILL} />
-      </div>
-      <div className="ax-panel rounded-2xl p-4">
-        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-1">
-          K · self-description bytes <span className="text-ink-mute normal-case tracking-normal">(compressed — deletions visibly drop it)</span>
-        </div>
-        <GapLine pts={pt('K')} color={OUTC} fmt={fmtBytes} />
-      </div>
-    </div>
-  )
-}
-
-/* trailing-30d trigger P&L — rows arrive sorted ascending by roi (biggest losers first) */
-function TriggerMarketCard({ rows }: { rows: NonNullable<EconLatest['trigger_roi']> }) {
-  const shown = rows.slice(0, 15)
-  const unpriced = rows.length > 0 && rows.every((r) => r.value_reached === 0)
-  return (
-    <div className="ax-panel rounded-2xl p-4">
-      <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">Trigger market · trailing 30d</div>
-      {unpriced && (
-        <div className="text-[11px] text-ink-mute mb-2">
-          market unpriced — no funded goal has shipped in-window; ROI shows cost only and nothing is auto-retired
-        </div>
-      )}
-      <div className="text-[11px] text-ink-mute mb-2">
-        a trigger earns by its wakes reaching shipped funded goals; guards survive by premium, not ROI — persistent
-        roi&lt;0 with no premium is retired by market_decay
-      </div>
-      <table className="w-full text-[12px]">
-        <thead>
-          <tr className="text-left text-[10px] uppercase tracking-wider text-ink-dim">
-            <th className="font-normal pb-1">trigger</th>
-            <th className="font-normal pb-1 text-right">fires</th>
-            <th className="font-normal pb-1 text-right">cost</th>
-            <th className="font-normal pb-1 text-right">value reached</th>
-            <th className="font-normal pb-1 text-right">roi</th>
-          </tr>
-        </thead>
-        <tbody>
-          {shown.map((r) => (
-            <tr key={`${r.agent}/${r.trigger}`}>
-              <td className="py-0.5 text-ink truncate max-w-[200px]">{r.agent}/{r.trigger}</td>
-              <td className="py-0.5 text-right font-mono text-ink-mute">{r.fires}</td>
-              <td className="py-0.5 text-right font-mono text-ink-mute">{fmtTokens(r.cost)}</td>
-              <td className="py-0.5 text-right font-mono text-ink-mute">{fmtTokens(r.value_reached)}</td>
-              <td className="py-0.5 text-right font-mono" style={{ color: r.roi < 0 ? ROSE : GREEN }}>
-                {fmtSigned(r.roi)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {!rows.length && <div className="text-xs text-ink-mute">no trigger fires in window — the daily econ job writes ROI rows</div>}
-    </div>
-  )
-}
-
-/* ── Market — per-agent P&L, concentration, attribution ────────────────────────────── */
-function MarketTab({ d }: { d: EconDissipative }) {
-  const L = d.today ?? d.latest
-  const pnl = L ? [...L.pnl].sort((a, b) => b.burned - a.burned) : []
-  const maxNet = Math.max(...pnl.map((p) => Math.abs(p.net)), 1)
-  const lastAttr = [...d.series].reverse().find((p) => p.attributed_frac != null)?.attributed_frac ?? null
-  const theil = L?.theil_burn ?? null
-  const theilRead = theil == null ? '' : theil < 0.3 ? 'diffuse' : theil <= 0.7 ? 'differentiated' : 'concentrated'
-
-  return (
-    <div className="space-y-3">
-      <div className="grid gap-3 grid-cols-2 md:grid-cols-3">
-        <StatCard label="GDP · window W" value={fmtTokens(L?.thermo.W)} sub="budgets of goals VERIFIED in window — the only way value enters" />
-        <StatCard
-          label="Theil · burn concentration"
-          value={theil == null ? '—' : `${theil.toFixed(3)}${theilRead ? ` · ${theilRead}` : ''}`}
-          sub="<0.3 diffuse · 0.3–0.7 differentiated · >0.7 concentrated"
-        />
-        <StatCard label="attributed % of Φ" value={fmtPct(lastAttr)} sub="spend attributed to goals — the rest is blind flux" />
-      </div>
-
-      <div className="ax-panel rounded-2xl p-4">
-        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">
-          P&L · yesterday <span className="text-ink-mute">{L ? `(${L.day})` : ''}</span>
-        </div>
-        <div className="space-y-1.5">
-          {pnl.map((p) => (
-            <div key={p.agent} className="flex items-center gap-2.5 text-[12px] py-0.5">
-              <AgentFace name={p.agent} size={22} />
-              <span className="text-ink w-28 truncate">{displayName(p.agent)}</span>
-              <div className="flex-1 h-1.5 rounded-full bg-deck-3 overflow-hidden hidden sm:block">
-                <div
-                  className="h-full rounded-full"
-                  style={{ width: `${(Math.abs(p.net) / maxNet) * 100}%`, background: p.net >= 0 ? GREEN : ROSE }}
-                />
-              </div>
-              <span className="font-mono text-ink-mute whitespace-nowrap text-[11px] hidden md:inline">
-                burned {fmtTokens(p.burned)} · earned {fmtTokens(p.value_earned)} · {p.turns} turns
-              </span>
-              <span className="font-mono w-16 ml-auto md:ml-0 text-right whitespace-nowrap" style={{ color: p.net >= 0 ? GREEN : ROSE }}>
-                {fmtSigned(p.net)}
-              </span>
-            </div>
-          ))}
-          {!pnl.length && <div className="text-xs text-ink-mute">no P&L rows yet — the daily econ job writes them</div>}
-        </div>
-      </div>
-
-      <TriggerMarketCard rows={L?.trigger_roi ?? []} />
-
-      <div className="ax-panel rounded-2xl p-4 text-[11px] text-ink-mute leading-relaxed">
-        <span className="text-ink-dim uppercase tracking-wider text-[11px]">value law</span> — value enters only at
-        the boundary (verified funded goals); internal use propagates it; nothing internal can mint it.
-      </div>
-    </div>
-  )
-}
-
-/* ── Productivity — trigger TFP + sense adoption ───────────────────────────────────── */
-
-const TFP_COLORS = ['var(--t-accent)', 'var(--t-accent2)', 'var(--t-good)', 'var(--t-warn)', 'var(--t-bad)', 'color-mix(in srgb, var(--t-warn) 50%, var(--t-bad))']
-
-/* cost_per_fire over days for the top triggers by fires — a falling line is a
-   productivity gain (same wake, fewer tokens) */
-function TfpChart({ rows }: { rows: EconTriggerTfp[] }) {
-  const byTrig = new Map<string, EconTriggerTfp[]>()
-  for (const r of rows) {
-    const a = byTrig.get(r.trigger)
-    if (a) a.push(r)
-    else byTrig.set(r.trigger, [r])
-  }
-  const top = [...byTrig.entries()]
-    .map(([trigger, pts]) => ({
-      trigger,
-      fires: pts.reduce((s, p) => s + p.fires, 0),
-      pts: [...pts].sort((a, b) => (a.day < b.day ? -1 : 1)),
-    }))
-    .sort((a, b) => b.fires - a.fires)
-    .slice(0, 6)
-  if (!top.length) return <div className="text-xs text-ink-mute py-4 text-center">no trigger fires in window</div>
-
-  const all = top.flatMap((t) => t.pts)
-  const days = all.map((p) => dayNum(p.day))
-  const d0 = Math.min(...days), d1 = Math.max(...days)
-  const span = Math.max(1, d1 - d0)
-  const vMax = Math.max(...all.map((p) => p.cost_per_fire), 1)
-  const W = 1060, H = 150, padL = 54, padR = 10, padT = 8, padB = 14
-  const plotW = W - padL - padR, plotH = H - padT - padB
-  const x = (day: string) => padL + ((dayNum(day) - d0) / span) * plotW
-  const y = (v: number) => padT + (1 - v / (vMax * 1.08)) * plotH
-
-  return (
-    <div>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} height={H} preserveAspectRatio="none" className="block">
-        {[0, 0.5, 1].map((g) => (
-          <g key={g}>
-            <line x1={padL} y1={y(g * vMax)} x2={W - padR} y2={y(g * vMax)} stroke="var(--t-line)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-            <text x={padL - 5} y={y(g * vMax) + 3} textAnchor="end" fontSize={9} fill="var(--t-mute)" fontFamily="monospace">{fmtTokens(g * vMax)}</text>
-          </g>
-        ))}
-        {top.map((t, i) => {
-          const color = TFP_COLORS[i % TFP_COLORS.length]
-          const line = t.pts.map((p, j) => `${j === 0 ? 'M' : 'L'}${x(p.day).toFixed(1)},${y(p.cost_per_fire).toFixed(1)}`).join(' ')
-          return (
-            <g key={t.trigger}>
-              {t.pts.length > 1 && <path d={line} fill="none" stroke={color} strokeWidth={1.5} vectorEffect="non-scaling-stroke" opacity={0.9} />}
-              {t.pts.map((p) => (
-                <circle key={p.day} cx={x(p.day)} cy={y(p.cost_per_fire)} r={2} fill={color}>
-                  <title>{`${t.trigger} · ${p.day} — ${fmtTokens(p.cost_per_fire)}/fire · ${p.fires} fires`}</title>
-                </circle>
-              ))}
-            </g>
-          )
-        })}
-      </svg>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-[10px] text-ink-mute">
-        {top.map((t, i) => (
-          <span key={t.trigger} className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: TFP_COLORS[i % TFP_COLORS.length] }} />
-            {t.trigger} ({t.fires})
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function ProductivityTab({ d }: { d: EconDissipative }) {
-  const P = (d.today ?? d.latest)?.productivity
-  return (
-    <div className="space-y-3">
-      <div className="grid gap-3 grid-cols-2 md:grid-cols-3">
-        <StatCard
-          label="median wake cost"
-          value={P?.median_wake_cost != null ? fmtTokens(P.median_wake_cost) : '—'}
-          sub={`billable per trigger wake · ${P?.window_days ?? '—'}d window`}
-        />
-        <StatCard label="triggers measured" value={String(new Set((P?.trigger_tfp ?? []).map((t) => t.trigger)).size)} sub="distinct triggers with fires in window" />
-        <StatCard label="sense calls" value={String((P?.senses ?? []).reduce((s, r) => s + r.calls, 0))} sub="afferent reads that replaced a full wake" />
-      </div>
-
-      <div className="ax-panel rounded-2xl p-4">
-        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-1">
-          Trigger TFP · cost per fire <span className="text-ink-mute normal-case tracking-normal">(falling = productivity gain)</span>
-        </div>
-        <TfpChart rows={P?.trigger_tfp ?? []} />
-      </div>
-
-      <div className="ax-panel rounded-2xl p-4">
-        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">Senses · adoption</div>
-        {P?.senses.length ? (
-          <div className="space-y-1">
-            {P.senses.map((s) => (
-              <div key={s.sense} className="flex items-center gap-2 text-[12px] py-1 border-b border-line/40 last:border-0">
-                <span className="text-ink truncate">{s.sense}</span>
-                <span className="font-mono text-ink-mute shrink-0">{s.calls} calls</span>
-                <span className="ml-auto font-mono text-ink-mute whitespace-nowrap">
-                  saved ≈ {s.saved_est != null ? fmtTokens(s.saved_est) : '—'}
-                  <span className="text-[10px]"> (× median wake)</span>
-                  {' · since '}{s.first_call.slice(0, 10)}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-xs text-ink-mute">
-            no sense calls in window — senses are the 1h→1min→0 move; adoption shows here.
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/* ── Integrity — the Goodhart panel: each detector names the exploit it catches ────── */
-function Detector({ name, value, catches, note }: { name: string; value: string | null; catches: string; note?: string }) {
-  return (
-    <div className="ax-panel rounded-2xl p-4">
-      <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">{name}</div>
-      {value != null ? (
-        <div className="text-xl font-bold text-ink mt-1 font-mono">{value}</div>
-      ) : (
-        <div className="text-xs text-ink-mute mt-1.5">no data yet — needs verified goals</div>
-      )}
-      <div className="text-[10px] text-ink-mute mt-1">{catches}</div>
-      {note && <div className="text-[10px] text-ink-mute mt-0.5 font-mono">{note}</div>}
-    </div>
-  )
-}
-
-function IntegrityTab({ d }: { d: EconDissipative }) {
-  const I = (d.today ?? d.latest)?.integrity
-  const lastAttr = [...d.series].reverse().find((p) => p.attributed_frac != null)?.attributed_frac ?? null
-  const theil = (d.today ?? d.latest)?.theil_burn ?? null
-  return (
-    <div className="space-y-3">
-      <div className="text-[11px] text-ink-mute">
-        every measured system invites its exploit — these detectors watch the measures themselves.
-      </div>
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
-        <Detector
-          name="budget CPI"
-          value={I?.budget_cpi != null ? `${I.budget_cpi.toFixed(2)}×` : null}
-          catches="inflation of budgets per outcome — same work, fatter price tag"
-        />
-        <Detector
-          name="verify latency · median"
-          value={I?.verify_latency_h_median != null ? `${I.verify_latency_h_median.toFixed(1)}h` : null}
-          catches="collapsing latency = lazy gates rubber-stamping claims"
-        />
-        <Detector
-          name="milestone rate"
-          value={I?.milestone_rate != null ? fmtPct(I.milestone_rate) : null}
-          catches="≈100% = milestone spam — every step declared a milestone"
-        />
-        <Detector
-          name="attributed % of Φ"
-          value={lastAttr != null ? fmtPct(lastAttr) : null}
-          catches="low = value flow blind — spend nobody can tie to a goal"
-          note={I?.unattributed_spend_note}
-        />
-        <Detector
-          name="Theil · burn"
-          value={theil != null ? theil.toFixed(3) : null}
-          catches="one-agent-takes-all — concentration masquerading as an org"
-        />
-      </div>
-    </div>
-  )
-}
-
-/* ── Playground — the equations live client-side; sliders recompute from econ.series ─ */
-
-type PlayPt = { day: string; v: number | null; hyp: number | null }
-
-/* per-day G′ (solid) with the shipped-X projection (dashed) overlaid */
-function PlayChart({ pts }: { pts: PlayPt[] }) {
-  const have = pts.filter((p) => p.v != null || p.hyp != null)
-  if (!have.length) return <div className="text-xs text-ink-mute py-4 text-center">no data in window</div>
-  const W = 1060, H = 110, padL = 62, padR = 10, padT = 8, padB = 14
-  const plotW = W - padL - padR, plotH = H - padT - padB
-  const d0 = dayNum(pts[0].day), d1 = dayNum(pts[pts.length - 1].day)
-  const span = Math.max(1, d1 - d0)
-  const x = (day: string) => padL + ((dayNum(day) - d0) / span) * plotW
-  const vMax = Math.max(...have.flatMap((p) => [p.v ?? 0, p.hyp ?? 0]))
-  const top = vMax > 0 ? vMax * 1.08 : 1
-  const y = (v: number) => padT + (1 - v / top) * plotH
-  const lanes: { get: (p: PlayPt) => number | null; color: string; dash?: string }[] = [
-    { get: (p) => p.v, color: BILL },
-    { get: (p) => p.hyp, color: GREEN, dash: '6 5' },
-  ]
-  return (
-    <svg width="100%" viewBox={`0 0 ${W} ${H}`} height={H} preserveAspectRatio="none" className="block">
-      {[0, 0.5, 1].map((g) => (
-        <g key={g}>
-          <line x1={padL} y1={y(g * top)} x2={W - padR} y2={y(g * top)} stroke="var(--t-line)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          <text x={padL - 5} y={y(g * top) + 3} textAnchor="end" fontSize={9} fill="var(--t-mute)" fontFamily="monospace">{fmtG(g * top)}</text>
-        </g>
-      ))}
-      {lanes.map(({ get, color, dash }, li) =>
-        daySegments(pts.map((p) => ({ day: p.day, v: get(p) }))).map((seg, i) => {
-          const line = seg.map((p, j) => `${j === 0 ? 'M' : 'L'}${x(p.day).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')
-          return (
-            <g key={`${li}-${i}`}>
-              {seg.length > 1 && (
-                <path d={line} fill="none" stroke={color} strokeWidth={1.5} strokeDasharray={dash} vectorEffect="non-scaling-stroke" />
-              )}
-              {seg.map((p) => (
-                <circle key={p.day} cx={x(p.day)} cy={y(p.v)} r={1.8} fill={color}>
-                  <title>{`${p.day} — ${fmtG(p.v)}`}</title>
-                </circle>
-              ))}
-            </g>
-          )
-        })
-      )}
-    </svg>
-  )
-}
-
-const WINDOWS = [7, 14, 30, 60, 90]
-
-function PlaygroundTab({ d }: { d: EconDissipative }) {
-  const [win, setWin] = useState(30)
-  const [alpha, setAlpha] = useState(1)
-  const [ship, setShip] = useState(0)
-
-  const s = d.series
-  const maxPhi = Math.max(...s.map((p) => p.phi ?? 0), 1)
-  const lastDay = s.length ? dayNum(s[s.length - 1].day) : 0
-  const winPts = s.filter((p) => dayNum(p.day) > lastDay - win)
-
-  const sumPhi = winPts.reduce((a, p) => a + (p.phi ?? 0), 0)
-  const sumW = winPts.reduce((a, p) => a + (p.W ?? 0), 0)
-  const heats = winPts.map((p) => p.heat_frac).filter((v): v is number => v != null)
-  const meanHeat = heats.length ? heats.reduce((a, b) => a + b, 0) / heats.length : null
-  const K = [...winPts].reverse().find((p) => p.K != null)?.K ?? [...s].reverse().find((p) => p.K != null)?.K ?? null
-
-  // G′ = W / (Φ · K^α) — ×1e9 like the served G, so α=1 reproduces the law
-  const gPrime = (w: number) => (sumPhi > 0 && K ? (w / (sumPhi * Math.pow(K, alpha))) * 1e9 : null)
-  const Gp = gPrime(sumW)
-  const GpShip = gPrime(sumW + ship * winPts.length)
-  const etaP = sumPhi > 0 ? sumW / sumPhi : null
-
-  const chartPts: PlayPt[] = winPts.map((p) => {
-    const denom = p.phi && p.K ? p.phi * Math.pow(p.K, alpha) : null
-    return {
-      day: p.day,
-      v: denom ? ((p.W ?? 0) / denom) * 1e9 : null,
-      hyp: denom ? (((p.W ?? 0) + ship) / denom) * 1e9 : null,
-    }
-  })
-
-  return (
-    <div className="space-y-3">
-      <div className="ax-panel rounded-2xl p-4">
-        <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute mb-2">
-          The law, adjustable <span className="text-ink-mute normal-case tracking-normal">· G′ = W / (Φ · K^α) — all client-side, from econ.series</span>
-        </div>
-        <div className="space-y-3">
-          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 text-[12px]">
-            <span className="text-ink-dim basis-full sm:basis-auto sm:w-44 shrink-0">window</span>
-            <div className="flex flex-wrap gap-1">
-              {WINDOWS.map((w) => (
-                <button
-                  key={w}
-                  onClick={() => setWin(w)}
-                  className={`rounded-md px-2.5 py-1 text-[12px] font-mono transition-colors duration-75 ${
-                    win === w ? 'bg-deck-3 text-cyan-soft' : 'text-ink-dim hover:bg-deck-3 hover:text-ink'
-                  }`}
-                >
-                  {w}d
-                </button>
-              ))}
-            </div>
-            <span className="sm:ml-auto font-mono text-ink-mute text-[11px]">{winPts.length} measured days in window</span>
-          </div>
-          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 text-[12px]">
-            <span className="text-ink-dim basis-full sm:basis-auto sm:w-44 shrink-0">α · K-weight exponent</span>
-            <input
-              type="range" min={0} max={2} step={0.1} value={alpha}
-              onChange={(e) => setAlpha(Number(e.currentTarget.value))}
-              className="flex-1 min-w-0" style={{ accentColor: OUTC }}
-            />
-            <span className="font-mono text-ink-mute sm:w-40 text-right text-[11px]">
-              α = {alpha.toFixed(1)} {alpha === 0 ? '· structure ignored' : alpha === 1 ? '· the law' : alpha >= 1.5 ? '· bloat punished hard' : ''}
-            </span>
-          </div>
-          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 text-[12px]">
-            <span className="text-ink-dim basis-full sm:basis-auto sm:w-44 shrink-0">what if we shipped…</span>
-            <input
-              type="range" min={0} max={2 * maxPhi} step={Math.max(1, Math.round(maxPhi / 50))} value={ship}
-              onChange={(e) => setShip(Number(e.currentTarget.value))}
-              className="flex-1 min-w-0" style={{ accentColor: GREEN }}
-            />
-            <span className="font-mono text-ink-mute sm:w-40 text-right text-[11px]">{fmtTokens(ship)} value-tok/day</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
-        <StatCard label="G′ · recomputed" value={fmtG(Gp)} sub={`W ${fmtTokens(sumW)} / (Φ ${fmtTokens(sumPhi)} · K ${fmtBytes(K)}^${alpha.toFixed(1)})`} />
-        <StatCard label="G′ · if shipping" value={fmtG(GpShip)} sub={ship > 0 ? `+${fmtTokens(ship)}/day over ${winPts.length} measured days` : 'move the slider'} />
-        <StatCard label="η′ · window" value={fmtPct(etaP)} sub="ΣW / ΣΦ over the chosen window" />
-        <StatCard label="heat · window mean" value={fmtPct(meanHeat)} sub="mean of daily heat fractions" />
-      </div>
-
-      <div className="ax-panel rounded-2xl p-4">
-        <div className="flex items-baseline gap-3 mb-1">
-          <div className="text-[11px] uppercase tracking-[0.14em] text-ink-mute">daily G′ + projection</div>
-          <div className="flex gap-4 ml-auto text-[10px] text-ink-mute">
-            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: BILL }} /> measured</span>
-            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: GREEN }} /> if shipping (dashed)</span>
-          </div>
-        </div>
-        <PlayChart pts={chartPts} />
-        <div className="text-[11px] text-ink-mute mt-2 font-mono">
-          at α={alpha.toFixed(1)}, window={win}d: G′ = {fmtG(Gp)}
-          {ship > 0 ? ` → ${fmtG(GpShip)} if the org shipped ${fmtTokens(ship)} value-tokens/day` : ''}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/* ── the tabbed Economy panel — the org as a measured dissipative system ───────────── */
-
+/* (owner 11-15: "the base system should be simple; obviously we need abstraction over it to see the stuff"). The
+   tabs carry the names the org has always used for them; their numbers now come from src/astryx/econ/system.py, read
+   live, instead of a nightly rollup whose table stayed empty. */
 const TABS = [
-  { id: 'usage', label: 'Usage' },
+  { id: 'mind', label: 'Mind' },
+  { id: 'equations', label: 'Equations' },
+  { id: 'dynamics', label: 'System dynamics' },
+  { id: 'energy', label: 'Energy' },
   { id: 'thermo', label: 'Thermo' },
   { id: 'market', label: 'Market' },
-  { id: 'productivity', label: 'Productivity' },
-  { id: 'integrity', label: 'Integrity' },
-  { id: 'playground', label: 'Playground' },
+  { id: 'game', label: 'Game theory' },
+  { id: 'simulation', label: 'Simulation' },
+  { id: 'usage', label: 'Usage' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
 
 export default function EconomyView() {
   const [econ, setEcon] = useState<Economy | null>(null)
-  const [tab, setTab] = useState<TabId>('usage')
+  const [tab, setTab] = useState<TabId>('mind')
+  const [sys, setSys] = useState<Sys | null>(null)
+  const [sysErr, setSysErr] = useState<string | null>(null)
+  // the system view compresses the org's own description each read: once a minute is plenty
+  useEffect(() => {
+    const load = () => api<Sys>('/mind/system').then((x) => { setSys(x); setSysErr(null) }).catch((e) => setSysErr(String((e as Error).message || e)))
+    load()
+    const t = setInterval(load, 60_000)
+    return () => clearInterval(t)
+  }, [])
 
   useEffect(() => {
     const load = () => api<Economy>('/economy').then(setEcon).catch(() => {})
@@ -1283,7 +518,6 @@ export default function EconomyView() {
     return () => clearInterval(t)
   }, [])
 
-  const diss = econ?.econ && Object.keys(econ.econ).length ? econ.econ : null
   const spenders = econ ? [...econ.agents].sort((a, b) => b.bill - a.bill).slice(0, 6).map((a) => a.agent) : []
   const auth = econ?.authoritative
 
@@ -1291,7 +525,7 @@ export default function EconomyView() {
     <ScrollArea className="h-full">
       <div className="px-5 sm:px-8 py-7 max-w-[1240px] mx-auto">
         <ViewHeader
-          kicker="effort, value, spend"
+          kicker="what the org wants, understands and spends"
           title="Economy"
           live={econ ? <>
             <span className="flex items-center gap-1.5"><LiveDot state={econ.summary.turns_24h ? 'working' : 'awake'} />{econ.summary.turns_24h.toLocaleString()} turns today</span>
@@ -1304,21 +538,12 @@ export default function EconomyView() {
         <div className="mb-5 -mx-5 px-5 sm:mx-0 sm:px-0 overflow-x-auto [scrollbar-width:none]"><div className="w-max"><Tabs id="econ" items={TABS} value={tab} onChange={setTab} /></div></div>
 
         <div className="space-y-3">
+          {tab === 'mind' && sys && <MindLoop s={sys} />}
+          {tab === 'mind' && <MindView />}
           {tab === 'usage' && <UsageTab econ={econ} />}
-          {tab !== 'usage' && !econ && (
-            <div className="space-y-3">
-              <div className="grid gap-3 grid-cols-2 md:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="block w-full h-[104px] rounded-2xl" />)}</div>
-              <Skeleton className="block w-full h-64 rounded-2xl" />
-            </div>
-          )}
-          {tab !== 'usage' && econ && !diss && (
-            <Panel className="p-2"><Empty title="The dissipative layer has no readings yet" hint="src/astryx/econ/econ.py writes one row per day — the first lands after tonight's rollup." /></Panel>
-          )}
-          {tab === 'thermo' && diss && <ThermoTab d={diss} />}
-          {tab === 'market' && diss && <MarketTab d={diss} />}
-          {tab === 'productivity' && diss && <ProductivityTab d={diss} />}
-          {tab === 'integrity' && diss && <IntegrityTab d={diss} />}
-          {tab === 'playground' && diss && <PlaygroundTab d={diss} />}
+          {tab !== 'mind' && tab !== 'usage' && (sys ? <EconSystem s={sys} tab={tab} />
+            : sysErr ? <Panel className="p-4 text-[13px] text-bad">The economy's view isn't answering: {sysErr}</Panel>
+            : <div className="space-y-3"><div className="grid gap-3 grid-cols-2 md:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="block w-full h-[104px] rounded-2xl" />)}</div><Skeleton className="block w-full h-64 rounded-2xl" /></div>)}
         </div>
       </div>
     </ScrollArea>

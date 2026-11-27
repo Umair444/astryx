@@ -22,7 +22,7 @@ lifespan run (pools, per-org outbound listeners on real NOTIFY), nothing bound t
      row in A addressed to B lands in B through the process's own listeners
   G8 a sibling whose door RAISES (its pool gone) leaves that row pending and stalls nothing: A's next row is handled
      (a2 #60413 R-1)
-  G9 a to_agent past the doorbell's channel name (52 bytes after astryx_msg_) is refused at the door (400), never cut
+  G9 a to_agent past the doorbell's channel name (44 bytes after ax<chan>_msg_) is refused at the door (400), never cut
   G6 a cog org whose .env names no ASTRYX_ORG, or two orgs one federation name: cog() refuses (CogError)
   G10 the relay in a cog (S3e, the live step 4 of 10-19: our org hosts one): the registry's DOOR org may host it,
      ASTRYX_RELAY_HOST=1 in its .env: cog() serves, the relay's routes mount at the bare root, and UNDER UVICORN it
@@ -107,7 +107,7 @@ async def main():
             "SELECT count(*) FROM messages WHERE from_agent='gateway' AND intent='error' AND to_agent='fxsender'")
         out["a_from_b"] = await A.pool.fetchval("SELECT count(*) FROM messages WHERE from_org=$1", nb)
 
-        # G9: a to_agent past the doorbell's 52-byte channel name is refused at B's door (400), never cut
+        # G9: a to_agent past the doorbell's 44-byte channel name is refused at B's door (400), never cut
         long_ = await A.pool.fetchval(ins, "x" * 53, nb, "to a name no channel can carry")
         await wait(lambda: A.pool.fetchval("SELECT count(*) FROM messages WHERE id=$1 AND status='dead'", long_))
         out["long_status"] = await A.pool.fetchval("SELECT status FROM messages WHERE id=$1", long_)

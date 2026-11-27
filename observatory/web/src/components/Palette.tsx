@@ -72,7 +72,7 @@ export default function Palette() {
   useEffect(() => { if (open) { setQ(''); setI(0); setAnswer(null); setTimeout(() => input.current?.focus(), 10) } }, [open])
 
   const items = useMemo<Item[]>(() => {
-    const views: Item[] = (who.owner ? LINKS : LINKS.filter((l) => l.tab === 'network' || l.tab === 'floor')).map((l) => ({
+    const views: Item[] = (who.owner ? LINKS : LINKS.filter((l) => l.tab === 'network' || l.tab === 'floor')).filter((l) => l.tab !== 'admin').map((l) => ({
       id: `v:${l.tab}`, label: l.label, hint: l.hint, icon: glyph(l.icon), call: ['navigate', { view: l.tab }],
     }))
     if (!who.owner) {

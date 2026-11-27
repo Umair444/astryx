@@ -5,8 +5,8 @@
     opens its POST (POST /api/messages, POST /api/agents are 403 to a visitor).
   - E2 ONE RESOLVER (bridges/routing.py): a duplicate chat and an agent with several routes but no single home are
     problems; the doorbell is the only row, else the single home, else NONE (never file order); diff() reads the
-    EFFECTIVE maps. BC-2: no first-match route loop is left in a bridge, and each bridge's routes() is the resolver.
-  - BC-3: a routes file that stops parsing keeps the last good table and alarms, never [] silently.
+    EFFECTIVE maps. BC-2: no first-match route loop is left in a bridge, and each bridge's routes() is its Book's table.
+  - BC-3: a route table that doesn't read keeps a bridge's last good table (common.Book) and alarms, never [] silently.
   - E3 ONE HOST WRITER: no write_text / open-for-write in observatory/api outside hostfile.py (the answers log's
     O_APPEND is the one declared exception); atomic_write refuses a stale If-Match and leaves the file and no temp.
   - E4 THE ROUTES PUT: no If-Match is 428, a stale one 409, a duplicate chat 400 (nothing written), and a move returns
@@ -14,7 +14,7 @@
   - E5 / BC-1: config.set_env writes a key exactly once (a hand-made duplicate collapses, and the first-wins and the
     last-wins readers agree); duplicate_keys() names a duplicate; federate.set_env is config.set_env.
   - E9 GLYPHS: the public projection carries only {agent, channel, kind, count}: no chat id, jid, number, name, note or
-    webhook of the route table reaches it (fixture tables, and the org's own routes files when GLYPH_ROUTES_DIR names them).
+    webhook of the route table reaches it (fixture tables, and the route table GET /api/floor/glyphs reads).
 """
 import ast
 import importlib.util
@@ -61,6 +61,18 @@ def resolver_arms(tmp: Path):
     homed = [two[0], {**two[1], "home": True}]
     arm("E2: with one home it validates, and the home is the doorbell",
         R.validate(homed) == [] and R.resolve(homed).doorbell("seed")["chat"] == "b", R.validate(homed))
+    shown = lambda v: [{"chat": "a", "agent": "seed", "enabled": True, "show": v}]
+    arm("SHOW (owner 11-15): a route shows steps or replies; anything else is a problem in words",
+        R.validate(shown("steps")) == [] and R.validate(shown("replies")) == []
+        and any("shows" in p for p in R.validate(shown("everything"))), R.validate(shown("everything")))
+    tiered = lambda **k: [{"chat": "a", "agent": "member", "enabled": True, "tier": "career", **k}]
+    arm("SHOW: a TIERED route that shows steps is a named problem, by show or by the older live_steps flag (medic 12249)",
+        any("tiered (career)" in p for p in R.validate(tiered(show="steps")))
+        and any("tiered (career)" in p for p in R.validate(tiered(live_steps=True)))
+        and R.validate(tiered(show="replies")) == [] and R.validate(tiered()) == [], [R.validate(tiered(show="steps")), R.validate(tiered(live_steps=True))])
+    rail = (REPO / "observatory/web/src/components/ChannelRail.tsx").read_text()
+    arm("RAIL: the table's problems are drawn at the channel's head, and Steps is off on a tiered chat",
+        "table.problems.map" in rail and "o.v === 'steps' && !!c.tier" in rail)
     arm("E2: an agent's only route is its doorbell; a disabled route reaches no one",
         R.resolve([two[0], {"chat": "c", "agent": "ledger", "enabled": False}]).doorbell("seed")["chat"] == "a"
         and R.resolve([{"chat": "c", "agent": "ledger", "enabled": False}]).chat("c") is None)
@@ -94,15 +106,12 @@ def resolver_arms(tmp: Path):
     left = {b: len(loops.findall((REPO / "bridges" / f"{b}.py").read_text())) for b in ("whatsapp", "telegram", "discord")}
     arm("BC-2: no first-match route loop is left in any bridge (every lookup is .chat() / .doorbell())",
         not any(left.values()), left)
-    src = (REPO / "bridges" / "common.py").read_text()
-    fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef) and n.name == "load_routes")
-    arm("BC-2: common.load_routes (every bridge's routes()) returns the resolver over read_table",
-        "resolve(read_table(" in ast.get_source_segment(src, fn), ast.get_source_segment(src, fn))
-    for b in ("whatsapp", "telegram", "discord"):
+    for b in ("whatsapp", "telegram", "discord", "frontends"):
         t = ast.parse((REPO / "bridges" / f"{b}.py").read_text())
         rf = [n for n in ast.walk(t) if isinstance(n, ast.FunctionDef) and n.name == "routes"]
-        arm(f"BC-2: {b}.routes() reads through load_routes", bool(rf) and any(
-            isinstance(c, ast.Call) and getattr(c.func, "id", None) == "load_routes" for c in ast.walk(rf[0])))
+        arm(f"BC-2: {b}.routes() is its Book's resolved table (the route table, owner 11-16)", bool(rf) and any(
+            isinstance(c, ast.Call) and getattr(c.func, "attr", None) == "routes" and getattr(c.func.value, "id", None) == "BOOK"
+            for c in ast.walk(rf[0])))
 
     # doctor, BEHAVIORAL (a3 #62025 R2): cli.org_checks on fixture estates, its failures counted and named
     import io
@@ -110,24 +119,31 @@ def resolver_arms(tmp: Path):
     from astryx import cli
     from astryx.ui import UI
 
+    import psycopg
+
     def doctor(routes, env="A=1\n"):
         d = tmp / f"est{len(list(tmp.glob('est*')))}"
-        (d / "bridges").mkdir(parents=True)
-        (d / "agents").mkdir()
+        (d / "agents").mkdir(parents=True)
         for a in ("seed", "ledger"):
             (d / "agents" / f"{a}.md").write_text(f"# {a}\n")
-        (d / "bridges" / "routes-whatsapp.json").write_text(json.dumps(routes))
-        (d / ".env").write_text(env)
+        with psycopg.connect(os.environ["ASTRYX_DSN"], autocommit=True) as c:     # the fixture's route table
+            c.execute("DELETE FROM route")
+            for r_ in routes:
+                c.execute("INSERT INTO route (channel, chat, agent, purpose, rule, opened_by) VALUES ('whatsapp', %s, %s, "
+                          "'standing', %s, 'owner')", (r_["chat"], r_["agent"], json.dumps({k: v for k, v in r_.items()
+                                                                                             if k not in ("chat", "agent")})))
+        (d / ".env").write_text(env + f"ASTRYX_DSN={os.environ['ASTRYX_DSN']}\n")
         buf = io.StringIO()
         n = cli.org_checks(SimpleNamespace(root=d, home=d, ui=UI(stream=buf)))
         return n, buf.getvalue()
     n, out = doctor([{"chat": G1, "agent": "seed", "enabled": True, "note": "Zeta group -> seed"}])
     arm("DOCTOR: a clean estate fails nothing", n == 0 and "✗" not in out, (n, out))
-    n, out = doctor([{"chat": G1, "agent": "seed", "enabled": True, "note": "Zeta group -> seed"},
-                     {"chat": G1, "agent": "ledger", "enabled": True}])
-    arm("DOCTOR: a duplicate chat fails the routes step, naming its label and both agents (never the chat id)",
-        n >= 1 and "✗ routes: bridges/routes-whatsapp.json" in out and "Zeta group" in out and "seed" in out
-        and "ledger" in out and G1 not in out, out)
+    try:
+        doctor([{"chat": G1, "agent": "seed", "enabled": True}, {"chat": G1, "agent": "ledger", "enabled": True}])
+        twice = True
+    except psycopg.errors.UniqueViolation:
+        twice = False
+    arm("A chat routed twice can't exist: the route table refuses the second row (one per channel and chat)", not twice)
     n, out = doctor([{"chat": G1, "agent": "seed", "enabled": True}, {"chat": G2, "agent": "seed", "enabled": True}])
     arm("DOCTOR: an agent with two routes and no home fails", n >= 1 and "home" in out, out)
     n, out = doctor([{"chat": G1, "agent": "seed", "enabled": True}], env="K=a\nB=2\nK=b\n")
@@ -147,17 +163,28 @@ def resolver_arms(tmp: Path):
     arm("R-1: with no reachable fixture the mutant runner says NOT CHECKED and exits 77, never a PASS",
         rr.returncode == 77 and "NOT CHECKED" in rr.stdout, (rr.returncode, rr.stdout[-300:]))
 
-    # BC-3
-    f = tmp / "routes-x.json"
-    f.write_text(json.dumps(homed))
-    good = R.read_table(f)
-    f.write_text('[{"chat": "a", ')
+    # BC-3: a bridge's Book keeps the last good table when the route table doesn't read, and alarms
+    import asyncio
     import contextlib
     import io
-    err = io.StringIO()
+    from bridges.common import Book
+
+    class Pool:                                # first a table, then a database that doesn't answer
+        def __init__(self):
+            self.n = 0
+
+        async def fetch(self, *a):
+            self.n += 1
+            if self.n > 1:
+                raise OSError("down")
+            return [{"id": i, "chat": r_["chat"], "agent": r_["agent"], "purpose": "standing", "person": None,
+                     "rule": {k: v for k, v in r_.items() if k not in ("chat", "agent")}} for i, r_ in enumerate(homed)]
+    book, pool_, err = Book("whatsapp"), Pool(), io.StringIO()
+    asyncio.run(book.refresh(pool_))
+    good = list(book.routes())
     with contextlib.redirect_stderr(err):
-        kept = R.read_table(f)
-    arm("BC-3: a file that stops parsing keeps the last good table", kept == good and len(kept) == 2, kept)
+        asyncio.run(book.refresh(pool_))
+    arm("BC-3: a route table that doesn't read keeps the last good table", list(book.routes()) == good and len(good) == 2, good)
     arm("BC-3: …and alarms", "ALARM" in err.getvalue(), err.getvalue())
 
 
@@ -290,37 +317,54 @@ def app_arms(tmp: Path):
     arm("E1/E9: /api/wire/routes is NOT public", ("GET", "/api/wire/routes") not in obs.PUBLIC
         and cl.get("/api/wire/routes").status_code == 403)
 
-    # E4, on a fixture bridges dir (never the estate's)
-    bdir = tmp / "bridges"
-    bdir.mkdir()
+    # E4, on the fixture's route table (never the estate's)
+    import asyncio
+    import psycopg
     rows = [{"chat": G1, "agent": "seed", "enabled": True, "note": "Zeta group -> seed",
-             "trusted_jids": [P1]}]
-    (bdir / "routes-whatsapp.json").write_text(json.dumps(rows))
-    obs.BRIDGES = bdir
+             "webhook": "https://example.invalid/hook"}]
+    with psycopg.connect(os.environ["ASTRYX_DSN"], autocommit=True) as c:
+        c.execute("DELETE FROM route")
+        c.execute("INSERT INTO route (channel, chat, agent, purpose, rule, opened_by) VALUES ('whatsapp', %s, 'seed', "
+                  "'standing', %s, 'owner')", (G1, json.dumps({k: v for k, v in rows[0].items() if k not in ("chat", "agent")})))
+
+    def stored():
+        with psycopg.connect(os.environ["ASTRYX_DSN"]) as c:
+            return [(a_, r_) for a_, r_ in c.execute("SELECT agent, rule FROM route WHERE channel='whatsapp' AND purpose='standing'")]
     obs.agent_meta = lambda: {"seed": {}, "ledger": {}}
+    db_cl = TestClient(obs.app)                 # WITH its lifespan: routes are rows, so these arms read the fixture DB
+    cl = db_cl.__enter__()
     g = cl.get("/api/wire/routes", headers=O).json()
-    tag = g[0]["etag"]
+    tag = next(x for x in g if x["channel"] == "whatsapp")["etag"]
     moved = [{**rows[0], "agent": "ledger"}]
+    before = stored()
     r = cl.put("/api/wire/routes/whatsapp", json={"routes": moved}, headers=O)
-    arm("E4: a PUT without If-Match is 428, and writes nothing", r.status_code == 428
-        and json.loads((bdir / "routes-whatsapp.json").read_text()) == rows, r.status_code)
+    arm("E4: a PUT without If-Match is 428, and writes nothing", r.status_code == 428 and stored() == before, r.status_code)
     r = cl.put("/api/wire/routes/whatsapp", json={"routes": moved}, headers={**O, "if-match": "0" * 64})
-    arm("E4: a stale If-Match is 409", r.status_code == 409, (r.status_code, r.text))
+    arm("E4: a stale If-Match is 409", r.status_code == 409 and stored() == before, (r.status_code, r.text))
     r = cl.put("/api/wire/routes/whatsapp", json={"routes": moved + [{**rows[0], "agent": "seed"}]},
                headers={**O, "if-match": tag})
     arm("E4: a duplicate chat is 400, naming both agents, and writes nothing",
         r.status_code == 400 and "seed" in r.json().get("error", "") and "ledger" in r.json()["error"]
-        and json.loads((bdir / "routes-whatsapp.json").read_text()) == rows, (r.status_code, r.text))
+        and stored() == before, (r.status_code, r.text))
     r = cl.put("/api/wire/routes/whatsapp", json={"routes": moved}, headers={**O, "if-match": tag})
     j = r.json() if r.status_code == 200 else {}
     arm("E4: a move answers the effective diff", r.status_code == 200 and j.get("diff", {}).get("moved")
         == [{"chat": rows[0]["chat"], "from": "seed", "to": "ledger"}], (r.status_code, r.text))
-    from bridges.routing import read_table, resolve       # what common.load_routes returns, the bridges' reader
-    seen_by_bridge = resolve(read_table(bdir / "routes-whatsapp.json")).chat(rows[0]["chat"])
-    arm("E4/BC-2: the bridges' reader agrees with the diff", seen_by_bridge and seen_by_bridge["agent"] == "ledger"
-        and j.get("etag") == obs.etag(bdir / "routes-whatsapp.json"), seen_by_bridge)
-    arm("E4: the trusted senders and note survive the write verbatim",
-        json.loads((bdir / "routes-whatsapp.json").read_text())[0]["trusted_jids"] == rows[0]["trusted_jids"])
+
+    async def bridge_sees():
+        import asyncpg
+        from bridges.common import Book
+        p_ = await asyncpg.create_pool(os.environ["ASTRYX_DSN"], min_size=1, max_size=1)
+        b_ = Book("whatsapp")
+        await b_.refresh(p_)
+        await p_.close()
+        return b_.routes().chat(rows[0]["chat"])
+    seen_by_bridge = asyncio.run(bridge_sees())
+    after = next(x for x in cl.get("/api/wire/routes", headers=O).json() if x["channel"] == "whatsapp")
+    arm("E4/BC-2: the bridges' reader agrees with the diff, and the next GET's etag is the one the PUT answered",
+        seen_by_bridge and seen_by_bridge["agent"] == "ledger" and j.get("etag") == after["etag"], (seen_by_bridge, j, after["etag"]))
+    arm("E4: a route's note and an unknown key (a webhook) survive the write verbatim",
+        stored()[0][1].get("webhook") == rows[0]["webhook"] and stored()[0][1].get("note") == rows[0]["note"], stored())
 
     # E9: the public glyphs
     tables = {"whatsapp": [{"chat": G2, "agent": "seed", "enabled": True, "note": "Zeta group -> seed (a fixture surface)",
@@ -361,18 +405,11 @@ def app_arms(tmp: Path):
     names = ["Zeta", "Example Person", "Example Household", "a fixture surface"]
     arm("E9: no contact or group NAME reaches the body", not [x for x in names if x.lower() in body.lower()],
         [x for x in names if x.lower() in body.lower()])
-    live_dir = os.environ.get("GLYPH_ROUTES_DIR")
-    if live_dir:
-        live = {p.name[7:-5]: json.loads(p.read_text()) for p in Path(live_dir).glob("routes-*.json")
-                if not p.name.endswith(".example.json")}
-        lb = json.dumps(obs.glyphs_of(live))
-        hit = [x for x in needles(live) if x and x in lb]
-        arm(f"E9: …nor of the org's own routes files ({len(live)} channels, read-only)", live and not hit, hit)
-    obs.BRIDGES = bdir
     r = cl.get("/api/floor/glyphs")
     arm("E9: GET /api/floor/glyphs answers a visitor with the projection (keys pinned), a POST does not",
         r.status_code == 200 and r.json() == [{"agent": "ledger", "channel": "whatsapp", "kind": "group", "count": 1}]
         and cl.post("/api/floor/glyphs").status_code in (403, 405), (r.status_code, r.text))
+    db_cl.__exit__(None, None, None)
 
 
 if __name__ == "__main__":

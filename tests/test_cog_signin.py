@@ -15,8 +15,9 @@ passwords and keys only; every assertion is on a status, a name or whose value a
   S3 RATE (D4, J4): 5 failures on one account → the 6th is 429 even with the right password; the same for an email
      with no account, in the same bytes; 20 failures from one client → 429 for any account from it
   S4 THE OWNER ARM (owner ruling 10-21, seed #61925): signed in, with NO x-obs-key, the owner reaches org A's
-     owner-only /api/presence (200) and /api/whoami says owner, through /o/A/ and through the root with x-astryx-org;
+     owner-only /api/goals (200) and /api/whoami says owner, through /o/A/ and through the root with x-astryx-org;
      the same requests with ONLY x-obs-key, no cookie, still work (the fallback intact); with neither, 403
+     (the probe was /api/presence until 11-15, when presence became an insider read: main.sees)
   S5 EACH ORG DECIDES (I1): the same account is only a MEMBER of B: B's owner-only route is 403 and whoami not owner;
      /auth/me lists {A owner, B member} as each org answered; an account with no membership anywhere lists none, and
      once its session row expires, /auth/me is 401
@@ -378,19 +379,19 @@ def run(t, da, dbb, procs):
     via = {"/o/A/": lambda p, h: call(F, f"/o/{oa}{p}", headers=h),
            "the root with x-astryx-org": lambda p, h: call(F, p, headers={**h, "x-astryx-org": oa})}
     for name, go in via.items():
-        st_p, _, _, _ = go("/api/presence", C)
+        st_p, _, _, _ = go("/api/goals", C)
         _, _, w, _ = go("/api/whoami", C)
-        check(f"signed in, no x-obs-key, through {name}: the owner-only /api/presence is 200, whoami says owner",
+        check(f"signed in, no x-obs-key, through {name}: the owner-only /api/goals is 200, whoami says owner",
               st_p == 200 and json.loads(w).get("owner") is True, f"{st_p} {w[:80]}")
-    st_k, _, _, _ = call(F, f"/o/{oa}/api/presence", headers={"x-obs-key": KEY["a"]})
+    st_k, _, _, _ = call(F, f"/o/{oa}/api/goals", headers={"x-obs-key": KEY["a"]})
     _, _, wk, _ = call(F, f"/o/{oa}/api/whoami", headers={"x-obs-key": KEY["a"]})
     check("ONLY x-obs-key, no cookie: still 200 and owner (the fallback intact)",
           st_k == 200 and json.loads(wk).get("owner") is True, f"{st_k}")
-    st_0, _, _, _ = call(F, f"/o/{oa}/api/presence")
+    st_0, _, _, _ = call(F, f"/o/{oa}/api/goals")
     check("neither: 403", st_0 == 403, f"{st_0}")
 
     print("\nS5 EACH ORG DECIDES")
-    st_b, _, _, _ = call(F, f"/o/{ob}/api/presence", headers=C)
+    st_b, _, _, _ = call(F, f"/o/{ob}/api/goals", headers=C)
     _, _, wb, _ = call(F, f"/o/{ob}/api/whoami", headers=C)
     check("a MEMBER of B: B's owner-only route is 403, whoami not owner", st_b == 403
           and json.loads(wb).get("owner") is False, f"{st_b} {wb[:80]}")
@@ -405,7 +406,7 @@ def run(t, da, dbb, procs):
     st_l, _, ml, _ = call(F, "/auth/me", headers={"cookie": lone})
     check("an account with no membership anywhere: /auth/me lists no org", st_l == 200 and json.loads(ml).get("orgs") == [],
           f"{st_l} {ml[:80]}")
-    st_la, _, _, _ = call(F, f"/o/{oa}/api/presence", headers={"cookie": lone, **SO})
+    st_la, _, _, _ = call(F, f"/o/{oa}/api/goals", headers={"cookie": lone, **SO})
     check("...and A's owner-only route is 403 for it", st_la == 403, f"{st_la}")
     import psycopg
     with psycopg.connect(dbb["url"], autocommit=True) as c:      # its sessions run out (D7: a server row's expiry)
@@ -536,7 +537,7 @@ def run(t, da, dbb, procs):
     with psycopg.connect(da["url"], autocommit=True) as c:     # schema.sql not yet re-applied to this org's database
         c.execute("DROP TABLE members")
     st_w, _, w13, _ = call(A, "/api/whoami", headers={"x-astryx-identity": token(real, owner_sub, oa)})
-    st_p, _, _, _ = call(A, "/api/presence", headers={"x-astryx-identity": token(real, owner_sub, oa)})
+    st_p, _, _, _ = call(A, "/api/goals", headers={"x-astryx-identity": token(real, owner_sub, oa)})
     check("a valid identity reads as the public face (whoami 200, not owner; an owner route 403), never a 500",
           st_w == 200 and json.loads(w13).get("owner") is False and st_p == 403, f"{st_w} {st_p}")
 

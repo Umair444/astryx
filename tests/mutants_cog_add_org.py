@@ -51,7 +51,7 @@ MUTANTS = {
     "T5 windows_idle_stop is installed where no Windows container is":
         ('    if shim != "windows_idle_stop":\n        return True\n', '    return True\n'),
     "T6 a new org gets no backup trigger":
-        ('COG_SHIMS = ("context_compact", "pr_review", "windows_idle_stop", "agent_heal", "org_backup")',
+        ('COG_SHIMS = ("context_compact", "pr_review", "windows_idle_stop", "agent_heal", "org_backup", "influence_nightly", "usage_idle", "connection_sweep")',
          'COG_SHIMS = ("context_compact", "pr_review", "windows_idle_stop", "agent_heal")'),
     "T7 the reconcile serves the primary (whose checkout ./init.sh reconciles)":
         ('    if e["primary"]:\n', '    if False:\n'),

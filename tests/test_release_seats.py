@@ -9,7 +9,7 @@
   SEAT       step.py AUTO-DELIVER for a labelled member goes through send_row (the sentinel never lands in messages);
              refused → no row and a metadata-only error step; an UNLABELLED agent's AUTO-DELIVER is today's row
   CLI        `label` refuses a malformed grant (rc 1); `read` refuses another tier's pointer (rc 1)
-Fixtures only: a temp root (charters, routes, tier store), short fixture ids (privacy gate), a stamped fixture DB,
+Fixtures only: a temp root (charters, tier store), the routes as rows in the fixture DB, short fixture ids (privacy gate), a stamped fixture DB,
 a synthetic key. NOT covered here, stated: the session strip of turns.raw_payload (S1d) and the node seats (S1b-2).
 Exit 0 pass · 1 fail · 77 no psycopg / no fixture DB.
 """
@@ -52,7 +52,6 @@ root = Path(tempfile.mkdtemp(prefix="relseats."))
 (root / "agents" / "plain.md").write_text("# plain\nGrants: gmail, contacts\n")
 (root / "agents" / "peer.md").write_text("# peer\n")
 ROUTE = {"chat": "101@s.whatsapp.net", "agent": "member", "enabled": True, "counterpart": "owner", "tier": "career"}
-(root / "bridges" / "routes-whatsapp.json").write_text(json.dumps([ROUTE]))
 R.REPO = root                                   # the module reads charters, routes and the store under its REPO
 os.environ[R.MAC_KEY_ENV] = KEY
 
@@ -79,10 +78,6 @@ for bad in ("owner-private:career", "owner_private: career", "owner_private:Care
 check("two charters with one name → refused (ambiguous identity)", isinstance(refused(R.label_of, "member"),
                                                                               R.GrantError))
 (root / "agents" / "dup" / "member.md").unlink()
-(root / "bridges" / "routes-telegram.json").write_text(json.dumps([{"chat": "7", "agent": "x", "tier": "secret"}]))
-check("a route declaring an undeclared tier → the route read refuses", isinstance(refused(R.declared_routes),
-                                                                                   R.GrantError))
-(root / "bridges" / "routes-telegram.json").unlink()
 
 print("cli:")
 (root / "agents" / "bad.md").write_text("# bad\nGrants: owner-private:career\n")
@@ -103,6 +98,7 @@ try:
     from astryx.security.sqlguard.fixture import fixture_db
     _fx = fixture_db()
     fx = _fx.__enter__()
+    os.environ["ASTRYX_DSN"] = fx["dsn"]       # every seat below (step.py's door included) reads the fixture's routes
 except Exception as e:  # noqa: BLE001
     print(f"  SKIP  db arms: {type(e).__name__}: {e}")
     print(f"\n{'FAIL' if fails else 'SKIP (partial)'}")
@@ -118,7 +114,20 @@ def blob(c):
         "SELECT from_agent, to_agent, thread, intent, body, delivery FROM messages").fetchall()])
 
 
-routes = R.declared_routes()
+def declare(c, channel, route):
+    """A route of the OWNER's, as the rail writes it: a standing row in the route table (routes are rows, 11-16)."""
+    from astryx.core import routes as table
+    c.execute("INSERT INTO route (channel, chat, agent, purpose, rule, opened_by) VALUES (%s, %s, %s, 'standing', %s, 'owner')",
+              (channel, route["chat"], route["agent"], json.dumps(table.rule_of(route))))
+
+
+with psycopg.connect(fx["dsn"], autocommit=True) as c:
+    declare(c, "telegram", {"chat": "7", "agent": "x", "tier": "secret"})
+    check("a route declaring an undeclared tier → the route read refuses", isinstance(refused(R.declared_routes, c),
+                                                                                       R.GrantError))
+    c.execute("DELETE FROM route")
+    declare(c, "whatsapp", ROUTE)
+    routes = R.declared_routes(c)
 store = R.TierStore()
 lbl = R.label(["career"])
 try:

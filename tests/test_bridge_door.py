@@ -64,8 +64,10 @@ SENT = "S1C-SENTINEL-private-body-7a31"
 
 
 def said(ch, frm, text):
-    """What the human sees: WhatsApp shows one number for every agent, so its bridge signs the text."""
-    return f"\u25b8 *{frm}*\n{text}" if ch == "whatsapp" else text
+    """What the human sees: one identity speaks for every agent (WhatsApp's number, Telegram's bot, a Discord bot with
+    no webhook: DC_ORG has none), so the bridge signs the text in the channel's own markup (bridges/common.signed)."""
+    mark = {"whatsapp": "*", "telegram": "", "discord": "**"}[ch]
+    return f"\u25b8 {mark}{frm}{mark}\n{text}"
 KEY = "d" * 40
 
 
@@ -108,6 +110,12 @@ check("whatsapp: an unrouted chat is labelled (the default)", _wa.signed("seed",
 check("whatsapp: signing twice labels once (an edited bubble)",
       _wa.signed("seed", _wa.signed("seed", "hi", WA_ORG["chat"]), WA_ORG["chat"]) == said("whatsapp", "seed", "hi"))
 check("whatsapp: an empty text stays empty (a poll-only row)", _wa.signed("seed", "", WA_ORG["chat"]) == "")
+from bridges.common import signed as _signed  # noqa: E402 — the one label rule (cog-gaps: Telegram + Discord too)
+check("telegram/discord: the label in the channel's markup (plain / **bold**), idempotent",
+      _signed("seed", "hi", TG_ORG) == said("telegram", "seed", "hi") == _signed("seed", said("telegram", "seed", "hi"), TG_ORG)
+      and _signed("seed", "hi", DC_ORG, "**") == said("discord", "seed", "hi"))
+check("telegram/discord: a route with signed:false stays unlabelled, as WhatsApp's",
+      _signed("seed", "hi", {**TG_ORG, "signed": False}) == "hi" and _signed("seed", "hi", {**DC_ORG, "signed": False}, "**") == "hi")
 _wa.routes = _routes
 
 
@@ -118,7 +126,7 @@ def plain_row(thread, to="owner", frm="seed", body="org text"):
 
 def stamped_row(channel, route, body=SENT, sender="member"):
     store = R.TierStore()
-    rel = R.release(sender, CAREER, body, [(channel, route, root / f"routes-{channel}.json")], K, store)
+    rel = R.release(sender, CAREER, body, [(channel, route, f"version-{channel}")], K, store)
     rid = next(_next)
     rel["stamp"] = R.stamp(K, rid, rel["route_key"], CAREER, rel["pointer"], rel["body_mac"])
     return {"id": rid, "from_agent": sender, "to_agent": "owner", "thread": f"tier-{sender}", "intent": "chat",
@@ -139,6 +147,12 @@ check("door_org: a disabled route is not declared", refused(R.door_org, "whatsap
                                                             [{**WA_ORG, "enabled": False}]))
 check("route_tier: a tiered route with live_steps is refused (its second egress, a4 #53717)",
       isinstance(refused(R.route_tier, {**WA_TIER, "live_steps": True}), R.GrantError))
+check("show (owner 11-15): steps is live steps, replies is none, an old live_steps flag still reads, an odd show is no",
+      R.shows_steps({**WA_ORG, "show": "steps"}) and not R.shows_steps({**WA_ORG, "show": "replies"})
+      and R.shows_steps({**WA_ORG, "live_steps": True}) and not R.shows_steps(WA_ORG)
+      and not R.shows_steps({**WA_ORG, "show": "replies", "live_steps": True}) and not R.shows_steps({**WA_ORG, "show": "all"}))
+check("route_tier: a tiered route that shows steps is refused like live_steps",
+      isinstance(refused(R.route_tier, {**WA_TIER, "show": "steps"}), R.GrantError))
 check("live_steps_ok: an org route yes; a tiered or malformed one no; none declared no",
       R.live_steps_ok({**WA_ORG, "live_steps": True}) and not R.live_steps_ok({**WA_TIER, "live_steps": True})
       and not R.live_steps_ok({**WA_ORG, "live_steps": True, "tiers": "x"}) and not R.live_steps_ok(WA_ORG))
@@ -198,7 +212,7 @@ class World:
         m = BR[ch]
         m.pool = self.pool
         m.routes = lambda: Routes(ROUTES[ch])        # the resolved table, enabled rows only (plan-11860 E2)
-        m.jobs.clear()
+        m.progress.jobs.clear()
         w = self
 
         class Prov:
@@ -252,6 +266,26 @@ async def bridge_arms():
         got = await w.deliver(r)
         check(f"{ch}: an unstamped row to a destination on NO route is REFUSED with a status, nothing sent (#45091)",
               got["status"] == "refused" and "door_refused" in got["delivery"] and not w.sends, repr((got, w.sends)))
+        if ch == "whatsapp":                     # a route opened in the same breath as its message (a link, 13614)
+            r = plain_row(off[ch])
+            w = World(ch, [r])
+            # the bridge's REAL Book (registered by its own __init__) and its real refresh; only the table read is
+            # stubbed, so a Book that stops registering itself, or a door that stops re-reading, goes red (medic 13617)
+            import astryx.core.routes as table
+            fresh = ROUTES[ch] + [{"chat": off[ch][3:], "agent": "seed", "enabled": True}]
+            book, load = bridges.common.BOOKS.get(ch), table.load
+
+            async def newer(pool, channel):
+                return fresh
+            table.load = newer
+            try:
+                got = await w.deliver(r)
+            finally:
+                table.load = load
+                if book is not None:
+                    book.table = Routes([])
+            check(f"{ch}: a route newer than the Book's last read is found on one re-read, the row delivered (13614)",
+                  got["status"] == "delivered" and w.sends, repr((got, w.sends)))
         r = plain_row(org[ch][0])
         w = World(ch, [r])
         got = await w.deliver(r)
@@ -310,6 +344,43 @@ async def bridge_arms():
             check(f"an unthreaded owner row from {frm!r} (thread {th!r}) lands on a DECLARED route and is marked",
                   got["status"] == "delivered" and got["delivery"].get("door") == "org-unstamped"
                   and (chat, said("whatsapp", frm, "org text")) in w.sends, repr((got, w.sends)))
+    print("whatsapp claims by THREAD (medic 13091 R1): a linked person answered here under another channel's name")
+    for to in ("cv-x.2", "fe-x"):
+        r = plain_row("wa:10101@g.us", to=to)
+        w = World("whatsapp", [r])
+        got = await w.deliver(r)
+        check(f"a row to {to} on wa:<route> is delivered on WhatsApp, not skipped as another channel's",
+              got["status"] == "delivered" and any(c == "10101@g.us" or "10101@g.us" in str(t) for c, t in w.sends),
+              repr((got["status"], w.sends)))
+    r = plain_row("", to="tg-123")
+    w = World("whatsapp", [r])
+    got = await w.deliver(r)
+    check("a row to tg-123 with no wa: thread is still left for its own bridge", got["status"] == "pending" and not w.sends,
+          repr((got["status"], w.sends)))
+    print("the sender label on telegram + discord (cog-gaps, WhatsApp's signed()):")
+    ROUTES["telegram"].append({"chat": "41414", "agent": "twin", "enabled": True, "signed": False})
+    r = plain_row("tg:41414", frm="twin")
+    w = World("telegram", [r])
+    got = await w.deliver(r)
+    check("telegram: a signed:false route delivers the agent's words unlabelled (the owner's voice)",
+          got["status"] == "delivered" and w.sends == [("41414", "org text")], repr((got, w.sends)))
+    ROUTES["telegram"].pop()
+    ROUTES["discord"].append({"chat": "61616", "agent": "seed", "enabled": True, "webhook": "http://127.0.0.1:1/hook"})
+    r = plain_row("dc:61616")
+    w = World("discord", [r])
+    hooked = []
+
+    async def hook_send(hook, agent, text):
+        hooked.append((agent, text))
+        return "h-1"
+    BR["discord"].hook_send, real = hook_send, BR["discord"].hook_send
+    try:
+        got = await w.deliver(r)
+    finally:
+        BR["discord"].hook_send = real
+        ROUTES["discord"].pop()
+    check("discord: a WEBHOOK route names the agent itself (its username), so the text stays unlabelled",
+          got["status"] == "delivered" and hooked == [("seed", "org text")] and not w.sends, repr((got, hooked, w.sends)))
     # discord routes are channels (groups with no live membership read): no audience releases to one
     s = stamped_row("whatsapp", WA_TIER)
     rel = json.loads(s["delivery"])["release"]
@@ -328,11 +399,11 @@ asyncio.run(bridge_arms())
 # ── PAIRING (AST) ─────────────────────────────────────────────────────────────────────────────────────────────────
 print("pairing:")
 # the functions a TEXT-carrying platform send may sit in. A new one fails here until a reviewer classifies it: inside
-# deliver() (door-gated), a helper deliver() calls, the platform primitive itself, or the live_steps path (on_step /
-# worker), whose jobs are created only under live_steps_ok()
-EGRESS = {"whatsapp": {"deliver", "send_files", "send_poll", "worker"},
-          "telegram": {"deliver", "on_step", "tg"},
-          "discord": {"deliver", "on_step", "hook_send", "hook_file", "hook_poll", "hook_edit"}}
+# deliver() (door-gated), a helper deliver() calls, the platform primitive itself, or a live-steps act (_post / _edit,
+# the channel's acts handed to bridges/progress.py), whose jobs are opened only under live_steps_ok()
+EGRESS = {"whatsapp": {"deliver", "send_files", "send_poll", "_post", "_edit", "_finish"},
+          "telegram": {"deliver", "tg", "_post", "_edit"},
+          "discord": {"deliver", "hook_send", "hook_file", "hook_poll", "hook_edit", "_post", "_edit"}}
 TG_TEXT = {"sendMessage", "editMessageText", "sendPoll", "sendPhoto", "sendDocument", "sendMediaGroup", "sendAudio",
            "sendVoice", "sendVideo", "copyMessage", "forwardMessage"}
 
@@ -373,8 +444,8 @@ for ch, m in BR.items():
     check(f"{ch}: deliver() asks the door (door_open AND door_org_ok) before its first platform send",
           "door_open" in calls and "door_org_ok" in calls and max(calls["door_open"], calls["door_org_ok"]) < first_send,
           repr({k: calls.get(k) for k in ("door_open", "door_org_ok")}))
-    makes = [n for n in ast.walk(tree) if isinstance(n, ast.Assign) and any(
-        isinstance(t, ast.Subscript) and ast.unparse(t.value) == "jobs" for t in n.targets)]
+    makes = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr == "open" and ast.unparse(n.func.value) == "progress"]
 
     def guarded(n):
         while n in parent:
@@ -389,9 +460,11 @@ for ch, m in BR.items():
 
 # ── SELECT: each bridge's own predicate, on a fixture DB ──────────────────────────────────────────────────────────
 def predicate(ch):
+    """The bridge's own listen predicate: its CLAIM, the one string its listen() is handed."""
     tree = ast.parse(Path(BR[ch].__file__).read_text())
     call = next(n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "listen")
-    return ast.literal_eval(call.args[1])
+    assert getattr(call.args[1], "id", "") == "CLAIM", f"{ch}: listen() is not handed CLAIM"
+    return BR[ch].CLAIM
 
 
 try:
@@ -454,7 +527,7 @@ try:
                 for ch, route in (("whatsapp", WA_TIER), ("telegram", TG_TIER)):
                     with c.cursor() as cur:
                         i = R.send_row(cur, "member", CAREER, "owner", None, "chat", SENT, key=K, store=R.TierStore(),
-                                       routes=[(ch, route, root / f"routes-{ch}.json")])
+                                       routes=[(ch, route, f"version-{ch}")])
                     w = World(ch, [], pool=pool)
                     await BR[ch].deliver(await pool.fetchrow("SELECT * FROM messages WHERE id=$1", i))
                     st, d = state(i)
@@ -469,7 +542,7 @@ try:
                 for ch, route in (("whatsapp", WA_TIER), ("telegram", TG_TIER)):
                     with c.cursor() as cur:
                         i = R.send_row(cur, "member", CAREER, "owner", None, "chat", SENT, key=K, store=R.TierStore(),
-                                       routes=[(ch, route, root / f"routes-{ch}.json")])
+                                       routes=[(ch, route, f"version-{ch}")])
 
                     def boom(ch=ch):
                         raise RuntimeError(f"{ch} send text: S1C-ERR-SENTINEL {route['chat']} said no")
@@ -494,7 +567,7 @@ try:
                 for gone in (False, True):
                     with c.cursor() as cur:
                         i = R.send_row(cur, "member", CAREER, "owner", None, "chat", SENT, key=K, store=R.TierStore(),
-                                       routes=[("whatsapp", WA_TIER, root / "routes-whatsapp.json")])
+                                       routes=[("whatsapp", WA_TIER, "version-whatsapp")])
 
                     async def stub(pool_, row_, channel, routes_):
                         return DC_ORG, SENT
@@ -518,7 +591,7 @@ try:
                     if route:
                         with c.cursor() as cur:
                             i = R.send_row(cur, "member", CAREER, "owner", None, "chat", SENT, key=K,
-                                           store=R.TierStore(), routes=[(ch, route, root / f"routes-{ch}.json")])
+                                           store=R.TierStore(), routes=[(ch, route, f"version-{ch}")])
                     else:
                         i = ins(thread)
                     w = World(ch, [], pool=pool, on_send=lambda i=i: c.execute("DELETE FROM messages WHERE id=%s", (i,)))

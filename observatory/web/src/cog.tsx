@@ -10,7 +10,9 @@ import type { AgentRow, Overview, Presence } from './types'
    made the root answers 409, so the app shows the cog's rooms to choose from instead of a broken page. */
 
 export interface CogOrg { org: string | null; name: string; base: string; badge?: string | null }
-export interface Cog { cog: boolean; home: string | null; orgs: CogOrg[]; error?: string }
+/* door: the org the front routes a viewer who chose none to (front.py default(): the cog's only org, else the registry's
+   door), or null: then nothing is chosen for you */
+export interface Cog { cog: boolean; home: string | null; orgs: CogOrg[]; door?: string | null; error?: string }
 
 const COOKIE = 'astryx_org'
 const NONE: Cog = { cog: false, home: null, orgs: [] }
@@ -33,9 +35,14 @@ export function chosenOrg(): string | null {
    with no prompt. What the viewer sees is a walk, not a blink: the page fades to the room's name first. */
 export function chooseOrg(org: string) {
   if (org === chosenOrg()) return
-  document.cookie = `${COOKIE}=${encodeURIComponent(org)}; Path=/; SameSite=Strict; Max-Age=31536000`
+  setOrg(org)
   walkTo(org)
   location.reload()
+}
+
+/* the choice alone, no walk: the one writer of the cookie (chooseOrg, the sign-in's org pick, a one-org cog's auto pick) */
+export function setOrg(org: string) {
+  document.cookie = `${COOKIE}=${encodeURIComponent(org)}; Path=/; SameSite=Strict; Max-Age=31536000`
 }
 
 function walkTo(org: string) {
@@ -68,7 +75,8 @@ async function fetchCog(): Promise<Cog> {
   const j = await r.json().catch(() => ({}))
   if (!r.ok) return { ...NONE, error: j.error ?? `cog registry unreadable (HTTP ${r.status})` }   // fails closed, and SAYS so
   const orgs = (Array.isArray(j.orgs) ? j.orgs : []).filter((o: CogOrg) => o && typeof o.name === 'string' && safeBase(o.base))
-  return { cog: j.cog === true && orgs.length > 0, home: j.home ?? null, orgs }
+  const door = typeof j.door === 'string' && orgs.some((o: CogOrg) => o.org === j.door) ? j.door : null
+  return { cog: j.cog === true && orgs.length > 0, home: j.home ?? null, orgs, door }
 }
 
 /* Canvas is each org's own in a cog (forge #60765): served at /o/<org>/canvas/ with its session cookie on that Path, so a
@@ -87,6 +95,11 @@ export function CogProvider({ children, chooser }: { children: ReactNode; choose
   const [cog, setCog] = useState<Cog | null>(null)
   useEffect(() => { fetchCog().then(setCog).catch(() => setCog(NONE)) }, [])
   if (!cog) return null                                        // one request: never a flash of 409s
+  // A cog of ONE org has nothing to choose (cog front parity, owner 11-13: one org behind the front loses nothing): it
+  // is picked for the viewer, the cookie written so every later read agrees, and no chooser and no reload. Several
+  // orgs: the viewer's choice, as before (a door only routes requests that name none; it never hides the building).
+  const only = cog.cog && cog.orgs.length === 1 ? cog.orgs[0].org : null
+  if (only && chosenOrg() !== only) setOrg(only)
   const pick = chosenOrg()
   const choosing = cog.cog && !cog.orgs.some(o => o.org === pick)
   const base = cog.cog ? cog.orgs.find(o => o.org === pick)?.base : undefined

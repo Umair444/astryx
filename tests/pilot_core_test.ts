@@ -77,9 +77,9 @@ arm('visitor (palette without the key): a read is refused', o.status === 'refuse
 reset(); o = await ex.owner.run('open_desktop', { agent: 'forge' })
 arm('owner: actuate is parked too (R3: the palette is not a second door)', o.status === 'pending_owner_confirm' && ran.length === 0)
 arm('R4: the outcome carries no nonce', !('nonce' in o))
-reset(); o = await ex.room.run('open_desktop', { agent: 'forge' })
+reset(); o = await ex.owner.run('open_desktop', { agent: 'forge' })
 const n1 = ex.pending()!.nonce
-arm('room: actuate parks a confirm and runs nothing', o.status === 'pending_owner_confirm' && ran.length === 0)
+arm('owner palette: actuate parks a confirm and runs nothing', o.status === 'pending_owner_confirm' && ran.length === 0)
 ex.bindConfirm(n1, EL)
 t += CONFIRM_ARM_MS + 10
 reset(); o = await ex.confirm(n1)
@@ -91,7 +91,7 @@ arm('a keyboard-made click (no pointerType) runs nothing', o.status === 'refused
 reset(); o = await ex.confirm(n1, tap({ currentTarget: { id: 'elsewhere' } }))
 arm('a click on another element runs nothing', o.status === 'refused' && ran.length === 0)
 // arm v: a new request replaces the pending one; the old prompt is dead, the new one arms afresh
-reset(); await ex.room.run('open_desktop', { agent: 'painter' })
+reset(); await ex.owner.run('open_desktop', { agent: 'painter' })
 const n2 = ex.pending()!.nonce
 arm('a new request replaces the pending one with a new nonce', n2 !== n1)
 reset(); o = await ex.confirm(n1, tap())
@@ -104,7 +104,7 @@ reset(); o = await ex.confirm(n2, tap({ currentTarget: EL2, timeStamp: t + CONFI
 arm('a trusted click on the armed prompt runs exactly that call, once', o.status === 'done' && ran.length === 1 && ran[0] === 'open_desktop{"agent":"painter"}')
 reset(); o = await ex.confirm(n2, tap({ currentTarget: EL2, timeStamp: t + 2 * CONFIRM_ARM_MS }))
 arm('the same nonce never runs twice', o.status === 'refused' && ran.length === 0)
-await ex.room.run('open_desktop', { agent: 'forge' })
+await ex.owner.run('open_desktop', { agent: 'forge' })
 const n3 = ex.pending()!.nonce
 ex.bindConfirm(n3, EL); ex.dismiss(n3)
 reset(); o = await ex.confirm(n3, tap({ timeStamp: t + 10 * CONFIRM_ARM_MS }))

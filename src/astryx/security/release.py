@@ -103,25 +103,12 @@ def releasable(lbl: frozenset, aud) -> bool:
 
 # ── audience ──────────────────────────────────────────────────────────────────────────────────────────────────────
 def chat_kind(channel: str, chat: str) -> str:
-    """'dm' | 'group' | 'unknown', from the chat id's own shape. WhatsApp: a group jid ends @g.us, a person's in
-    @s.whatsapp.net or @lid. Telegram: a positive id is a user's private chat, a negative one a group or channel
-    (S0 measured the live route's getChat type 'private' with a positive id). Discord routes are channels: groups."""
-    chat = str(chat or "")
-    if channel == "whatsapp":
-        if chat.endswith("@g.us"):
-            return "group"
-        if chat.endswith("@s.whatsapp.net") or chat.endswith("@lid"):
-            return "dm"
-        return "unknown"
-    if channel == "telegram":
-        if re.fullmatch(r"-\d+", chat):
-            return "group"
-        if re.fullmatch(r"\d+", chat):
-            return "dm"
-        return "unknown"
-    if channel == "discord":
-        return "group"
-    return "unknown"
+    """'dm' | 'group' | 'unknown', from the chat id's own shape: the one channel table's rule (core/channels.py).
+    WhatsApp: a group jid ends @g.us, a person's in @s.whatsapp.net or @lid. Telegram: a positive id is a user's private
+    chat, a negative one a group or channel (S0 measured the live route's getChat type 'private' with a positive id).
+    Discord routes are channels: groups."""
+    from astryx.core.channels import chat_kind as kind
+    return kind(channel, chat)
 
 
 def audience(channel: str, route: dict, members=None):
@@ -243,19 +230,12 @@ class TierStore:
         return (self.root / tier / ptr).read_text()
 
 
-def route_file_sha(path: Path) -> str:
-    """sha256 of the routes file as it stood at release: a forged trusted set shows up in the audit (a2 G2)."""
-    try:
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    except OSError:
-        return "unreadable"
-
-
 # ── the door ──────────────────────────────────────────────────────────────────────────────────────────────────────
 def release(sender: str, lbl: frozenset, body: str, routes, key: bytes, store: TierStore, members=None) -> dict:
     """An owner-addressed release from `sender`, whose session carries `lbl`.
 
-    routes: (channel, route, routes_file) for every running bridge's declared routes (v4 D5).
+    routes: (channel, route, routes_sha) for every declared route (v4 D5); routes_sha is the version of that channel's
+    owner routes when read (route_version, schema.sql), so a forged route shows in the audit (a2 G2).
     The destination is the ONE route the sender serves whose audience ⊆ readers(lbl). None → Refused; more than one
     → Refused (the door never guesses between two of the owner's surfaces). The body goes to the tier store; what
     returns is the row's METADATA: pointer, bytes, keyed body MAC, route key, route-file sha, label. No body."""
@@ -273,7 +253,7 @@ def release(sender: str, lbl: frozenset, body: str, routes, key: bytes, store: T
         raise Refused(f"{sender} serves {len(ok)} owner-only routes; the door won't pick one")
     channel, route, rfile = ok[0]
     return {"pointer": store.put(lbl, body), "bytes": len(body.encode()), "body_mac": body_mac(key, body),
-            "channel": channel, "route_key": route_key(key, channel, route), "route_sha": route_file_sha(rfile),
+            "channel": channel, "route_key": route_key(key, channel, route), "route_sha": rfile,
             "label": _label_text(lbl)}
 
 
@@ -361,18 +341,28 @@ def route_tier(route) -> str | None:
     t = route[TIER_KEY]
     if t not in TIERS:
         raise GrantError(f"the route declares tier {t!r}, which is not one of {','.join(sorted(TIERS))}")
-    if route.get("live_steps"):
+    if shows_steps(route):
         # live_steps streams STEP text straight to the chat and never passes deliver()'s door: a tiered route can't
         # have that second egress (a4 #53717), so the declaration itself is refused
         raise GrantError(f"a {t} route can't carry live_steps: step text would reach the chat around the door")
     return t
 
 
+SHOWS = ("steps", "replies")      # a route's `show` (owner 11-15: per chat, steps then the reply, or the reply only)
+
+
+def shows_steps(route) -> bool:
+    """Does this route want live STEP text? Its `show` decides (steps | replies); a route written before `show` keeps
+    its `live_steps` flag (true = steps, false or absent = replies). Anything else in `show` is no."""
+    show = route.get("show")
+    return show == "steps" if show is not None else bool(route.get("live_steps"))
+
+
 def live_steps_ok(route) -> bool:
     """A live_steps job may start only on an ORG route: one declaring live_steps and no tier. A malformed or tiered
     declaration is never a yes (S1c, a4 #53717)."""
     try:
-        return bool(isinstance(route, dict) and route.get("live_steps")) and route_tier(route) is None
+        return bool(isinstance(route, dict) and shows_steps(route)) and route_tier(route) is None
     except GrantError:
         return False
 
@@ -419,23 +409,43 @@ def read_for(agent: str, pointer: str, bmac: str, *, key: bytes, store: "TierSto
     return body
 
 
-def declared_routes(bridges_dir: Path | None = None) -> list:
-    """(channel, route, routes_file) for every route declared in bridges/routes-<channel>.json (v4 D5's route
-    domain). A route's `tier`, when present, must be a declared tier, or the whole read refuses (a4 #46035)."""
-    out = []
-    for f in sorted((Path(bridges_dir) if bridges_dir else REPO / "bridges").glob("routes-*.json")):
-        import json
-        try:
-            rows = json.loads(f.read_text())
-        except (OSError, ValueError):
-            raise Refused(f"{f.name} is unreadable: no route can be established")
-        for r in rows if isinstance(rows, list) else []:
+def declared_routes(conn=None) -> list:
+    """(channel, route, routes_sha) for every OWNER route in the route table (v4 D5's route domain; owner 11-16: routes
+    are rows). A route's `tier`, when present, must be a declared tier, or the whole read refuses (a4 #46035). An
+    agent's connection is no route here: the door releases only to the owner's own surfaces."""
+    from astryx.core import routes as table
+    import psycopg
+    out, rows, shas = [], {}, {}
+    try:
+        with (psycopg.connect(_dsn()) if conn is None else _same(conn)) as c:
+            for ch, chat, agent, rule in c.execute("SELECT channel, chat, agent, rule FROM route WHERE purpose = 'standing' "
+                                                   "ORDER BY channel, id").fetchall():
+                rows.setdefault(ch, []).append(table.as_route({"chat": chat, "agent": agent, "rule": rule,
+                                                               "purpose": "standing", "id": None, "person": None}))
+            shas = {ch: table.version_sync(c, ch) for ch in rows}
+    except psycopg.Error:
+        raise Refused("the route table is unreadable: no route can be established")
+    for ch, rs in rows.items():
+        sha = shas[ch]
+        for r in rs:
             try:
                 route_tier(r)
             except GrantError as e:
-                raise GrantError(f"a route in {f.name}: {e}")
-            out.append((f.stem.split("-", 1)[1], r, f))
+                raise GrantError(f"a route on {ch}: {e}")
+            out.append((ch, r, sha))
     return out
+
+
+class _same:
+    """A caller's own connection, used as a context manager without closing it."""
+    def __init__(self, c):
+        self.c = c
+
+    def __enter__(self):
+        return self.c
+
+    def __exit__(self, *a):
+        return False
 
 
 def send_row(cur, sender: str, lbl: frozenset, to: str, thread, intent, body: str, *, key: bytes,
@@ -512,7 +522,7 @@ def door_stamped(row, channel: str, routes, *, key: bytes, store: "TierStore", m
 
 
 def door_org(channel: str, chat, routes) -> dict:
-    """An UNSTAMPED row's destination must be a DECLARED ORG ROUTE of this bridge: enabled, in its routes file,
+    """An UNSTAMPED row's destination must be a DECLARED ORG ROUTE of this bridge: enabled, among its routes,
     declaring no tier. Returns that route; Refused otherwise (a malformed tier declaration refuses too)."""
     hits = [r for r in routes if r.get("enabled") and str(r.get("chat")) == str(chat)]
     if not hits:

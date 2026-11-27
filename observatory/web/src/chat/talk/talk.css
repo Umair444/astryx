@@ -1,0 +1,52 @@
+/* TALK: canvas's VoiceMode in the workspace's paint — the void at 95%, the lavender aurora, the orb with three thin
+   rings, the serif state line. Rings breathe while the agent thinks; reduced motion stills them. */
+
+.ws-talk { position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 72px 20px calc(24px + env(safe-area-inset-bottom)); text-align: center;
+  background: color-mix(in srgb, var(--t-bg) 95%, transparent); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px); }
+.ws-talk-aurora { position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(42% 36% at 50% 40%, color-mix(in srgb, var(--t-accent) 13%, transparent), transparent 70%),
+    radial-gradient(30% 26% at 62% 58%, color-mix(in srgb, var(--t-accent2) 9%, transparent), transparent 70%); }
+.ws-talk-top { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: calc(18px + env(safe-area-inset-top)) 20px 0 22px; }
+.ws-talk-x { width: 44px; height: 44px; border-radius: 16px; display: grid; place-items: center; color: var(--t-dim);
+  background: color-mix(in srgb, var(--t-panel) 70%, transparent); border: 1px solid var(--t-line); transition: color 120ms, background-color 120ms; }
+.ws-talk-x:hover { color: var(--t-fg); background: var(--t-panel); }
+
+.ws-talk-stage { position: relative; width: 300px; height: 300px; display: grid; place-items: center; }
+.ws-talk-stage > * { grid-area: 1 / 1; }
+.ws-talk-ring { width: calc(196px + var(--i) * 48px); height: calc(196px + var(--i) * 48px); border-radius: 9999px;
+  border: 1px solid var(--t-accent); opacity: calc(.2 - var(--i) * .055); transition: border-color 400ms;
+  animation: ws-talk-drift calc(6s + var(--i) * 2s) ease-in-out infinite; }
+.ws-talk-stage[data-phase="speaking"] .ws-talk-ring { border-color: var(--t-accent2); }
+.ws-talk-stage[data-phase="thinking"] .ws-talk-ring, .ws-talk-stage[data-phase="sending"] .ws-talk-ring {
+  animation: ws-talk-think calc(2.4s + var(--i) * 1s) ease-in-out infinite; border-style: dashed; }
+@keyframes ws-talk-drift { 50% { transform: scale(1.025); } }
+@keyframes ws-talk-think { 0% { transform: scale(1) rotate(0); } 50% { transform: scale(1.06) rotate(180deg); } 100% { transform: scale(1) rotate(360deg); } }
+
+.ws-talk-words { position: relative; margin-top: 28px; max-width: 620px; min-height: 150px; }
+.ws-talk-shimmer { background: linear-gradient(90deg, var(--t-fg) 20%, var(--t-accent) 45%, var(--t-accent2) 55%, var(--t-fg) 80%);
+  background-size: 220% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: ws-talk-sheen 2.4s linear infinite; }
+@keyframes ws-talk-sheen { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+
+.ws-talk-controls { position: relative; display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.ws-talk-btn { height: 44px; padding: 0 16px; border-radius: 16px; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500;
+  color: var(--t-dim); background: color-mix(in srgb, var(--t-fg) 6%, transparent); transition: color 120ms, background-color 120ms; }
+.ws-talk-btn:hover:not(:disabled) { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 10%, transparent); }
+.ws-talk-btn[data-on="true"] { color: var(--t-warn); background: color-mix(in srgb, var(--t-warn) 14%, transparent); }
+.ws-talk-btn:disabled { opacity: .4; }
+.ws-talk-end { height: 44px; width: 56px; border-radius: 16px; display: grid; place-items: center; color: var(--t-on, #fff); background: var(--t-bad);
+  transition: filter 120ms, transform 80ms; }
+.ws-talk-end:hover { filter: brightness(1.1); } .ws-talk-end:active { transform: scale(.95); }
+.ws-talk-foot { position: absolute; bottom: calc(18px + env(safe-area-inset-bottom)); left: 20px; right: 20px; margin: 0 auto; max-width: 640px;
+  font-size: 12px; line-height: 1.5; color: var(--t-mute); }
+.ws-talk-foot a { color: var(--t-dim); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+.ws-talk-foot a:hover { color: var(--t-fg); }
+
+@media (max-width: 640px) {
+  .ws-talk { justify-content: flex-start; padding-top: calc(96px + env(safe-area-inset-top)); }
+  .ws-talk-stage { width: 260px; height: 260px; transform: scale(.88); }
+  .ws-talk-words { margin-top: 8px; min-height: 120px; }
+  .ws-talk-foot { position: relative; bottom: auto; left: auto; right: auto; margin-top: 18px; }
+}
+@media (prefers-reduced-motion: reduce) { .ws-talk-ring, .ws-talk-shimmer { animation: none !important; } }

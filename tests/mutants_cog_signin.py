@@ -13,14 +13,14 @@ ENV = "OBS_FRONT_SRC"
 
 MUTANTS = {
     "F1 sign-in from any Origin (D7's configured-origin check dropped)":
-        ("    o = _origin(request, a)\n    if o is None:\n        return _nope(403,",
-         "    o = _origin(request, a) or 'http://fx-any.invalid'\n    if o is None:\n        return _nope(403,"),
+        ("    o = _origin(request, a)\n    if o is None:\n        return _nope(403, b'{\"error\":\"sign in from",
+         "    o = _origin(request, a) or 'http://fx-any.invalid'\n    if o is None:\n        return _nope(403, b'{\"error\":\"sign in from"),
     "F2 no rate limit":
         ("    if _limited(ck, ak):", "    if False:"),
     "F3 failures counted per client only (an account is guessed from many addresses)":
         ("    _fails[ak].append(now)\n    _inflight += 1\n", "    _inflight += 1\n"),
     "F4 the session cookie is never Secure":
-        ('secure=o.startswith("https://")', "secure=False"),
+        ('secure=origin.startswith("https://")', "secure=False"),
     "F5 the session cookie is SameSite=Lax":
         ('samesite="strict", secure=o', 'samesite="lax", secure=o'),
     "F6 the session cookie is readable by script":
@@ -31,18 +31,18 @@ MUTANTS = {
         ("    out.raw_headers = relay.response_headers(resp.headers.raw, org)",
          "    out.raw_headers = [(k, v) for k, v in resp.headers.raw if k.decode().lower() not in relay.HOP]"),
     "F9 the identity is minted for another org than the one routed to":
-        ("identity.mint(a.key, who, org))] if who else []", "identity.mint(a.key, who, org + 'x'))] if who else []"),
+        ("    return identity.mint(a.key, v[0], org, name=v[1])", "    return identity.mint(a.key, v[0], org + 'x', name=v[1])"),
     "F10 /auth/me holds the role itself (every room, as owner): a2 I1's authority moved to the front":
-        ('return {"org": r["org"], "name": r["name"], "role": got} if got in cogauth.ROLES else None',
+        ('return {"org": r["org"], "name": r["name"], "role": got} if got else None',
          'return {"org": r["org"], "name": r["name"], "role": "owner"}'),
     "F11 the cog stream asks the session once, not at every connect (a signed-out stream keeps its identity)":
-        ("                who = await viewer(request, a)    # asked again at EVERY connect",
-         "                who = getattr(request.state, 'fx_who', None) or await viewer(request, a); request.state.fx_who = who  #"),
+        ("                who = await viewer_id(request, a)    # asked again at EVERY connect",
+         "                who = getattr(request.state, 'fx_who', None) or await viewer_id(request, a); request.state.fx_who = who  #"),
     "F12 sign-out clears the cookie and keeps the session row live":
         ("            await a.db(cogauth.sign_out, tok)", "            pass"),
     "F13 the identity rides with no session (a caller's own x-astryx-identity is relayed)":
-        ("    signed = [(identity.HEADER, identity.mint(a.key, who, org))] if who else []",
-         "    signed = [(identity.HEADER, identity.mint(a.key, who, org))] if who else [(identity.HEADER, request.headers.get(identity.HEADER, ''))]"),
+        ("    signed = [(identity.HEADER, _mint(a, who, org))] if who else []",
+         "    signed = [(identity.HEADER, _mint(a, who, org))] if who else [(identity.HEADER, request.headers.get(identity.HEADER, ''))]"),
     "F16 an unusable store is a silent 503 (a2 #62616: the journal never says why)":
         ('            print(f"front: the cog\'s sign-in store is unusable: {e}", file=sys.stderr)', "            pass"),
     "F14 a same-site page's request is signed in (a2 #62390 R-1: SameSite=Strict is a site rule; a writing GET runs)":

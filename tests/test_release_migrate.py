@@ -51,10 +51,8 @@ def check(name, ok, detail=""):
 
 root = Path(tempfile.mkdtemp(prefix="relmig."))
 home = Path(tempfile.mkdtemp(prefix="relmig_home."))
-(root / "bridges").mkdir()
-(root / "bridges" / "routes-whatsapp.json").write_text(json.dumps(
-    [{"chat": CHAT, "agent": "member", "enabled": True},
-     {"chat": "30303@g.us", "agent": "other", "enabled": True}]))
+DECLARED = [{"chat": CHAT, "agent": "member", "enabled": True}, {"chat": "30303@g.us", "agent": "other", "enabled": True}]
+WA = [("whatsapp", r, None) for r in DECLARED]     # the owner's whatsapp routes (rows in the fixture DB, below)
 R.REPO = root
 M.R.REPO = root
 # the residual transcript lives under $HOME; the org's DSN authenticates through ~/.pgpass, so pin that file first
@@ -93,11 +91,11 @@ ROUTED = [("whatsapp", {"chat": CHAT, "agent": "member", "enabled": True, "tier"
            None)]
 check("route_of: the one route of the agent on the channel, one already declaring THIS tier included",
       M.route_of("member", "whatsapp", "career", ROUTED)["chat"] == CHAT
-      and M.route_of("member", "whatsapp", "career")["chat"] == CHAT)
+      and M.route_of("member", "whatsapp", "career", WA)["chat"] == CHAT)
 check("route_of: 0 routes, 2 routes, a route declaring ANOTHER tier and a route with NO chat all refuse",
       _refuses(lambda: M.route_of("member", "whatsapp", "career", [("whatsapp", {"agent": "member", "enabled": True},
                                                                     None)]))
-      and _refuses(lambda: M.route_of("nobody", "whatsapp", "career"))
+      and _refuses(lambda: M.route_of("nobody", "whatsapp", "career", WA))
       and _refuses(lambda: M.route_of("member", "whatsapp", "career", ROUTED * 2))
       and _refuses(lambda: M.route_of("member", "whatsapp", "family", ROUTED)))
 
@@ -116,6 +114,9 @@ except Exception as e:  # noqa: BLE001
 try:
     os.environ["ASTRYX_DSN"] = fx["dsn"]
     db = psycopg.connect(fx["dsn"], autocommit=True)
+    for r_ in DECLARED:                 # the owner's routes are rows (owner 11-16): what the door's route read finds
+        db.execute("INSERT INTO route (channel, chat, agent, purpose, rule, opened_by) VALUES ('whatsapp', %s, %s, "
+                   "'standing', '{\"enabled\": true}', 'owner')", (r_["chat"], r_["agent"]))
     J = json.dumps
 
     def msg(thread, body, delivery, frm="member"):

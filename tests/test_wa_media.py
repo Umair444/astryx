@@ -50,7 +50,7 @@ spec.loader.exec_module(wa)
 
 CHAT = "wa-test-group@g.us"               # fake-in-shape ids (no digit run: privacy_gate (c))
 OWNER = "wa-test-owner@lid"
-ROUTE = {"chat": CHAT, "agent": "seed", "enabled": True, "open": False, "trusted_jids": [OWNER]}
+ROUTE = {"chat": CHAT, "agent": "seed", "enabled": True, "open": False}
 CAPTION = "synthetic caption: make this better"
 fails = []
 
@@ -108,6 +108,10 @@ class World:
             return P()
         wa.asyncio.create_subprocess_exec = exec_
         wa.routes = lambda: Routes([ROUTE])
+
+        async def identity_of(pool, channel, account, fallback, route=None):     # the one minter (identity_who): the owner's number
+            return "owner" if account == OWNER else fallback          # is the owner's handle, everyone else as minted
+        wa.identity_of = identity_of
         self.root.mkdir(parents=True, exist_ok=True)
         wa.DATA_HOST, wa.WA_DOCKER = str(self.root), docker
 
@@ -221,9 +225,45 @@ async def hostile(tmp):
     check("M9 ...and the body says it was refused", "refused" in body, body)
 
 
+async def partials(tmp):
+    # P: wacli writes `.wacli-download-<n>` (encrypted/short) beside the finished file for a moment; owner 14855's voice
+    # note was delivered as that file, unreadable. The partial is never the attachment, on either branch.
+    w = World(f"{tmp}/p1").install()
+    d = w.put("IDP1", "audio", ".wacli-download-2066708430").parent
+    got = await wa.fetch_media(CHAT, "IDP1", "audio")
+    check("P1 only a partial download in the dir → it is never returned (the file never landed)",
+          "never landed" in str(got), str(got))
+    (d / "message-IDP1.oga").write_bytes(b"OggS-synthetic")
+    got = await wa.fetch_media(CHAT, "IDP1", "audio")
+    check("P1 ...and once the finished file is there, it is the one returned", Path(str(got)).name == "message-IDP1.oga", str(got))
+    # P2: the docker copy-out lists the partial first: the finished one is copied
+    w = World(f"{tmp}/p2").install(docker="wacli-sync")
+    wa.MEDIA_DIR = Path(f"{tmp}/p2/media")
+    base = f"{wa.DATA_CTR}/store/media/{CHAT.replace('@', '_')}/IDP2/audio"
+    cats = []
+
+    async def exec2(*argv, stdout=None, **kw):
+        class P:
+            async def communicate(self):
+                return f"{base}/.wacli-download-9\n{base}/message-IDP2.oga\n".encode(), b""
+
+            async def wait(self):
+                if stdout is not None and hasattr(stdout, "write"):
+                    stdout.write(b"OggS-synthetic")
+                return 0
+        if argv[3] == "cat":
+            cats.append(argv[4])
+        return P()
+    wa.asyncio.create_subprocess_exec = exec2
+    got = await wa.fetch_media(CHAT, "IDP2", "audio")
+    check("P2 the docker copy-out takes the finished file, never the partial listed first",
+          cats and cats[0].endswith("/message-IDP2.oga") and str(got).endswith("message-IDP2.oga"), f"{cats} {got}")
+
+
 with tempfile.TemporaryDirectory(prefix="wa-media-") as tmp:
     asyncio.run(main(tmp))
     asyncio.run(hostile(tmp))
+    asyncio.run(partials(tmp))
 print()
 print(f"FAILED ({len(fails)}): " + "; ".join(fails) if fails else "/hook: every inbound file arrives as a path beside its caption, or says why not")
 sys.exit(1 if fails else 0)

@@ -88,7 +88,8 @@ def main(url):
         me = next(r for r in rows if r["agent"] == agent)
         arm("the model label is the DOMINANT recent model, not the last auxiliary call",
             "opus" in (me.get("model") or ""), me.get("model"))
-        arm("an agent's face is public (no key)", cl.get(f"/api/agents/{agent}/avatar").status_code in (200, 404))
+        arm("an agent's face is public (no key)", cl.get(f"/api/agents/{agent}/avatar").status_code in (200, 204))
+        arm("a missing face is a quiet 204, not a 404", cl.get("/api/agents/no-such-agent/avatar").status_code == 204)
         arm("a path-shaped avatar name is refused", cl.get("/api/agents/..%2Fsecret/avatar").status_code in (403, 404))
         arm("presence is owner-only", cl.get("/api/presence").status_code == 403)
         arm("the heartbeat (an activity rate) is owner-only", cl.get("/api/pulse").status_code == 403)

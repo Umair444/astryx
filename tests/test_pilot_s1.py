@@ -9,7 +9,8 @@
       app's tabs minus the fullscreen face mode (App.tsx Route);
   (d) the MCP list for agents is cut from the matrix: exactly the actions agent may run, all of class view,
       never read/write/actuate;
-  (e) the executor's gate, run by node on the real catalog (tests/pilot_core_test.ts).
+  (e) the executor's gate, run by node on the real catalog (tests/pilot_core_test.ts), and the egress projection
+      with the call's screen mask (tests/pilot_egress_test.ts).
 No DB, no network, no browser.
 """
 import importlib.util
@@ -18,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -88,18 +90,41 @@ arm("the agent MCP list is non-empty", len(mcp) > 0)
 arm("the agent MCP list is exactly the view actions", sorted(t["name"] for t in mcp) == sorted(a["name"] for a in cat["actions"] if a["class"] == "view"))
 arm("no read / write / actuate action reaches agents", not any(by[t["name"]]["class"] != "view" for t in mcp))
 arm("a missing matrix cell reads as deny", pc.cell(cat, "agent", "actuate") == "deny" and pc.cell(cat, "nobody", "view") == "deny")
-arm("no principal runs write or actuate outright: every such cell is confirm or absent", all(r.get(k, "deny") in ("confirm", "deny") for r in cat["matrix"].values() for k in ("write", "actuate")))
+# owner 11-11 ("i dont want the confirmation"): his own call (room) runs write/actuate through the egress projection;
+# every OTHER principal still confirms or is denied
+arm("only the owner's call runs write or actuate outright (projected); every other such cell is confirm or absent",
+    all(r.get(k, "deny") in ("confirm", "deny") for p, r in cat["matrix"].items() if p != "room" for k in ("write", "actuate"))
+    and all(cat["matrix"]["room"].get(k) == "projection" for k in ("write", "actuate")))
 arm("there is no owner_tap principal (a caller-assertable owner)", "owner_tap" not in cat["matrix"])
 arm("a classless action reads as actuate", pc.cls({"name": "x"}, cat) == "actuate")
 
 # (e)
+sys.path.insert(0, str(REPO / "tests"))
+from node_ts import run_ts, ts_unavailable         # node < 22.6 can't load .ts: bundled first (tests/node_ts.py)
 node = shutil.which("node")
+unverified = ts_unavailable()                      # a clean clone (no npm ci): the node arms verify nothing, not red
 if not node:
     arm("node is installed (the executor's gate runs under it)", False)
+elif unverified:
+    print(f"  SKIP  the node arms: {unverified}")
 else:
-    r = subprocess.run([node, str(REPO / "tests/pilot_core_test.ts"), str(CAT)], capture_output=True, text=True, timeout=60)
-    print(r.stdout.rstrip())
-    arm("the executor's gate (node)", r.returncode == 0, r.stderr.strip()[-400:])
+    with tempfile.TemporaryDirectory() as d:
+        broken = Path(d) / "broken_test.ts"
+        broken.write_text("const n: number = 1;\nif (n) throw new Error('a broken suite');\n")
+        rc, _, _ = run_ts(broken)
+        arm("a broken .ts suite still FAILS where the bundler is present (the skip covers only its absence)", rc != 0, rc)
+    rc, out, err = run_ts(REPO / "tests/pilot_core_test.ts", CAT)
+    print(out.rstrip())
+    arm("the executor's gate (node)", rc == 0, err.strip()[-400:])
+    rc, out, err = run_ts(REPO / "tests/pilot_egress_test.ts", CAT)
+    print(out.rstrip())
+    arm("what leaves for the provider: the egress projection and the screen mask (node)", rc == 0, err.strip()[-400:])
+    rc, out, err = run_ts(REPO / "tests/pilot_asks_test.ts")
+    print(out.rstrip())
+    arm("the call's open asks: which reply is read back, and when an ask closes (node)", rc == 0, err.strip()[-400:])
 
+if not fails and unverified:
+    print(f"SKIP: the pure arms passed; the node arms verified nothing ({unverified})")
+    sys.exit(77)
 print("ALL PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

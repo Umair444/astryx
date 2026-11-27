@@ -18,7 +18,7 @@ cd "$(dirname "$_self")"
 unset _self _t _hops
 # <<< self dir
 # >>> org-home guard (plan-11324 S3a): this script sets up ONE org from its checkout, and reads that org's estate
-# (.env, agents/, bridges/routes-*.json, …) relative to it. On a host that runs SEVERAL orgs the checkout carries no
+# (.env, agents/, …) relative to it. On a host that runs SEVERAL orgs the checkout carries no
 # estate, so it REFUSES before any of it: a multi-org setup is seed's estate move (#58435 item 7) and S3b's per-org
 # units, never this script guessing which org it means. units() below already serves a HOME (ORGH); the rest doesn't.
 # The ONE verb a cog may run is `units` (S3f S2): units() resolves its own org (ASTRYX_HOME; none carried is the cog's
@@ -49,6 +49,13 @@ fi
 # <<< org-home guard
 
 say() { echo -e "\033[36m[astryx]\033[0m $*"; }
+# every line this script adds to the env file goes in under its .lock, the lock the one writer (astryx.config._write_env)
+# takes: an observatory write at the same moment can never lose it, or lose its own (medic 12364 R2). flock(1) is
+# util-linux; where it's absent (macOS) the append is plain, as before. stdin is the line.
+env_add() {
+  if command -v flock >/dev/null 2>&1; then ( flock 9; dd of=.env oflag=append conv=notrunc status=none ) 9>>.env.lock
+  else dd of=.env oflag=append conv=notrunc status=none; fi
+}
 die() { echo -e "\033[31m[astryx]\033[0m $*" >&2; exit 1; }
 
 # The units the owner should ENABLE: [Install]-bearing, and not declared installed-but-disabled (a remote body's growbot).
@@ -85,7 +92,7 @@ units() {  # GENERATE systemd units from the org's declared sources of truth.
   # footgun that hid telegram/discord/gateway/canopus-inbound from the UI). The
   # set derives from four authorities (plan-17):
   #   1. shipped-set  — the units every org always has (below, unconditional)
-  #   2. channels     — inbound CONVERSATION; one per bridges/routes-<name>.json present
+  #   2. channels     — inbound CONVERSATION; one per wired channel (its token/secret in .env)
   #   3. senses       — inbound PERCEPTION; one per sense module+grant present
   #   4. runners      — per-agent pollers declared in nucleus/runners.conf
   # doctor reconciles the enabled set against this same derivation, bidirectionally.
@@ -287,9 +294,10 @@ ExecStart=${UEXEC}$PWD/scripts/spawn-all.sh
 WantedBy=multi-user.target
 EOF
 
-  # ── 2. channels — one service per present routes-<name>.json ─────────────────
-  # Presence signal = the channel's routing file exists (the org has wired it).
-  [ -f "$ORGH/bridges/routes-whatsapp.json" ] && _uw astryx-whatsapp service && cat > "$_UF" <<EOF
+  # ── 2. channels — one service per WIRED channel ──────────────────────────────
+  # Wired = its token or generated secret is in the org's .env (astryx.core.channels wired); its routes are rows.
+  local WIRED; WIRED=" $(venv/bin/python -m astryx.core.channels wired --env "$ORGH/.env" 2>/dev/null | tr '\n' ' ') "
+  [[ "$WIRED" == *" whatsapp "* ]] && _uw astryx-whatsapp service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx whatsapp bridge — owner surface on the wire
 After=network.target docker.service
@@ -303,7 +311,7 @@ Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
-  [ -f "$ORGH/bridges/routes-discord.json" ] && _uw astryx-discord service && cat > "$_UF" <<EOF
+  [[ "$WIRED" == *" discord "* ]] && _uw astryx-discord service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx discord bridge — owner surface on the wire
 After=network.target
@@ -317,7 +325,7 @@ Environment=ASTRYX_HOME=$ORGH
 [Install]
 WantedBy=multi-user.target
 EOF
-  [ -f "$ORGH/bridges/routes-telegram.json" ] && _uw astryx-telegram service && cat > "$_UF" <<EOF
+  [[ "$WIRED" == *" telegram "* ]] && _uw astryx-telegram service && cat > "$_UF" <<EOF
 [Unit]
 Description=astryx telegram bridge — owner surface on the wire
 After=network.target
@@ -496,20 +504,19 @@ EOF
 active_dep_groups() {  # which manifest groups this org needs, from the channel authority
   # core always; media when any channel that can carry voice is wired (same
   # channels-present authority the units-generator gates on — one authority).
-  local g="core"
-  for ch in whatsapp discord telegram; do
-    [ -f "${1:-.}/bridges/routes-$ch.json" ] && { g="$g media"; break; }
-  done
-  [ -f "${1:-.}/bridges/routes-discord.json" ] && g="$g discord"   # discord.py: the discord bridge only
+  local g="core" w
+  w=" $(venv/bin/python -m astryx.core.channels wired --env "${1:-.}/.env" 2>/dev/null | tr '\n' ' ') "
+  [ -n "${w// /}" ] && g="$g media"                       # any wired channel can carry voice
+  [[ "$w" == *" discord "* ]] && g="$g discord"             # discord.py: the discord bridge only
   echo "$g"
 }
 
 org_identity() {  # federation identity: org name + Ed25519 keypair, once
   grep -q '^ASTRYX_ORG=' .env 2>/dev/null || {
-    echo "ASTRYX_ORG=$(hostname -s | tr 'A-Z' 'a-z')" >> .env
+    echo "ASTRYX_ORG=$(hostname -s | tr 'A-Z' 'a-z')" | env_add
     say "org name set to '$(hostname -s | tr 'A-Z' 'a-z')' — edit ASTRYX_ORG in .env (your domain, once you have one)"; }
   grep -q '^ASTRYX_SECRET_KEY=' .env 2>/dev/null || {
-    venv/bin/python - <<'PYEOF' >> .env
+    venv/bin/python - <<'PYEOF' | env_add
 from nacl.signing import SigningKey
 from nacl.encoding import HexEncoder
 k = SigningKey.generate()
@@ -517,7 +524,7 @@ print("ASTRYX_SECRET_KEY=" + k.encode(HexEncoder).decode())
 PYEOF
     say "org keypair generated (ASTRYX_SECRET_KEY in .env — this IS your org's identity, guard it)"; }
   grep -q '^ASTRYX_URL=' .env 2>/dev/null || {
-    echo "ASTRYX_URL=" >> .env
+    echo "ASTRYX_URL=" | env_add
     say "ASTRYX_URL empty: NAT mode (your gateway will long-poll peers). Set it when you have a public address."; }
 }
 
@@ -625,7 +632,9 @@ _act_schema() { say "applying schema (schema.sql differs from what this database
     return 1
   fi
   sha=$(_sha256 "$tmp")
-  psql_q -X -q -v ON_ERROR_STOP=1 < "$tmp" >/dev/null; rc=$?; rm -f "$tmp"; [ "$rc" -eq 0 ] || return 1
+  psql_q -X -q -v ON_ERROR_STOP=1 < "$tmp" >/dev/null; rc=$?; rm -f "$tmp"
+  # cog-rls slice 2: a provisioned org's DSN is org_<key>, which owns no core object. The apply is the provisioner's.
+  [ "$rc" -eq 0 ] || { echo -e "\033[31m[astryx]\033[0m schema apply refused; if this org is provisioned (its DSN is org_<key>), apply as the provisioner: sudo venv/bin/python devtools/org_apply.py --all" >&2; return 1; }
   psql_q -X -q -v ON_ERROR_STOP=1 \
     -c "CREATE TABLE IF NOT EXISTS schema_applied (id int PRIMARY KEY CHECK (id = 1), sha text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())" \
     -c "INSERT INTO schema_applied (id, sha) VALUES (1, '$sha') ON CONFLICT (id) DO UPDATE SET sha = EXCLUDED.sha, applied_at = now()" >/dev/null; }
@@ -739,7 +748,7 @@ _act_obs() { say "building the observatory (the public portal on :8090) and canv
   (cd canvas/web && npm install --no-fund --no-audit >/dev/null && npm run build >/dev/null); }
 
 _chk_obskey() { grep -q '^OBS_KEY=' .env 2>/dev/null; }
-_act_obskey() { echo "OBS_KEY=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)" >> .env; }
+_act_obskey() { echo "OBS_KEY=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 20)" | env_add; }
 
 _chk_ident() { grep -q '^ASTRYX_ORG=' .env 2>/dev/null && grep -q '^ASTRYX_SECRET_KEY=' .env 2>/dev/null \
   && grep -q '^ASTRYX_URL=' .env 2>/dev/null; }
@@ -933,19 +942,52 @@ _act_upstreamprs() {
   say "installed the upstream PR watch (seed): each outside PR to this repo reaches medic for triage"
 }
 
+# influence_nightly (owner 11-15: the floor's influence graph was empty on every org, because nothing scheduled
+# influence/shell.py compute): every org gets it; deferential like ccompact.
+_chk_influence() { _trigger_chk influence_nightly; }
+_act_influence() {
+  mkdir -p triggers/seed
+  venv/bin/python -m astryx.pulse.shipped_triggers.shims write influence_nightly triggers/seed   # one source (shims.py)
+  say "installed the influence nightly (seed): the influence graph is computed daily, so the floor can draw it"
+}
+
+# usage_idle (medic 12485: an idle org read no limits, and the 00:55 wake was held nine hours by a stale 98%): every
+# org gets it; deferential like ccompact.
+_chk_usageidle() { _trigger_chk usage_idle; }
+_act_usageidle() {
+  mkdir -p triggers/seed
+  venv/bin/python -m astryx.pulse.shipped_triggers.shims write usage_idle triggers/seed   # one source (shims.py)
+  say "installed the idle usage reading (seed): each login's limits are read when no turn has, so energy is never stale"
+}
+# connection_sweep (identity-channels P3): ends an agent's connect() connection when no one wrote for its idle time
+_chk_connsweep() { _trigger_chk connection_sweep; }
+_act_connsweep() {
+  mkdir -p triggers/seed
+  venv/bin/python -m astryx.pulse.shipped_triggers.shims write connection_sweep triggers/seed   # one source (shims.py)
+  say "installed the connection sweep (seed): a connection no one wrote in for its idle time ends, and its agent is told"
+}
+
+# late_failure_notice: tells an agent when a message it sent failed after its send stopped waiting ("still in flight")
+_chk_latefail() { _trigger_chk late_failure_notice; }
+_act_latefail() {
+  mkdir -p triggers/seed
+  venv/bin/python -m astryx.pulse.shipped_triggers.shims write late_failure_notice triggers/seed   # one source (shims.py)
+  say "installed the late failure notice (seed): an agent hears when a message it sent fails after its send stopped waiting"
+}
+
 # the precondition DAG, in dependency order (top depends on nothing).  name|class
 RECONCILE_NODES=(
   "pg|interior" "pgready|wait" "schema|interior" "harden|interior" "hardencut|halt" "venv|interior" "deps|interior"
   "peoplegate|interior" "derivedgraphs|interior" "geoschema|interior" "model|interior" "chan|interior" "obs|interior" "obskey|interior" "ident|interior"
   "units|interior" "law|interior" "prehook|interior" "ccompact|interior" "prreview|interior" "androidlic|halt"
-  "android|interior" "phonesweep|interior" "winidle|interior" "agentheal|interior" "orgbackup|interior" "upstreamprs|interior" "login|halt"
+  "android|interior" "phonesweep|interior" "winidle|interior" "agentheal|interior" "orgbackup|interior" "influence|interior" "usageidle|interior" "connsweep|interior" "latefail|interior" "upstreamprs|interior" "login|halt"
   "seed|interior" "prompt|interior")
 
 # >>> trigger reinstall
 # The shipped triggers init.sh installs, name|node. `./init.sh --reinstall N` is the owner's exit from a DEFERRED name
 # (doctor says when): it clears seed's tombstone for N (a creator of (seed, N) erases it, a3 BC-2) and installs N unless
 # it is installed already or this host doesn't use it (the node's own gate).
-TRIGGER_NODES=("context_compact|ccompact" "pr_review|prreview" "phone_resume_sweep|phonesweep" "windows_idle_stop|winidle" "agent_heal|agentheal" "run_backup|orgbackup" "run_restore_verify|orgbackup" "upstream_prs|upstreamprs")
+TRIGGER_NODES=("context_compact|ccompact" "pr_review|prreview" "phone_resume_sweep|phonesweep" "windows_idle_stop|winidle" "agent_heal|agentheal" "run_backup|orgbackup" "run_restore_verify|orgbackup" "influence_nightly|influence" "usage_idle|usageidle" "connection_sweep|connsweep" "late_failure_notice|latefail" "upstream_prs|upstreamprs")
 # A node shared by several names (orgbackup: run_backup and run_restore_verify) stands down when ANY of them is not
 # absent. "<name> <state…>" of the first such OTHER name of node $2, else rc 1 (a2 #61535: an absent name standing down
 # for its sibling is not "not used on this host", and doctor must not read green for it).
@@ -1403,13 +1445,10 @@ if [ "${1:-}" = "doctor" ]; then
   # leg (does the JID/chat still exist on the platform) needs the platform API and
   # stays a live reconciler; this is the org-authored half we CAN assert offline.
   routebad=""
-  for rf in "$ORGH"/bridges/routes-*.json; do
-    [ -f "$rf" ] || continue
-    while read -r a; do
-      [ -z "$a" ] && continue
-      venv/bin/python src/astryx/core/charter.py "$a" >/dev/null 2>&1 || routebad="$routebad ${rf##*/}→$a"
-    done < <(venv/bin/python -c "import json; [print(r.get('agent','')) for r in json.load(open('$rf')) if r.get('enabled')]" 2>/dev/null)
-  done
+  while read -r ch a; do                                  # the owner's enabled routes, from the route table
+    [ -z "$a" ] && continue
+    venv/bin/python src/astryx/core/charter.py "$a" >/dev/null 2>&1 || routebad="$routebad $ch→$a"
+  done < <(venv/bin/python -m astryx.core.routes agents --estate "$ORGH" 2>/dev/null)
   [ -z "$routebad" ] && ok "every enabled route targets a real agent" \
     || bad "enabled routes to UNKNOWN agents (mis-route risk):$routebad"
   # durability: the org's whole state is one docker volume — a recent dump is the only
@@ -1430,21 +1469,29 @@ if [ "${1:-}" = "doctor" ]; then
   # restore-verify: a fresh dump that won't pg_restore is backup THEATER — this asserts
   # the newest dump was proven-restorable recently (weekly), so a silently-unrestorable
   # backup goes RED instead of freshness-green. Reads the stamp only (never restores here).
+  # >>> restore stamp
   if [ -f "$ORGH/backups/.last-restore-ok" ]; then
     # Read the OUTCOME first, then the age. A stamp whose freshness was the only thing
     # checked reported "proven-restorable" for 8 days after verification began failing,
-    # because a failing run left the previous success's stamp untouched. Unknown content
-    # falls through to RED — detector polarity: a stamp we cannot interpret is not evidence.
-    if [ "$(cut -d" " -f1 "$ORGH/backups/.last-restore-ok")" = "FAILED" ]; then
-      bad "backup restore-verify FAILED on its last run ($(cut -d" " -f2 "$ORGH/backups/.last-restore-ok")) — the newest dump does NOT restore"
+    # because a failing run left the previous success's stamp untouched. Only a stamp that
+    # reads OK is green: a FAILED one, one we cannot read (root's 0600 stamp read by a
+    # non-root doctor read as empty, and went green over a FAILED run, 11-20) or any other
+    # content is not evidence — detector polarity.
+    stamp=$(cat "$ORGH/backups/.last-restore-ok" 2>/dev/null) \
+      || stamp="UNREADABLE as $(id -un) (written by $(stat -c %U "$ORGH/backups/.last-restore-ok"))"
+    if [ "${stamp%% *}" = "FAILED" ]; then
+      bad "backup restore-verify FAILED on its last run (${stamp#FAILED }) — the newest dump does NOT restore"
+    elif [ "${stamp%% *}" != "OK" ]; then
+      bad "backup restore-verify outcome unknown: backups/.last-restore-ok reads '${stamp:0:80}' — not proof the dump restores"
     elif [ "$(( $(date +%s) - $(stat -c %Y "$ORGH/backups/.last-restore-ok") ))" -gt 691200 ]; then
       bad "backup restore-verify STALE (>8d): a dump may have stopped restoring (scripts/restore_verify.sh)"
     else
-      ok "backup restore-verified ($(cat "$ORGH/backups/.last-restore-ok"), <8d — proven-restorable)"
+      ok "backup restore-verified ($stamp, <8d — proven-restorable)"
     fi
   elif [ -n "$newest_bk" ]; then
     warn "backup never restore-verified — run scripts/restore_verify.sh (a dump you can't restore is a hope, not a backup)"
   fi
+  # <<< restore stamp
   # A2A card (plan-20): assert the SERVED /.well-known/agent-card.json exposes EXACTLY the
   # public roster (== the fail-closed tier oracle) with zero tier-private agents, signed with
   # the introduce key. Runs against the live gateway on the SERVED bytes — the grade-1 check
@@ -1476,11 +1523,10 @@ fi
 if [ "${1:-}" = "whatsapp" ] || [ "${1:-}" = "channels" ]; then
   command -v docker >/dev/null || die "whatsapp surface needs docker (wacli container)"
   grep -q '^WA_WEBHOOK_SECRET=' .env 2>/dev/null || {
-    echo "WA_WEBHOOK_SECRET=$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> .env
+    echo "WA_WEBHOOK_SECRET=$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" | env_add
     say "generated WA_WEBHOOK_SECRET in .env"; }
-  grep -q '^WA_CLI=' .env 2>/dev/null || echo "WA_CLI=docker exec wacli-sync wacli" >> .env
-  [ -f bridges/routes.json ] || { cp bridges/routes.example.json bridges/routes.json
-    say "created bridges/routes.json — EDIT IT: your chat JIDs and trusted senders"; }
+  grep -q '^WA_CLI=' .env 2>/dev/null || echo "WA_CLI=docker exec wacli-sync wacli" | env_add
+  say "route your WhatsApp chats on the Floor's Channels rail once the bridge runs (routes are rows, not a file)"
   units
   # The secret is never PRINTED (stdout reaches logs and agent contexts): the docker line reads it from .env
   # when the human runs it.
@@ -1491,7 +1537,7 @@ if [ "${1:-}" = "whatsapp" ] || [ "${1:-}" = "channels" ]; then
   say "  docker run -d --name wacli-sync --restart unless-stopped -v $PWD/wacli-data:/data astryx/wacli \\"
   say "    sync --follow --download-media --webhook http://$(_docker_host_ip):8477/hook \\"
   say "    --webhook-secret \"\$(sed -n 's/^WA_WEBHOOK_SECRET=//p' '$PWD/.env')\" --webhook-allow-private"
-  grep -q '^WA_DATA_HOST=' .env || echo "WA_DATA_HOST=$PWD/wacli-data" >> .env
+  grep -q '^WA_DATA_HOST=' .env || echo "WA_DATA_HOST=$PWD/wacli-data" | env_add
   say "then install the bridge (cp to /etc, not symlink — /home may be a separate mount):"
   say "  sudo ./scripts/deploy.sh units && sudo systemctl enable --now astryx-whatsapp.service"
   exit 0

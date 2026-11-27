@@ -14,7 +14,8 @@ updated while you watch and click), and VOICE on top. Design attacked by abstrac
 
 TRUST (one line each, the reasons live in a1 #35009):
   owner      logs in with OBS_KEY → from_agent 'owner'
-  invitee    invite token (sha256 stored) → 'cv-<name>'; reaches ONLY owner-granted agents
+  member     signed in at the cog's front (signed_viewer) → 'cv-<label>.<uid>'; reaches their agents (members.reach)
+             (no invitees: a canvas is the org's, shared with members only; owner 11-17, medic 13018)
   a canvas   anything originating inside an iframe → 'canvas-<id>' — never the viewer
   session    HttpOnly SameSite=Strict cookie; every write needs the x-astryx header (CSRF);
              no credential ever rides a URL.
@@ -45,11 +46,14 @@ from pydantic import BaseModel
 
 from astryx import orgs  # the org's tmux server (plan-11324 S3b)
 from astryx.security import relay  # noqa: E402   canvas_cookie(): the session cookie's one name (plan-11859 D3)
+from astryx.security import identity  # noqa: E402   the cog front's signed identity (cog-gaps: canvas knows who signed in)
+from observatory.api import members  # noqa: E402   THIS org's membership: the ONE role reader and the who-asked handle
 from astryx.security.serve import serve_untrusted  # noqa: E402   the ONE server of untrusted bytes (plan-11884 G3)
 from astryx.core import canvas as cv
 from astryx.core import presence as pres
+from astryx.core import address  # elsewhere_sql: a cv- name on another channel's thread is that bridge's (identity P1)
 from .canvas_shell import render
-from .common import (ESTATE, MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target,
+from .common import (ESTATE, MEDIA_DIR, REPO, agent_exists, describe_media, env, media_path, route_target, team_of, team_stamp,
                      step_line, wire_insert)
 from .transcribe import transcribe
 
@@ -64,8 +68,10 @@ PREFIX = "/canvas"                                 # served at <host>/canvas/ (o
 # it under the cog front's /o/<org>/: its cookie lives at THAT path, under a name of its own, so one browser holds each
 # org's session apart (a cookie name on one host is host-wide, like a tmux socket) and never sends one org's session
 # to another's canvas. The org is THIS process's registry name, computed, never read from a request. One org: the
-# public path is PREFIX and the cookie `cv_session`, exactly as before.
-_ORG = orgs.name()
+# public path is PREFIX and the cookie `cv_session`, exactly as before. "In a cog" is "behind the cog's front": one org
+# under a registry `cog` block is reached at /o/<org>/ too, so its name and path follow the registry entry, never
+# multi() (orgs.here; cog front parity 11-13: the front relays cv_session-<org>, and a plain cv_session never passed).
+_ORG = orgs.here(ESTATE)
 PUBLIC = f"/o/{_ORG}{PREFIX}" if _ORG else PREFIX
 COOKIE = relay.canvas_cookie(_ORG)                 # ONE name, read by both relays too (src/astryx/security/relay.py)
 
@@ -78,18 +84,26 @@ hits: dict[str, list[float]] = {}                  # rate limits: key -> timesta
 
 
 # ------------------------------------------------------------------ identity
-OWNER_WIRE = "owner"   # the owner's wire handle on this surface; an invitee is cv-<name>
+OWNER_WIRE = "owner"   # the owner's wire handle on this surface; a member is cv-<label>.<uid>
 
 
 class Viewer:
-    def __init__(self, name: str, agents: list[str] | None = None):
-        self.name = name                           # 'owner' or an invitee name
+    def __init__(self, name: str, role: str | None = None, label: str = "", account: str = "",
+                 reach: set[str] | None = frozenset()):
+        self.name = name                           # 'owner', or a cog member's <label>.<uid>
         self.owner = name == "owner"
         self.wire = OWNER_WIRE if self.owner else f"cv-{name}"
-        self.agents = agents or []
+        self.role = role                           # a signed-in cog member's role here ('member'/'admin'), else None
+        self.member = role in members.MEMBER_ROLES and not self.owner
+        self.label = label or name                 # the human's own label (display_name on the wire)
+        self.keys = [name] + ([account] if account else [])   # who they are to a canvas: cv.sees (a member: their account too)
+        self.reach = reach                         # a member's agents (members.agents_reached): None = every agent
+        self.account = account
 
     def may_reach(self, agent: str) -> bool:
-        return self.owner or agent in self.agents
+        # a cog member reaches the agents the members table gives them (owner 11-17: "a member to use only the
+        # selected agents"), as on /chat: the ONE reach (members.agents_reached), never every agent (medic 12984)
+        return self.owner or (self.member and (self.reach is None or agent in self.reach))
 
 
 def _h(s: str) -> str:
@@ -97,20 +111,59 @@ def _h(s: str) -> str:
 
 
 async def viewer(request: Request) -> Viewer | None:
+    """The canvas's own session (its cookie: the owner's key login) first; else the cog front's signed identity
+    (signed_viewer: a member). An old invitee's session is no one."""
     tok = request.cookies.get(COOKIE)
-    if not tok:
+    own = tok and await pool.fetchval("SELECT 1 FROM canvas_sessions WHERE token_hash=$1 AND expires_at > now() "
+                                      "AND user_name = 'owner'", _h(tok))
+    return Viewer("owner") if own else await signed_viewer(request)
+
+
+# cog-gaps: a member signed in at the cog's front is HERE too, as main.py's _who reads her. The front mints a 60 s
+# Ed25519 token per request (src/astryx/security/identity.py); the observatory passes it on to canvas only when it
+# verified it itself (main._pipe), and canvas verifies it again: the cog's public keys, aud = THIS org's registry name,
+# from loopback only. The token says WHO; the role is this org's own fact (members.role_of). The owner is 'owner' (as
+# his key login is); a member or admin is cv-<label>.<uid> (members.member_handle, the who-asked rule), so her canvas
+# chats are the SAME threads and handle her /chat sees; a viewer, an unknown account or any doubt: no viewer (401).
+_COGAUTH = orgs.cog() if _ORG else None
+_verifiers: dict = {}
+_verifiers_at = 0.0
+
+
+def _keys(kid_missing: bool = False) -> dict:
+    """The cog's public keys, re-read at most once a minute when a token names an unknown kid (main.py's rule)."""
+    global _verifiers, _verifiers_at
+    if _COGAUTH and (not _verifiers_at or (kid_missing and time.monotonic() - _verifiers_at > 60)):
+        _verifiers, _verifiers_at = identity.load_verifiers(_COGAUTH["home"]), time.monotonic()
+    return _verifiers
+
+
+async def signed_viewer(request: Request) -> Viewer | None:
+    tok = request.headers.get(identity.HEADER)
+    peer = request.client.host if request.client else ""
+    if not (_COGAUTH and _ORG and tok and peer == "127.0.0.1"):
         return None
-    row = await pool.fetchrow(
-        "SELECT s.user_name, u.agents, u.revoked FROM canvas_sessions s "
-        "LEFT JOIN canvas_users u ON u.name = s.user_name "
-        "WHERE s.token_hash=$1 AND s.expires_at > now()", _h(tok))
-    if not row:
+    c = identity.claims(tok, _keys(), _ORG)
+    if c is None:
+        before = _verifiers
+        if _keys(kid_missing=True) is not before:       # a rotated key, read once
+            c = identity.claims(tok, _verifiers, _ORG)
+    if c is None:
         return None
-    if row["user_name"] != "owner":
-        if row["revoked"] or row["revoked"] is None:
-            return None
-        await pool.execute("UPDATE canvas_users SET last_seen=now() WHERE name=$1", row["user_name"])
-    return Viewer(row["user_name"], list(row["agents"] or []))
+    try:
+        role = await members.role_of(pool, c["sub"])
+    except (asyncpg.PostgresError, OSError):            # no members table, a DB blip: anonymous, never a 500
+        return None
+    if role == "owner":
+        return Viewer("owner")
+    h = members.member_handle(c["sub"], c["name"]) if role in members.MEMBER_ROLES else None
+    if not h:
+        return None
+    try:
+        reach = await members.agents_reached(pool, c["sub"], members.agent_nodes(ESTATE))
+    except (asyncpg.PostgresError, OSError):            # closed: a member never widens on a blip
+        reach = set()
+    return Viewer(h[3:], role=role, label=c["name"] or h[3:], account=c["sub"], reach=reach)
 
 
 def limited(key: str, n: int, window: float) -> bool:
@@ -168,7 +221,7 @@ WHERE id IN (
   SELECT id FROM messages
   WHERE status='pending' AND to_org='local' AND (
         (thread LIKE 'cv:%' AND (to_agent='owner' OR to_agent LIKE 'cv-%' OR to_agent LIKE 'canvas-%'))
-     OR to_agent LIKE 'cv-%' OR to_agent LIKE 'canvas-%')
+     OR ((to_agent LIKE 'cv-%' OR to_agent LIKE 'canvas-%') AND NOT """ + address.elsewhere_sql("canvas") + """))
   ORDER BY id FOR UPDATE SKIP LOCKED)
 RETURNING *"""
 
@@ -188,7 +241,7 @@ async def thread_user(conn, row) -> str | None:
     if user and thread:
         await conn.execute(
             "INSERT INTO canvas_threads (thread, user_name, agent, title) VALUES ($1,$2,$3,$4) "
-            "ON CONFLICT (thread) DO NOTHING", thread, user, row["from_agent"],
+            "ON CONFLICT (tenant, thread) DO NOTHING", thread, user, row["from_agent"],
             re.sub(r"\s+", " ", row["body"])[:60])
         push(user, {"type": "thread", "thread": thread})
     return user
@@ -198,15 +251,17 @@ async def claim(conn):
     for row in await conn.fetch(CLAIM):
         user = await thread_user(conn, row)
         waiting.get(row["from_agent"], {}).pop(row["thread"] or "", None)
-        if user:
-            push(user, {"type": "message", "thread": row["thread"], "message": shape(row)})
-            push(user, {"type": "progress", "thread": row["thread"], "agent": row["from_agent"], "line": None})
+        th = row["thread"] or ""
+        users = await canvas_viewers("canvas:" + th[10:], conn) if th.startswith("cv:canvas-") else {user} if user else set()
+        for u in users:                            # a canvas's thread: everyone who sees the canvas works in it
+            push(u, {"type": "message", "thread": th, "message": shape(row)})
+            push(u, {"type": "progress", "thread": th, "agent": row["from_agent"], "line": None})
 
 
-async def canvas_viewers(surface: str | None) -> set[str]:
-    """Who may see an agent's presence on `surface`: a canvas's owner + its shares; anything else, the owner."""
+async def canvas_viewers(surface: str | None, conn=None) -> set[str]:
+    """Who sees what happens on `surface`: a canvas's owner + its shares; anything else, the owner."""
     if surface and surface.startswith("canvas:") and surface[7:].isdigit():
-        row = await pool.fetchrow("SELECT user_name, shared_with FROM canvases WHERE id=$1", int(surface[7:]))
+        row = await (conn or pool).fetchrow("SELECT user_name, shared_with FROM canvases WHERE id=$1", int(surface[7:]))
         return {row["user_name"], *row["shared_with"]} if row else set()
     return {"owner"}
 
@@ -270,8 +325,10 @@ async def wire_loop():
         try:
             conn = await asyncpg.connect(DSN)
             q: asyncio.Queue = asyncio.Queue()
-            for ch in ("astryx_wire", "astryx_steps", "astryx_canvas", "astryx_presence"):
-                await conn.add_listener(ch, lambda c, p, chan, payload: q.put_nowait((chan, payload)))
+            # cog-rls slice 3: this org's channels (ax<n>_…), dispatched below by their logical names
+            from astryx.pg import channels
+            await channels.listen(conn, ("wire", "steps", "canvas", "presence"),
+                                  lambda chan, payload: q.put_nowait((chan, payload)))
             conn.add_termination_listener(lambda c: q.put_nowait(("__dead__", "")))
             await claim(conn)
             present.clear()
@@ -364,11 +421,8 @@ async def login(body: Login, request: Request):
     name = None
     if OBS_KEY and secrets.compare_digest(key, OBS_KEY):
         name = "owner"
-    else:
-        row = await pool.fetchrow("SELECT name FROM canvas_users WHERE token_hash=$1 AND NOT revoked", _h(key))
-        name = row["name"] if row else None
     if not name:
-        return deny(401, "that key or invite is not valid")
+        return deny(401, "that key is not valid")
     tok = secrets.token_urlsafe(32)
     await pool.execute("INSERT INTO canvas_sessions (token_hash, user_name) VALUES ($1,$2)", _h(tok), name)
     resp = JSONResponse({"ok": True, "name": name})
@@ -415,7 +469,7 @@ def _alive() -> set[str]:
 async def me(request: Request):
     v = V(request)
     return {"name": v.name, "wire": v.wire, "owner": v.owner, "home": HOME_AGENT,
-            "painter": PAINTER, "agents": _roster() if v.owner else v.agents}
+            "painter": PAINTER, "agents": [a for a in _roster() if v.may_reach(a)]}
 
 
 @app.get("/api/agents")
@@ -484,7 +538,7 @@ class NewThread(BaseModel):
 @app.post("/api/threads")
 async def new_thread(body: NewThread, request: Request):
     v = V(request)
-    agent = (body.agent or (HOME_AGENT if v.owner else (v.agents[0] if v.agents else ""))).strip().lower()
+    agent = (body.agent or HOME_AGENT).strip().lower()
     if not agent or not agent_exists(agent):
         return deny(400, "no such agent" if agent else "you have no agents yet — ask the owner for access")
     if not v.may_reach(agent):
@@ -502,9 +556,21 @@ async def _own_thread(v: Viewer, thread: str):
     return t
 
 
+async def _read_thread(v: Viewer, thread: str):
+    """A thread the viewer may READ: their own, or a canvas's thread when they see the canvas, as its live rows
+    already reach them (claim). Gated on its maker alone, a shared viewer's side chat sat blank (owner 16104)."""
+    t = await _own_thread(v, thread)
+    if t:
+        return t
+    t = await pool.fetchrow("SELECT * FROM canvas_threads WHERE thread=$1", thread)
+    if not t or not t["canvas_id"] or not await _canvas_for(v, int(t["canvas_id"])):
+        return None
+    return t
+
+
 @app.get("/api/threads/{thread}/messages")
 async def thread_messages(thread: str, request: Request):
-    t = await _own_thread(V(request), thread)
+    t = await _read_thread(V(request), thread)
     if not t:
         return deny(404, "no such conversation")
     # a canvas's own thread also shows the page's rows (to/from canvas-<id>) wherever they were threaded
@@ -530,18 +596,24 @@ async def _say(v: Viewer, thread: str, default_agent: str, text: str, intent="ch
         agent, text = await route_target(pool, thread, text, default_agent)
         if not v.may_reach(agent):                 # an @mention can't reach past a grant
             agent = default_agent
-    meta = {"surface": "canvas", "display_name": v.name, **(meta or {})}
+    # who asked (cog-who's stamp): a signed-in member's row carries her label and role, as /chat's does
+    meta = {"surface": "canvas", "display_name": v.label, **({"role": v.role} if v.member else {}), **(meta or {})}
     sender = who or v.wire
-    row = await pool.fetchrow(
-        "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, delivery) "
-        "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *", sender, ORG, agent, thread, intent, text,
-        json.dumps(meta))
+    # a team (two or more @agents this viewer may reach): one row each, stamped, the lead's LAST (common.wire_chat)
+    team = [] if who is not None else [a for a in team_of(text) if v.may_reach(a)]
+    members = team[1:] + team[:1] if len(team) > 1 else [agent]
+    stamp = team_stamp(team)
+    for agent in members:
+        row = await pool.fetchrow(
+            "INSERT INTO messages (from_agent, from_org, to_agent, thread, intent, body, delivery) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *", sender, ORG, agent, thread, intent, text,
+            json.dumps({**meta, **stamp}))
+        waiting.setdefault(agent, {})[thread] = (v.name, time.time())
+        push(v.name, {"type": "progress", "thread": thread, "agent": agent, "line": "◌ waking up"})
     await pool.execute(
         "UPDATE canvas_threads SET updated_at=now(), title=coalesce(title, $2) WHERE thread=$1",
         thread, _title_of(text))
-    waiting.setdefault(agent, {})[thread] = (v.name, time.time())
     push(v.name, {"type": "message", "thread": thread, "message": shape(row)})
-    push(v.name, {"type": "progress", "thread": thread, "agent": agent, "line": "◌ waking up"})
     return row
 
 
@@ -601,11 +673,11 @@ def _never_served(path: Path) -> bool:
 
 async def _message_file(v, msg: int, n: int) -> Path | None:
     """The n-th file a message embeds ([[file:/abs/path]]), if the viewer may see that message:
-    they own its thread, or they are its sender/recipient. Only a path the message names."""
+    they may read its thread (_read_thread), or they are its sender/recipient. Only a path the message names."""
     row = await pool.fetchrow("SELECT thread, body, to_agent, from_agent FROM messages WHERE id=$1", msg)
     if not row:
         return None
-    t = await _own_thread(v, row["thread"] or "") if row["thread"] else None
+    t = await _read_thread(v, row["thread"] or "") if row["thread"] else None
     if not t and not (row["to_agent"] == v.wire or row["from_agent"] == v.wire):
         return None
     paths = [(a or b).strip() for a, b in _ANY_FILE.findall(row["body"])]
@@ -648,9 +720,9 @@ INLINE_TYPES = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".mp4
 TEXT_TYPES = {".txt", ".md", ".csv", ".tsv", ".json", ".log", ".py", ".js", ".ts", ".tsx", ".sql", ".yaml",
               ".yml", ".toml", ".sh", ".ini", ".xml"}
 # Office documents become a PDF (LibreOffice, headless) so they read exactly as authored.
-OFFICE_TYPES = {".docx", ".doc", ".odt", ".rtf", ".pptx", ".ppt", ".odp", ".xlsx", ".xls", ".ods"}
+from astryx.core import office as _office  # noqa: E402
+OFFICE_TYPES = _office.OFFICE_TYPES
 _PREVIEW_DIR = MEDIA_DIR / ".preview"
-_convert_lock = asyncio.Lock()          # one soffice at a time: it is heavy, and shares a profile
 
 
 @app.get("/api/file")
@@ -678,33 +750,10 @@ async def message_file_preview(msg: int, n: int, request: Request):
     path = await _message_file(v, msg, n)
     if not path:
         return deny(404, "file not found")
-    if path.suffix.lower() not in OFFICE_TYPES:
-        return deny(415, "no preview for this type")
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:32]
-    out = _PREVIEW_DIR / f"{digest}.pdf"
-    if not out.is_file():
-        soffice = shutil.which("soffice") or shutil.which("libreoffice")
-        if not soffice:
-            return deny(501, "LibreOffice is not installed on this host")
-        async with _convert_lock:
-            if not out.is_file():
-                _PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-                with tempfile.TemporaryDirectory() as tmp:
-                    src = Path(tmp) / f"doc{path.suffix.lower()}"
-                    shutil.copyfile(path, src)
-                    proc = await asyncio.create_subprocess_exec(
-                        soffice, f"-env:UserInstallation=file://{tmp}/profile", "--headless", "--norestore",
-                        "--convert-to", "pdf", "--outdir", tmp, str(src),
-                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-                    try:
-                        await asyncio.wait_for(proc.wait(), 120)
-                    except asyncio.TimeoutError:
-                        proc.kill()
-                        return deny(504, "the document took too long to render")
-                    made = Path(tmp) / "doc.pdf"
-                    if not made.is_file():
-                        return deny(422, "this document could not be rendered")
-                    shutil.move(str(made), out)
+    try:                                   # the ONE converter, shared with the chat workspace (core/office.py)
+        out = await _office.to_pdf(path, _PREVIEW_DIR)
+    except _office.Unavailable as e:
+        return deny(e.status, e.why)
     return serve_untrusted(out, inline=True, filename=f"{path.stem}.pdf", frame_pdf=True)   # plan-11884 G3 (a2 BC-2 ii)
 
 
@@ -749,7 +798,7 @@ async def transcribe_voice(request: Request):
 # -------------------------------------------------------------------- canvases
 async def _canvas_for(v: Viewer, cid: int):
     c = await pool.fetchrow("SELECT *, version AS ver FROM canvases WHERE id=$1", cid)
-    if not c or not (v.owner or c["user_name"] == v.name or v.name in c["shared_with"]):
+    if not c or not cv.sees(c, v.keys, v.owner):
         return None
     return c
 
@@ -760,24 +809,19 @@ def _cshape(c) -> dict:
             "brief": c["brief"], "updated_at": c["updated_at"].isoformat(), "archived": c["archived"]}
 
 
-async def _shape_for(v, c) -> dict:
-    """_cshape for a VIEWER: a non-owner sees the agent-written title/brief only once steward's
-    pii_canvas sweep has cleared them (a3 #36233 C2). The owner sees everything."""
-    d = _cshape(c)
-    if not v.owner:
-        mv = await sync(cv.meta_view, c["id"])
-        if mv["meta"]:
-            d["title"], d["brief"] = "(withheld: " + "; ".join(mv["meta"]) + ")", None
-    return d
+def _shape_for(v, c) -> dict:
+    """_cshape for a VIEWER: yours, its maker or the owner (crew, share, roll back, archive). Whoever sees a canvas
+    (cv.sees) sees all of it and directs its agent (owner 11-17: one rule)."""
+    return {**_cshape(c), "yours": v.owner or c["user_name"] in v.keys}
 
 
 @app.get("/api/canvases")
 async def canvases(request: Request):
     v = V(request)
     rows = await pool.fetch(
-        "SELECT *, version AS ver FROM canvases WHERE NOT archived AND ($1 OR user_name=$2 OR $2 = ANY(shared_with)) "
-        "ORDER BY updated_at DESC", v.owner, v.name)
-    return [await _shape_for(v, r) for r in rows]
+        f"SELECT *, version AS ver FROM canvases WHERE NOT archived AND {cv.sees_sql('$1', '$2')} "
+        "ORDER BY updated_at DESC", v.owner, v.keys)
+    return [_shape_for(v, r) for r in rows]
 
 
 class NewCanvas(BaseModel):
@@ -798,7 +842,8 @@ async def new_canvas(body: NewCanvas, request: Request):
     if not v.owner and limited(f"newcv:{v.name}", 10, 86400):
         return deny(429, "canvas limit reached for today")
     try:
-        cid = await sync(cv.create, body.title, agent, v.name, body.brief or None, body.tier)
+        # its maker by ACCOUNT for a member (a rename keeps what they made, as projects), by name otherwise
+        cid = await sync(cv.create, body.title, agent, v.account or v.name, body.brief or None, body.tier)
     except cv.CanvasError as e:
         return deny(400, str(e))
     brief = body.brief.strip() or "(no brief — make something worth looking at from the title)"
@@ -821,11 +866,9 @@ async def canvas_get(cid: int, request: Request):
         return deny(404, "no such canvas")
     vers = await pool.fetch("SELECT version AS ver, author, note, ts FROM canvas_versions WHERE canvas_id=$1 "
                             "ORDER BY version DESC LIMIT 50", cid)
-    held = {} if v.owner else (await sync(cv.meta_view, cid))["notes"]     # per-version note masking
-    return {**(await _shape_for(v, c)), "thread": f"cv:canvas-{cid}",
-            "versions": [{"version": r["ver"], "author": r["author"],
-                          "note": ("(withheld: " + "; ".join(held[r["ver"]]) + ")") if r["ver"] in held else r["note"],
-                          "ts": r["ts"].isoformat()} for r in vers]}
+    return {**_shape_for(v, c), "thread": f"cv:canvas-{cid}",
+            "versions": [{"version": r["ver"], "author": r["author"], "note": r["note"], "ts": r["ts"].isoformat()}
+                         for r in vers]}
 
 
 @app.get("/api/canvases/{cid}/render")
@@ -834,13 +877,6 @@ async def canvas_render(cid: int, request: Request, v: int = 0, theme: str = "da
     if not c:
         return deny(404, "no such canvas")
     ver = v or c["ver"]
-    viewer = V(request)
-    if not viewer.owner:
-        # THE VIEW GATE (steward, a3 #35598): a guest is served only content steward's pii_canvas sweep
-        # has CLEARED. Publishing to an already-shared canvas would otherwise reach the guest at once.
-        blocked = await sync(cv.view_blockers, cid, ver)
-        if blocked:
-            return {"version": ver, "html": None, "withheld": blocked}
     row = await pool.fetchrow("SELECT html FROM canvas_versions WHERE canvas_id=$1 AND version=$2", cid, ver)
     if not row:
         return {"version": 0, "html": None}
@@ -849,16 +885,8 @@ async def canvas_render(cid: int, request: Request, v: int = 0, theme: str = "da
 
 @app.get("/api/canvases/{cid}/data")
 async def canvas_data(cid: int, request: Request, key: str | None = None):
-    viewer = V(request)
-    if not await _canvas_for(viewer, cid):
+    if not await _canvas_for(V(request), cid):
         return deny(404, "no such canvas")
-    if not viewer.owner:
-        # the same view gate, for live values: all-or-nothing, the page simply reads no data
-        blocked = await sync(cv.data_blockers, cid)
-        if blocked:
-            body = {"key": key, "value": None} if key is not None else {}
-            why = "; ".join(blocked).replace("\u2014", "-").encode("ascii", "replace").decode()[:500]
-            return JSONResponse(body, headers={"x-astryx-withheld": why})   # headers are latin-1 only
     if key is not None:
         row = await pool.fetchrow("SELECT value FROM canvas_data WHERE canvas_id=$1 AND key=$2", cid, key)
         return {"key": key, "value": json.loads(row["value"]) if row else None}
@@ -912,6 +940,8 @@ async def canvas_ask(cid: int, body: Ask, request: Request):
     text = body.text.strip()[:4000]
     if not text:
         return deny(400, "empty")
+    if v.member and not v.may_reach(c["agent"]):    # its keeper is outside their agents: not theirs to direct
+        return deny(403, f"you don't have access to {c['agent']}")
     if body.frame:
         if limited(f"ask:{cid}", 12, 60):
             return deny(429, "this canvas is asking too often")
@@ -921,8 +951,6 @@ async def canvas_ask(cid: int, body: Ask, request: Request):
         await _say(v, f"cv:canvas-{cid}", c["agent"], body_text, intent="canvas",
                    who=f"canvas-{cid}", meta={"canvas": cid, "version": c["ver"]})
     else:
-        if c["user_name"] != v.name and not v.owner:
-            return deny(403, "only the canvas's owner can direct its agent")
         agent = (body.agent or c["agent"]).strip().lower()
         if agent != c["agent"]:
             if not agent_exists(agent) or not v.may_reach(agent):
@@ -952,7 +980,7 @@ async def crew_remove(cid: int, agent: str, request: Request):
     c = await _canvas_for(v, cid)
     if not c:
         return deny(404, "no such canvas")
-    if c["user_name"] != v.name and not v.owner:
+    if c["user_name"] not in v.keys and not v.owner:
         return deny(403, "only the canvas's owner can change its crew")
     agent = agent.strip().lower()
     if agent == c["agent"]:
@@ -994,7 +1022,7 @@ class Rollback(BaseModel):
 async def canvas_rollback(cid: int, body: Rollback, request: Request):
     v = V(request)
     c = await _canvas_for(v, cid)
-    if not c or (c["user_name"] != v.name and not v.owner):
+    if not c or (c["user_name"] not in v.keys and not v.owner):
         return deny(404, "no such canvas")
     try:
         ver = await sync(cv.rollback, cid, body.version, "owner" if v.owner else c["agent"])
@@ -1009,21 +1037,14 @@ class Share(BaseModel):
 
 @app.post("/api/canvases/{cid}/share")
 async def canvas_share(cid: int, body: Share, request: Request):
+    """Its maker or the owner shares a canvas with the org's members (cv.share_set, the one rule)."""
     v = V(request)
-    if not v.owner:
-        return deny(403, "only the owner shares canvases")
     c = await _canvas_for(v, cid)
-    if not c:
-        return deny(404, "no such canvas")
-    users = sorted({u.strip().lower() for u in body.users if u.strip()})
-    if users and c["tier"] == "personal":
-        return deny(400, "a personal-tier canvas is never shared")
-    if set(users) - set(c["shared_with"]):
-        # THE SHARE GATE (seed #35151, steward): widening the audience needs a cleared canvas.
-        # Narrowing or unsharing is always allowed — it only ever reduces exposure.
-        blocked = await sync(cv.share_blockers, cid)
-        if blocked:
-            return deny(409, "not shared — " + "; ".join(blocked))
+    if not c or not (v.owner or c["user_name"] in v.keys):
+        return deny(403 if c else 404, "only the canvas's maker or the owner shares it" if c else "no such canvas")
+    users, why = cv.share_set(body.users, c["shared_with"], [r["uid"] for r in await members.rows(pool)], c["tier"])
+    if why:
+        return deny(400, why)
     await pool.execute("UPDATE canvases SET shared_with=$2 WHERE id=$1", cid, users)
     return {"ok": True, "shared_with": users}
 
@@ -1032,59 +1053,9 @@ async def canvas_share(cid: int, body: Share, request: Request):
 async def canvas_archive(cid: int, request: Request):
     v = V(request)
     c = await _canvas_for(v, cid)
-    if not c or (c["user_name"] != v.name and not v.owner):
+    if not c or (c["user_name"] not in v.keys and not v.owner):
         return deny(404, "no such canvas")
     await pool.execute("UPDATE canvases SET archived=true WHERE id=$1", cid)
-    return {"ok": True}
-
-
-# ----------------------------------------------------------------- invitees
-class NewUser(BaseModel):
-    name: str
-    agents: list[str] = []
-
-
-@app.get("/api/users")
-async def users(request: Request):
-    if not V(request).owner:
-        return deny()
-    rows = await pool.fetch("SELECT name, agents, created_at, last_seen, revoked FROM canvas_users ORDER BY name")
-    return [{"name": r["name"], "agents": list(r["agents"]), "revoked": r["revoked"],
-             "last_seen": r["last_seen"].isoformat() if r["last_seen"] else None} for r in rows]
-
-
-@app.post("/api/users")
-async def invite(body: NewUser, request: Request):
-    if not V(request).owner:
-        return deny()
-    name = body.name.strip().lower()
-    if not re.fullmatch(r"[a-z][a-z0-9_-]{1,30}", name) or name == "owner":
-        return deny(400, "name: 2-31 chars, a-z 0-9 _ -, starting with a letter")
-    bad = [a for a in body.agents if not agent_exists(a)]
-    if bad:
-        return deny(400, f"no such agent: {', '.join(bad)}")
-    tok = secrets.token_urlsafe(24)
-    await pool.execute(
-        "INSERT INTO canvas_users (name, token_hash, agents) VALUES ($1,$2,$3) "
-        "ON CONFLICT (name) DO UPDATE SET token_hash=EXCLUDED.token_hash, agents=EXCLUDED.agents, revoked=false",
-        name, _h(tok), body.agents)
-    return {"name": name, "token": tok, "link": f"{public_base(request)}/#invite={tok}"}
-
-
-@app.post("/api/users/{name}/grants")
-async def grants(name: str, body: NewUser, request: Request):
-    if not V(request).owner:
-        return deny()
-    await pool.execute("UPDATE canvas_users SET agents=$2 WHERE name=$1", name, body.agents)
-    return {"ok": True}
-
-
-@app.post("/api/users/{name}/revoke")
-async def revoke(name: str, request: Request):
-    if not V(request).owner:
-        return deny()
-    await pool.execute("UPDATE canvas_users SET revoked=true WHERE name=$1", name)
-    await pool.execute("DELETE FROM canvas_sessions WHERE user_name=$1", name)
     return {"ok": True}
 
 
@@ -1093,7 +1064,8 @@ async def revoke(name: str, request: Request):
 async def events(request: Request):
     v = V(request)
     q: asyncio.Queue = asyncio.Queue()
-    clients.setdefault(v.name, set()).add(q)
+    for k in v.keys:                               # a canvas shared with a member's account reaches them too
+        clients.setdefault(k, set()).add(q)
 
     async def stream():
         try:
@@ -1108,7 +1080,8 @@ async def events(request: Request):
                 except asyncio.TimeoutError:
                     yield ": ping\n\n"
         finally:
-            clients.get(v.name, set()).discard(q)
+            for k in v.keys:
+                clients.get(k, set()).discard(q)
 
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"cache-control": "no-store", "x-accel-buffering": "no"})

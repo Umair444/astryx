@@ -57,7 +57,7 @@ import os
 import re
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -87,8 +87,9 @@ K = 5
 fails = []
 # D2-b: the only places a wake may survive its check's failure. Each must dedup on the WIRE.
 DURABLE_DECLARED = {
-    "triggers/seed/wedge_watch.py": (1, "owner escalation: the out-of-band last-resort alarm; its dedup "
-                                        "(_esc_binds) reads the sent row, and owner wakes are never held (D-1)"),
+    "src/astryx/pulse/shipped_triggers/connection_sweep.py": (1, "a connection's end notice: its DELETE … RETURNING "
+                                        "commits first, so each notice must survive a later row's failure or the "
+                                        "timeout; the deleted row is the dedup, never ctx.state (seed 14035)"),
 }
 
 
@@ -138,9 +139,24 @@ def durable_then_crash(ctx):
     ctx.say("steward", "not durable", from_agent="seed")
     raise RuntimeError("boom")
 
+def two_logins(ctx):
+    ctx.say("steward", "beta to steward", from_agent="seed")
+    ctx.say("seed", "beta to seed", from_agent="pulse")
+
 def to_owner(ctx):
     ctx.say("owner", "the org has gone quiet", thread="esc-x", intent="chat", from_agent="seed")
 '''
+
+
+# 11-16: the pulse holds by the org's FEELING (astryx.econ.energy: need before the reset over what is left), not an 85%
+# line. A gauge here is therefore a reading with a reset two hours out and a usual pace that needs 12 points in those two
+# hours: 90% (10 left) is tired, 84% or less (16+ left) is not, the old rung's meaning kept.
+def _pace(conn):
+    import json as _j
+    from astryx.econ import energy as _E
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {_E._t()} (id int PRIMARY KEY, at timestamptz NOT NULL DEFAULT now(), body jsonb NOT NULL)")
+    body = {"at": datetime.now().astimezone().isoformat(), "hourly": [1e6] * 24, "rate": {"h5": 6e-6, "d7": 1e-7}, "think": 1e5, "usual": {}}
+    conn.execute(f"INSERT INTO {_E._t()} (id, body) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET at = now(), body = EXCLUDED.body", (_j.dumps(body),))
 
 
 def set_gauge(conn, pct):
@@ -148,9 +164,12 @@ def set_gauge(conn, pct):
     conn.execute("DELETE FROM turns WHERE usage_snapshot IS NOT NULL")
     if pct is not None:
         snap = {"state": "fresh", "fetched_at": datetime.now().astimezone().isoformat(),
-                "data": {"five_hour_utilization": pct}}
+                "data": {"five_hour_utilization": pct, "seven_day_utilization": 10,
+                         "five_hour_resets_at": (datetime.now().astimezone() + timedelta(hours=2)).isoformat(),
+                         "seven_day_resets_at": (datetime.now().astimezone() + timedelta(days=3)).isoformat()}}
         conn.execute("INSERT INTO usage_polls (state, snapshot) VALUES ('fresh', %s::jsonb)",
                      (json.dumps(snap),))
+        _pace(conn)
 
 
 def make_trigger(conn, name, func, checks, premium=0, kind="python", note=None):
@@ -226,10 +245,10 @@ def o7_scan():
                 mods = [a.name for a in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
                 mods = [node.module]
-            for m in mods:
-                cand = REPO / (m.replace(".", "/") + ".py")
-                if cand.exists():
-                    todo.append(cand)
+            for m in mods:                # astryx.* lives under src/ (a shim's shipped trigger: medic 14035)
+                for cand in (REPO / (m.replace(".", "/") + ".py"), REPO / "src" / (m.replace(".", "/") + ".py")):
+                    if cand.exists():
+                        todo.append(cand)
     return hits, len(seen), durable
 
 
@@ -298,7 +317,7 @@ def main():
                   (fa, fo, ta, to, th, it) == ("seed", "local", "steward", "local", "t-x", "trigger"),
                   repr(m[0][:6]))
             check("A3 held stamp prefixes the body (P4)",
-                  body.startswith("[held wake · raised ") and "under 5h ≥85% quota pressure]\nalpha" in body, body)
+                  body.startswith("[held wake · raised ") and "while its login was too tired for it]\nalpha" in body, body)
             check("A3 delivery.held_from records the raised time (B2)", bool(dv and dv.get("held_from")), repr(dv))
         check("A3 release liveness: no held row survives a tick below 85%", not held(conn, "alpha"))
 
@@ -471,6 +490,26 @@ def main():
         check("A22 the elided row stays readable, marked released",
               conn.execute("SELECT count(*) FROM held_wakes WHERE body='lost-ish' AND elided "
                            "AND released_at IS NOT NULL").fetchone()[0] == 1)
+
+        # A26 — per login (owner 11-16): a wake is held by its RECIPIENT's login, released when that login rests
+        conn.execute("DELETE FROM held_wakes")
+        steward_tired = lambda a: a == "steward"
+        t25 = make_trigger(conn, "per_login", "two_logins", checks)
+        pulse.process(conn, [fresh(conn, t25)], datetime.now().astimezone(), hot=steward_tired)
+        check("A26 steward's login tired, seed's rested: the wake to steward held, the one to seed delivered",
+              len(held(conn, "beta to steward")) == 1 and not msgs(conn, "beta to steward")
+              and len(msgs(conn, "beta to seed")) == 1, (held(conn, "beta%"), msgs(conn, "beta%")))
+        pulse.release(conn, steward_tired)
+        check("A26 …a release while steward's login is still tired keeps it held",
+              len(held(conn, "beta to steward")) == 1 and not msgs(conn, "beta to steward"))
+        pulse.release(conn, lambda a: a == "seed")
+        check("A26 …and steward's login rested (seed's tired now): delivered, stamped with its login",
+              not held(conn, "beta to steward") and len(msgs(conn, "%beta to steward")) == 1
+              and "while its login was too tired" in msgs(conn, "%beta to steward")[0][6], msgs(conn, "%beta to steward"))
+        hb = {"agent": "steward", "name": "hb", "kind": "heartbeat", "premium": 0}
+        hb2 = {"agent": "seed", "name": "hb", "kind": "heartbeat", "premium": 0}
+        kept = pulse.shed([hb, hb2], conn, steward_tired)
+        check("A26 a heartbeat waits only when ITS agent's login is tired", kept == [hb2], kept)
 
         # A23 — a trigger that vanishes mid-evaluation
         t23 = make_trigger(conn, "twentythree", "counted", checks)

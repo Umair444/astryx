@@ -53,6 +53,26 @@ run_restore_verify` (tombstones the pulse honours). Deleting this file does NOT 
 reinstall."""
 from astryx.pulse.shipped_triggers.org_backup import run_backup, run_restore_verify  # noqa: F401
 ''',
+    'usage_idle': '''"""Live install of the shipped idle usage reading (one writer: src/astryx/pulse/shipped_triggers/usage_idle.py): reads each
+login's limits when no turn has, and says when no reading has landed in 3 h. To retire it:
+`trigger action=retire name=usage_idle` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
+from astryx.pulse.shipped_triggers.usage_idle import usage_idle  # noqa: F401
+''',
+    'connection_sweep': '''"""Live install of the shipped connection sweep (one writer: src/astryx/pulse/shipped_triggers/connection_sweep.py): ends
+an agent's connection (connect) when no one has written for its idle time and tells the agent. To retire it:
+`trigger action=retire name=connection_sweep` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
+from astryx.pulse.shipped_triggers.connection_sweep import connection_sweep  # noqa: F401
+''',
+    'influence_nightly': '''"""Live install of the shipped influence nightly (one writer: src/astryx/pulse/shipped_triggers/influence_nightly.py): keeps
+the influence graph computed so the floor's influence view has something to draw. To retire it:
+`trigger action=retire name=influence_nightly` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
+from astryx.pulse.shipped_triggers.influence_nightly import influence_nightly  # noqa: F401
+''',
+    'late_failure_notice': '''"""Live install of the shipped late failure notice (one writer: src/astryx/pulse/shipped_triggers/late_failure_notice.py): tells
+an agent when a message it sent failed after its send stopped waiting. To retire it:
+`trigger action=retire name=late_failure_notice` (a tombstone the pulse honours). Deleting this file does NOT retire it: init.sh would reinstall."""
+from astryx.pulse.shipped_triggers.late_failure_notice import late_failure_notice  # noqa: F401
+''',
 }
 
 NAMES: dict[str, tuple[str, ...]] = {
@@ -63,6 +83,10 @@ NAMES: dict[str, tuple[str, ...]] = {
     'agent_heal': ('agent_heal',),
     'upstream_prs': ('upstream_prs',),
     'org_backup': ('run_backup', 'run_restore_verify'),
+    'influence_nightly': ('influence_nightly',),
+    'usage_idle': ('usage_idle',),
+    'connection_sweep': ('connection_sweep',),
+    'late_failure_notice': ('late_failure_notice',),
 }
 
 

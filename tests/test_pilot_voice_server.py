@@ -4,10 +4,13 @@ every voice surface spends against ONE ledger and ONE cap. No real mint: the pro
 an in-memory stand-in for canvas_voice_usage, so nothing is spent and no row is written.
 
   (a) anonymous → 403 on /api/pilot/voice/{status,session,usage} (the default-deny middleware, before any handler);
-  (b) the owner mints: one ledger row, user observatory-owner, the ephemeral value returned, the real key never;
+  (b) the owner mints: one ledger row, user owner/call (voice_mint.who), the ephemeral value returned, the real key never;
   (c) one ledger: canvas_voice.minutes_today and voice_mint.minutes_today are the same count, over rows from BOTH
       surfaces; one cap: canvas_voice._cap_minutes() is voice_mint.cap_minutes();
   (d) over the cap, the observatory refuses a new session (429), counting minutes canvas spent.
+  (f) the call (iteration 17): the session names its agent. A known agent mints in its persona (its charter's one-line
+      role, digit runs masked) and its own room voice; an unknown or malformed name is a 400 and mints nothing; no body
+      still means seed. Anonymous is still refused before any of it.
 """
 import asyncio
 import os
@@ -115,10 +118,37 @@ r = c.post("/api/pilot/voice/session", headers=H)
 body = r.json() if r.status_code == 200 else {}
 arm("the owner mints a session (200, the ephemeral value)", r.status_code == 200 and body.get("value") == "ek_test_ephemeral", r.status_code)
 arm("the real key is never in the response", "sk-test" not in r.text)
-arm("one ledger row, user observatory-owner", len(led.rows) == 1 and led.rows[0]["user"] == "observatory-owner")
+arm("one ledger row, user owner/call", len(led.rows) == 1 and led.rows[0]["user"] == "owner/call", led.rows)
 # the catalog's actions, plus the Room's one bridge to the org: ask_agent (owner brief 10-11, observatory/api/room.py)
 arm("the minted session's tools are the catalog actions plus ask_agent", sorted(t["name"] for t in minted[0]["session"]["tools"]) ==
     sorted([a["name"] for a in __import__("json").loads((REPO / "observatory/pilot/catalog.json").read_text())["actions"]] + ["ask_agent"]))
+
+# (f) the call: the agent's persona and voice
+from observatory.api import room as RM  # noqa: E402
+rows_before = len(led.rows)
+arm("no body still mints as seed (the instructions name seed)", "speak as seed" in minted[0]["session"]["instructions"])
+before = len(minted)
+r3 = c.post("/api/pilot/voice/session", headers=H, json={"agent": "no-such-agent-zz"})
+arm("an unknown agent is a 400", r3.status_code == 400, r3.status_code)
+r4 = c.post("/api/pilot/voice/session", headers=H, json={"agent": "../../etc/passwd"})
+arm("a malformed agent name is a 400", r4.status_code == 400, r4.status_code)
+arm("neither minted anything", len(minted) == before)
+r5 = c.post("/api/pilot/voice/session", json={"agent": "seed"})
+arm("anonymous naming an agent is still refused (403)", r5.status_code == 403, r5.status_code)
+# a role line with a phone-shaped run: the mask holds (charter text is stubbed: synthetic, never a real charter)
+from astryx.core import charter as CH  # noqa: E402
+fake_dir = Path(__import__("tempfile").mkdtemp())
+(fake_dir / "probe.md").write_text("# probe\n*The probe seat. Reach it on 03001234567 any time.*\n\nGrants: none\n")
+real_resolve = CH.resolve
+CH.resolve = lambda n: (fake_dir / "probe.md") if n == "probe" else real_resolve(n)
+r6 = c.post("/api/pilot/voice/session", headers=H, json={"agent": "probe"})
+ins = minted[-1]["session"]["instructions"] if r6.status_code == 200 else ""
+arm("a known agent mints in its persona (its role line is in the instructions)", r6.status_code == 200 and "speak as probe" in ins and "probe seat" in ins, r6.status_code)
+arm("a digit run in a charter's role never reaches the provider", "03001234567" not in ins and "[number]" in ins)
+arm("the session answers which agent it is", r6.status_code == 200 and r6.json().get("agent") == "probe")
+arm("the voice is the agent's own room voice", minted[-1]["session"]["audio"]["output"]["voice"] == RM.voice_of("probe"))
+CH.resolve = real_resolve
+del led.rows[rows_before:]                                # (c) below counts canvas's row at id 2: the ledger as it expects
 
 # (c) one ledger, one cap, across canvas and the observatory
 from bridges import canvas as C  # noqa: E402
@@ -133,9 +163,10 @@ arm("one cap: canvas's cap IS voice_mint's", CV._cap_minutes() == V.cap_minutes(
 
 # (d) canvas's minutes count against the observatory's cap
 asyncio.run(V.report(led, 2, "umair", 5 * 60))
+n_minted = len(minted)
 r2 = c.post("/api/pilot/voice/session", headers=H)
 arm("over the shared cap (canvas spent it), the observatory refuses a new session (429)", r2.status_code == 429, r2.status_code)
-arm("and mints nothing", len(minted) == 1)
+arm("and mints nothing", len(minted) == n_minted)
 
 print("ALL PASS" if not fails else f"FAIL ({fails})")
 sys.exit(1 if fails else 0)

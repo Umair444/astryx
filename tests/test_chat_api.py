@@ -6,7 +6,8 @@ no OpenAI key is set, so nothing leaves the host.
     a PUBLIC pair.
   - D1: /api/chat/file is 403 with ONLY ?key= (and with ?key= beside the header): a navigation never authenticates it;
     200 with the header.
-  - D3 UPLOAD: the BYTES decide (a script or an svg is 415 whatever its name); an empty body 400, an oversize one 413;
+  - D3 UPLOAD: every kind is accepted (owner 11-13); the BYTES decide the type, and bytes off the allowlist are stored
+    opaque (.bin unless a plain, non-claiming extension) and served only as an attachment; an empty body 400, an oversize one 413;
     the stored name is server-minted (uuid + the sniffed extension) under media/upload/, the client's name only
     display metadata; two uploads of one name make two files; the answer names nothing else.
   - G3 SERVING: every answer of the file route carries nosniff and the CSP sandbox; an allowlisted type is served as
@@ -26,6 +27,7 @@ no OpenAI key is set, so nothing leaves the host.
 CHAT_SRC names another chat.py, SERVE_SRC another serve.py (devtools/mutation_probe.py: tests/mutants_chat_api.py,
 tests/mutants_serve_untrusted.py)."""
 import importlib.util
+import time
 import os
 import re
 import sys
@@ -53,6 +55,7 @@ def arm(name, ok, detail=""):
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + ("" if ok else f"\n        {detail}"))
 
 
+REPLIES: dict[str, int] = {}                   # seed_work's answer rows, by turn letter (the msgs arms)
 QUIET_THREAD = "chat:20990101-quiet"
 EMPTY_THREAD = "chat:20990101-nobody-wrote-here"
 
@@ -79,11 +82,11 @@ def seed_work(url: str):
         a = turn(m1, 60, 55)                                  # A: opened here, answered here
         step("tool", "Bash: read the fixture", a, 58)
         step("tool_done", "Bash done", a, 57)
-        msg("zeta", "owner", T, a)
+        REPLIES["a"] = msg("zeta", "owner", T, a)
         m3 = msg("owner", "zeta", "wa:fixture-other")
         b = turn(m3, 50, 45)                                  # B: opened ELSEWHERE, answered HERE
         step("tool", "Bash: the cross-thread work", b, 48)
-        msg("zeta", "owner", T, b)
+        REPLIES["b"] = msg("zeta", "owner", T, b)
         m5 = msg("owner", "zeta", T)
         cc = turn(m5, 40, 35)                                 # C: opened here, answered ELSEWHERE
         step("milestone", "answered on the plan thread", cc, 37)
@@ -140,10 +143,22 @@ def main(tmp: Path, url: str):
     arm("G1 every /api/chat (method, path), HEAD and OPTIONS included, is 403 to a visitor", not leaks, leaks)
 
     # ── D3 upload ────────────────────────────────────────────────────────────────────────────────────────────
+    # every kind is accepted (owner 11-13); bytes off the allowlist are stored OPAQUE: they never wear an extension
+    # that claims a sniffed or rendered type, and serve_untrusted hands them out only as an attachment
     for label, body, name in (("a script named .png", b"#!/bin/sh\x00\x01\x02rm", "photo.png"),
                               ("an svg", b"\x00<svg onload=alert(1)>", "logo.svg")):
         r = cl.post(f"/api/chat/upload?name={name}", content=body, headers=O)
-        arm(f"D3 the bytes decide: {label} is 415", r.status_code == 415, r.status_code)
+        jj = r.json() if r.status_code == 200 else {}
+        arm(f"D3 the bytes decide: {label} is stored opaque (.bin, octet-stream)",
+            r.status_code == 200 and jj.get("path", "").endswith(".bin") and jj.get("type") == "application/octet-stream", (r.status_code, jj))
+        f = cl.get("/api/chat/file", params={"path": jj.get("path", "")}, headers=O)
+        arm(f"D3 {label} is served only as an attachment",
+            f.status_code == 200 and f.headers.get("content-type", "").startswith("application/octet-stream")
+            and "attachment" in f.headers.get("content-disposition", ""), (f.status_code, dict(f.headers)))
+    r = cl.post("/api/chat/upload?name=Q3 report.docx", content=b"PK\x03\x04" + b"\x00" * 64, headers=O)
+    jd = r.json() if r.status_code == 200 else {}
+    arm("D3 any other kind (a .docx) is accepted, keeping its plain extension",
+        r.status_code == 200 and jd.get("path", "").endswith(".docx") and jd.get("type") == "application/octet-stream", (r.status_code, jd))
     arm("D3 an empty body is 400", cl.post("/api/chat/upload?name=a.png", content=b"", headers=O).status_code == 400)
     arm("D3 a body over the cap is 413",
         cl.post("/api/chat/upload?name=a.txt", content=b"x" * (chat.MAX_UPLOAD + 1), headers=O).status_code == 413)
@@ -161,6 +176,38 @@ def main(tmp: Path, url: str):
     t = tr.json() if tr.status_code == 200 else {"status": tr.status_code}
     arm("D3 text is accepted and stored as .txt", t.get("path", "").endswith(".txt") and t.get("type", "").startswith("text/plain"), t)
 
+    # ── P1 Office previews (owner 11-13: every Office file viewable in chat, canvas's standard) ───────────────────
+    import shutil as _sh
+    import subprocess as _sp
+    import tempfile as _tf
+    if _sh.which("soffice") or _sh.which("libreoffice"):
+        with _tf.TemporaryDirectory() as td:
+            src = Path(td) / "deck.txt"
+            src.write_text("Quarterly review\nSlide text\n")
+            made = {}
+            for ext in ("docx", "pptx"):
+                _sp.run([_sh.which("soffice") or _sh.which("libreoffice"), f"-env:UserInstallation=file://{td}/p",
+                         "--headless", "--convert-to", ext if ext == "docx" else "pptx:Impress MS PowerPoint 2007 XML",
+                         "--outdir", td, str(src)], capture_output=True, timeout=180)
+                f = Path(td) / f"deck.{ext}"
+                if f.is_file():
+                    up = cl.post(f"/api/chat/upload?name=Q3 deck.{ext}", content=f.read_bytes(), headers=O)
+                    made[ext] = up.json().get("path", "") if up.status_code == 200 else ""
+            for ext, path in made.items():
+                pv = cl.get("/api/chat/preview", params={"path": path}, headers=O)
+                arm(f"P1 a .{ext} previews as a PDF (as authored)", pv.status_code == 200 and pv.content[:5] == b"%PDF-"
+                    and pv.headers.get("content-type", "").startswith("application/pdf"), (pv.status_code, pv.content[:40]))
+                t0 = time.time()
+                again = cl.get("/api/chat/preview", params={"path": path}, headers=O)
+                arm(f"P1 a .{ext} preview is cached (converted once)", again.status_code == 200 and time.time() - t0 < 3, time.time() - t0)
+            arm("P1 both a docx and a pptx were made to preview", set(made) == {"docx", "pptx"}, made)
+            arm("P1 a ?key= never authenticates the preview",
+                cl.get("/api/chat/preview", params={"path": made.get("docx", ""), "key": O["x-obs-key"]}).status_code == 403)
+        arm("P1 a non-Office file has no preview (415)",
+            cl.get("/api/chat/preview", params={"path": str(p)}, headers=O).status_code == 415)
+    else:
+        print("  SKIP  P1 office previews: LibreOffice isn't installed here")
+
     # ── D1 + G3 the file read ────────────────────────────────────────────────────────────────────────────────
     ok = cl.get("/api/chat/file", params={"path": str(p)}, headers=O)
     arm("D1 the header reads the file (200)", ok.status_code == 200, ok.status_code)
@@ -177,6 +224,18 @@ def main(tmp: Path, url: str):
     arm("G3 an agent's .html is plain TEXT under the sandbox, never a page",
         h.status_code == 200 and h.headers["content-type"].startswith("text/plain")
         and h.headers.get("content-security-policy", "").startswith("sandbox"), (h.status_code, dict(h.headers)))
+    svg = estate / "homes" / "fixture-agent" / "chart.svg"
+    svg.write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/><script>alert(1)</script></svg>')
+    sv = cl.get("/api/chat/file", params={"path": str(svg)}, headers=O)
+    arm("G3 an .svg that IS one is image/svg+xml (the panel's <img> draws it) under a sandbox CSP that runs nothing",
+        sv.status_code == 200 and sv.headers.get("content-type") == "image/svg+xml"
+        and sv.headers.get("content-security-policy", "").startswith("sandbox;") and "script-src" not in sv.headers.get("content-security-policy", "")
+        and sv.headers.get("x-content-type-options") == "nosniff", (sv.status_code, dict(sv.headers)))
+    fake_svg = estate / "homes" / "fixture-agent" / "page.svg"
+    fake_svg.write_text("<html><script>alert(1)</script></html>")
+    fs_ = cl.get("/api/chat/file", params={"path": str(fake_svg)}, headers=O)
+    arm("G3 an .svg whose bytes aren't an SVG stays plain text", fs_.headers.get("content-type", "").startswith("text/plain"),
+        dict(fs_.headers))
     blob = estate / "homes" / "fixture-agent" / "data.bin"
     blob.write_bytes(b"\x00\x01\x02binary")
     bb = cl.get("/api/chat/file", params={"path": str(blob)}, headers=O)
@@ -224,6 +283,50 @@ def main(tmp: Path, url: str):
         back.get("etag") == tag and back.get("projects", [{}])[0].get("missing") == ["gone-agent"], back)
     arm("D6' `missing` is never stored", "missing" not in before, before)
 
+    # ── iteration 5: a project = instructions + team + conversations of any surface + pinned files ─────────────
+    import json as _json
+    cur = cl.get("/api/chat/projects", headers=O).json()
+    legacy = chat.projects_file().read_text()
+    arm("P5 an old project (brief, no files) reads as the new shape: brief -> instructions, files [], stamps None",
+        cur["projects"][0].get("instructions") == "" and cur["projects"][0].get("files") == [] and "brief" not in cur["projects"][0], cur)
+    rich = [{"id": "zeta-launch", "name": "  Zeta launch ", "brief": "Ship the zeta report by Friday.", "agents": ["zeta"],
+             "threads": ["chat:20990101-abc123", "obs:zeta", "cv:0a1b2c3d"], "files": ["0123456789abcdef"],
+             "color": "teal", "emoji": "🚀", "created": "1999-01-01T00:00:00Z", "updated": "1999-01-01T00:00:00Z"}]
+    w5 = cl.put("/api/chat/projects", json=rich, headers={**O, "if-match": cur["etag"]})
+    got = w5.json().get("projects", [{}])[0] if w5.status_code == 200 else {}
+    arm("P5 any owner surface is a project's (chat:, obs:, cv:), files, colour and emoji land", w5.status_code == 200
+        and got.get("threads") == rich[0]["threads"] and got.get("files") == ["0123456789abcdef"]
+        and got.get("color") == "teal" and got.get("emoji") == "🚀", w5.text)
+    arm("P5 a legacy `brief` on a write becomes `instructions`; brief is never stored; the name is trimmed",
+        got.get("instructions") == "Ship the zeta report by Friday." and got.get("name") == "Zeta launch"
+        and '"brief"' not in chat.projects_file().read_text(), got)
+    arm("P5 created/updated are the server's, never the client's", (got.get("created") or "1999")[:4] != "1999"
+        and (got.get("updated") or "1999")[:4] != "1999", got)
+    stored = _json.loads(chat.projects_file().read_text())["projects"][0]
+    first_created = stored["created"]
+    back5 = cl.get("/api/chat/projects", headers=O).json()
+    same = cl.put("/api/chat/projects", json=back5["projects"], headers={**O, "if-match": back5["etag"]}).json()
+    arm("P5 a write that changes nothing keeps created AND updated",
+        same["projects"][0]["created"] == first_created and same["projects"][0]["updated"] == stored["updated"], same)
+    import time as _time
+    _time.sleep(1.1)
+    moved = cl.put("/api/chat/projects", json=[{**same["projects"][0], "instructions": "New brief."}],
+                   headers={**O, "if-match": same["etag"]}).json()
+    arm("P5 an edit moves updated, never created",
+        moved["projects"][0]["created"] == first_created and moved["projects"][0]["updated"] > stored["updated"], moved)
+    before5 = chat.projects_file().read_text()
+    base = moved["projects"][0]
+    for label, bad_list in (("a WhatsApp thread", [{**base, "threads": ["wa:x"]}]),
+                            ("a bare prefix", [{**base, "threads": ["chat:"]}]),
+                            ("one conversation in two projects", [base, {**base, "id": "other", "threads": ["obs:zeta"]}]),
+                            ("a file that is not an artifact id", [{**base, "files": ["../../etc/passwd"]}]),
+                            ("an unknown colour", [{**base, "color": "#ff0000"}]),
+                            ("an 'emoji' that is markup", [{**base, "emoji": "<b>"}]),
+                            ("instructions past the cap", [{**base, "instructions": "x" * 20001}])):
+        r = cl.put("/api/chat/projects", json=bad_list, headers={**O, "if-match": moved["etag"]})
+        arm(f"P5 {label} is 400, nothing written", r.status_code == 400 and chat.projects_file().read_text() == before5, r.status_code)
+    chat.projects_file().write_text(legacy)          # the arms below read the legacy file as they always have
+
     # ── D4 the work ──────────────────────────────────────────────────────────────────────────────────────────
     T, (a, b, c, d, q) = seed_work(url)
     wk = cl.get("/api/chat/work", params={"thread": T}, headers=O)
@@ -235,6 +338,11 @@ def main(tmp: Path, url: str):
         b in got and got[b]["elsewhere"] == ["wa:fixture-other"], got.get(b))
     arm("D4 a turn opened here that answered elsewhere names that thread", c in got and got[c]["elsewhere"] == ["plan-fixture"], got.get(c))
     arm("D4 an unrelated turn never appears", d not in got, sorted(got))
+    # 11-11: a tab's live copy of a reply is the INSERT's (turn_id null until the Stop hook back-fills it), so each turn
+    # names THIS thread's rows it wrote, the workspace's way to pair them (and to see a row the stream never brought)
+    arm("D4 msgs: a turn names the rows it wrote HERE (A and B their answers; C answered elsewhere, none here)",
+        a in got and got[a].get("msgs") == [REPLIES["a"]] and b in got and got[b].get("msgs") == [REPLIES["b"]]
+        and c in got and got[c].get("msgs") == [], {k: got[k].get("msgs") for k in got})
     arm("D4 the done-marks are dropped, the work kept", a in got and [s["kind"] for s in got[a]["steps"]] == ["tool"], got.get(a))
     live = body.get("live", {}).get("zeta", [])
     arm("D4 the newest unlinked step is the live lane", [s["content"] for s in live] == ["Bash: working right now"], live)

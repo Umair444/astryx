@@ -201,7 +201,8 @@ from bridges import relay as relay_mod  # noqa: E402
 SKEW = 600                      # seconds of envelope timestamp tolerance
 BODY_MAX = 16000
 THREAD_MAX = 200
-AGENT_MAX = 63 - len("astryx_msg_")   # postgres caps a NOTIFY channel at 63 bytes; the doorbell is astryx_msg_<agent>
+AGENT_MAX = 63 - len("ax" + "0" * 12 + "_msg_")   # postgres caps a NOTIFY channel at 63 bytes; the doorbell is
+                                                   # ax<chan>_msg_<agent>, chan = cog.orgs.chan (12 hex, cog-rls slice 3)
 INBOX_RATE = int(_env("ASTRYX_INBOX_RATE", "60"))   # envelopes/hour per introduced org
 RATE_WINDOW = float(_env("ASTRYX_RATE_WINDOW", "3600"))  # seconds a rate cap counts over (tests shorten it)
 INTRO_RATE = 5                  # introductions/hour per IP
@@ -532,7 +533,7 @@ async def introduce(ctx: Ctx, d: dict, window: float = SKEW):
     await ctx.pool.execute(
         """INSERT INTO peers (org, url, pubkey, status, notes)
            VALUES ($1, $2, $3, 'introduced', 'introduced itself')
-           ON CONFLICT (org) DO UPDATE SET url=$2, pubkey=$3""",
+           ON CONFLICT (tenant, org) DO UPDATE SET url=$2, pubkey=$3""",
         org, url, pub)
     await ctx.pool.execute(
         "INSERT INTO messages (from_agent, from_org, to_agent, intent, body) "
@@ -702,7 +703,8 @@ async def push(ctx: Ctx, row) -> bool:
     pool = ctx.pool
     if row["to_org"] in RESERVED_ORGS:
         await pool.execute("UPDATE messages SET to_org='local' WHERE id=$1 AND status='pending'", row["id"])
-        await pool.execute("SELECT pg_notify('astryx_msg_' || $1, $2), pg_notify('astryx_wire', $2)",
+        # the org's own doorbells (cog-rls slice 3: ax<n>_…, named by the database for this pool's login role)
+        await pool.execute("SELECT pg_notify(cog.chan('msg_' || $1::text), $2), pg_notify(cog.chan('wire'), $2)",
                            row["to_agent"], str(row["id"]))
         return True
     peer = await pool.fetchrow("SELECT url, pubkey, status FROM peers WHERE org=$1",
@@ -771,7 +773,8 @@ async def listen_task(ctx: Ctx):
         try:
             conn = await asyncpg.connect(ctx.dsn)
             q: asyncio.Queue = asyncio.Queue()
-            await conn.add_listener("astryx_outbound",
+            # this org's outbound doorbell, ax<n>_outbound (cog-rls slice 3): the pool's login role names its org
+            await conn.add_listener(await conn.fetchval("SELECT cog.chan('outbound')"),
                                     lambda c, p, ch, payload: q.put_nowait(payload))
             conn.add_termination_listener(lambda c: q.put_nowait("__dead__"))
             # drain anything that queued while we were down
@@ -962,7 +965,7 @@ async def seed_siblings(ctxs: dict[str, Ctx]) -> None:
                 await c.pool.execute(
                     """INSERT INTO peers (org, url, pubkey, status, notes)
                        VALUES ($1, NULL, $2, 'introduced', 'a sibling in this cog (S3c)')
-                       ON CONFLICT (org) DO NOTHING""", s.name, s.pub)
+                       ON CONFLICT (tenant, org) DO NOTHING""", s.name, s.pub)
 
 
 @asynccontextmanager

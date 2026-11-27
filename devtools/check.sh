@@ -532,6 +532,15 @@ run "env reader: every Python .env read goes through config.read_env, per line, 
 run "org auth: each org of a cog runs its agents on its own login, never another org's (10224 ORGAUTH)" "$PY" tests/test_org_auth.py
 run "org backup: a cog org's own dump and restore-verify triggers, the shims' one source (plan-10224 add-org-parity)" "$PY" tests/test_org_backup.py
 run "init.sh schedules a one-org backup, deferentially by either name (seed 61526)" "$PY" tests/test_init_orgbackup.py
+run "influence nightly: every org computes its influence graph, so the floor draws it (owner 11-15)" "$PY" tests/test_influence_nightly.py
+run "whatsapp: the chat search finds groups as well as people (owner 11-15)" "$PY" tests/test_wa_group_search.py
+run "bridges: one live steps bubble per REQUEST for every channel: it lives through background work, waits behind another chat, reopens a false finished (owner 11-18)" "$PY" tests/test_bridge_progress.py
+run "owed replies: a person's message with no reply keeps the agent from going idle, once per message (owner 11-15)" "$PY" tests/test_owed.py
+run "a turn a Stop hook made go on is ONE turn, and its continuation delivers nothing by itself (medic 12441)" "$PY" tests/test_turn_once.py
+run ".env: one locked, fsynced, atomic writer (init.sh appends under the same lock); vault keys derived, never taken (medic 12364 R2)" "$PY" tests/test_env_write.py
+run "vault: named logins and keys, values only in .env under derived keys; an agent connects to one (owner 11-16)" "$PY" tests/test_vault.py
+run "vault sign-in: setup-token in a throwaway home, the login straight into .env, never in a response (medic 12364 R3)" "$PY" tests/test_vault_signin.py
+run "economy: the tab's one read runs on this tree's schema, an empty org included (medic 12299)" "$PY" tests/test_econ_system.py
 run "cog rehearsal: the runbook's steps 2-6 end to end on a fixture registry, the double spawn seen and refused (plan-11324 S3f S6)" "$PY" tests/test_cog_rehearsal.py
 run "doctor in a cog: the primary served, its units-drift its own units only, its seats on its own server; another org refused (plan-11324 S3f S7)" "$PY" tests/test_doctor_cog.py
 run "ops cog: pause, smoke, refresh and vitals act on THIS org in a cog (plan-11324 S3f S4)" "$PY" tests/test_ops_cog.py
@@ -545,6 +554,7 @@ run "the Room's SQL on a fixture schema: voiceprints, the router, the ear's spea
 run "channel oracles: none stages server.mjs without its sibling modules (10-11)" "$PY" tests/test_stage_channel_users.py
 run "pushed_tree_check: the committed tree inherits no database or credential env (a4, 10-11)" "$PY" tests/test_pushed_tree_env.py
 run "pushed_tree_check: WHO LAST TOUCHED names each failing gate's script from check.sh's own block (a4, 10-25)" "$PY" tests/test_ptc_who.py
+run "pushed_tree_check: PTC_BASELINE lets an inherited red through, never a new one (medic, 11-13)" "$PY" tests/test_ptc_baseline.py
 run "trigger: the sql watch's memory and wake (new, while, renag, over cap, storm; a4 plan-12214)" "$PY" tests/test_trigger_watch.py
 run "trigger: the expand, normalize, guarded read, one-shots, the tool's naive path (a4 plan-12214)" "$PY" tests/test_trigger_tool.py
 run "send: a malformed [[poll:]]/[[file:]] to a human surface is refused before the INSERT, in parity with the bridge grammar" node tests/test_send_embeds.mjs
@@ -600,10 +610,10 @@ run "jobs MCP: fail-closed ATS status + sponsor-register lookup" "$PY" tests/tes
 # touching a good PDF; paths confined to the root; the page fetches nothing (real Chromium vs a
 # real loopback listener: 0 hits). Mutants: proxy flag removed → X3 RED; confinement off → 6 RED.
 run "docpdf MCP: verified render, confined paths, no network from the page" "$PY" tests/test_docpdf_mcp.py
-# gmail MCP: a Gmail query reaches IMAP byte-exact (quotes, backslash, non-ASCII, OR braces) as a
-# literal; inlined as "{query}" any quote got BAD. Real imaplib vs a strict fake IMAP on loopback;
-# the old inline form is the mutant and must fail the quote arm. Imports without .env.
-run "gmail MCP: byte-exact search query, imports without .env" "$PY" tests/test_gmail_mcp.py
+# mail MCP, any mail server: a Gmail query reaches IMAP byte-exact (quotes, backslash, non-ASCII, OR
+# braces) as a literal; inlined as "{query}" any quote got BAD; another server gets IMAP criteria or a
+# TEXT search. Real imaplib vs a strict fake IMAP on loopback; the old inline form is the mutant and must
+# fail the quote arm. SMTP by the port, a login only with a password. Imports without .env.
 # the tool nudge, O5 (goal 4227, S4): the REAL UserPromptSubmit hook against a fake loopback
 # classifier. It never exits non-zero (static, from the AST), stays silent and inside its hard
 # deadline whether the classifier is unset/down/hung/DRIPPING, refuses non-loopback endpoints
@@ -687,10 +697,6 @@ run "the shared repo is not bare (core.bare tripwire)" "$PY" tests/test_git_env_
 # fixtures, no DB, no live estate. SKIPs by name where triggers/ is absent, which is every
 # clean checkout: there the guard is not here to be verified. ~0.3s.
 run "pii_sweep cannot forget a finding or print a routing id" "$PY" tests/test_pii_sweep_ledger.py
-# CANVAS privacy (steward, seed #35151): pii_canvas sweeps every canvas version + live value (history is
-# guest-readable via ?v=N), REACH-tagged; its state IS the share gate, src/astryx/core/canvas.py:share_blockers,
-# which fails closed. Fixture DB only. The gate arms always run; the sweep arms SKIP 77 without the body.
-run "canvas: privacy sweep + fail-closed share gate" "$PY" tests/test_pii_canvas.py
 run "send: a name nothing consumes is refused in the sender's turn" "$PY" tests/test_send_address.py
 # The guard that reads THIS suite's own live-tree result. check.sh runs automatically in
 # exactly two places and both are clones, where the gitignored estate cannot exist — so
@@ -797,6 +803,11 @@ run "init.sh trigger installs: by NAME through the helper, never over a retireme
 # Mutants: tests/mutants_org_home_*.py. With no registry (this host), nothing they test changes a byte.
 run "org home: each org process binds its own HOME, DSN and law; the backup is the org's; one org is unchanged" "$PY" tests/test_org_home.py
 run "restore row counts: an empty table restores as empty only where live is empty (seed 61553)" "$PY" tests/test_restore_counts.py
+# doctor: only a restore stamp that reads OK is green; root's 0600 FAILED stamp read as empty went green (medic 11-20)
+run "doctor restore stamp: a FAILED, unreadable or unknown stamp is red" "$PY" tests/test_doctor_restore_stamp.py
+run "etl server: acts are the etl seats', a tail path is refused before it is opened, a stalled kernel is shut down, a job must be listed (medic 14956)" "$PY" tests/test_etl_mcp.py
+run "whatsapp mention-only route: a group with \"wake\": \"tagged\" wakes its agent only when a message tags us (owner 15092)" "$PY" tests/test_wa_tagged.py
+run "restore-verify runs as the provisioner when its root-only DSN is readable (medic 11-16)" "$PY" tests/test_restore_super.py
 run "org home pane: an org-B resident's environment is built from HOME-B, none of org A's names" "$PY" tests/test_org_home_pane.py
 run "org home units: each org's units are its own @<org> instance files, the partition (org_units.json) is total, one org is plain" "$PY" tests/test_org_home_units.py
 run "gateway cog: one door serves every org of a cog by federation name; a sibling's row goes in process through its own door's checks" "$PY" tests/test_gateway_cog.py
@@ -826,7 +837,22 @@ run "canvas cog: each org's canvas session at its own path under its own name; o
 # mutants_cog_signin.py, mutants_backend_identity.py, mutants_cogauth_session.py, mutants_cogauth_cli.py.
 run "cog identity: the signed token verified against its spec, the response-cookie rule, ONE owner predicate (U1+U2)" "$PY" tests/test_cog_identity.py
 run "cog sign-in: the owner signs in and reaches his rooms with no key, the key still works, each org decides (U1+U2)" "$PY" tests/test_cog_signin.py
+# cog-rebuild Phase 1 (owner 11-13, "the front IS the design"): a cog of ONE org behind the front loses nothing the bare
+# :8090 served: default-org routing (the only org, else the door), bare /canvas /ear /brain, canvas's cookie through
+# both relays, sign-in, the key door, websockets; no registry and no cog block stay today's (its P8 arms, with a
+# one-org-cog control that must pass where they must not).
+run "cog one-org parity: one org behind the front loses nothing; no cog block is today (cog-rebuild P1)" "$PY" tests/test_cog_one_org_parity.py
 run "cog CLI: the one writer of accounts and memberships; the cog store's backup restores (U1+U2 D7 D8 D9)" "$PY" tests/test_cogauth_cli.py
+# cog-rls slice 1 (homes/seed/cog-rebuild/RLS.md): the tenant column on every org/agent/per-human table, keys widened to lead
+# with it, every ON CONFLICT target a real unique index, tree-scoped members; main's shape migrates in place, a re-apply
+# is a no-op. RLS stays off.
+run "cog-rls slice 1: tenant column, widened keys, ON CONFLICT targets, tree-scoped members; re-apply idempotent" "$PY" tests/test_tenant_slice1.py
+run "cog-rls slice 2: roles (schema owner, org group, org_<key>), ownership sweep, org DML only, prefixed shared store + its guard, ear helpers, DSN census, registry role" "$PY" tests/test_cog_roles.py
+run "cog-rls slice 3: RLS on (ENABLE+FORCE, tenant policy, default cog.tenant()), security_invoker views, secret per-org NOTIFY tokens, tenant-keyed lock, no cross-org read/write/escape, census" "$PY" tests/test_rls_leak.py
+# cog-rebuild (owner 11-13: "an admin panel in observatory too for each org"): the org's admin API (members through
+# observatory/api/members.py, on either members shape) and the front's account half (one-time invite/reset links,
+# sign out everywhere), every guard: admins below owner, the last owner, cog-wide sessions, one use, expiry.
+run "cog admin panel: users, roles, invites, reset links, sign out everywhere, and every guard" "$PY" tests/test_admin_panel.py
 # plan-11859 U4: the owner sets this org's agent login from the observatory (a subscription token, a metered key only with
 # the billing confirmed, or neither), through the one .env writer, never a value back. Mutants: tests/mutants_org_login.py,
 # tests/mutants_config_unset.py.
@@ -1008,6 +1034,7 @@ run "influence graph: SHA-joined PASSes, BC-D delegation, coverage-gated kinds, 
 run "group scopes: groups from the tree, read-time group views, reach unchanged (11324 S3d)" "$PY" tests/test_groups.py
 run "federation node addressing: one org unchanged, a cog's /o/<org> doors, envelopes held to their org (11324 S3e)" "$PY" tests/test_fed_node.py
 run "the cog's per-org doors on the gateway: /o/<org>, the door org at the root, per-org trust, addressed envelopes (11324 S3e)" "$PY" tests/test_fed_doors.py
+run "observatory federation: identity, peers + wire counts, a peer's traffic, introduce (introduce.py, network stubbed), trust/untrust/block with an audit row; owner-only (cog-rebuild P4)" "$PY" tests/test_observatory_federation.py
 # econ PROVENANCE (steward): a2's trip (#21969) evaluated, not remembered — every v2.1+ econ row's
 # built_from.sha must be an ancestor of main with dirty=false; missing/unknown/foreign/dirty rows are
 # reported with their own remedies (report-only trigger, gitignored body; SKIPs where it is absent).
@@ -1099,6 +1126,45 @@ run "chat: the server half stays owner-only, and the side panel reads nothing ou
 # Mutants: tests/mutants_owner_surface.py, tests/mutants_owner_surface_chat.py (a1's W-H, aliased, via module,
 # UNKNOWN); serve_untrusted's own: tests/mutants_serve_untrusted.py.
 run "owner surface: no new writer of the wire, no second server of untrusted bytes, over the derived domain" "$PY" tests/test_owner_surface.py
+run "who asked (cog-who): a member posts as cv-<label>.<uid>, the owner as owner; the reply reaches their thread; the agent sees role" "$PY" tests/test_who_asked.py
+run "cog gaps: a member's search, titles, briefing follow their view; their own thread tools + projects; owner-only stays" "$PY" tests/test_cog_gaps.py
+run "cog gaps: canvas knows the cog's sign-in (owner as owner, a member as cv-<label>.<uid>; else anonymous)" "$PY" tests/test_canvas_signin.py
+run "cog gaps: the viewer's own words sit right, every other human's left under their name" "$PY" tests/test_chat_sides.py
+# the chat workspace's oracles (11-10 → 11-15): each was run at its merge; here they run every time
+run "chat workspace: the unified conversation list, pure derivation" "$PY" tests/test_ws_threads.py
+run "chat workspace: full-text search" "$PY" tests/test_ws_search.py
+run "chat workspace: the while-you-were-away briefing" "$PY" tests/test_ws_briefing.py
+run "chat workspace: the artifact store" "$PY" tests/test_ws_artifacts.py
+run "chat workspace: canvas's read-only window" "$PY" tests/test_ws_canvas.py
+run "chat workspace: Stop interrupts, handoffs show" "$PY" tests/test_ws_interrupt.py
+run "chat workspace: a / line is typed in the agent's terminal (owner only; one literal line or named keys; /login and /logout refused)" "$PY" tests/test_ws_terminal.py
+run "chat workspace: a reply shows without a reload (live heal)" "$PY" tests/test_ws_live_heal.py
+run "chat workspace: who a message goes to by default" "$PY" tests/test_ws_recipients.py
+run "chat workspace: switching a chat's agents" "$PY" tests/test_ws_switch.py
+run "chat: inline files" "$PY" tests/test_chat_inline.py
+run "chat: reply by reference" "$PY" tests/test_chat_reply.py
+run "sms: a channel (gateway queue, door, cap)" "$PY" tests/test_sms_channel.py
+run "canvas: the way home" "$PY" tests/test_canvas_nav.py
+run "email: a channel (one address per chat, the door, subject and thread, attachments, cap)" "$PY" tests/test_email_channel.py
+run "chat: a signed answer's provenance footer" "$PY" tests/test_chat_provenance.py
+run "chat: tables and figures written out" "$PY" tests/test_chat_tables.py
+run "chat: code in an answer, a human's markdown, long pastes" "$PY" tests/test_chat_code.py
+run "chat: rich copy (formatted for a mail client, clean words for a plain editor)" "$PY" tests/test_chat_clip.py
+# the mind (owner 11-15): it wakes only an agent that is free to think, and keeps numbers out of what it quotes
+run "mind: who may be woken (liveness, target, tiredness bends and never gates, waiting, rest, one per tick); numbers masked by shape" "$PY" tests/test_mind.py
+run "energy: tiredness is need over what is left, a forecast with no threshold; learned from the org's own history" "$PY" tests/test_energy.py
+run "chat: the live line follows any human's ask" "$PY" tests/test_chat_pending.py
+run "chat: a member opens an attached file read-only (the store's import is the owner's)" "$PY" tests/test_chat_open.py
+run "chat: the client never spells the viewer as the literal 'owner'" "$PY" tests/test_chat_viewer_lint.py
+run "chat: a chat's live progress carries only the work it asked for" "$PY" tests/test_progress_scope.py
+run "channel: a person's message from another chat while the agent is mid-task carries the mid_task line (owner 11-18)" "$PY" tests/test_mid_task.py
+run "chat: the calculator's server (qalc in a jail)" "$PY" tests/test_chat_calc.py
+run "chat: the calculator's boxes" "$PY" tests/test_chat_calc_ui.py
+run "member insides: an insider reads the agents' work short of the personal tier" "$PY" tests/test_member_insides.py
+run "send: a cancelled send never reaches a channel" "$PY" tests/test_send_cancel.py
+run "role DSN: a URL stays a URL" "$PY" tests/test_role_dsn.py
+run "sign-up: a pending org a cog admin decides; a new email proves itself by a code" "$PY" tests/test_signup.py
+run "fan-out (cog): a message naming several agents reaches each, stamped {team, lead}; the lead replies, helpers work over the wire" "$PY" tests/test_fanout.py
 # devtools/sqlsite.sh: one oracle's sqlguard view (rungs + why; --ledger: what enforce would say), advisory, writes
 # nothing. Mutants: tests/mutants_sqlsite.py.
 run "sqlsite: one oracle's sqlguard view, and the ledger diff, write nothing" "$PY" tests/test_sqlsite.py

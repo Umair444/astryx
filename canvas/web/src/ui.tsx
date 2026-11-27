@@ -87,5 +87,6 @@ export const I = {
   share: (c = 'w-4 h-4') => <svg viewBox="0 0 24 24" className={c} {...P}><circle cx="18" cy="5" r="2.5" /><circle cx="6" cy="12" r="2.5" /><circle cx="18" cy="19" r="2.5" /><path d="M8.2 10.8l7.6-4.5M8.2 13.2l7.6 4.5" /></svg>,
   logout: (c = 'w-4 h-4') => <svg viewBox="0 0 24 24" className={c} {...P}><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H3" /></svg>,
   spark: (c = 'w-4 h-4') => <svg viewBox="0 0 24 24" className={c} {...P}><path d="M12 3l1.8 5.4L19 10l-5.2 1.6L12 17l-1.8-5.4L5 10l5.2-1.6z" /><path d="M19 17l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z" /></svg>,
+  home: (c = 'w-4 h-4') => <svg viewBox="0 0 24 24" className={c} {...P}><path d="M4 11l8-7 8 7" /><path d="M6 9.5V20h12V9.5" /></svg>,
   archive: (c = 'w-4 h-4') => <svg viewBox="0 0 24 24" className={c} {...P}><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4" /></svg>,
 }

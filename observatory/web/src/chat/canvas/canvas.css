@@ -1,0 +1,68 @@
+/* iteration 13: painted canvases in the workspace (chat/canvas/). Canvas's look: the page sits on its own easel, a new
+   version cross-fades in with a soft blur (canvas/web/src/CanvasView.tsx), the mark is canvas's line icon. */
+
+.ws-cvstage { overflow: hidden; background: var(--t-bg); }   /* placed by its user: absolute inset-0 in the panel and a card */
+.ws-cvframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: transparent;
+  transition: opacity 700ms ease-out, filter 700ms ease-out; opacity: 0; filter: blur(6px); pointer-events: none; }
+.ws-cvframe[data-shown="true"] { opacity: 1; filter: none; pointer-events: auto; }
+.ws-cvstage[data-still="true"] .ws-cvframe { inset: auto; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; transition: opacity 500ms ease-out; filter: none; }
+.ws-cvpanel[data-dragging="true"] .ws-cvframe { pointer-events: none; }
+
+/* waiting for the first paint: canvas's easel, a slow light across it */
+.ws-cvwait { position: absolute; inset: 0; background:
+  radial-gradient(60% 50% at 30% 35%, color-mix(in srgb, var(--t-accent) 14%, transparent), transparent 70%),
+  radial-gradient(50% 45% at 72% 70%, color-mix(in srgb, var(--t-accent2) 12%, transparent), transparent 70%), var(--t-bg); }
+.ws-cvwait span { position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--t-fg) 5%, transparent) 50%, transparent 70%);
+  background-size: 220% 100%; animation: ws-cv-sheen 1.6s ease-in-out infinite; }
+@keyframes ws-cv-sheen { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+.ws-cvempty { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; font-size: 13px; color: var(--t-dim); }
+
+.ws-cvmark { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; flex-shrink: 0; color: var(--t-on);
+  background: linear-gradient(135deg, var(--t-accent), var(--t-accent2)); box-shadow: 0 4px 14px -6px color-mix(in srgb, var(--t-accent) 70%, transparent); }
+
+.ws-cvbanner, .ws-cvnote { position: absolute; left: 50%; transform: translateX(-50%); z-index: 3; max-width: calc(100% - 32px);
+  display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 14px; border-radius: 9999px; font-size: 12.5px; color: var(--t-fg);
+  background: color-mix(in srgb, var(--t-panel) 92%, transparent); border: 1px solid var(--t-line); backdrop-filter: blur(12px);
+  box-shadow: 0 12px 34px -16px rgba(0,0,0,.45); animation: ws-cv-pop 180ms var(--ws-ease, ease-out); }
+.ws-cvbanner { top: 12px; }
+.ws-cvnote { bottom: 14px; padding-right: 14px; }
+.ws-cvbanner button, .ws-cvnote a { font-weight: 500; white-space: nowrap; color: var(--t-accent); }
+.ws-cvbanner button { padding: 3px 10px; border-radius: 9999px; background: color-mix(in srgb, var(--t-accent) 12%, transparent); }
+@keyframes ws-cv-pop { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+.ws-cvfoot { height: 32px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-top: 1px solid var(--t-line);
+  font-size: 11.5px; color: var(--t-mute); }
+.ws-cvlive { width: 6px; height: 6px; border-radius: 9999px; background: var(--t-mute); flex-shrink: 0; }
+.ws-cvlive[data-on="true"] { background: var(--t-good); box-shadow: 0 0 8px var(--t-good); animation: ws-cv-breathe 2s ease-in-out infinite; }
+@keyframes ws-cv-breathe { 50% { opacity: .45; } }
+
+/* the canvas chip in the top bar: canvas's mark, its version */
+.ws-cvchip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px 0 4px; border-radius: 9999px; font-size: 12px;
+  color: var(--t-fg); border: 1px solid color-mix(in srgb, var(--t-accent) 30%, var(--t-line));
+  background: color-mix(in srgb, var(--t-accent) 7%, transparent); transition: background-color 120ms, border-color 120ms; white-space: nowrap; }
+.ws-cvchip:hover { background: color-mix(in srgb, var(--t-accent) 12%, transparent); }
+.ws-cvchip[aria-pressed="true"] { border-color: var(--t-accent); background: color-mix(in srgb, var(--t-accent) 15%, transparent); }
+.ws-cvchip .ws-cvmark { width: 20px; height: 20px; border-radius: 9999px; box-shadow: none; }
+
+/* a canvas in the library: the live page as its face (or canvas's easel until it scrolls in) */
+.ws-cvface { position: relative; display: block; overflow: hidden; aspect-ratio: 16 / 10; border-radius: 14px; box-shadow: 0 0 0 1px var(--t-line);
+  background: radial-gradient(70% 60% at var(--cv-x, 30%) 40%, color-mix(in srgb, var(--t-accent) 26%, transparent), transparent 70%),
+    radial-gradient(60% 50% at var(--cv-y, 70%) 80%, color-mix(in srgb, var(--t-accent2) 22%, transparent), transparent 70%), var(--t-bg2);
+  transition: box-shadow 140ms ease-out; }
+.ws-cvcard:hover .ws-cvface { box-shadow: 0 0 0 1px var(--t-line2), 0 14px 34px -20px rgba(0,0,0,.5); }
+.ws-cvcard[data-active="true"] .ws-cvface { box-shadow: 0 0 0 2px var(--t-accent); }
+.ws-cvface .ws-cvstage { position: absolute; inset: 0; background: transparent; }
+.ws-cvface-badge { position: absolute; top: 10px; right: 10px; z-index: 2; font-size: 11px; padding: 1px 8px; border-radius: 9999px;
+  background: color-mix(in srgb, var(--t-panel) 88%, transparent); border: 1px solid var(--t-line); color: var(--t-dim); backdrop-filter: blur(8px); }
+.ws-cvface-shade { position: absolute; inset: auto 0 0 0; height: 40%; z-index: 1; pointer-events: none;
+  background: linear-gradient(to top, color-mix(in srgb, var(--t-bg) 55%, transparent), transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-cvframe { transition: none; filter: none; }
+  .ws-cvwait span, .ws-cvlive[data-on="true"] { animation: none; }
+}
+
+/* the library's two shelves when both show: Canvases, then Files */
+.ws-libhead { display: flex; align-items: baseline; gap: 10px; margin: 0 0 12px; font-family: "Instrument Serif", Georgia, serif;
+  font-size: 24px; font-weight: 400; line-height: 1; color: var(--t-fg); letter-spacing: -.01em; }
+.ws-libhead span { font-family: "Inter Variable", Inter, system-ui, sans-serif; font-size: 12px; color: var(--t-mute); letter-spacing: 0; }

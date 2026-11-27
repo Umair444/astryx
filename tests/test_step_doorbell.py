@@ -205,9 +205,9 @@ try:
 
             secret_id = step("zzy", "SECRET-zzy-content")             # zzy: nobody subscribes
             empty_id = step("", "SECRET-empty-agent-content")         # agent '' IS a legal value
-            db.execute("SELECT pg_notify('astryx_steps', %s)",
+            db.execute("SELECT pg_notify(cog.chan('steps'), %s)",
                        (json.dumps({"id": secret_id, "agent": "zzx", "kind": "tool"}),))
-            db.execute("SELECT pg_notify('astryx_steps', %s)",
+            db.execute("SELECT pg_notify(cog.chan('steps'), %s)",
                        (json.dumps({"id": empty_id, "agent": "", "kind": "tool"}),))
             after_id = step("zzx", "LEGIT-after-forgery")
             arrived = wait_for(lambda: "LEGIT-after-forgery" in stdout_text(), 10)

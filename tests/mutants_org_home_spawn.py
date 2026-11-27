@@ -17,8 +17,8 @@ ENV = "ORG_HOME_SPAWN_SRC"
 
 MUTANTS = {
     'S1 the law is read from the CHECKOUT again (a2 BC-S2 (c))':
-        ('cat "$ORGH/local.md"; }',
-         'cat "$ROOT/local.md"; }'),   # org-home: mutant pattern
+        ('cat "$ORGH/local.md"\n',
+         'cat "$ROOT/local.md"\n'),   # org-home: mutant pattern
     'S2 ORGH is never resolved in a cog of several orgs':
         ('  ORGH=$("$PY" -c \'import sys',
          '  : ORGH=$("$PY" -c \'import sys'),

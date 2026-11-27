@@ -1,11 +1,40 @@
 {
   "_doc": "plan-9000 S1: the observatory's ONE action catalog. Every caller (the Ctrl-K palette, the voice model, an agent's command row) reaches the screen only through these actions, gated by the matrix. The browser executor (observatory/web/src/pilot) and the server/MCP side (observatory/pilot/catalog.py) both read THIS file, so there is nothing to keep in sync. A missing matrix cell is DENY; an action with no class is treated as actuate. A principal is never a value a caller passes: the executor has one entry point per principal (a1 #44141 R1). Schemas use only the keywords the validator implements (tests/test_pilot_s1.py checks).",
-  "classes": ["view", "read", "write", "actuate"],
+  "classes": [
+    "view",
+    "read",
+    "compose",
+    "write",
+    "actuate"
+  ],
+  "_classes": {
+    "view": "changes only what this page shows; nothing is stored or sent",
+    "read": "reads org data back to the caller",
+    "compose": "changes the owner's own workspace (a draft in the message box, who a chat is with); never a wire message, never production",
+    "write": "sends or stores something on the owner's behalf (a wire message): the owner's tap, always",
+    "actuate": "acts on a machine (a desktop): the owner's tap, always"
+  },
   "matrix": {
-    "owner": {"view": "allow", "read": "allow", "write": "confirm", "actuate": "confirm"},
-    "visitor": {"view": "allow"},
-    "room": {"view": "projection", "read": "projection", "write": "confirm", "actuate": "confirm"},
-    "agent": {"view": "allow"},
+    "owner": {
+      "view": "allow",
+      "read": "allow",
+      "compose": "allow",
+      "write": "confirm",
+      "actuate": "confirm"
+    },
+    "visitor": {
+      "view": "allow"
+    },
+    "room": {
+      "view": "projection",
+      "read": "projection",
+      "compose": "projection",
+      "write": "projection",
+      "actuate": "projection"
+    },
+    "agent": {
+      "view": "allow"
+    },
     "anonymous": {},
     "peer": {}
   },
@@ -23,9 +52,29 @@
       "class": "view",
       "description": "Go to one of the observatory's views.",
       "parameters": {
-        "type": "object", "additionalProperties": false, "required": ["view"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "view"
+        ],
         "properties": {
-          "view": {"type": "string", "enum": ["floor", "chat", "network", "agents", "wire", "goals", "economy", "tools", "theatre", "memory", "growbot", "monitor"]}
+          "view": {
+            "type": "string",
+            "enum": [
+              "floor",
+              "chat",
+              "network",
+              "agents",
+              "wire",
+              "goals",
+              "economy",
+              "tools",
+              "theatre",
+              "memory",
+              "growbot",
+              "monitor"
+            ]
+          }
         }
       }
     },
@@ -34,8 +83,18 @@
       "class": "view",
       "description": "Open one wire thread by its key (for example plan-9000).",
       "parameters": {
-        "type": "object", "additionalProperties": false, "required": ["thread"],
-        "properties": {"thread": {"type": "string", "minLength": 1, "maxLength": 120}}
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "thread"
+        ],
+        "properties": {
+          "thread": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
       }
     },
     {
@@ -43,24 +102,58 @@
       "class": "view",
       "description": "Open an agent's profile panel by its name.",
       "parameters": {
-        "type": "object", "additionalProperties": false, "required": ["agent"],
-        "properties": {"agent": {"type": "string", "minLength": 1, "maxLength": 64}}
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "agent"
+        ],
+        "properties": {
+          "agent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        }
       }
     },
     {
       "name": "close_panel",
       "class": "view",
       "description": "Close whatever panel or overlay is open (agent profile, desktop view).",
-      "parameters": {"type": "object", "additionalProperties": false, "properties": {}}
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
     },
     {
       "name": "set_theme",
       "class": "view",
       "description": "Switch the colour theme.",
       "parameters": {
-        "type": "object", "additionalProperties": false, "required": ["theme"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "theme"
+        ],
         "properties": {
-          "theme": {"type": "string", "enum": ["astryx", "tokyo-night", "catppuccin", "rose-pine", "kanagawa", "gruvbox", "everforest", "nord", "matte-black", "catppuccin-latte", "flexoki-light", "white"]}
+          "theme": {
+            "type": "string",
+            "enum": [
+              "astryx",
+              "tokyo-night",
+              "catppuccin",
+              "rose-pine",
+              "kanagawa",
+              "gruvbox",
+              "everforest",
+              "nord",
+              "matte-black",
+              "catppuccin-latte",
+              "flexoki-light",
+              "white"
+            ]
+          }
         }
       }
     },
@@ -69,8 +162,20 @@
       "class": "view",
       "description": "Step to the next or previous colour theme.",
       "parameters": {
-        "type": "object", "additionalProperties": false, "required": ["direction"],
-        "properties": {"direction": {"type": "string", "enum": ["next", "previous"]}}
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "direction"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string",
+            "enum": [
+              "next",
+              "previous"
+            ]
+          }
+        }
       }
     },
     {
@@ -78,29 +183,65 @@
       "class": "view",
       "description": "Scroll the current view.",
       "parameters": {
-        "type": "object", "additionalProperties": false, "required": ["to"],
-        "properties": {"to": {"type": "string", "enum": ["up", "down", "top", "bottom"]}}
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "to"
+        ],
+        "properties": {
+          "to": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down",
+              "top",
+              "bottom"
+            ]
+          }
+        }
       }
     },
     {
       "name": "get_view_state",
       "class": "view",
       "description": "What is on screen now: the view's NAME, the open agent panel, the theme. Never a URL or query string.",
-      "parameters": {"type": "object", "additionalProperties": false, "properties": {}}
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
     },
     {
       "name": "get_usage",
       "class": "read",
       "description": "The org's plan-limit gauges: 5-hour and 7-day percent used, and when each resets.",
-      "parameters": {"type": "object", "additionalProperties": false, "properties": {}}
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
     },
     {
       "name": "list_goals",
       "class": "read",
       "description": "Goals on the board in one state: their ids and titles.",
       "parameters": {
-        "type": "object", "additionalProperties": false, "required": ["state"],
-        "properties": {"state": {"type": "string", "enum": ["active", "proposed", "hibernated", "done"]}}
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "proposed",
+              "hibernated",
+              "done"
+            ]
+          }
+        }
       }
     },
     {
@@ -108,8 +249,178 @@
       "class": "actuate",
       "description": "Open the live view of the desktop an agent is using, or of a free desk by its name (e.g. desk-1), where the owner can also act on it.",
       "parameters": {
-        "type": "object", "additionalProperties": false, "required": ["agent"],
-        "properties": {"agent": {"type": "string", "minLength": 1, "maxLength": 64}}
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "agent"
+        ],
+        "properties": {
+          "agent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        }
+      }
+    },
+    {
+      "name": "read_screen",
+      "class": "view",
+      "description": "What the owner is looking at right now: the page, its visible headings, the open conversation's title, agent and last few lines, the visible table and chart captions. Numbers that look like phone or account ids and anything secret-looking arrive masked.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    },
+    {
+      "name": "point_at",
+      "class": "view",
+      "description": "Point at something on screen by its visible words (a heading, a button, a conversation, a chart caption): your figure glides to it and it lights up for a moment.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      }
+    },
+    {
+      "name": "open_conversation",
+      "class": "view",
+      "description": "Open one of the owner's chat conversations by (part of) its title. Opens the chat workspace if needed.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      }
+    },
+    {
+      "name": "search",
+      "class": "view",
+      "description": "Search everything in the chat workspace (conversations, messages, files, agents) for some words and show the results.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      }
+    },
+    {
+      "name": "open_file",
+      "class": "view",
+      "description": "Open a file from the open conversation in the side panel, by (part of) its name.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        }
+      }
+    },
+    {
+      "name": "dance",
+      "class": "view",
+      "description": "Do a short happy dance on screen: when the owner asks for it, or to celebrate something that worked.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    },
+    {
+      "name": "switch_agent",
+      "class": "compose",
+      "description": "Hand the open chat to another agent (it starts fresh from here; nothing is sent to anyone).",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "agent"
+        ],
+        "properties": {
+          "agent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        }
+      }
+    },
+    {
+      "name": "type_in_composer",
+      "class": "compose",
+      "description": "Write words into the chat's message box as a draft. Nothing is sent: sending is send_message, which the owner taps to allow.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "replace",
+              "append"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "send_message",
+      "class": "write",
+      "description": "Send a message in the open chat conversation, to its agent. Waits for the owner's tap on Allow; the prompt shows the exact words.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
       }
     }
   ]

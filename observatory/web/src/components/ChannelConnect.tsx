@@ -14,13 +14,13 @@ export interface ChannelState {
   account: string | null
   activate: string | null
   invite?: string | null
-}
-
-const STEPS: Record<string, string[]> = {
-  telegram: ['In Telegram, open @BotFather and send /newbot.', 'Choose a name, then a username that ends in "bot".',
-             'BotFather replies with a token. Paste it below.'],
-  discord: ['Open the Discord Developer Portal and create a New Application.', 'Under Bot, reset the token and copy it. Turn on Message Content Intent.',
-            'Paste the token below. You get a link to add the bot to your server.'],
+  fixed?: boolean           // a built-in (web chat, canvas, terminal): not routed per chat
+  shows?: string            // what a built-in shows, in words
+  // a channel the owner connects here (the server's one channel table, core/channels.py): how, and its words
+  connect?: 'token' | 'link'
+  title?: string
+  numbers?: boolean         // its people are phone numbers: a search finds one by number
+  steps?: string[]          // how to get its token
 }
 const WORDS: Record<ChannelState['state'], string> = {
   'not-set': 'Not connected', written: 'Token saved, bridge not answering yet', 'activation-needed': 'Saved. One step left',
@@ -50,7 +50,7 @@ export default function ChannelConnect({ s, loaded, onChanged }: { s: ChannelSta
           Add the bot to your Discord server
         </a>
       )}
-      {s.channel === 'whatsapp' ? <WhatsAppPair s={s} onDone={onChanged} /> : <TokenForm s={s} onDone={onChanged} />}
+      {s.connect === 'link' ? <WhatsAppPair s={s} onDone={onChanged} /> : <TokenForm s={s} onDone={onChanged} />}
     </div>
   )
 }
@@ -94,7 +94,7 @@ function TokenForm({ s, onDone }: { s: ChannelState; onDone: () => void }) {
   }
   return (
     <form className="mt-2" onSubmit={(e) => { e.preventDefault(); save(confirm) }}>
-      <ol className="list-decimal pl-5 text-[12px] text-ink-dim space-y-0.5">{STEPS[s.channel]?.map((t) => <li key={t}>{t}</li>)}</ol>
+      <ol className="list-decimal pl-5 text-[12px] text-ink-dim space-y-0.5">{s.steps?.map((t) => <li key={t}>{t}</li>)}</ol>
       <div className="mt-2 flex gap-1.5">
         <input type="password" autoComplete="off" spellCheck={false} value={tok} onChange={(e) => setTok(e.currentTarget.value)}
           placeholder={`${title} bot token`} aria-label={`${title} bot token`}

@@ -1,8 +1,54 @@
-import type { WhoAmI } from './types'
+import { humanName, isHuman, type WhoAmI } from './types'
+
+/* A 403 to a request that CARRIED a key: the key may have been rotated under a running page. Announced, never acted
+   on here: whoever listens (the chat workspace's gate, chat/Gate.tsx) re-asks /whoami before it believes it. */
+export const DENIED = 'astryx:denied'
+function denied(r: Response, key: string) {
+  if (r.status === 403 && key) window.dispatchEvent(new CustomEvent(DENIED))
+}
+
+/* THE SERVER'S CLOCK. Every ts the API hands out (a message, a step) is stamped by the SERVER's clock, and a timer that
+   subtracts one from the browser's Date.now() is only right while the two clocks agree. They don't always: 11-11 the
+   org host ran ~183 s AHEAD of real time (no NTP daemon; the owner's laptop was on time), so the live-activity line's
+   `now - Date.parse(since)` was negative for the first three minutes of every turn and clock() clamped it to 00:00,
+   frozen for the length of a typical turn. So every API response is a clock reading: its Date header says the server
+   time (to the second) somewhere between the request leaving and the response arriving, which bounds the offset
+   (server - browser) to an interval; the intersection of recent intervals is the estimate, tight to well under a
+   second after a few requests. A reading that contradicts the rest (a clock was reset) restarts the estimate. */
+let skewLo = -Infinity, skewHi = Infinity
+export function noteServerTime(serverMs: number, resolutionMs: number, sentAt: number, gotAt: number) {
+  if (!Number.isFinite(serverMs)) return
+  const lo = serverMs - gotAt, hi = serverMs + resolutionMs - sentAt
+  if (lo > skewHi || hi < skewLo) { skewLo = lo; skewHi = hi; return }
+  skewLo = Math.max(skewLo, lo); skewHi = Math.min(skewHi, hi)
+}
+function noteDate(r: Response, sentAt: number) {
+  // the FIRST date: through the TLS front a response carries two Date headers, which fetch joins with ", " into a string
+  // Date.parse can't read (NaN), so the skew was never measured and the timer froze at 00:00 again (owner 14522)
+  const d = r.headers.get('date')?.match(/^\w{3}, \d{1,2} \w{3} \d{4} [\d:]{8} GMT/)?.[0]
+  // 2.1 s: the header is whole seconds AND uvicorn re-stamps its cached Date only once a second (Server.on_tick)
+  if (d) noteServerTime(Date.parse(d), 2100, sentAt, Date.now())
+}
+/* server minus browser, ms (0 until a response has been read) */
+export function serverSkew(): number {
+  return Number.isFinite(skewLo) && Number.isFinite(skewHi) ? (skewLo + skewHi) / 2 : 0
+}
+/* an API timestamp as epoch ms, read as UTC when it names no zone (a naive "2026-11-11T07:13:22" is the server's UTC,
+   never the browser's local time) */
+export function parseTs(ts: string): number {
+  return Date.parse(/(?:Z|[+-]\d\d:?\d\d)$/i.test(ts) || !/T\d/.test(ts) ? ts : ts + 'Z')
+}
+/* ms since a server timestamp, on the SERVER's clock (so a skewed host can't freeze or inflate a timer) */
+export function elapsedSince(ts: string, now = Date.now()): number {
+  return now + serverSkew() - parseTs(ts)
+}
 
 export async function api<T>(path: string): Promise<T> {
   const key = obsKey()
+  const t0 = Date.now()
   const r = await fetch('/api' + path, { headers: key ? { 'x-obs-key': key } : {} })
+  noteDate(r, t0)
+  denied(r, key)
   if (!r.ok) throw new Error(`${path}: ${r.status}`)
   return r.json()
 }
@@ -25,11 +71,14 @@ export function saveObsKey(key: string) {
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   const key = obsKey()
+  const t0 = Date.now()
   const r = await fetch('/api' + path, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(key ? { 'x-obs-key': key } : {}) },
     body: JSON.stringify(body),
   })
+  noteDate(r, t0)
+  denied(r, key)
   if (!r.ok) throw new Error(`${path}: ${r.status}`)
   return r.json()
 }
@@ -42,6 +91,7 @@ export class ApiError extends Error {
 
 export async function apiSend<T>(method: string, path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
   const key = obsKey()
+  const t0 = Date.now()
   const r = await fetch('/api' + path, {
     method,
     headers: {
@@ -51,6 +101,8 @@ export async function apiSend<T>(method: string, path: string, body?: unknown, h
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
+  noteDate(r, t0)
+  denied(r, key)
   if (!r.ok) {
     let data: Record<string, unknown> | null = null
     try { data = await r.json() } catch { /* not json */ }
@@ -61,7 +113,9 @@ export async function apiSend<T>(method: string, path: string, body?: unknown, h
 
 export async function fetchWhoami(): Promise<WhoAmI> {
   const key = obsKey()
+  const t0 = Date.now()
   const r = await fetch('/api/whoami', { headers: key ? { 'x-obs-key': key } : {} })
+  noteDate(r, t0)
   if (!r.ok) throw new Error(`/whoami: ${r.status}`)
   return r.json()
 }
@@ -70,11 +124,26 @@ export async function fetchWhoami(): Promise<WhoAmI> {
 /* The filename stem is the canonical name (wire id, home, tmux); the dashboard
    shows it prettified — separators to spaces, each word capitalized. So
    'abstractor-1' -> 'Abstractor 1', 'seed' -> 'Seed'. Display-only. */
+const ACRONYMS = new Set(['etl', 'db'])   // owner 15584: "ETL", not "Etl"
 export function displayName(name: string): string {
   return (name || '')
     .replace(/[-_]+/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .replace(/\b\w+/g, (w) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
 }
+
+/* ANY party as the viewer reads it (11-15, one rule for every label): 'You' for the viewer's own handle (`me`, the
+   store's who.handle), a human's name for another human (types.humanName: 'Owner', a member's label), else the agent's
+   display name. `you` lets a mid-sentence label say 'you'. Never compare a name to the literal 'owner' to mean "me"
+   (isMine) or "a human" (types.isHuman): a member is a viewer too. */
+export function personName(name: string, you = 'You', me = viewer()): string {
+  if (name === me) return you
+  return isHuman(name) ? humanName(name) : displayName(name)
+}
+/* the viewer's wire handle, set once by the store when whoami answers (the workspace renders only after it has) */
+let viewerHandle = 'owner'
+export const setViewer = (h: string | null | undefined) => { viewerHandle = h || 'owner' }
+export const viewer = () => viewerHandle
+export const isMine = (name: string | null | undefined) => !!name && name === viewerHandle
 
 /* the mark in an agent's avatar chip: a trailing number distinguishes ranked
    members (abstractor-1 -> '1'), otherwise the first letter */

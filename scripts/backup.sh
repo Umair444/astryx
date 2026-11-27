@@ -65,7 +65,6 @@ done
 #                 regenerates nothing and units() faithfully emits the nothing it was told.
 #                 Includes the `backup` timer itself: a restored org silently stops backing
 #                 up, and the backup system cannot restore its own scheduler.
-#   routes-*.json channel routing (the .example.json siblings are tracked; these are not).
 #   owner/relations/PLAN.md   authored, in no repo.
 #
 # NO NEW PUSH SURFACE, verified rather than assumed: privacy_gate.sh:32-33 already declares
@@ -87,8 +86,6 @@ done
 # infra/pg/.env (10-10): the declared postgres server's compose env (its init password and settings), written
 # by hand at the infra/pg cutover; nothing regenerates it, and a restore of genesis-pg needs it.
 state_files=(local.md .env owner.md relations.md PLAN.md nucleus/runners.conf   # org-home: relative to $ORGH, the org's HOME (cd above)
-         bridges/routes-whatsapp.json bridges/routes-telegram.json
-         bridges/routes-discord.json mcp/contacts/test_server.py   # org-home: relative to $ORGH, the org's HOME (cd above)
          bridges/geoloc.py infra/pg/.env)   # org-home: relative to $ORGH, the org's HOME (cd above)
 for f in "${state_files[@]}"; do
   if [ -f "$f" ]; then state_dirs="$state_dirs $f"; fi
@@ -140,6 +137,21 @@ fi
 
 DSN=$("$ROOT/venv/bin/python" "$ROOT/src/astryx/config.py" dsn --file 2>/dev/null || true)
 [ -n "$DSN" ] || { echo "backup: no ASTRYX_DSN in .env" >&2; exit 1; }   # org-home: a message
+# cog-rls slice 2: a provisioned org's DSN is org_<key>, which can't dump the whole database (row-level security, objects
+# it was never granted) nor read every role. A full dump is the PROVISIONER's: the root-only superuser file, same
+# database. Readable only under sudo/root; otherwise the org DSN is used and pg_dump fails LOUD (never a silent partial).
+SUPER_FILE=${ASTRYX_PG_SUPER_FILE:-/etc/astryx/pg-super.dsn}
+if [ -r "$SUPER_FILE" ]; then
+  # the DSNs ride the environment, never argv (ps shows argv to every user)
+  # a URL stays a URL: pg_dsn_user/pg_dsn_db (the docker path) parse URLs only, and make_conninfo writes key=value
+  DSN=$(ORG_DSN="$DSN" SUPER_FILE="$SUPER_FILE" "$ROOT/venv/bin/python" -c 'import os; from urllib.parse import quote, urlsplit
+from psycopg.conninfo import make_conninfo, conninfo_to_dict
+s = open(os.environ["SUPER_FILE"]).read().strip(); db = conninfo_to_dict(os.environ["ORG_DSN"]).get("dbname")
+if db and "://" in s: s = urlsplit(s)._replace(path="/" + quote(db, safe="")).geturl()
+elif db: s = make_conninfo(s, dbname=db)
+print(s)') \
+    || { echo "backup: the provisioner DSN file is unreadable as a DSN" >&2; exit 1; }
+fi
 
 mkdir -p backups   # org-home: relative to $ORGH, the org's HOME (cd above)
 ts=$(date +%Y%m%dT%H%M%S)
@@ -208,20 +220,7 @@ fi
 ASTRYX_DSN="$DSN" PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" timeout 600 "$ROOT/venv/bin/python" -m astryx.core.turns_retention --days "${TURNS_IMAGE_DAYS:-7}" \
   2>&1 | sed 's/^/backup: /' || echo "backup: turns retention failed — continuing with the dump" >&2
 
-# host pg_dump if present AND not older than the server, else the container's (mirrors init.sh's
-# psql/docker split). pg_dump refuses a newer server ("server version mismatch"), so a distro
-# client one major behind (Ubuntu 24.04 ships 16; the server runs 17/18) made EVERY backup fail
-# while the container's own client, always version-matched, sat unused.
-host_pg_ok() {
-  command -v "$1" >/dev/null || return 1
-  local cmaj smaj
-  cmaj=$("$1" --version 2>/dev/null | grep -oE '[0-9]+' | head -1)
-  # -w, </dev/null and a connect timeout: the probe fails fast, never waits on a prompt or a dead connect (medic #66298)
-  smaj=$(PGCONNECT_TIMEOUT=10 psql -w -Atq -d "$DSN" -c 'SHOW server_version_num' </dev/null 2>/dev/null \
-    || pg_exec psql -w -Atq -U "$(pg_dsn_user "$DSN")" -c 'SHOW server_version_num' </dev/null 2>/dev/null)
-  smaj=$(( ${smaj:-0} / 10000 ))
-  [ -n "$cmaj" ] && [ "$cmaj" -ge "$smaj" ]
-}
+# host pg_dump if present AND not older than the server, else the container's (host_pg_ok: scripts/pgcontainer.sh)
 if host_pg_ok pg_dump; then
   pg_dump -Fc "$DSN" > "$part"
 else

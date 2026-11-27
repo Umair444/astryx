@@ -8,6 +8,7 @@ import { api, apiPost } from '../api'
 import Md from './Md'
 import LateReplies, { said } from './LateReplies'
 import { Empty, LiveDot, Orb, Panel, SectionHead, Tabs, ViewHeader } from '../ui/kit'
+import { paintGroup, svgPoint, useCamera } from '../ui/camera'
 
 /* The Memory tab — the org's recall system, rendered.
  *
@@ -126,15 +127,9 @@ export default function MemoryView() {
   const [thread, setThread] = useState<string | null>(null)
   const [ans, setAns] = useState<Answer | null>(null)
   const [blink, setBlink] = useState(0)        // 1 = ignition, 0.6 = warm, 0 = idle
-  const [view, setView] = useState({ x: 0, y: 0, k: 1 })
   const fitRef = useRef({ x: 0, y: 0, k: 1 })
-  // Float equality is the wrong test — panning a pixel and back leaves k at 0.9999999.
-  // Near-identity counts as default, so the reset control does not linger forever.
-  // 'Default' is now the FITTED view, not k=1 — k=1 means a different thing on each lens.
-  const atDefault = Math.abs(view.k - fitRef.current.k) < 1e-3 &&
-    Math.abs(view.x - fitRef.current.x) < 0.5 && Math.abs(view.y - fitRef.current.y) < 0.5
-  const drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
+  const gRef = useRef<SVGGElement | null>(null)
   const mobile = useMediaQuery('(max-width: 48em)')
 
   useEffect(() => {
@@ -160,42 +155,19 @@ export default function MemoryView() {
   const view_g = lens === 'ontology' ? onto : g
   const byId = useMemo(() => new Map((view_g?.nodes ?? []).map((n) => [n.id, n])), [view_g])
 
-  /* Zoom must be SCOPED TO THIS CANVAS, which means preventDefault() on the wheel — and
-   * React registers onWheel as PASSIVE, where preventDefault is a no-op (it warns and the
-   * browser scrolls/zooms the page anyway). So the listener is attached natively with
-   * {passive:false}. That is the whole bug: the handler ran, the state updated, and the
-   * page zoomed underneath it because nothing stopped the default. */
-  useEffect(() => {
-    const el = svgRef.current
-    if (!el) return
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault()
-      const f = e.deltaY > 0 ? 0.9 : 1.1
-      /* UNBOUNDED. The old clamp (0.35..3) meant a 16-node lens like People could never
-       * be filled and a 300-node cortex could never be read. The only real limits are
-       * numerical: k must stay a positive finite float, so guard THAT and nothing else.
-       * Zoom holds toward the POINTER rather than the origin — aiming at a cluster and
-       * watching it slide away is what makes a canvas feel broken. */
-      const u = toUser(e.clientX, e.clientY)
-      setView((v) => {
-        const k = v.k * f
-        if (!Number.isFinite(k) || k <= 1e-6 || k >= 1e6) return v
-        if (!u) return { ...v, k }
-        // Keep the world point under the cursor fixed: x' = c - f*(c - x), with c and x
-        // both in USER units. Anchoring to the pointer is what makes a canvas feel like
-        // you are moving through it rather than operating it from outside.
-        return { k, x: u.x - (u.x - v.x) * f, y: u.y - (u.y - v.y) * f }
-      })
-    }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-    /* Depends on view_g, NOT g. The lens switch early-returns a loading state, which
-     * unmounts the svg and takes the listener with it; the remount is a NEW element, and
-     * with [g] the effect never re-ran to bind it. That is why Cortex and System 1↔2
-     * zoomed while Ontology and People did not — same symptom as the passive-listener
-     * bug, entirely different cause. A listener bound to a ref must depend on whatever
-     * can remount that ref. */
-  }, [view_g])
+  // Float equality is the wrong test — panning a pixel and back leaves k at 0.9999999.
+  // Near-identity counts as default, so the reset control does not linger forever.
+  // 'Default' is now the FITTED view, not k=1 — k=1 means a different thing on each lens.
+  // THE CAMERA is the observatory's one (ui/camera.ts, owner 11-15: "zooming and moving is very good in the floor tab,
+  // not in memory's cortex and system1<->system2"): a trackpad pans, a wheel or pinch zooms about the pointer, a drag
+  // pans, all in USER units through the svg's own CTM (svgPoint), painted straight onto the <g>. `view` is the settled
+  // copy for what reads the zoom (label sizes, the reset control). It depends on view_g: a lens switch remounts the svg
+  const paintG = useMemo(() => paintGroup(gRef), [])
+  const toUserPt = useMemo(() => svgPoint(svgRef), [])
+  const { cam: view, camRef, setCam: setView, bind: camBind } = useCamera({ box: svgRef, paint: paintG, local: toUserPt, min: 0.02, max: 60 })
+  const atDefault = Math.abs(view.k - fitRef.current.k) < 1e-3 &&
+    Math.abs(view.x - fitRef.current.x) < 0.5 && Math.abs(view.y - fitRef.current.y) < 0.5
+
 
   /* THE BLINK. Ignite to full, then settle to 60% rather than fading out — the retrieved
    * set stays warm until the next question so the answer remains anchored to its evidence
@@ -374,35 +346,8 @@ export default function MemoryView() {
     return m
   }, [view_g, lens, byId])
 
-  /* SCREEN PIXELS ARE NOT USER UNITS, and conflating them was the zoom bug.
-   *
-   * The svg is viewBox="-900 -700 1800 1400" with preserveAspectRatio="xMidYMid meet", so
-   * the viewBox is SCALED to fit the element and letterboxed. The old anchor maths measured
-   * the cursor in CSS pixels (clientX - rect.left - rect.width/2) and applied that straight
-   * to view.x, which lives in user units. With a ~1200px-wide element showing 1800 units,
-   * every correction was ~0.67 of what it should be — so the point under the cursor drifted
-   * toward the origin on every notch, which reads exactly as "it always zooms to the centre
-   * no matter where my cursor is".
-   *
-   * getScreenCTM() is the browser's own answer to this question: it accounts for the
-   * viewBox, the aspect-ratio letterboxing, and any CSS transform on an ancestor. Using it
-   * means the conversion cannot drift from how the element is actually laid out — the same
-   * reason this codebase derives rather than hardcodes everywhere else.
-   *
-   * The pan handler's magic `* 1.6` was the FINGERPRINT of this bug: someone measured the
-   * mismatch empirically and multiplied it away at one call site. It is gone now, because
-   * the conversion is correct rather than compensated. */
-  const toUser = (clientX: number, clientY: number) => {
-    const el = svgRef.current
-    if (!el) return null
-    const ctm = el.getScreenCTM()
-    if (!ctm) return null
-    const pt = el.createSVGPoint()
-    pt.x = clientX
-    pt.y = clientY
-    const u = pt.matrixTransform(ctm.inverse())
-    return { x: u.x, y: u.y }
-  }
+  /* SCREEN PIXELS ARE NOT USER UNITS (the old zoom bug): the svg's viewBox is scaled and letterboxed, so a pointer is
+   turned into user units by the browser's own getScreenCTM() (ui/camera.ts svgPoint), never by rect arithmetic. */
 
   /* DEFAULT SCALE IS PER-LENS AND CONSTANT — it must not depend on mount timing.
    *
@@ -590,7 +535,7 @@ export default function MemoryView() {
               {/* Shows only when the view is OFF-DEFAULT: a control that is always there is
                   chrome; one that appears exactly when it can do something is a hint. */}
               {!atDefault && (
-                <button onClick={() => setView(fitRef.current)} title="Reset zoom and pan"
+                <button onClick={() => setView(fitRef.current, true)} title="Reset zoom and pan"
                   className="ax-panel text-[11.5px] font-mono px-2.5 py-1 rounded-full text-cyan hover:brightness-125 transition">
                   ⤢ reset · {view.k.toFixed(2)}×
                 </button>
@@ -611,18 +556,7 @@ export default function MemoryView() {
           ref={svgRef}
           className="flex-1 cursor-grab active:cursor-grabbing touch-none"
           viewBox="-900 -700 1800 1400" preserveAspectRatio="xMidYMid meet"
-          onMouseDown={(e) => { drag.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y } }}
-          onMouseUp={() => { drag.current = null }}
-          onMouseLeave={() => { drag.current = null; setHover(null) }}
-          onMouseMove={(e) => {
-            if (!drag.current) return
-            const d = drag.current
-            // 1:1 with the cursor, in USER units. The old `* 1.6` was this same
-            // screen-vs-user confusion patched by measurement at one call site.
-            const a = toUser(d.x, d.y), b = toUser(e.clientX, e.clientY)
-            if (!a || !b) return
-            setView((v) => ({ ...v, x: d.vx + (b.x - a.x), y: d.vy + (b.y - a.y) }))
-          }}
+          {...camBind} onMouseLeave={() => setHover(null)}
         >
           <defs>
             <filter id="blob" x="-60%" y="-60%" width="220%" height="220%">
@@ -647,7 +581,7 @@ export default function MemoryView() {
             })}
           </defs>
 
-          <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+          <g ref={gRef} transform={`translate(${camRef.current.x} ${camRef.current.y}) scale(${camRef.current.k})`}>
             {/* the cortical blobs */}
             <g filter="url(#blob)" opacity={0.5}>
               {blobs.map((b) => {

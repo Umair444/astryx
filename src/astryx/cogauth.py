@@ -8,16 +8,23 @@ org's own `members` table, and the host CLI that is the only writer of either.
     venv/bin/python src/astryx/cogauth.py user add EMAIL                the password is read from stdin (a pipe) or
     venv/bin/python src/astryx/cogauth.py user reset EMAIL              the terminal, NEVER argv; reset revokes every
                                                                         session of that account
-    venv/bin/python src/astryx/cogauth.py grant ORG EMAIL owner|member|viewer
-    venv/bin/python src/astryx/cogauth.py revoke ORG EMAIL
+    venv/bin/python src/astryx/cogauth.py grant ORG EMAIL owner|admin|member|viewer [--node PATH]
+    venv/bin/python src/astryx/cogauth.py revoke ORG EMAIL [--node PATH]     no --node: every row of the account
+    venv/bin/python src/astryx/cogauth.py cog-admin EMAIL [--revoke]    the COG's admin (cog_grants): decides org
+                                                                        sign-up requests; the bootstrap is the primary
+                                                                        org's owner
     venv/bin/python src/astryx/cogauth.py backup DIR                    the cog store: pg_dump -Fc → DIR/cog-<ts>.dump
     venv/bin/python src/astryx/cogauth.py restore-verify DIR            the newest dump restores into a scratch
                                                                         database (<db>_restorecheck), its users count
                                                                         matches the live store's, and it is dropped
 
 THE RULES IT HOLDS:
-- There is no public sign-up (D7): an account exists because the host CLI wrote it. Recovery is `user reset` (no
-  email: an externally authored identity, a1 F6).
+- An account exists because the host CLI wrote it, because a person opened a one-time invite an org's owner or admin
+  made (observatory/front.py, the admin panel), or through the front's PUBLIC SIGN-UP, which exists only while the cog
+  .env's ASTRYX_COG_SIGNUP is on (default off: D7's "no public sign-up" stands until the owner opens it). A sign-up
+  makes the account and a PENDING org request, never an org: a cog admin (cog_grants, this CLI's `cog-admin`) approves
+  it with a token budget. Recovery is `user reset`, or a one-time reset link from that panel (no email: an externally
+  authored identity, a1 F6).
 - A password is stored as an argon2id PHC string (OWASP's first choice), by libsodium through PyNaCl, already a core
   dependency. libsodium releases the GIL, so the front checks it in a thread and its event loop keeps relaying
   (measured: `cryptography`'s argon2id held the GIL, 2 loop ticks in 1.65 s; PyNaCl's left 61 of ~93). A sign-in for
@@ -54,7 +61,8 @@ from pathlib import Path
 
 from astryx import config, orgs
 
-ROLES = ("owner", "member", "viewer")
+# in step with schema.sql's members_role_check and the front's `in cogauth.ROLES` filter (tests/test_tenant_slice1.py)
+ROLES = ("owner", "admin", "member", "viewer")
 SESSION_DAYS = 14
 SCHEMA = Path(__file__).resolve().parent / "sql" / "cog_schema.sql"
 # argon2id above OWASP's floor for interactive sign-in (m 19 MiB, t 2): m 64 MiB, t 3; libsodium fixes p at 1
@@ -94,8 +102,57 @@ def norm_email(e: str) -> str:
     return e.strip().lower()
 
 
+def one_address(e) -> bool:
+    """ONE bare address (local@domain), the only shape an account's email takes. A list, a display name or a quoted
+    or bracketed form is refused: "a@x,b@y" would mail one sign-up code to both (medic 12207)."""
+    import email.utils
+    if not isinstance(e, str):
+        return False
+    e = e.strip()
+    if not 3 <= len(e) <= 254 or e.count("@") != 1 or any(c.isspace() or c in ',;<>"()\\[]:' for c in e):
+        return False
+    local, _, domain = e.partition("@")
+    return bool(local and domain) and email.utils.getaddresses([e]) == [("", e)]
+
+
 def digest(token: str) -> bytes:
     return hashlib.sha256(token.encode()).digest()
+
+
+# ------------------------------------------------------------------ email codes (cog_schema.sql email_codes)
+CODE_MINUTES, CODE_TRIES, CODE_RESEND = 10, 5, 60      # a code lives 10 min and takes 5 guesses; one mail a minute
+
+
+def _code_digest(email: str, code: str) -> bytes:
+    return digest(f"{email}\n{code}")
+
+
+async def code_issue(conn, email: str) -> str | None:
+    """A fresh code for `email`, replacing any earlier one, or None while the last was mailed under a minute ago (it
+    still stands). The caller mails it; only its digest is stored."""
+    code = f"{secrets.randbelow(10**6):06d}"
+    cur = await conn.execute(
+        "INSERT INTO email_codes (email, digest, expires) VALUES (%s, %s, now() + make_interval(mins => %s)) "
+        "ON CONFLICT (email) DO UPDATE SET digest = EXCLUDED.digest, sent = now(), expires = EXCLUDED.expires, tries = 0 "
+        "WHERE email_codes.sent < now() - make_interval(secs => %s) RETURNING 1",
+        (email, _code_digest(email, code), CODE_MINUTES, CODE_RESEND))
+    return code if await cur.fetchone() else None
+
+
+async def code_drop(conn, email: str) -> None:
+    await conn.execute("DELETE FROM email_codes WHERE email = %s", (email,))
+
+
+async def code_check(conn, email: str, code: str) -> bool:
+    """True once, for the live code of `email`. Every guess spends a try FIRST, in one statement, so racing guesses
+    can't share one; a right one is then used up."""
+    cur = await conn.execute("UPDATE email_codes SET tries = tries + 1 WHERE email = %s AND expires > now() "
+                             "AND tries < %s RETURNING digest", (email, CODE_TRIES))
+    row = await cur.fetchone()
+    if row is None or not secrets.compare_digest(bytes(row[0]), _code_digest(email, code.strip())):
+        return False
+    await code_drop(conn, email)
+    return True
 
 
 # ------------------------------------------------------------------ the front's sessions (async: psycopg)
@@ -162,16 +219,45 @@ def sub(uid: int, cog_id: str) -> str:
     return f"{uid}@{cog_id}"
 
 
-def grant(org_conn, who: str, role: str) -> None:
-    """THE one writer of a membership row (D8)."""
+def grant(org_conn, who: str, role: str, node: str = "") -> None:
+    """THE one writer of a membership row (D8). `node` is a path in the agents/ tree ('' = the whole org); a role on a
+    node is inherited by its subtree (schema.sql member_role). A role change that would leave the org's members with
+    no whole-org owner is refused by the table itself (members_last_owner)."""
     if role not in ROLES:
         raise ValueError(f"role must be one of {', '.join(ROLES)}")
-    org_conn.execute("INSERT INTO members (uid, role) VALUES (%s, %s) ON CONFLICT (uid) DO UPDATE SET role = "
-                     "EXCLUDED.role", (who, role))
+    org_conn.execute("INSERT INTO members (uid, node, role) VALUES (%s, %s, %s) ON CONFLICT (tenant, uid, node) DO "
+                     "UPDATE SET role = EXCLUDED.role", (who, node, role))
 
 
-def revoke(org_conn, who: str) -> bool:
-    return org_conn.execute("DELETE FROM members WHERE uid = %s", (who,)).rowcount > 0
+COG_ROLES = ("cog_admin",)          # cog_schema.sql cog_grants_role_check
+
+
+def cog_grant(conn, email: str, role: str = "cog_admin") -> int | None:
+    """THE one writer of a cog_grants row: the account's id, or None for no such account. Idempotent."""
+    if role not in COG_ROLES:
+        raise ValueError(f"role must be one of {', '.join(COG_ROLES)}")
+    uid = uid_of(conn, email)
+    if uid is not None:
+        conn.execute("INSERT INTO cog_grants (uid, role) VALUES (%s, %s) ON CONFLICT (uid, role) DO NOTHING", (uid, role))
+    return uid
+
+
+def cog_ungrant(conn, email: str, role: str = "cog_admin") -> bool:
+    return conn.execute("DELETE FROM cog_grants WHERE role = %s AND uid = (SELECT id FROM users WHERE email = %s)",
+                        (role, norm_email(email))).rowcount > 0
+
+
+async def is_cog_admin(conn, uid: int) -> bool:
+    """The front's check: a cog_grants row, never derived from any org's members (an org owner is not a cog admin)."""
+    cur = await conn.execute("SELECT 1 FROM cog_grants WHERE uid = %s AND role = 'cog_admin'", (uid,))
+    return await cur.fetchone() is not None
+
+
+def revoke(org_conn, who: str, node: str | None = None) -> bool:
+    """Every membership row of `who` (node None), or its row on one node."""
+    if node is None:
+        return org_conn.execute("DELETE FROM members WHERE uid = %s", (who,)).rowcount > 0
+    return org_conn.execute("DELETE FROM members WHERE uid = %s AND node = %s", (who, node)).rowcount > 0
 
 
 # ------------------------------------------------------------------ the CLI
@@ -255,13 +341,34 @@ def cmd_grant(a, role: str | None) -> int:
         uid = uid_of(conn, a.email)
     if uid is None:
         raise SystemExit("cogauth: no such account")
+    node = getattr(a, "node", None)
+    where = f"{a.org}" + (f" at {node}" if node else "")
     with psycopg.connect(_org_dsn(a.org), autocommit=True) as oc:
-        if role:
-            grant(oc, sub(uid, c["id"]), role)
-            print(f"cogauth: {sub(uid, c['id'])} is {role} of {a.org}")
-        else:
-            print(f"cogauth: {sub(uid, c['id'])} " + ("removed from " if revoke(oc, sub(uid, c["id"])) else
-                                                      "was not a member of ") + a.org)
+        try:
+            if role:
+                grant(oc, sub(uid, c["id"]), role, node or "")
+                print(f"cogauth: {sub(uid, c['id'])} is {role} of {where}")
+            else:
+                print(f"cogauth: {sub(uid, c['id'])} " + ("removed from " if revoke(oc, sub(uid, c["id"]), node) else
+                                                          "was not a member of ") + where)
+        except psycopg.errors.CheckViolation:
+            raise SystemExit("cogauth: refused: that would leave this org's members with no whole-org owner, or the "
+                             "node is not a path in the agents/ tree") from None
+    return 0
+
+
+def cmd_cog_admin(a) -> int:
+    import psycopg
+    c = cog_or_refuse()
+    with psycopg.connect(store_dsn(c["home"]), autocommit=True) as conn:
+        if a.revoke:
+            print(f"cogauth: {norm_email(a.email)} " + ("is no longer" if cog_ungrant(conn, a.email) else "was not")
+                  + " a cog admin")
+            return 0
+        uid = cog_grant(conn, a.email)
+    if uid is None:
+        raise SystemExit("cogauth: no such account")
+    print(f"cogauth: {sub(uid, c['id'])} is a cog admin (decides org sign-up requests)")
     return 0
 
 
@@ -337,6 +444,10 @@ def main(argv=None) -> int:
         g.add_argument("email")
         if name == "grant":
             g.add_argument("role", choices=ROLES)
+        g.add_argument("--node", help="a path in the agents/ tree (default: the whole org)")
+    ca = s.add_parser("cog-admin")
+    ca.add_argument("email")
+    ca.add_argument("--revoke", action="store_true")
     for name in ("backup", "restore-verify"):
         s.add_parser(name).add_argument("dir")
     a = ap.parse_args(argv)
@@ -346,6 +457,8 @@ def main(argv=None) -> int:
         return cmd_user(a)
     if a.cmd in ("grant", "revoke"):
         return cmd_grant(a, getattr(a, "role", None))
+    if a.cmd == "cog-admin":
+        return cmd_cog_admin(a)
     return cmd_backup(a) if a.cmd == "backup" else cmd_restore_verify(a)
 
 

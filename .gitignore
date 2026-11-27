@@ -1,7 +1,8 @@
 venv/
-channel/node_modules/
+channel/node_modules
 homes/
 .env
+.env.lock
 local.md
 PLAN.md
 relations.md
@@ -16,9 +17,9 @@ agents/seed/avatar.*
 !agents/*.example/**
 agents/.git/
 /memory/
-observatory/web/node_modules/
+observatory/web/node_modules
 observatory/web/dist/
-canvas/web/node_modules/
+canvas/web/node_modules
 canvas/web/dist/
 
 # geoloc — niche owner-personal location intake (Tasker→endpoint); removed from the
@@ -27,11 +28,12 @@ canvas/web/dist/
 bridges/geoloc.py
 mcp/geoloc/
 *.tsbuildinfo
+# routes are rows (astryx.core.routes); an old checkout's route file still never reaches git
 **/routes*.json
-!**/routes*.example.json
 # per-agent provider/auth override (base_url + token_env name + model map); observatory-written.
 # Real file is private (references .env token keys); the .example ships the schema for cloners.
 runtime.json
+credentials.json
 !runtime.json.example
 **/runners*.conf
 !**/runners*.example.conf
@@ -70,3 +72,14 @@ var/
 infra/pg/.env
 infra/pg/data/
 mcp/phone/upstream/node_modules/
+# operational/private runtime trees that appeared post-0.1.2 and were NOT yet ignored
+# (seed, 2026-10-17). creds/ = credentials (privacy invariant, never public); data/ =
+# an org's own data trees (agent content, may hold PII literals — never public);
+# logs/ = service stdout (resume.sh writes logs/*.log; may hold PII); java/ = a vendored
+# runtime (binary, not source). Name-anchored so a relocation can't silently un-ignore them.
+creds/
+/data/
+logs/
+java/
+# the org's own tool servers' tools (mcp/scan.py: an org-local server never travels in the tracked manifest)
+mcp/manifest.local.json

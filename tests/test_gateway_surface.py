@@ -34,7 +34,7 @@ async def main(url):
     ctx.pool = await asyncpg.create_pool(url, min_size=1, max_size=2)
     heard = []
     ear = await asyncpg.connect(url)
-    await ear.add_listener("astryx_msg_cv-guest", lambda *a: heard.append(a[-1]))
+    await ear.add_listener(await ear.fetchval("SELECT cog.chan('msg_cv-guest')"), lambda *a: heard.append(a[-1]))
     try:
         ins = ("INSERT INTO messages (from_agent, to_agent, to_org, intent, body, status) "
                "VALUES ('painter', 'cv-guest', 'canvas', 'chat', $1, $2) RETURNING *")

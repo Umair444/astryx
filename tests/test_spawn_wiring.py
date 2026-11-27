@@ -17,8 +17,8 @@ temp tree, and every fixture agent name is one no real org uses. A broken render
 as a logged side effect, never as a session.
 
   R1 a resident renders exactly CLAUDE.md, .mcp.json and .claude/settings.json, and nothing else
-  R2 .mcp.json: {astryx, tools, hands, influence}, and with a grant spliced in {astryx, tools, hands, influence,
-     gmail}, valid JSON
+  R2 .mcp.json: the registry's who=every set (astryx, tools, hands, influence, channels), and with a grant spliced in that set +
+     ocr} (the fixture writes `Grants: ocr`), valid JSON
   R11 influence (who_should_i_ask, plan-11324, seed #58432) is the tree's mcp/influence/server.py with
       ASTRYX_AGENT = the agent written into its env (never inherited); `Grants: memory` mounts mcp/memory (ask)
       and adds ONLY memory to the resident set (the tool left that server; the grant gained nothing)
@@ -53,7 +53,9 @@ SUBJECT = Path(os.environ.get("SPAWN_SRC") or REPO / "scripts" / "spawn.sh")
 STATION = REPO / "src" / "astryx" / "core" / "station.py"
 TOKEN = "tok-fixture-4227-render"
 # Every RESIDENT's core block: the wire, the door (4227 S4), hands (7862), influence (11324, seed #58432).
-RESIDENT_SET = {"astryx", "tools", "hands", "influence"}
+# every resident's servers ARE the registry's who=every (owner 11-17: one list), and they include these five
+RESIDENT_SET = {n for n, e in json.loads((REPO / "mcp" / "registry.json").read_text()).items() if e.get("who") == "every"}
+assert {"astryx", "tools", "hands", "influence", "channels"} <= RESIDENT_SET, RESIDENT_SET
 fails = []
 
 
@@ -81,7 +83,7 @@ def make_tree() -> Path:
     (t / "runtime.json").write_text(json.dumps({"zzgrant": {
         "base_url": "https://example.invalid/anthropic", "token_env": "FIXTURE_TOKEN"}}))
     for name, body in (("zzres", "# zzres\nfixture resident\n"),
-                       ("zzgrant", "# zzgrant\nGrants: gmail\nThink: off\n"),
+                       ("zzgrant", "# zzgrant\nGrants: ocr\nThink: off\n"),
                        ("zzmem", "# zzmem\nGrants: memory\n"),
                        ("zzstat", "# zzstat\nType: stationed\n")):
         (t / "agents" / name).mkdir(parents=True)
@@ -181,8 +183,8 @@ try:
     except Exception as e:  # noqa: BLE001
         servers, env_ = {}, {}
         check("R2 grant render is valid JSON", False, f"{e}: {r.stderr[-200:]}")
-    check("R2 with a grant spliced: {astryx, tools, hands, influence, gmail}",
-          set(servers) == RESIDENT_SET | {"gmail"}, str(sorted(servers)))
+    check("R2 with a grant spliced (`ocr`): {astryx, tools, hands, influence, ocr}",
+          set(servers) == RESIDENT_SET | {"ocr"}, str(sorted(servers)))
     check("R3 Think: off lands (MAX_THINKING_TOKENS=0)", env_.get("MAX_THINKING_TOKENS") == "0",
           str(env_))
     check("R3 the provider token splice lands, as in a real spawn",

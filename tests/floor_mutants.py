@@ -40,8 +40,9 @@ MUTANTS = {
         (API, '    return [{"agent": a, "channel": c, "kind": k, "count": n} for (a, c, k), n in sorted(counts.items())]',
          '    return [{"agent": a, "channel": c, "kind": k, "count": n, "chat": str(next(iter(tables.values()))[0].get("chat"))}'
          ' for (a, c, k), n in sorted(counts.items())]'),
-    "M12 a routes file that stops parsing reads [] (BC-3)":
-        (B, "        return _last_good.get(key, [])", "        return []"),
+    "M12 a route table that doesn't read leaves a bridge with [] (BC-3)":
+        (REPO / "bridges" / "common.py", "            self.failing = True",
+         "            self.failing = True\n            self.table = resolve([])"),
     "S1 logredact stops scrubbing a bot token (httpx's request log leaks it)":
         (LR, '    return _HOOK.sub(r"\\1<redacted>", _TG.sub(r"\\1<redacted>", _KEY.sub(r"\\1<redacted>", text)))',
          '    return _HOOK.sub(r"\\1<redacted>", _KEY.sub(r"\\1<redacted>", text))', S3),

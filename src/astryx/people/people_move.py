@@ -47,14 +47,14 @@ DST_SQL = ("SELECT r.org, r.pid, r.kind, r.context, r.evidence, r.confidence FRO
            f"WHERE {' OR '.join('p.' + c + ' IS NOT NULL' for c in DETAIL)} ORDER BY r.org, r.pid")
 UPSERT_SQL = ("INSERT INTO social_relation (org, pid, kind, context, evidence, confidence) "
               f"SELECT org, id, relation, who, shape, confidence FROM social_person WHERE {ANY_DETAIL} "
-              "ON CONFLICT (org, pid) DO UPDATE SET kind = COALESCE(EXCLUDED.kind, social_relation.kind), "
+              "ON CONFLICT (tenant, org, pid) DO UPDATE SET kind = COALESCE(EXCLUDED.kind, social_relation.kind), "
               "context = COALESCE(EXCLUDED.context, social_relation.context), "
               "evidence = COALESCE(EXCLUDED.evidence, social_relation.evidence), "
               "confidence = COALESCE(EXCLUDED.confidence, social_relation.confidence), updated_at = now()")
 # --keep-target: the existing value wins wherever there is one (conflicts were counted and named first).
 UPSERT_KEEP_SQL = ("INSERT INTO social_relation (org, pid, kind, context, evidence, confidence) "
                    f"SELECT org, id, relation, who, shape, confidence FROM social_person WHERE {ANY_DETAIL} "
-                   "ON CONFLICT (org, pid) DO UPDATE SET kind = COALESCE(social_relation.kind, EXCLUDED.kind), "
+                   "ON CONFLICT (tenant, org, pid) DO UPDATE SET kind = COALESCE(social_relation.kind, EXCLUDED.kind), "
                    "context = COALESCE(social_relation.context, EXCLUDED.context), "
                    "evidence = COALESCE(social_relation.evidence, EXCLUDED.evidence), "
                    "confidence = COALESCE(social_relation.confidence, EXCLUDED.confidence), updated_at = now()")

@@ -15,7 +15,10 @@ import asyncio
 from pathlib import Path
 from threading import Lock
 
-_MODEL_NAME = "small"        # Systran/faster-whisper-small — already in the HF cache
+_MODEL_NAME = "small"        # Systran/faster-whisper-small — prefetched into the HF cache
+                             # by init.sh (_act_model reconciler, re-runs each ./init.sh so an
+                             # evicted cache self-heals); local_files_only below => runtime never
+                             # hits the network, soft-fails to file-path if the cache is cold.
 _model = None
 _model_failed = False
 _lock = Lock()

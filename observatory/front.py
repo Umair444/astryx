@@ -15,10 +15,21 @@ ASTRYX_ORG (a federation name, public by nature), and relays bytes.
   POST /auth/login           {email, password} → 200 + the session cookie | 401 (one body) | 429 | 403 foreign Origin
   POST /auth/logout          the session revoked (a server row), the cookie cleared
   GET  /auth/me              {user, orgs: [{org, name, role}]}, each role as its org answers | 401 (plan-11859 U1+U2)
+  /auth/admin/*, /auth/link, /auth/accept   the admin panel's account half: users, one-time invite and reset links,
+                             sign out everywhere (the block "the admin panel's ACCOUNT half" below)
+  GET  /auth/signup, POST /auth/signup   PUBLIC SIGN-UP (cog-rebuild Phase 3): an account plus a PENDING org request,
+                             never an org. A 404 unless the cog .env's ASTRYX_COG_SIGNUP is on (default off: the GATE)
+  /auth/cog/requests[/<id>/approve|reject]   the cog admin decides those requests (the block "PUBLIC SIGN-UP" below)
   ANY  /api/<path>           the root API, for the org the VIEWER chose: the `x-astryx-org` header, else the
                              `astryx_org` cookie (the app sets it when the owner picks a room; the front never
-                             does). None named, or one not in this cog: 409, pointing at /api/cog. There is no
-                             default org: a cog has no primary (ruling 3(b))
+                             does). None named: the DEFAULT org (cog front parity, owner 11-13): the cog's only org,
+                             else the registry's `door`; with neither, 409 pointing at /api/cog (ruling 3(b): a
+                             cog of several has no primary unless its registry names a door). One named that is not
+                             in this cog: 409
+  ANY  /canvas[/<path>]      308 to /o/<default>/canvas/<path>: canvas's session lives at that path (its cookie's
+                             Path), so a bare-path relay would set a cookie the browser never sends back
+  ANY  /ear/<path>, /brain/<path>   relayed to the default org, as every root path today's one-org :8090 served
+  WS   /o/<org>/<path>, /api/<path>  a websocket pipe to that org's backend (hands' noVNC), the same default rule
   /                          the web app (observatory/web/dist), as the one-org observatory serves it
 
 The front adds ONE fact: who the viewer is (plan-11859 U1+U2). It is the authority for that, so it signs it, per
@@ -27,8 +38,7 @@ Its one cookie is the session's (httpOnly, SameSite=Strict, Secure on an https o
 read it (relay.py, both directions). It has no PUBLIC_PATHS of its own to widen (every /o/ request is judged by the
 backend's).
 
-STATED LIMITS: the one websocket piped through is hands' noVNC (/api/hands/<desk>/vnc, by /o/<org>/ or the chosen org);
-the backend still judges its key. No other websocket is relayed (owner 11-19: Join on desk-1 read "connection closed").
+STATED LIMITS: a websocket carries no signed identity (the backend's VNC gate is the owner key in its query, as before).
 Run: uvicorn front:app --host 0.0.0.0 --port 8090   (from observatory/), registry: ASTRYX_COG_REGISTRY or the default.
 """
 from __future__ import annotations
@@ -37,16 +47,16 @@ import asyncio
 import concurrent.futures
 import http.cookiejar
 import json
+import re
+import secrets
 import sys
 import time
 from collections import defaultdict, deque
 from http import HTTPMethod
 from pathlib import Path
-from urllib.parse import quote
 
 import httpx
-import websockets
-from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -54,7 +64,7 @@ ROOT = Path(__file__).resolve().parent                 # observatory/
 REPO = ROOT.parent
 DIST = ROOT / "web" / "dist"
 sys.path.insert(0, str(REPO / "src"))
-from astryx import cogauth, config, orgs  # noqa: E402
+from astryx import cog_provision, cogauth, config, mail, orgs  # noqa: E402
 from astryx.security import identity, relay  # noqa: E402   the ONE relay header policy (plan-11859 D3)
 
 BACKEND = "astryx-observatory-org"     # the per-org backend's stem (data/org_units.json): its port is the registry's
@@ -122,6 +132,13 @@ class _Auth:
         self.key = identity.load_signer(c["home"])
         # the ORIGINS the cog is signed in on, CONFIGURED (a4 X1): never read from a forwarded header
         self.origins = {o.strip().rstrip("/") for o in env.get("ASTRYX_COG_ORIGINS", "").split(",") if o.strip()}
+        # PUBLIC SIGN-UP (cog-rebuild Phase 3) is OFF unless the cog .env turns it on; read once, so a change is a front
+        # restart (the owner's act). Its caps are the cog's too: sign-ups per client per hour, requests per 24 h.
+        self.signup = env.get("ASTRYX_COG_SIGNUP", "").strip().lower() in ("1", "true", "yes", "on")
+        self.signup_per_client = _count(env.get("ASTRYX_COG_SIGNUP_PER_IP"), SIGNUP_PER_CLIENT)
+        self.signup_daily = _count(env.get("ASTRYX_COG_SIGNUP_DAILY"), SIGNUP_DAILY)
+        # the cog's MAILBOX (src/astryx/mail.py): with one, a NEW account first proves its email by a mailed code
+        self.mail = {k: v for k, v in env.items() if k.startswith("MAIL_")} if mail.configured(env) else None
         try:     # the cog store's DSN, through the ONE resolver (file only; it refuses an org's database)
             self.dsn = config.dsn(c["home"] / ".env", env_first=False)
         except (LookupError, config.ForeignDSN) as e:
@@ -146,6 +163,18 @@ class _Auth:
                     self.conn = None
                     if attempt:
                         raise
+
+
+SIGNUP_PER_CLIENT, SIGNUP_DAILY, SIGNUP_WINDOW = 3, 20, 3600.0
+
+
+def _count(v, default: int) -> int:
+    """A cap from the cog .env: a non-negative integer, else the default (a typo never lifts a cap)."""
+    try:
+        n = int(str(v).strip())
+    except (TypeError, ValueError):
+        return default
+    return n if 0 <= n <= 100000 else default
 
 
 _auth_state: list = []
@@ -186,8 +215,74 @@ def _nope(status: int = 401, body: bytes = FAILED) -> Response:
     return Response(body, status_code=status, media_type="application/json", headers={"cache-control": "no-store"})
 
 
+CODE_SENT = {"code": "sent", "minutes": cogauth.CODE_MINUTES}
+# codes MAILED, capped per client and per invite link in an hour's window (medic 12207: one live invite and a new email
+# each time was an unmetered mail cannon; the 60 s resend is per address). A refused send is a 429 and mails nothing
+CODE_SENDS = {"c:": 5, "l:": 3}
+_sends: dict[str, deque] = defaultdict(deque)
+
+
+def _send_capped(keys: tuple[str, ...]) -> bool:
+    now = time.monotonic()
+    for k in list(_sends):                       # every key, so a client or link seen once doesn't stay forever
+        q = _sends[k]
+        while q and now - q[0] > SIGNUP_WINDOW:
+            q.popleft()
+        if not q:
+            del _sends[k]
+    return any(len(_sends.get(k, ())) >= CODE_SENDS[k[:2]] for k in keys)
+
+
+async def _prove_email(a: _Auth, email: str, code, ck: str, link: str = "") -> Response | None:
+    """A NEW account's email, proven (owner 11-15: "so people don't sign themselves up with wrong emails"). None: go on
+    (the cog has no mailbox, or the code is right). Else the reply: 202 when a code was just mailed (or one mailed
+    under a minute ago still stands), 400 {field: code} for a wrong or spent one (it counts as a failed sign-in), 429
+    past the mail caps (CODE_SENDS: per client, and per invite `link`), 503 when the mail didn't go."""
+    if a.mail is None:
+        return None
+    if isinstance(code, str) and code.strip():
+        if await a.db(cogauth.code_check, email, code):
+            return None
+        now = time.monotonic()
+        _fails[ck].append(now)
+        _fails["a:" + email].append(now)
+        return _json({"error": "that code is wrong or has expired", "field": "code"}, 400)
+    keys = (ck, "l:" + link) if link else (ck,)
+    if _send_capped(keys):
+        return _nope(429, b'{"error":"too many codes sent from here; try again later"}')
+    fresh = await a.db(cogauth.code_issue, email)
+    if fresh:
+        for k in keys:
+            _sends[k].append(time.monotonic())
+        try:
+            await asyncio.to_thread(lambda: mail.send(
+                a.mail, email, f"{fresh} is your astryx code",
+                f"Your astryx code is {fresh}. It expires in {cogauth.CODE_MINUTES} minutes.\n\n"
+                "If you didn't ask for it, ignore this mail: nothing happens without the code.\n", one=True))
+        except Exception as e:  # noqa: BLE001 — the reason goes to the journal, never to the caller
+            await a.db(cogauth.code_drop, email)
+            print(f"front: an email code could not be sent: {type(e).__name__}: {e}", file=sys.stderr)
+            return _nope(503, b'{"error":"the code could not be sent; try again in a moment"}')
+    return _json(CODE_SENT, 202)
+
+
 async def viewer(request: Request, a: _Auth | None) -> str | None:
-    """The signed-in account behind this request, as identity's sub (uid@cog id), or None. The browser must say the
+    """viewer_id's sub alone (uid@cog id), or None."""
+    v = await viewer_id(request, a)
+    return v[0] if v else None
+
+
+def _mint(a: "_Auth", v: tuple[str, str, str], org: str) -> str:
+    """The signed identity for `org`: the account's sub, its own label (cog-who: the email's local part, so the org
+    can say WHICH human asked) and its proven email, which the org links as that person's email channel (owner 11-18:
+    "users are signing in to org with their emails - so it should be linked")."""
+    return identity.mint(a.key, v[0], org, name=v[1], email=v[2] if a.mail else None)   # a cog with no mailbox
+    # proves no address (sign-up took what was typed), so it vouches for none: its people link email by a code (13734)
+
+
+async def viewer_id(request: Request, a: _Auth | None) -> tuple[str, str, str] | None:
+    """(sub, label, email) of the signed-in account behind this request, or None. sub is identity's (uid@cog id), the
+    label its email's local part. The browser must say the
     request started on this origin (Sec-Fetch-Site), and a state-changing method must also come FROM a configured
     origin (D7's Origin check, on top of SameSite=Strict)."""
     tok = request.cookies.get(SESSION)
@@ -205,7 +300,7 @@ async def viewer(request: Request, a: _Auth | None) -> str | None:
         s = await a.db(cogauth.session_of, tok)
     except Exception:  # noqa: BLE001 — a store that can't answer signs nobody in (fail closed), the key still works
         return None
-    return cogauth.sub(s[0], a.cog_id) if s else None
+    return (cogauth.sub(s[0], a.cog_id), str(s[1]).partition("@")[0], str(s[1])) if s else None
 
 
 @app.post("/auth/login")
@@ -247,9 +342,14 @@ async def login(request: Request):
             _fails[k].remove(now)
         except (KeyError, ValueError):
             pass
-    r = Response(b'{"ok":true}', media_type="application/json", headers={"cache-control": "no-store"})
-    r.set_cookie(SESSION, got[1], max_age=cogauth.SESSION_DAYS * 86400, path="/", httponly=True,
-                 samesite="strict", secure=o.startswith("https://"))
+    return _signed_in(got[1], o)
+
+
+def _signed_in(token: str, origin: str, body: bytes = b'{"ok":true}') -> Response:
+    """The reply that carries a new session: its one cookie (httpOnly, SameSite=Strict, Secure on an https origin)."""
+    r = Response(body, media_type="application/json", headers={"cache-control": "no-store"})
+    r.set_cookie(SESSION, token, max_age=cogauth.SESSION_DAYS * 86400, path="/", httponly=True,
+                 samesite="strict", secure=origin.startswith("https://"))
     return r
 
 
@@ -288,23 +388,752 @@ async def me(request: Request):
     who = cogauth.sub(s[0], a.cog_id)
 
     async def role(r: dict):
-        if r["port"] is None:
-            return None
-        try:
-            resp = await client().get(f"http://127.0.0.1:{r['port']}/api/auth/role", timeout=3,
-                                      headers={identity.HEADER: identity.mint(a.key, who, r["org"])})
-            got = resp.json().get("role") if resp.status_code == 200 else None
-        except (httpx.HTTPError, ValueError, AttributeError):
-            return None
-        return {"org": r["org"], "name": r["name"], "role": got} if got in cogauth.ROLES else None
+        got = await _role_in(a, who, r)
+        return {"org": r["org"], "name": r["name"], "role": got} if got else None
     mine = [x for x in await asyncio.gather(*(role(r) for r in rooms())) if x]
-    return JSONResponse({"user": s[1], "orgs": mine}, headers={"cache-control": "no-store"})
+    # the account's own org requests (sign-up: "your org is waiting for approval") and whether it is a cog admin. A
+    # store without Phase 3's tables (cog_schema.sql not re-applied yet) answers none and no: never a 503 for sign-in
+    try:
+        reqs = await a.db(_requests_of, s[0])
+        admin = await a.db(cogauth.is_cog_admin, s[0])
+    except Exception:  # noqa: BLE001
+        reqs, admin = [], False
+    return JSONResponse({"user": s[1], "orgs": mine, "requests": reqs, "cog_admin": admin},
+                        headers={"cache-control": "no-store"})
+
+
+async def _role_in(a: "_Auth", who: str, r: dict) -> str | None:
+    """The role `who` holds in org r, as THAT org's backend answers (its members table, asked with a token for it)."""
+    if r["port"] is None:
+        return None
+    try:
+        resp = await client().get(f"http://127.0.0.1:{r['port']}/api/auth/role", timeout=3,
+                                  headers={identity.HEADER: identity.mint(a.key, who, r["org"])})
+        got = resp.json().get("role") if resp.status_code == 200 else None
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+    return got if got in cogauth.ROLES else None
+
+
+
+# ---------------------------------------------------------------- the admin panel's ACCOUNT half (cog-rebuild, owner 11-13)
+# "an option to create new user … whoever is the owner of org can decide the roles of other users … managed by an
+# admin". Accounts are the cog's (this store); roles are each org's (its backend, observatory/api/admin.py). There is
+# no mail sent for these, so a new user and a forgotten password are both a ONE-TIME LINK the owner or an admin copies
+# to the person: a random token, only its sha256 stored (cog_schema.sql `links`), one use, an expiry.
+#
+#   GET  /auth/admin/users?org=          the accounts with a role in org: uid, email, created, last sign-in, live
+#                                        sessions, their rows [{node, role}]; and the org's open invites
+#   POST /auth/admin/invite              {org, role, node?} → {link, expires}: shown once
+#   POST /auth/admin/invite/cancel       {org, id}
+#   POST /auth/admin/reset               {org, uid} → {link, expires}: a reset LINK, never a password
+#   POST /auth/admin/revoke-sessions     {org, uid} → {revoked}: sign out everywhere
+#   GET  /auth/link?t=                   what a link is (kind, org, role, node; a reset's email) | 410
+#   POST /auth/accept                    {token, email?, password, code?}: an invite creates the account when the email
+#                                        is new (an existing one proves its password; a new one, on a cog with a
+#                                        mailbox, first gets 202 {code: sent} and proves the mailed code), then the
+#                                        role is granted; a reset
+#                                        sets the password and revokes every session. Either way, signed in after
+#
+# WHO MAY: the owner or an admin OF THAT ORG, as its backend answers (/api/auth/role, as /auth/me asks), through a
+# session viewer() accepts (this origin; a state change from a configured Origin). An admin never makes an owner.
+# THE GRANT AT ACCEPT is made AS THE INVITER: the front mints the inviter's identity for that org and PUTs the row to
+# the org's /api/admin/members, so the backend judges it with the guards it applies to everyone, and an inviter who
+# has since lost the role can no longer bring anyone in. Sessions are cog-wide, so a reset or a sign-out-everywhere
+# is refused unless the caller manages EVERY org where the target holds a role (an owner target: owners only).
+INVITE_HOURS, RESET_HOURS = 72, 24
+_NODE = re.compile(r"^[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*)*$")   # schema.sql members_node_check
+MANAGERS = ("owner", "admin")
+GONE = b'{"error":"this link is no longer valid"}'
+
+
+def _json(obj, status: int = 200) -> JSONResponse:
+    return JSONResponse(obj, status_code=status, headers={"cache-control": "no-store"})
+
+
+def _account_n(a: _Auth, who) -> int | None:
+    """The account id in a uid of THIS cog (<n>@<cog id>), else None."""
+    if not isinstance(who, str):
+        return None
+    n, _, cid = who.partition("@")
+    return int(n) if n.isdigit() and len(n) <= 18 and cid == a.cog_id else None
+
+
+async def _manager(request: Request, org) -> tuple | Response:
+    """(auth, the caller's uid, its role in org, org's room), or the refusal."""
+    a = auth()
+    if a is None:
+        return _nope(404, b'{"error":"this cog has no sign-in"}')
+    r = _cog().get(org) if isinstance(org, str) else None
+    if r is None:
+        return _nope(404, b'{"error":"no such org in this cog"}')
+    who = await viewer(request, a)
+    if who is None:
+        return _nope(401, b'{"error":"signed out"}')
+    role = await _role_in(a, who, r)
+    if role not in MANAGERS:
+        return _nope(403, b'{"error":"owners and admins only"}')
+    return a, who, role, r
+
+
+async def _backend(a: _Auth, who: str, r: dict, method: str, path: str, body=None) -> tuple[int, dict]:
+    """A call to org r's backend AS `who` (a token minted for that org): (status, its JSON or {})."""
+    if r["port"] is None:
+        return 502, {}
+    try:
+        resp = await client().request(method, f"http://127.0.0.1:{r['port']}{path}", json=body, timeout=10,
+                                      headers={identity.HEADER: identity.mint(a.key, who, r["org"])})
+    except httpx.HTTPError:
+        return 502, {}
+    try:
+        j = resp.json()
+    except ValueError:
+        j = {}
+    return resp.status_code, j if isinstance(j, dict) else {}
+
+
+async def _body(request: Request) -> dict | None:
+    try:
+        j = await request.json()
+    except Exception:  # noqa: BLE001 — any malformed body is the same refusal
+        return None
+    return j if isinstance(j, dict) else None
+
+
+async def _accounts(conn, ids: list[int]):
+    cur = await conn.execute(
+        "SELECT u.id, u.email, u.created, max(s.created), "
+        "count(s.digest) FILTER (WHERE s.revoked IS NULL AND s.expires > now()) "
+        "FROM users u LEFT JOIN sessions s ON s.uid = u.id WHERE u.id = ANY(%s) GROUP BY u.id", (ids,))
+    return await cur.fetchall()
+
+
+async def _open_invites(conn, org: str):
+    cur = await conn.execute(
+        "SELECT l.id, l.role, l.node, l.created, l.expires, u.email FROM links l LEFT JOIN users u ON u.id = l.by_uid "
+        "WHERE l.kind = 'invite' AND l.org = %s AND l.used IS NULL AND l.expires > now() ORDER BY l.created", (org,))
+    return await cur.fetchall()
+
+
+def _iso(t):
+    return t.isoformat() if t else None
+
+
+@app.get("/auth/admin/users")
+async def admin_users(request: Request, org: str = ""):
+    got = await _manager(request, org)
+    if isinstance(got, Response):
+        return got
+    a, who, you, r = got
+    st, j = await _backend(a, who, r, "GET", "/api/admin/members")
+    if st != 200 or not isinstance(j.get("members"), list):
+        return _nope(502, b'{"error":"the org could not list its members"}')
+    rows: dict[str, list] = {}
+    for m in j["members"]:
+        rows.setdefault(m.get("uid"), []).append({"node": m.get("node") or "", "role": m.get("role")})
+    ids = [n for n in (_account_n(a, u) for u in rows) if n is not None]
+    try:
+        acc = {x[0]: x for x in await a.db(_accounts, ids)}
+        inv = await a.db(_open_invites, r["org"])
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    users = []
+    for uid, held in rows.items():
+        x = acc.get(_account_n(a, uid))
+        root = next((h["role"] for h in held if h["node"] == ""), None)
+        users.append({"uid": uid, "email": x[1] if x else None, "created": _iso(x[2]) if x else None,
+                      "last_session": _iso(x[3]) if x else None, "live_sessions": x[4] if x else 0,
+                      "role": root, "roles": sorted(held, key=lambda h: h["node"]), "you": uid == who})
+    users.sort(key=lambda u: (-{"owner": 3, "admin": 2, "member": 1, "viewer": 0}.get(u["role"] or "", -1),
+                              u["email"] or "~"))
+    return _json({"org": r["org"], "name": r["name"], "you": you, "uid": who, "roles": j.get("roles") or [],
+                  "tree": bool(j.get("tree")), "users": users,
+                  "invites": [{"id": i[0], "role": i[1], "node": i[2], "created": _iso(i[3]), "expires": _iso(i[4]),
+                               "by": i[5]} for i in inv]})
+
+
+@app.get("/auth/people")
+async def people(request: Request, org: str = ""):
+    """Who a project can be shared with (owner 11-17), for ANY member of org: the org's members table (its
+    /api/chat/people, asked as the caller), each named as the org already knows them (_mint: the email's local part,
+    never the whole email). One list: the members table."""
+    a = auth()
+    if a is None:
+        return _nope(404, b'{"error":"this cog has no sign-in"}')
+    r = _cog().get(org) if isinstance(org, str) else None
+    if r is None:
+        return _nope(404, b'{"error":"no such org in this cog"}')
+    who = await viewer(request, a)
+    if who is None:
+        return _nope(401, b'{"error":"signed out"}')
+    if await _role_in(a, who, r) is None:
+        return _nope(403, b'{"error":"not a member of this org"}')
+    st, j = await _backend(a, who, r, "GET", "/api/chat/people")
+    uids = j.get("people") if st == 200 else None
+    if not isinstance(uids, list):
+        return _nope(502, b'{"error":"the org could not list its members"}')
+    try:
+        acc = {x[0]: x[1] for x in await a.db(_accounts, [n for n in (_account_n(a, u) for u in uids) if n is not None])}
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    return _json({"people": [{"uid": u, "name": str(acc[_account_n(a, u)]).partition("@")[0]}
+                             for u in uids if _account_n(a, u) in acc]})
+
+
+async def _new_link(conn, dig: bytes, kind: str, org: str, role, node: str, uid, by: int, hours: int):
+    cur = await conn.execute(
+        "INSERT INTO links (digest, kind, org, role, node, uid, by_uid, expires) VALUES (%s, %s, %s, %s, %s, %s, %s, "
+        "now() + make_interval(hours => %s)) RETURNING expires", (dig, kind, org, role, node, uid, by, hours))
+    return (await cur.fetchone())[0]
+
+
+def _link_url(request: Request, a: _Auth, token: str) -> str:
+    return f"{_origin(request, a)}/#/accept?t={token}"     # a POST here passed viewer(): its Origin is configured
+
+
+@app.post("/auth/admin/invite")
+async def admin_invite(request: Request):
+    j = await _body(request) or {}
+    got = await _manager(request, j.get("org"))
+    if isinstance(got, Response):
+        return got
+    a, who, you, r = got
+    role, node = j.get("role"), j.get("node") or ""
+    st, mj = await _backend(a, who, r, "GET", "/api/admin/members")
+    if st != 200:
+        return _nope(502, b'{"error":"the org could not be asked"}')
+    if role not in (mj.get("roles") or []):
+        return _json({"error": f"role is one of {', '.join(mj.get('roles') or [])}"}, 400)
+    if you != "owner" and role == "owner":
+        return _nope(403, b'{"error":"only an owner can invite an owner"}')
+    if not isinstance(node, str) or (node and not (mj.get("tree") and _NODE.fullmatch(node))):
+        return _nope(400, b'{"error":"node is a path in the agents/ tree"}')
+    token = secrets.token_urlsafe(32)
+    try:
+        exp = await a.db(_new_link, cogauth.digest(token), "invite", r["org"], role, node, None, _account_n(a, who),
+                         INVITE_HOURS)
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    return _json({"link": _link_url(request, a, token), "expires": _iso(exp), "role": role, "node": node})
+
+
+async def _cancel_invite(conn, org: str, iid: int, owner_too: bool) -> int:
+    cur = await conn.execute("UPDATE links SET used = now() WHERE id = %s AND org = %s AND kind = 'invite' AND "
+                             "used IS NULL AND (%s OR role <> 'owner')", (iid, org, owner_too))
+    return cur.rowcount
+
+
+@app.post("/auth/admin/invite/cancel")
+async def admin_invite_cancel(request: Request):
+    j = await _body(request) or {}
+    got = await _manager(request, j.get("org"))
+    if isinstance(got, Response):
+        return got
+    a, _, you, r = got
+    if not isinstance(j.get("id"), int):
+        return _nope(400, b'{"error":"send {org, id}"}')
+    n = await a.db(_cancel_invite, r["org"], j["id"], you == "owner")
+    return _json({"ok": n > 0})
+
+
+async def _may_manage(a: _Auth, who: str, you: str, r: dict, target: str) -> Response | None:
+    """None when the caller may act on the target's ACCOUNT (cog-wide), else the refusal."""
+    if _account_n(a, target) is None:
+        return _nope(400, b'{"error":"uid is an account of this cog"}')
+    every = rooms()
+    theirs = await asyncio.gather(*(_role_in(a, target, x) for x in every))
+    if theirs[[x["org"] for x in every].index(r["org"])] is None:
+        return _nope(404, b'{"error":"no such member of this org"}')
+    if target == who:
+        return None
+    mine = await asyncio.gather(*(_role_in(a, who, x) if x["org"] != r["org"] else _same(you) for x in every))
+    for t, m in zip(theirs, mine):
+        if t is None:
+            continue
+        if m not in MANAGERS:
+            return _nope(403, b'{"error":"that account is also in an org you do not manage"}')
+        if t == "owner" and m != "owner":
+            return _nope(403, b'{"error":"only an owner can do that to an owner"}')
+    return None
+
+
+async def _same(v):
+    return v
+
+
+@app.post("/auth/admin/reset")
+async def admin_reset(request: Request):
+    j = await _body(request) or {}
+    got = await _manager(request, j.get("org"))
+    if isinstance(got, Response):
+        return got
+    a, who, you, r = got
+    bad = await _may_manage(a, who, you, r, j.get("uid"))
+    if bad:
+        return bad
+    token = secrets.token_urlsafe(32)
+    try:
+        exp = await a.db(_new_link, cogauth.digest(token), "reset", r["org"], None, "", _account_n(a, j["uid"]),
+                         _account_n(a, who), RESET_HOURS)
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    return _json({"link": _link_url(request, a, token), "expires": _iso(exp)})
+
+
+async def _revoke_all(conn, uid: int) -> int:
+    cur = await conn.execute("UPDATE sessions SET revoked = now() WHERE uid = %s AND revoked IS NULL", (uid,))
+    return cur.rowcount
+
+
+@app.post("/auth/admin/revoke-sessions")
+async def admin_revoke_sessions(request: Request):
+    j = await _body(request) or {}
+    got = await _manager(request, j.get("org"))
+    if isinstance(got, Response):
+        return got
+    a, who, you, r = got
+    bad = await _may_manage(a, who, you, r, j.get("uid"))
+    if bad:
+        return bad
+    n = await a.db(_revoke_all, _account_n(a, j["uid"]))
+    return _json({"revoked": n})
+
+
+async def _peek(conn, dig: bytes):
+    cur = await conn.execute(
+        "SELECT l.kind, l.org, l.role, l.node, l.uid, l.by_uid, l.expires, u.email FROM links l "
+        "LEFT JOIN users u ON u.id = l.uid WHERE l.digest = %s AND l.used IS NULL AND l.expires > now()", (dig,))
+    return await cur.fetchone()
+
+
+async def _claim(conn, dig: bytes) -> bool:
+    cur = await conn.execute("UPDATE links SET used = now() WHERE digest = %s AND used IS NULL AND expires > now()",
+                             (dig,))
+    return cur.rowcount == 1
+
+
+async def _unclaim(conn, dig: bytes) -> None:
+    await conn.execute("UPDATE links SET used = NULL WHERE digest = %s", (dig,))
+
+
+async def _create(conn, email: str, phc: str) -> int | None:
+    cur = await conn.execute("INSERT INTO users (email, pw) VALUES (%s, %s) ON CONFLICT (email) DO NOTHING RETURNING id",
+                             (email, phc))
+    row = await cur.fetchone()
+    return row[0] if row else None
+
+
+async def _drop_account(conn, uid: int) -> None:
+    await conn.execute("DELETE FROM users WHERE id = %s", (uid,))
+
+
+async def _set_password(conn, uid: int, phc: str) -> None:
+    await conn.execute("UPDATE users SET pw = %s WHERE id = %s", (phc, uid))
+    await conn.execute("UPDATE sessions SET revoked = now() WHERE uid = %s AND revoked IS NULL", (uid,))
+
+
+@app.get("/auth/link")
+async def link_info(t: str = ""):
+    a = auth()
+    if a is None:
+        return _nope(404, b'{"error":"this cog has no sign-in"}')
+    try:
+        row = await a.db(_peek, cogauth.digest(t)) if t else None
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    r = _cog().get(row[1]) if row else None
+    if row is None or r is None:
+        return _nope(410, GONE)
+    return _json({"kind": row[0], "org": row[1], "name": r["name"], "role": row[2], "node": row[3],
+                  "expires": _iso(row[6]), "email": row[7] if row[0] == "reset" else None})
+
+
+@app.post("/auth/accept")
+async def accept(request: Request):
+    global _inflight
+    a = auth()
+    if a is None:
+        return _nope(404, b'{"error":"this cog has no sign-in"}')
+    o = _origin(request, a)
+    if o is None:
+        return _nope(403, b'{"error":"open the link on this cog\'s own page"}')
+    j = await _body(request) or {}
+    token, pw, email = j.get("token"), j.get("password"), j.get("email")
+    if not (isinstance(token, str) and token and isinstance(pw, str)):
+        return _nope(400, b'{"error":"send {token, password}"}')
+    ck = "c:" + (request.client.host if request.client else "?")
+    if _limited(ck, "l:" + cogauth.digest(token).hex()):
+        return _nope(429, b'{"error":"too many tries"}')
+    dig = cogauth.digest(token)
+    link = await a.db(_peek, dig)
+    room = _cog().get(link[1]) if link else None
+    if link is None or room is None:
+        _fails[ck].append(time.monotonic())
+        return _nope(410, GONE)
+    kind, org, role, node, target, by = link[:6]
+    if len(pw) < 12:
+        return _nope(400, b'{"error":"a password has at least 12 characters"}')
+    if _inflight >= INFLIGHT:
+        return _nope(503, b'{"error":"sign-in is busy, try again in a moment"}')
+    acct = None
+    if kind == "invite":
+        if not cogauth.one_address(email):
+            return _nope(400, b'{"error":"enter your email"}')
+        email = cogauth.norm_email(email)
+        if _limited(ck, "a:" + email):     # login's per-account limit holds here too: a link is no side door
+            return _nope(429, b'{"error":"too many tries"}')
+        acct = await a.db(cogauth._account, email)
+        if not acct and (held := await _prove_email(a, email, j.get("code"), ck, dig.hex())):
+            return held
+    _inflight += 1
+    try:
+        if acct:      # an existing account joins: it proves its own password (a link is no way into someone's account)
+            ok = await _check(cogauth.check_password, pw, acct[1])
+            if not ok:
+                now = time.monotonic()
+                _fails[ck].append(now)
+                _fails["a:" + email].append(now)
+                return _nope()
+        phc = None if acct else await _check(cogauth.hash_password, pw)
+    finally:
+        _inflight -= 1
+    if not await a.db(_claim, dig):         # one use: the claim is the conditional UPDATE, whoever raced us
+        return _nope(410, GONE)
+    if kind == "reset":
+        await a.db(_set_password, target, phc)
+        uid = target
+    else:
+        uid = acct[0] if acct else await a.db(_create, email, phc)
+        if uid is None:                      # the email was taken between the read and the write
+            await a.db(_unclaim, dig)
+            return _nope(409, b'{"error":"that email was just registered: open the link again"}')
+        st, bj = await _backend(a, cogauth.sub(by, a.cog_id), room, "PUT", "/api/admin/members",
+                                {"uid": cogauth.sub(uid, a.cog_id), "role": role, "node": node})
+        if st != 200:                        # the inviter may no longer grant this: nothing is left half-made
+            await a.db(_unclaim, dig)
+            if not acct:
+                await a.db(_drop_account, uid)
+            return _json({"error": "the invite could not be honoured: " + str(bj.get("error") or f"status {st}")},
+                         409 if st in (401, 403, 409) else 502)     # 409: the link's promise no longer holds
+    tok = secrets.token_urlsafe(32)
+    await a.db(cogauth._open_session, uid, cogauth.digest(tok))
+    return _signed_in(tok, o, json.dumps({"ok": True, "org": org, "kind": kind}).encode())
+
+
+# ---------------------------------------------------------------- PUBLIC SIGN-UP (cog-rebuild Phase 3, owner 11-13)
+# "everyone can sign up to a cog, and sign-up creates that user's OWN org". A sign-up makes an ACCOUNT and a PENDING
+# org request (cog_schema.sql org_requests), never an org: no database, role, HOME, registry entry or agent exists
+# until a COG ADMIN (cog_grants, `cogauth cog-admin EMAIL`) approves it with a token budget, because a self-serve
+# org's agents would otherwise run on the host owner's login and spend his treasury (DESIGN.md Phase 3).
+#
+#   GET  /auth/signup                        {open: true, min_password} | 404 while the flag is off
+#   POST /auth/signup                        {email, password, org_name, org_key, code?} → 200 + the session cookie,
+#                                            (a NEW email on a cog with a mailbox: 202 {code: sent} first, then the
+#                                            same body with the mailed code; a wrong one is 400 {field: code})
+#                                            {request: {id, key, name, state: pending}} | 400 | 401 | 403 | 404 | 409
+#                                            (the key is taken, or the account already has a request waiting) | 429
+#   GET  /auth/cog/requests?state=           the cog admin's queue: [{id, key, name, state, email, created, allowance_tokens,
+#                                            decided_by, decided_at, note, provision, provision_note}]
+#   POST /auth/cog/requests/{id}/approve     {allowance_tokens} → approved, then src/astryx/cog_provision.py
+#                                            provision_org(key, owner uid, budget): an orgs row + one
+#                                            login role + its .env; what became of it is in the row
+#   POST /auth/cog/requests/{id}/reject      {note?} → rejected (the key is free again)
+#
+# THE GATE (DESIGN.md, CORRECTIONS 11-13): public sign-up does not open before the per-org sandbox exists. So the flag
+# is the cog .env's ASTRYX_COG_SIGNUP, default OFF; off, both /auth/signup routes are a 404 and /api/cog says
+# signup false, so the app never shows the path. The cog admin's routes stay up either way: requests already filed are
+# still decided after intake closes. Every sign-up is rate-limited per client (an hour's window) and cog-wide (a
+# day's count, read from the table, so a restart forgets nothing), and an existing account must prove its own password
+# (a sign-up is no way into someone's account; the reply is login's one 401).
+NO_SIGNUP = b'{"error":"this cog does not take sign-ups"}'
+_signups: dict[str, deque] = defaultdict(deque)
+
+
+def _signup_limited(a: _Auth, key: str) -> bool:
+    now = time.monotonic()
+    for k in list(_signups):
+        q = _signups[k]
+        while q and now - q[0] > SIGNUP_WINDOW:
+            q.popleft()
+        if not q:
+            del _signups[k]
+    return len(_signups.get(key, ())) >= a.signup_per_client
+
+
+def _org_name(v) -> str | None:
+    if not isinstance(v, str):
+        return None
+    v = " ".join(v.split())
+    return v if 1 <= len(v) <= 80 and v.isprintable() else None
+
+
+@app.get("/auth/signup")
+async def signup_info():
+    a = auth()
+    if a is None or not a.signup or not a.dsn:
+        return _nope(404, NO_SIGNUP)
+    return _json({"open": True, "min_password": 12})
+
+
+async def _signups_today(conn) -> int:
+    cur = await conn.execute("SELECT count(*) FROM org_requests WHERE created > now() - interval '1 day'")
+    return (await cur.fetchone())[0]
+
+
+class _Taken(Exception):
+    pass
+
+
+async def _file_request(conn, uid, email: str, phc, key: str, name: str):
+    """The account (when new) and its pending request, in ONE transaction: both land or neither."""
+    async with conn.transaction():
+        if uid is None:
+            cur = await conn.execute("INSERT INTO users (email, pw) VALUES (%s, %s) ON CONFLICT (email) DO NOTHING "
+                                     "RETURNING id", (email, phc))
+            row = await cur.fetchone()
+            if row is None:
+                raise _Taken("email")
+            uid = row[0]
+        cur = await conn.execute("INSERT INTO org_requests (uid, key, name) VALUES (%s, %s, %s) RETURNING id",
+                                 (uid, key, name))
+        return uid, (await cur.fetchone())[0]
+
+
+@app.post("/auth/signup")
+async def signup(request: Request):
+    global _inflight
+    a = auth()
+    if a is None or not a.signup or not a.dsn:
+        return _nope(404, NO_SIGNUP)
+    o = _origin(request, a)
+    if o is None:
+        return _nope(403, b'{"error":"sign up on this cog\'s own page"}')
+    j = await _body(request) or {}
+    email, pw, key, name = j.get("email"), j.get("password"), j.get("org_key"), _org_name(j.get("org_name"))
+    if not cogauth.one_address(email):
+        return _json({"error": "enter your email", "field": "email"}, 400)
+    if not (isinstance(pw, str) and 12 <= len(pw) <= 1024):
+        return _json({"error": "a password has at least 12 characters", "field": "password"}, 400)
+    if name is None:
+        return _json({"error": "name your org (1 to 80 characters)", "field": "org_name"}, 400)
+    if not (isinstance(key, str) and orgs.NAME.fullmatch(key)):
+        return _json({"error": "the org's key is lowercase letters, digits and dashes", "field": "org_key"}, 400)
+    if key in _cog():
+        return _json({"error": "that org key is taken", "field": "org_key"}, 409)
+    email = cogauth.norm_email(email)
+    ck = "c:" + (request.client.host if request.client else "?")
+    if _signup_limited(a, ck) or _limited(ck, "a:" + email):
+        return _nope(429, b'{"error":"too many tries"}')
+    if _inflight >= INFLIGHT:
+        return _nope(503, b'{"error":"sign-up is busy, try again in a moment"}')
+    try:
+        if await a.db(_signups_today) >= a.signup_daily:
+            return _nope(429, b'{"error":"this cog takes no more sign-ups today"}')
+        acct = await a.db(cogauth._account, email)
+        # every validated attempt counts, so probing keys is capped too; only a NEW email's code step on a cog that
+        # mails codes does not (its guesses count as failed sign-ins). A code sent anywhere else changes nothing
+        if acct or not (a.mail and j.get("code")):
+            _signups[ck].append(time.monotonic())
+        held = None if acct else await _prove_email(a, email, j.get("code"), ck)
+    except Exception:  # noqa: BLE001 — no store (or no Phase 3 tables): no sign-up, and no word on the account
+        return _nope(503, b'{"error":"sign-up is unavailable"}')
+    if held:
+        return held
+    _inflight += 1
+    try:
+        if acct:        # an existing account asks for an org of its own: it proves its own password, as login does
+            if not await _check(cogauth.check_password, pw, acct[1]):
+                now = time.monotonic()
+                _fails[ck].append(now)
+                _fails["a:" + email].append(now)
+                return _nope()
+        phc = None if acct else await _check(cogauth.hash_password, pw)
+    finally:
+        _inflight -= 1
+    import psycopg
+    try:
+        uid, rid = await a.db(_file_request, acct[0] if acct else None, email, phc, key, name)
+    except _Taken:
+        return _nope(409, b'{"error":"that email was just registered: sign in, then try again"}')
+    except psycopg.errors.UniqueViolation as e:
+        if e.diag.constraint_name == "org_requests_one_pending":
+            return _json({"error": "your account already has an org waiting for approval", "field": "email"}, 409)
+        return _json({"error": "that org key is taken", "field": "org_key"}, 409)
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"sign-up is unavailable"}')
+    tok = secrets.token_urlsafe(32)
+    await a.db(cogauth._open_session, uid, cogauth.digest(tok))
+    return _signed_in(tok, o, json.dumps({"ok": True, "request": {"id": rid, "key": key, "name": name,
+                                                                   "state": "pending"}}).encode())
+
+
+async def _requests_of(conn, uid: int) -> list[dict]:
+    cur = await conn.execute("SELECT id, key, name, state, created, decided_at, note FROM org_requests WHERE uid = %s "
+                             "ORDER BY created DESC LIMIT 20", (uid,))
+    return [{"id": r[0], "key": r[1], "name": r[2], "state": r[3], "created": _iso(r[4]), "decided_at": _iso(r[5]),
+             "note": r[6]} for r in await cur.fetchall()]
+
+
+async def _cog_admin(request: Request) -> tuple | Response:
+    """(auth, the caller's uid, its account id), or the refusal: a cog_grants row, never an org role."""
+    a = auth()
+    if a is None:
+        return _nope(404, b'{"error":"this cog has no sign-in"}')
+    who = await viewer(request, a)
+    if who is None:
+        return _nope(401, b'{"error":"signed out"}')
+    n = _account_n(a, who)
+    try:
+        ok = n is not None and await a.db(cogauth.is_cog_admin, n)
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    if not ok:
+        return _nope(403, b'{"error":"cog admins only"}')
+    return a, who, n
+
+
+REQUEST_STATES = ("pending", "approved", "rejected")
+
+
+async def _request_list(conn, state):
+    cur = await conn.execute(
+        "SELECT r.id, r.key, r.name, r.state, u.email, r.created, r.allowance_tokens, d.email, r.decided_at, r.note, "
+        "r.provision, r.provision_note FROM org_requests r JOIN users u ON u.id = r.uid "
+        "LEFT JOIN users d ON d.id = r.decided_by WHERE (%s::text IS NULL OR r.state = %s::text) "
+        "ORDER BY (r.state = 'pending') DESC, r.created DESC LIMIT 200", (state, state))
+    return await cur.fetchall()
+
+
+@app.get("/auth/cog/requests")
+async def cog_requests(request: Request, state: str = ""):
+    got = await _cog_admin(request)
+    if isinstance(got, Response):
+        return got
+    a = got[0]
+    if state and state not in REQUEST_STATES:
+        return _nope(400, b'{"error":"state is pending, approved or rejected"}')
+    try:
+        rows = await a.db(_request_list, state or None)
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    keys = ("id", "key", "name", "state", "email", "created", "allowance_tokens", "decided_by", "decided_at", "note",
+            "provision", "provision_note")
+    return _json({"signup": a.signup, "requests": [
+        {k: (_iso(v) if k in ("created", "decided_at") else v) for k, v in zip(keys, r)} for r in rows]})
+
+
+async def _decide(conn, rid: int, state: str, by: int, budget, note):
+    """The one conditional UPDATE that decides a pending request: (key, uid), or None when it is not pending."""
+    cur = await conn.execute(
+        "UPDATE org_requests SET state = %s, allowance_tokens = %s, note = %s, decided_by = %s, decided_at = now() "
+        "WHERE id = %s AND state = 'pending' RETURNING key, uid", (state, budget, note, by, rid))
+    return await cur.fetchone()
+
+
+async def _request_exists(conn, rid: int) -> bool:
+    cur = await conn.execute("SELECT 1 FROM org_requests WHERE id = %s", (rid,))
+    return await cur.fetchone() is not None
+
+
+async def _provisioned(conn, rid: int, prov: str, note) -> None:
+    await conn.execute("UPDATE org_requests SET provision = %s, provision_note = %s WHERE id = %s", (prov, note, rid))
+
+
+MAX_BUDGET = 10 ** 12
+
+
+@app.post("/auth/cog/requests/{rid}/approve")
+async def cog_approve(rid: int, request: Request):
+    got = await _cog_admin(request)
+    if isinstance(got, Response):
+        return got
+    a, _, by = got
+    j = await _body(request) or {}
+    b = j.get("allowance_tokens")
+    if type(b) is not int or not 0 < b <= MAX_BUDGET:
+        return _nope(400, b'{"error":"allowance_tokens is a positive whole number of tokens"}')
+    try:
+        row = await a.db(_peek_request, rid)
+        if row is not None and row[0] in _cog():       # an org of that name exists now: approving would collide
+            return _nope(409, b'{"error":"an org with that key already exists in this cog"}')
+        got = await a.db(_decide, rid, "approved", by, b, None)
+        if got is None:
+            return _nope(409 if await a.db(_request_exists, rid) else 404,
+                         b'{"error":"that request is no longer pending"}')
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    key, owner = got[0], cogauth.sub(got[1], a.cog_id)
+    # THE ONE SEAM (src/astryx/cog_provision.py): off the event loop. Its outcome is written to the row, so a deferral
+    # (no provisioner yet: feat/cog-rls2) or a failure is a queue a provisioner works from, never lost
+    call = f"provision_org({key}, {owner}, {b})"
+    try:
+        await asyncio.to_thread(cog_provision.provision_org, key, owner, b)
+        prov, note = "done", call
+    except cog_provision.ProvisionUnavailable as e:
+        prov, note = "deferred", f"{call}: {e}"
+    except Exception as e:  # noqa: BLE001 — named by type only: a provisioner's message may carry a DSN
+        prov, note = "failed", f"{call}: {type(e).__name__}"
+    try:
+        await a.db(_provisioned, rid, prov, note)
+    except Exception:  # noqa: BLE001
+        pass
+    return _json({"ok": True, "id": rid, "key": key, "state": "approved", "allowance_tokens": b, "provision": prov,
+                  "provision_note": note})
+
+
+async def _peek_request(conn, rid: int):
+    cur = await conn.execute("SELECT key, state FROM org_requests WHERE id = %s", (rid,))
+    return await cur.fetchone()
+
+
+@app.post("/auth/cog/requests/{rid}/reject")
+async def cog_reject(rid: int, request: Request):
+    got = await _cog_admin(request)
+    if isinstance(got, Response):
+        return got
+    a, _, by = got
+    j = await _body(request) or {}
+    note = j.get("note")
+    if note is not None and not (isinstance(note, str) and len(note) <= 500):
+        return _nope(400, b'{"error":"a note is at most 500 characters"}')
+    try:
+        got = await a.db(_decide, rid, "rejected", by, None, (note or "").strip() or None)
+        if got is None:
+            return _nope(409 if await a.db(_request_exists, rid) else 404,
+                         b'{"error":"that request is no longer pending"}')
+    except Exception:  # noqa: BLE001
+        return _nope(503, b'{"error":"the account store is unavailable"}')
+    return _json({"ok": True, "id": rid, "key": got[0], "state": "rejected"})
+
 
 
 @app.get("/api/cog")
 async def cog():
-    return {"cog": True, "home": None,
+    # `door`: the org a viewer with no choice lands in (default()), so the app can preselect it (sign-in's dropdown).
+    # `signup`: whether this cog takes public sign-ups (the app shows "Create your org" only then)
+    a = auth()
+    return {"cog": True, "home": None, "door": default(), "signup": bool(a and a.signup and a.dsn),
             "orgs": [{k: r[k] for k in ("org", "name", "base")} for r in rooms()]}
+
+
+def default() -> str | None:
+    """The org a request that names none goes to (cog front parity, owner 11-13): the cog's ONLY org, else the
+    registry's `door` (the primary's: the bare root was its own before the cog, orgs.load), else None (409). A
+    property of the registry, never of the request: nothing a caller sends picks it."""
+    c = _cog()
+    if len(c) == 1:
+        return next(iter(c))
+    d = orgs.door()
+    return d if d in c else None
+
+
+def _pick(request) -> tuple[str | None, bool]:
+    """(the org this root request is for, whether the viewer named it): the header, else the cookie, else default()."""
+    named = request.headers.get("x-astryx-org") or request.cookies.get("astryx_org") or ""
+    return (named, True) if named else (default(), False)
+
+
+NO_ORG = {"error": "this cog runs several orgs: choose one", "cog": "/api/cog"}
 
 
 @app.get("/api/cog/stream")
@@ -321,8 +1150,8 @@ async def cog_stream(request: Request):
             try:
                 if r["port"] is None:
                     raise httpx.ConnectError("no registry port")
-                who = await viewer(request, a)    # asked again at EVERY connect: a signed-out session stops here
-                signed = {identity.HEADER: identity.mint(a.key, who, r["org"])} if who else {}
+                who = await viewer_id(request, a)    # asked again at EVERY connect: a signed-out session stops here
+                signed = {identity.HEADER: _mint(a, who, r["org"])} if who else {}
                 async with client().stream("GET", f"http://127.0.0.1:{r['port']}/api/events", params=params,
                                            headers=signed) as s:
                     if s.status_code != 200:
@@ -375,10 +1204,114 @@ async def pipe(org: str, path: str, request: Request):
 
 @app.api_route("/api/{path:path}", methods=METHODS)
 async def chosen(path: str, request: Request):
-    org = request.headers.get("x-astryx-org") or request.cookies.get("astryx_org") or ""
+    org, _ = _pick(request)
     if org not in _cog():
-        return JSONResponse({"error": "this cog runs several orgs: choose one", "cog": "/api/cog"}, status_code=409)
+        return JSONResponse(NO_ORG, status_code=409)
     return await _relay(org, f"api/{path}", request)
+
+
+# THE BARE ROOT PATHS today's one-org :8090 serves beside /api (main.py's /canvas, /ear, /brain; the SPA is ours), for
+# the default org (cog front parity, owner 11-13: links, bookmarks, the growbot's brain URL keep working). Canvas is a
+# redirect, not a relay: its session cookie is Path=/o/<org>/canvas (canvas.py PUBLIC), so a page served at /canvas/
+# would set a cookie its own next request never carries (a login loop). The location is computed from the registry
+# and the request's own path, never from a header.
+@app.api_route("/canvas", methods=METHODS)
+@app.api_route("/canvas/{path:path}", methods=METHODS)
+async def bare_canvas(request: Request, path: str = ""):
+    org = default()
+    if org is None:
+        return JSONResponse(NO_ORG, status_code=409)
+    q = request.url.query
+    return Response(status_code=308, headers={"location": f"/o/{org}/canvas/{path}" + (f"?{q}" if q else "")})
+
+
+@app.api_route("/ear/{path:path}", methods=METHODS)
+@app.api_route("/brain/{path:path}", methods=METHODS)
+async def bare(path: str, request: Request):
+    org = default()
+    if org is None:
+        return JSONResponse(NO_ORG, status_code=409)
+    return await _relay(org, request.url.path.lstrip("/"), request)
+
+
+# WEBSOCKETS (hands' noVNC, ui/hands.tsx dials the ROOT /api/hands/<agent>/vnc): a byte pipe to the org's backend,
+# with the same routing as HTTP (/o/<org>/…, or the root's choice/default). Upstream is dialled FIRST, so the viewer
+# is accepted only with the subprotocol the backend chose, and a backend's refusal (its key check) is a refusal here.
+# The connect carries only the relay allowlist's headers (src/astryx/security/relay.py) and the query (the key rides
+# there: a browser websocket can't send headers); no identity is minted (STATED LIMITS).
+from fastapi import WebSocket  # noqa: E402
+
+
+@app.websocket("/o/{org}/{path:path}")
+async def pipe_ws(ws: WebSocket, org: str, path: str):
+    await _relay_ws(org, path, ws)
+
+
+@app.websocket("/api/{path:path}")
+async def chosen_ws(ws: WebSocket, path: str):
+    org, _ = _pick(ws)
+    await _relay_ws(org or "", f"api/{path}", ws)
+
+
+async def _relay_ws(org: str, path: str, ws: WebSocket):
+    import websockets
+    r = _cog().get(org)
+    if r is None or r["port"] is None:
+        await ws.close(code=4404)
+        return
+    q = ws.url.query
+    headers = [(k, v) for k, v in relay.headers(
+        ws.headers.items(), host=ws.headers.get("host", ""), proto="https" if ws.url.scheme == "wss" else "http",
+        cookies={relay.canvas_cookie(org)},
+        extra=[(CLIENT, ws.client.host if ws.client else ""), ("x-forwarded-prefix", f"/o/{org}")])
+        if k.lower() not in ("origin", "content-length")]     # websockets sends its own Origin-less handshake
+    protos = [p.strip() for p in ws.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
+    try:
+        up = await websockets.connect(f"ws://127.0.0.1:{r['port']}/{path}" + (f"?{q}" if q else ""),
+                                      additional_headers=headers, subprotocols=protos or None,
+                                      max_size=None, open_timeout=10)
+    except websockets.InvalidStatus as e:          # the backend refused the handshake (a 403 is its key check)
+        await ws.close(code=4403 if e.response.status_code == 403 else 4502)
+        return
+    except (OSError, websockets.WebSocketException, asyncio.TimeoutError):
+        await ws.close(code=4502)
+        return
+    await ws.accept(subprotocol=up.subprotocol)
+
+    async def to_up():
+        try:
+            while True:
+                m = await ws.receive()
+                if m["type"] == "websocket.disconnect":
+                    return
+                if m.get("bytes") is not None:
+                    await up.send(m["bytes"])
+                elif m.get("text") is not None:
+                    await up.send(m["text"])
+        except (websockets.ConnectionClosed, RuntimeError):
+            return
+
+    async def to_viewer():
+        try:
+            async for m in up:
+                if isinstance(m, bytes):
+                    await ws.send_bytes(m)
+                else:
+                    await ws.send_text(m)
+        except (websockets.ConnectionClosed, RuntimeError):
+            return
+
+    tasks = [asyncio.create_task(to_up()), asyncio.create_task(to_viewer())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for t in tasks:
+            t.cancel()
+        await up.close()
+        try:
+            await ws.close()
+        except RuntimeError:
+            pass
 
 
 async def _relay(org: str, path: str, request: Request):
@@ -386,10 +1319,10 @@ async def _relay(org: str, path: str, request: Request):
     if r is None or r["port"] is None:
         return JSONResponse({"error": f"no org {org!r} in this cog"}, status_code=404)
     a = auth()
-    who = await viewer(request, a)
+    who = await viewer_id(request, a)
     # the signed identity for THIS org (D1), minted from the session the front verified; a caller's own copy was
     # never on the allowlist. No session: no identity, and the backend answers as it does to anyone (D2)
-    signed = [(identity.HEADER, identity.mint(a.key, who, org))] if who else []
+    signed = [(identity.HEADER, _mint(a, who, org))] if who else []
     # ONE allowlist (src/astryx/security/relay.py): the caller's allowed headers, only this org's own canvas cookie,
     # and the view the front OBSERVED: the Host it was reached at, the scheme its uvicorn resolved from its pinned
     # trusted peer, the client it saw. Never the caller's x-forwarded-* or X-Forwarded-For (plan-11859 X1/X2).
@@ -408,60 +1341,6 @@ async def _relay(org: str, path: str, request: Request):
     out = StreamingResponse(resp.aiter_raw(), status_code=resp.status_code, background=done)
     out.raw_headers = relay.response_headers(resp.headers.raw, org)    # its own canvas cookie, or no Set-Cookie (N1)
     return out
-
-
-async def _vnc(ws: WebSocket, org: str, agent: str):
-    """A byte pipe to org's own /api/hands/<agent>/vnc. The backend checks the key (it rides in the query, as a
-    browser websocket can't send headers) and closes with its own code; the front adds nothing and widens nothing."""
-    room = _cog().get(org)                              # an org the cog doesn't hold closes before accept (a 403)
-    if room is None or room["port"] is None:
-        await ws.close(code=4404)
-        return
-    want = ["binary"] if "binary" in ws.headers.get("sec-websocket-protocol", "") else None
-    url = f"ws://127.0.0.1:{room['port']}/api/hands/{quote(agent, safe='')}/vnc" + (f"?{q}" if (q := ws.scope.get("query_string", b"").decode("latin-1")) else "")   # raw: ws.url re-parses a decoded ?
-    try:
-        up = await websockets.connect(url, subprotocols=want, max_size=None, open_timeout=10)
-    except (OSError, websockets.InvalidHandshake, asyncio.TimeoutError):
-        await ws.close(code=4502)
-        return
-    except websockets.ConnectionClosed as e:
-        await ws.close(code=e.rcvd.code if e.rcvd else 4502)
-        return
-    await ws.accept(subprotocol=up.subprotocol)
-
-    async def down_():                                  # backend -> browser
-        async for m in up:
-            await (ws.send_bytes(m) if isinstance(m, bytes) else ws.send_text(m))
-
-    async def up_():                                    # browser -> backend
-        while True:
-            m = await ws.receive()
-            if m["type"] == "websocket.disconnect":
-                return
-            await up.send(m["bytes"] if m.get("bytes") is not None else m.get("text") or "")
-
-    tasks = [asyncio.create_task(down_()), asyncio.create_task(up_())]
-    try:
-        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    finally:
-        for t in tasks:
-            t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)     # a backend's abnormal close is retrieved, not logged
-        await up.close()
-        try:
-            await ws.close()
-        except (RuntimeError, WebSocketDisconnect):
-            pass
-
-
-@app.websocket("/o/{org}/api/hands/{agent}/vnc")
-async def vnc_pipe(ws: WebSocket, org: str, agent: str):
-    await _vnc(ws, org, agent)
-
-
-@app.websocket("/api/hands/{agent}/vnc")
-async def vnc_chosen(ws: WebSocket, agent: str):
-    await _vnc(ws, ws.headers.get("x-astryx-org") or ws.cookies.get("astryx_org") or "", agent)
 
 
 # ?key= must never reach journald in clear (a3 #42085 F2), here as in the backends

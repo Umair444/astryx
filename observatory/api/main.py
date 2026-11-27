@@ -43,11 +43,20 @@ DIST = ROOT / "web" / "dist"
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 from astryx.core import charter as _charter  # noqa: E402 — the one roster rule
+from astryx.core import routes as _routes  # noqa: E402 — every route, one table (owner 11-16: "just route table")
+from astryx.core import channels as _channels  # noqa: E402 — the one channel table (owner 11-16: "a standard")
 from bridges.owner_surfaces import OWNER_ROW_BRIDGED_SQL  # noqa: E402 — the rows a bridge delivers, not the pane
 from astryx import config, orgs, paths  # noqa: E402 — the ONE resolver (plan-11324 S3a; S3b: its tmux server)
 # The org's estate (.env, agents/, triggers/, units/, …): this checkout on one org, the HOME on several. The observatory
 # is in the declared cog-scoped set (#58435 S3c); until S3c it serves ONE org, the HOME it was started for.
 ESTATE = paths.estate(__file__)
+# THIS org's registry name as the cog's FRONT addresses it (/o/<org>, a token's aud, canvas's cookie), or None when no
+# front stands before it (cog front parity, owner 11-13): several orgs, OR one org under a registry `cog` block. The
+# old gate was multi(), so a ONE-org cog behind the front lost its sign-in, its canvas cookie and its forwarded view.
+# Resolved once, as ESTATE is; every "am I behind a front" below reads THIS, never multi() (orgs.here).
+_SEAT = orgs.here(ESTATE)
+if _SEAT is None and orgs.cog() is not None:      # a cog block but this estate is no registered org: no front speaks
+    print(f"observatory: {ESTATE} is no org of this cog's registry: no sign-in, no /o/ prefix", file=sys.stderr)
 
 def _dsn() -> str:
     try:
@@ -227,8 +236,10 @@ def anonymous_can_see(from_org, to_org, peers: frozenset) -> bool:
 # valid token for THIS org means the public face, whatever path the request took (D2). Today `member` and `viewer`
 # open nothing beyond the public face (recorded, shown by /auth/me; a later slice gives them a meaning).
 from astryx.security import identity as _identity  # noqa: E402
-_COGAUTH = orgs.cog() if orgs.multi() else None    # the cog's sign-in: {id, home}, or None (one org; no `cog` block)
-_AUD = orgs.name() if _COGAUTH else None           # this org's registry name: the only aud this backend accepts
+from observatory.api import members as _members  # noqa: E402 — the members table's ONE reader/writer (its shape moves)
+from observatory.api import scope as _scope  # noqa: E402 — what a member given part of the tree may read
+_COGAUTH = orgs.cog() if _SEAT else None         # the cog's sign-in: {id, home}, or None (no `cog` block, or no front)
+_AUD = _SEAT if _COGAUTH else None               # this org's registry name: the only aud this backend accepts
 _verifiers: dict = {}
 _verifiers_at = 0.0
 
@@ -246,17 +257,20 @@ async def _who(request: Request) -> tuple[str | None, str | None]:
     (127.0.0.1): every org backend is loopback-bound (the D5 census), and the token is checked whatever the peer."""
     tok = request.headers.get(_identity.HEADER)
     peer = request.client.host if request.client else ""
+    request.state.label = request.state.email = ""     # the account's own label and proven email, set only when verified
     if not (_COGAUTH and tok and peer == "127.0.0.1"):
         return None, None
-    uid = _identity.verify(tok, _keys(), _AUD)
-    if uid is None:
+    c = _identity.claims(tok, _keys(), _AUD)
+    if c is None:
         before = _verifiers
         if _keys(kid_missing=True) is not before:       # a rotated key, read once
-            uid = _identity.verify(tok, _verifiers, _AUD)
+            c = _identity.claims(tok, _verifiers, _AUD)
+    uid = c["sub"] if c else None
     if uid is None or pool is None:
         return None, None
+    request.state.label, request.state.email = c["name"], c["email"]
     try:
-        return uid, await pool.fetchval("SELECT role FROM members WHERE uid = $1", uid)
+        return uid, await _members.role_of(pool, uid)   # observatory/api/members.py: the ONE reader of the table
     except (asyncpg.PostgresError, OSError) as e:   # no members table yet (schema.sql not re-applied), a DB blip:
         print(f"observatory: a signed-in viewer reads as public: {type(e).__name__}", file=sys.stderr)
         return uid, None                              # the public face (D2), never a 500 on it
@@ -264,6 +278,75 @@ async def _who(request: Request) -> tuple[str | None, str | None]:
 
 def _signed_owner(request: Request) -> bool:
     return getattr(request.state, "role", None) == "owner"
+
+
+# ---------------------------------------------------------------- who asked (cog-rebuild P2, option (a), owner 11-13)
+# Every message a human writes here says WHICH human, on the wire's existing structure: from_agent is the sender's
+# wire handle, from_org the surface ('local' for the observatory), and the row's delivery jsonb carries
+# {surface, display_name, role} exactly as bridges/canvas.py's _say already stamps it. No new table, no new handle class.
+#   the owner (the key door, or a signed-in account whose members role is owner)  ->  'owner', as ever, so every
+#     agent's send(to='owner') and every owner-only gate (verdicts, polls, approvals) is untouched;
+#   any other signed-in member                                                     ->  'cv-<label>.<n>'
+# where <n> is the account's cog uid (sub = <n>@<cog id>) and <label> its email's local part, slugged to the canvas
+# name alphabet. cv- is the org's existing class for a NAMED HUMAN ON THE WEB (address.py SURFACES admits it, the
+# canvas bridge delivers it); the uid makes it unique in the cog store and stable for the account's life (a label is
+# display only, the uid decides); the '.' is outside canvas invitee names ([a-z][a-z0-9_-]{1,30}), so a member's
+# handle can never be an invitee's. NO PRIVACY WITHIN AN ORG (owner 11-13): a member reads the wire as the owner does;
+# owner-only ACTS (interrupt, goals, federation, the db workbench, people answers) stay on owner_call.
+# The rule itself lives in observatory/api/members.py (cog-gaps): canvas maps the front's signed identity to the SAME
+# handle, so one definition serves both surfaces.
+MEMBER_ROLES = _members.MEMBER_ROLES               # who may talk on the wire here ('admin' once members admits it)
+member_handle = _members.member_handle
+
+
+def insider(request: Request) -> bool:
+    """A human of THIS org: the owner, or a signed-in member. Reads the wire unfiltered and may write to it."""
+    return owner_call(request) or getattr(request.state, "role", None) in MEMBER_ROLES
+
+
+def sees(request: Request):
+    """THE one answer to "may this viewer read this agent's insides" (its steps, presence, activity, charter): a
+    predicate on an agent name. The owner reads every agent; an insider (member, admin) reads the org-work tier, the
+    owner's own rule "no privacy within an org" (11-13), short of the personal tier; anyone else reads the public floor.
+    Both tiers are tier.py's positive, fail-closed allowlists. Every insides read in this file and in chat.py asks
+    THIS, so the REST doors and the live feed can never disagree again (11-15: the feed streamed a member every step
+    while /api/presence and /api/steps refused him, and his chat showed db silent through 11 minutes of work)."""
+    from astryx.core.tier import is_content_org, is_content_public
+    if is_owner(request):
+        return lambda agent: True
+    if not insider(request):
+        return is_content_public
+    scope = reaches(request)
+    return lambda agent: scope(agent) and is_content_org(agent)
+
+
+def reaches(request: Request):
+    """THE one answer to "may this viewer reach this agent" (message it, see it in their lists, read its work): a
+    predicate on an agent name. A member granted on part of the agents/ tree reaches that subtree only (owner 11-17);
+    a whole-org member, an admin of the whole org and the owner reach every agent. privacy_gate reads the scope once
+    per request (request.state.reach: None = every agent, else the names); a viewer read before that reaches none."""
+    if is_owner(request):
+        return lambda agent: True
+    scope = getattr(request.state, "reach", set())
+    return (lambda agent: True) if scope is None else (lambda agent: agent in scope)
+
+
+def wire_handle(request: Request) -> str | None:
+    """The from_agent a human's message here is written as: 'owner' for the owner, cv-<label>.<uid> for a member."""
+    if owner_call(request):
+        return "owner"
+    if getattr(request.state, "role", None) in MEMBER_ROLES:
+        return member_handle(getattr(request.state, "uid", "") or "", getattr(request.state, "label", ""))
+    return None
+
+
+def asker_meta(request: Request) -> dict | None:
+    """The delivery stamp a member's row carries (canvas's shape): None for the owner, whose rows stay as they were."""
+    h = wire_handle(request)
+    if h in (None, "owner"):
+        return None
+    return {"surface": "observatory", "display_name": getattr(request.state, "label", "") or h,
+            "role": request.state.role}
 
 
 def owner_call(request: Request) -> bool:
@@ -282,15 +365,26 @@ sse_clients: set[asyncio.Queue] = set()
 
 # ---------------------------------------------------------------- live feed
 async def listen_task():
-    """One LISTEN connection fans out to every SSE client. Reconnects forever."""
+    """One LISTEN connection fans out to every SSE client. Reconnects forever.
+    A NOTIFY sent while no LISTEN is open is gone for good, and the browsers' streams stayed open through the gap (their
+    pings kept coming), so nothing told them to catch up: a reply inserted in that gap reached no tab until a reload.
+    So every re-LISTEN after the first tells each open stream {"type": "resync"}, and the workspace backfills
+    (store.tsx) exactly as after a reconnect of its own."""
+    lost = False
     while True:
+        conn = None
         try:
             conn = await asyncpg.connect(DSN)
             q: asyncio.Queue = asyncio.Queue()
-            for ch in ("astryx_wire", "astryx_steps", "astryx_dag", "astryx_presence"):
-                await conn.add_listener(
-                    ch, lambda c, p, chan, payload: q.put_nowait((chan, payload)))
+            # cog-rls slice 3: the channels carry this org (ax<n>_<suffix>; NOTIFY is database-wide). The database names
+            # them for this login role; below they keep their logical names, so the dispatch reads as before.
+            from astryx.pg import channels
+            await channels.listen(conn, ("wire", "steps", "dag", "presence"),
+                                  lambda chan, payload: q.put_nowait((chan, payload)))
             conn.add_termination_listener(lambda c: q.put_nowait(("__dead__", "")))
+            if lost:
+                lost = False
+                _fanout({"type": "resync"})
             while True:
                 try:
                     chan, payload = await asyncio.wait_for(q.get(), timeout=60)
@@ -320,9 +414,17 @@ async def listen_task():
                     if prow:
                         data = {"type": "presence", **_presence(prow)}
                 elif chan == "astryx_wire":
+                    try:
+                        mid = int(payload)
+                    except (TypeError, ValueError):
+                        continue                  # a malformed ring never takes the tap down
                     row = await conn.fetchrow(
-                        "SELECT * FROM messages WHERE id = $1", int(payload))
-                    if row:
+                        "SELECT * FROM messages WHERE id = $1", mid)
+                    if row and row["status"] == RETRACTED:
+                        # the sender's send was cancelled before the row left (channel/server.mjs retractSend
+                        # rings the id again): every screen drops it
+                        data = {"type": "message_retracted", "id": mid}
+                    elif row:
                         data = {"type": "message", **msg(row)}
                         if row["to_agent"] == "room":
                             _room.nudge()
@@ -330,6 +432,12 @@ async def listen_task():
                     for cq in list(sse_clients):
                         cq.put_nowait(data)
         except Exception:
+            lost = True
+            if conn is not None and not conn.is_closed():
+                try:
+                    conn.terminate()          # the old connection's listeners would keep filling a queue nobody reads
+                except Exception:
+                    pass
             await asyncio.sleep(5)
 
 
@@ -351,16 +459,58 @@ app = FastAPI(lifespan=lifespan)
 # imported through the repo package (REPO is on sys.path), so main.py loads the same way under uvicorn and when an
 # oracle loads it by path; the pool is handed over, never re-imported (steward #44464)
 from observatory.api import pilot_voice as _pilot_voice  # noqa: E402
-from observatory.api.hostfile import Conflict, atomic_write, etag  # noqa: E402 — the ONE host-file writer (plan-11860 E3)
+from observatory.api.hostfile import atomic_write  # noqa: E402 — the ONE host-file writer (plan-11860 E3)
 import hashlib  # noqa: E402
 from bridges import routing as _routing  # noqa: E402 — the ONE route resolver/validator (plan-11860 E2)
-_pilot_voice.bind(lambda: pool)
+_pilot_voice.bind(lambda: pool, me=lambda r: wire_handle(r), reaches=lambda r: reaches(r))
 app.include_router(_pilot_voice.router)
 
 # plan-11884: /chat's server half (uploads, the side panel's file read, projects, dictation); owner-only by omission
 from observatory.api import chat as _chat  # noqa: E402
-_chat.bind(lambda: pool, ESTATE, ESTATE / "media", REPO, roster=lambda: set(agent_meta()))   # media/: every channel's inbound files
+_chat.bind(lambda: pool, ESTATE, ESTATE / "media", REPO, roster=lambda: set(agent_meta()),
+           me=lambda r: wire_handle(r), sees=lambda r: sees(r))   # media/: every channel's inbound files
 app.include_router(_chat.router)
+from observatory.api import calc as _calc  # noqa: E402 — the chat's calculator (Qalculate, sandboxed)
+_calc.bind(me=lambda r: wire_handle(r))
+app.include_router(_calc.router)
+from observatory.api import mind as _mindapi  # noqa: E402 — the org's mind: itches, drives, insights (read-only)
+_mindapi.bind(owner=lambda r: owner_call(r))
+app.include_router(_mindapi.router)
+from observatory.api import vault as _vaultapi  # noqa: E402 — the org's named logins and keys (owner-only)
+_vaultapi.bind(owner_call, ESTATE, pool=lambda: pool, roster=lambda: set(agent_meta()), alive=lambda: tmux_alive())
+app.include_router(_vaultapi.router)
+
+# feat/chat-workspace: the workspace's unified conversation list (chat:, obs:, cv:) and its pins/titles; owner-only by
+# omission from PUBLIC, like /api/chat
+from observatory.api import workspace as _ws  # noqa: E402
+_ws.bind(lambda: pool, ESTATE, roster=lambda: set(agent_meta()), charter=lambda n: _charter_path(n), owner=lambda r: owner_call(r),
+         me=lambda r: wire_handle(r), sees=lambda r: sees(r), reaches=lambda r: reaches(r),
+         scoped=lambda r: _scope.of(r) is not None)
+app.include_router(_ws.router)
+
+# feat/chat-workspace: the artifact store (a git repo under data/workspace: versions, restore, annotations) and a
+# thread's media list; sources pass chat.readable's gate; owner-only by omission from PUBLIC
+from observatory.api import artifacts as _arts  # noqa: E402
+_arts.bind(lambda: pool, ESTATE)
+app.include_router(_arts.router)
+
+# iteration 13: the workspace's READ-ONLY window onto canvas (its canvases, versions, a version through canvas's own shell,
+# the page's live values); owner-only by omission from PUBLIC. The cog prefix is set beside CANVAS_PRE, below.
+from observatory.api import ws_canvas as _wscv  # noqa: E402
+_wscv.bind(lambda: pool, owner=lambda r: is_owner(r))
+app.include_router(_wscv.router)
+
+# cog-rebuild Phase 4: FEDERATION (this org's identity, its peers and their traffic, introduce, trust/untrust/block);
+# owner-only by omission from PUBLIC (the public GET /api/peers is unchanged) and checked in every handler
+from observatory.api import federation as _fed  # noqa: E402
+_fed.bind(lambda: pool, ESTATE, owner=lambda r: owner_call(r), env=_env, me=lambda: _env("ASTRYX_ORG") or ORG)
+app.include_router(_fed.router)
+
+# cog-rebuild: the org's ADMIN API (its members: list, grant, revoke; the agents/ tree as nodes; activity counts). The
+# owner reaches it as everything; a signed-in ADMIN reaches exactly _admin.ADMIN_ROUTES past privacy_gate
+from observatory.api import admin as _admin  # noqa: E402
+_admin.bind(lambda: pool, DSN, ESTATE, _COGAUTH["id"] if _COGAUTH else None, owner=lambda r: is_owner(r))
+app.include_router(_admin.router)
 
 # the Room's speaker: agents answer the room with send(to='room'); spoken in their voice, or run on the screen
 from observatory.api import room as _room  # noqa: E402
@@ -375,15 +525,122 @@ _room.bind(lambda: pool, _fanout)
 app.include_router(_room.router)
 
 
+# A DEV observatory pointed at a live org's data (a worktree's dev server) must never act on the org: with
+# ASTRYX_DEV_NO_WIRE set, every write that reaches agents (a wire message, an interrupt) is refused at the server, so
+# a test script can't wake an agent in the owner's name however it is written (a held, not blocked, POST did: 10774).
+_DEV_NO_WIRE = bool(os.environ.get("ASTRYX_DEV_NO_WIRE"))
+_WIRE_WRITE = re.compile(r"^/api/(messages|ws/agents/[^/]+/interrupt|federation/.+)$")   # federation/: a peers row + seed's audit row
+
+
+# What a signed-in MEMBER may reach beyond the public face (cog-who): the chat workspace, i.e. talking on the wire and
+# reading it (no privacy within an org, owner 11-13), and the tools of HER OWN chats (cog-gaps): rename/pin/switch a
+# thread she is a party of (workspace.ws_meta checks the party), her projects (chat.projects_put: another's project
+# is read-only to her) and dictation. Owner-only ACTS are not here: interrupt, goals, the db workbench, federation,
+# people, services, admin. (METHOD, path) pairs, or a GET prefix. The agents' INSIDES (steps, presence, the activity
+# pulse, an agent's profile and charter) are reads a member makes as the owner does (11-15): each handler asks sees()
+# per agent, so the personal tier stays the owner's.
+MEMBER = {("POST", "/api/messages"), ("POST", "/api/thread/read"), ("POST", "/api/chat/upload"),
+          ("POST", "/api/ws/chats/share"),   # a chat's maker shares it (workspace: access.may share)
+          ("PUT", "/api/ws/threads/meta"), ("PUT", "/api/chat/projects"),
+          ("POST", "/api/chat/calc"),
+          ("POST", "/api/me/channels"),   # a person links THEIR OWN account (identity-channels P3)
+          ("POST", "/api/me/channels/confirm")}   # … and types back the code sent to it (email, SMS: 11-18)
+# What a person reaches only when they hold the feature (members.caps: their role's default, as the Admin panel set it
+# for them; owner 11-17 "an admin can assign a voice chat to a member"). The owner holds every feature.
+FEATURE_PATHS = {"dictate": {("POST", "/api/chat/dictate/session"), ("POST", "/api/chat/dictate/usage")},
+                 "call": {("GET", "/api/pilot/voice/status"), ("POST", "/api/pilot/voice/session"),
+                          ("POST", "/api/pilot/voice/usage")}}
+MEMBER_GET = ("/api/ws/threads", "/api/ws/thread-titles", "/api/ws/search", "/api/ws/handoffs", "/api/ws/agents",
+              "/api/ws/canvases",              # the canvases canvas's own rule gives them (ws_canvas.keys)
+              "/api/ws/briefing", "/api/ws/media", "/api/ws/artifacts", "/api/chat/", "/api/presence",
+              "/api/steps", "/api/pulse", "/api/me/channels")
+_MEMBER_AGENT_GET = re.compile(r"^/api/agents/[^/]+/(profile|charter)$")
+_MEMBER_POST = re.compile(r"^/api/ws/canvases/\d+/share$"   # a canvas's maker shares it (ws_canvas: maker or owner)
+                          r"|^/api/ws/artifacts/(open|create|[^/]+/(save|restore|export))$")   # access.may(say, thread)
+_MEMBER_PUT = re.compile(r"^/api/ws/artifacts/[^/]+/annotations$")   # … the same (the org standard stays the owner's)
+
+
+def member_may(m: str, p: str) -> bool:
+    return ((m, p) in MEMBER or (m == "POST" and bool(_MEMBER_POST.match(p))) or (m == "PUT" and bool(_MEMBER_PUT.match(p)))
+            or (m == "GET" and (p.startswith(MEMBER_GET) or bool(_MEMBER_AGENT_GET.match(p))) and p not in MEMBER_FILE))
+
+
+# the routes that hand out a FILE's bytes (or its rendering): a member reaches them only for an attached file
+MEMBER_FILE = ("/api/chat/file", "/api/chat/preview")
+
+
+async def member_file(request: Request) -> bool:
+    """/api/chat/file (and /preview) for a member: only a file some message on the wire ATTACHED ([[file:<path>]]), never any path
+    under the homes (chat.roots() spans whole agent homes; the personal tier binds every user, DESIGN Phase 2). The rule
+    is access.path_ok: only the system attaches (an agent, the owner) or an upload (medic 16376 H5, 16380 HX1)."""
+    path = request.query_params.get("path", "")
+    if not path or pool is None:
+        return False
+    from observatory.api import access as _access_core
+    return await _access_core.path_ok(request, path)
+
+
+
+def agent_nodes() -> dict[str, str]:
+    """Every agent's path in the agents/ tree, by name (members.agent_nodes: the one map, the canvas bridge's too)."""
+    return _members.agent_nodes(ESTATE)
+
+
+async def _access(request: Request) -> tuple[set | None, dict]:
+    """(the agents this viewer reaches: None = all, the features they hold: {feature: daily minutes or None}). The
+    owner: all and all. A signed-in member: their memberships' subtree and members.caps. Anyone else: none. A read that
+    fails reaches nothing (closed): a scoped member never widens on a database blip."""
+    if is_owner(request):
+        return None, await _members.caps(pool, None, "owner")
+    uid, role = getattr(request.state, "uid", None), getattr(request.state, "role", None)
+    if not uid or role is None or pool is None:
+        return set(), {}
+    try:
+        return await _members.agents_reached(pool, uid, agent_nodes()), await _members.caps(pool, uid, role)
+    except (asyncpg.PostgresError, OSError) as e:
+        print(f"observatory: a member's access reads as none: {type(e).__name__}", file=sys.stderr)
+        return set(), {}
+
+_ACCOUNTS: set[tuple[str, str]] = set()    # (uid, email) this process has made a person with their email linked
+
+
+async def _account_seen(request: Request) -> None:
+    """A signed-in account is a person, and the email it signed in with is one of their channels (identity_web), done
+    once per account per process (owner 11-18: "users are signing in to org with their emails - so it should be
+    linked"). A failure is logged and retried on the next request; it never refuses the request."""
+    uid, who, email = getattr(request.state, "uid", None), request.state.me, getattr(request.state, "email", "")
+    if not (uid and who and pool is not None) or (uid, email) in _ACCOUNTS:
+        return
+    try:
+        await pool.execute("SELECT identity_web($1, $2, $3)", uid, who, email)
+        _ACCOUNTS.add((uid, email))
+    except (asyncpg.PostgresError, OSError) as e:
+        print(f"observatory: an account's email was not linked yet: {type(e).__name__}", file=sys.stderr)
+
+
 @app.middleware("http")
 async def privacy_gate(request: Request, call_next):
     request.state.uid, request.state.role = await _who(request)
     p = request.url.path
+    request.state.reach, request.state.caps = await _access(request) if p.startswith("/api/") else (set(), {})
+    request.state.me = wire_handle(request)
+    await _account_seen(request)
     m = "GET" if request.method == "HEAD" else request.method
     if (p.startswith("/api/") and (m, p) not in PUBLIC and not (m == "GET" and _PUBLIC_AVATAR.match(p))
-            and not is_owner(request)):
+            and not is_owner(request) and not (member_may(m, p) and insider(request))
+            and not (insider(request) and any((m, p) in FEATURE_PATHS[f] for f in request.state.caps))
+            and not (m == "GET" and p in MEMBER_FILE and insider(request) and await member_file(request))
+            and not (request.state.role == "admin" and (m, p) in _admin.ADMIN_ROUTES)):
         return Response(status_code=403)
+    if _DEV_NO_WIRE and m != "GET" and _WIRE_WRITE.match(p):
+        return JSONResponse({"error": "dev server: wire writes are disabled (ASTRYX_DEV_NO_WIRE)"}, status_code=503)
     return await call_next(request)
+
+
+# A send whose tool call was cancelled before the row left (channel/server.mjs retractSend): never delivered, and
+# never shown — every history, list and preview here leaves it out; the live feed drops it (message_retracted).
+RETRACTED = "retracted"
+NOT_RETRACTED_SQL = "status IS DISTINCT FROM 'retracted'"
 
 
 # ---------------------------------------------------------------- shapers
@@ -395,7 +652,20 @@ def msg(r) -> dict:
         "thread": r["thread"], "intent": r["intent"],
         "body": r["body"], "status": r["status"],
         "turn_id": r["turn_id"] if "turn_id" in r.keys() else None,
+        "lead": _lead_of(r),
     }
+
+
+def _lead_of(r) -> str | None:
+    """A fanned-out row's lead (the agent that owns the one reply): the one fact of `delivery` the page may see (the
+    rest can carry a sender's jid). None for every other row."""
+    d = r["delivery"] if "delivery" in r.keys() else None
+    if isinstance(d, str):
+        try:
+            d = json.loads(d)
+        except ValueError:
+            return None
+    return d.get("lead") if isinstance(d, dict) and isinstance(d.get("team"), list) and len(d["team"]) > 1 else None
 
 
 def step(r) -> dict:
@@ -515,6 +785,13 @@ async def agents(request: Request):
     # roster and on the Floor through its old step rows.
     registry = set(charter.roster())
     rows = [r for r in rows if r["agent"] in registry]
+    if (o := await _scope.steps_open(pool, request)) is not None:   # a member: each agent's last line they may read
+        last = {r["agent"]: r for r in await pool.fetch(
+            "SELECT a.agent, s.kind, s.content FROM unnest($1::text[]) AS a(agent) CROSS JOIN LATERAL ("
+            "SELECT kind, left(content, 120) AS content FROM steps WHERE agent = a.agent AND "
+            f"{_scope.steps_sql('$2')} ORDER BY id DESC LIMIT 1) s", [r["agent"] for r in rows], o)}
+        rows = [{**dict(r), "last_kind": last[r["agent"]]["kind"] if r["agent"] in last else None,
+                 "last_content": last[r["agent"]]["content"] if r["agent"] in last else None} for r in rows]
     alive = {a for a in alive if a in registry}
     out = [{**dict(r), "last_seen": r["last_seen"].isoformat(),
             "alive": r["agent"] in alive, **enrich(r["agent"])} for r in rows]
@@ -531,51 +808,59 @@ async def agents(request: Request):
         out.append({"agent": a, "last_seen": None, "steps": 0, "tokens_in": 0,
                     "tokens_out": 0, "last_kind": None, "last_content": None,
                     "alive": a in alive, **enrich(a)})
+    see = sees(request)
     if not is_owner(request):
-        # CONTENT + RATE floor (plan-18, owner decision): a grant-derived-private
-        # agent stays a NODE — name, group, rank, model, alive: existence + liveness,
-        # which the viz needs — but every RATE/TIMING signal is zeroed for anon. The
-        # step/token COUNT and last-activity time are a career-activity RATE across the
-        # tier line (the plan-16 side-channel), and last_content is the body itself.
-        # Anon-only: the owner view (is_owner) keeps full metrics. Same fail-closed
-        # polarity as the content floor — driven by the one tier authority.
-        from astryx.core.tier import is_content_public
+        # CONTENT + RATE floor (plan-18, owner decision): an agent the viewer may not read stays a NODE (name, group,
+        # rank, model, alive: existence and liveness, which the viz needs), but every RATE/TIMING signal is zeroed.
+        # The step/token COUNT and last-activity time are a career-activity RATE across the tier line (the plan-16
+        # side-channel), and last_content is the body itself. WHICH agents: sees() (the public floor for anon, the
+        # inside tier for a member, 11-15), so a member's chat sees db working and refetches its work as it steps.
         for row in out:
-            # last_content is a 120-char slice of the agent's most recent STEP BODY, so
-            # it is the same content /api/steps was just gated for — a second door to the
-            # thing we closed. Nulled for EVERY agent while that gate stands, not only for
-            # tier-private ones; gating one path and leaving its excerpt on another is the
-            # two-writer leak we already paid for once today.
-            row["last_content"] = None
-            if not is_content_public(row["agent"]):
+            if not see(row["agent"]):
+                row["last_content"] = None
                 row["last_kind"] = None
                 row["last_seen"] = None
                 row["steps"] = 0
                 row["tokens_in"] = 0
                 row["tokens_out"] = 0
+            elif not insider(request):
+                # anon, content-public agent: last_content stays nulled, as before (the /api/steps gate's excerpt)
+                row["last_content"] = None
     return out
 
 
 @app.get("/api/messages")
 async def messages(request: Request, limit: int = 100, before_id: int | None = None,
-                   thread: str | None = None, agent: str | None = None):
+                   thread: str | None = None, agent: str | None = None, after_id: int | None = None):
+    # after_id (chat workspace, iteration 14 "stamina"): a client that was away (laptop asleep, network gone, API
+    # restarted) asks for what it missed: the OLDEST `limit` rows past the newest id it holds, ascending, so it can page
+    # forward until it is level. Same filters, same anonymous rule as every other read here.
     limit = min(limit, 500)
-    cond, args = [], []
-    if not is_owner(request):
+    cond, args = [NOT_RETRACTED_SQL], []
+    if not (is_owner(request) or insider(request)):     # a member reads the wire as the owner does (cog-who)
         # The rule is EMITTED by the authority, not restated here — see
         # anonymous_can_see_sql(). Passing the peer set as a parameter (rather than an
         # IN-subquery) keeps both anonymous paths reading the same python source of truth.
         peers = list(await peer_orgs())
         args.append(peers)
         cond.append(anonymous_can_see_sql(f"${len(args)}"))
+    elif _scope.of(request) is not None:                # a member reads their part's wire, and of people's chats theirs
+        await _scope.load(pool, request)
+        args.extend(_scope.args(request)); cond.append(_scope.sql(f"${len(args) - 2}", f"${len(args) - 1}", f"${len(args)}"))
     if before_id:
         args.append(before_id); cond.append(f"id < ${len(args)}")
+    if after_id is not None:
+        args.append(after_id); cond.append(f"id > ${len(args)}")
     if thread:
         args.append(thread); cond.append(f"thread = ${len(args)}")
     if agent:
         args.append(agent); cond.append(
             f"(from_agent = ${len(args)} OR to_agent = ${len(args)})")
     where = ("WHERE " + " AND ".join(cond)) if cond else ""
+    if after_id is not None:
+        rows = await pool.fetch(
+            f"SELECT * FROM messages {where} ORDER BY id ASC LIMIT {limit}", *args)
+        return [msg(r) for r in rows]
     rows = await pool.fetch(
         f"SELECT * FROM messages {where} ORDER BY id DESC LIMIT {limit}", *args)
     return [msg(r) for r in reversed(rows)]
@@ -587,7 +872,7 @@ async def threads():
         SELECT thread, count(*) AS count, min(ts) AS first_ts, max(ts) AS last_ts,
                (array_agg(from_agent ORDER BY id))[1]      AS starter,
                (array_agg(left(body, 140) ORDER BY id))[1] AS preview
-        FROM messages WHERE thread IS NOT NULL
+        FROM messages WHERE thread IS NOT NULL AND status IS DISTINCT FROM 'retracted'
         GROUP BY thread ORDER BY max(id) DESC LIMIT 200
     """)
     return [{**dict(r), "first_ts": r["first_ts"].isoformat(),
@@ -600,14 +885,15 @@ async def steps(request: Request, agent: str | None = None, kind: str | None = N
     limit = min(limit, 500)
     cond, args = [], []
     if not is_owner(request):
-        # CONTENT-class floor: anonymous sees step bodies ONLY for grant-derived
-        # content-public agents (src/astryx/core/tier.py). POSITIVE `agent = ANY(public)` —
-        # fail-closed: a private or unknown agent yields zero rows, and an anon
-        # request for a private agent's steps (?agent=canopus) returns []. Never the
-        # complement (NOT IN private) — a new private agent would leak through that.
-        from astryx.core.tier import content_public_agents
-        pub = sorted(content_public_agents(agent_meta().keys()))
-        args.append(pub); cond.append(f"agent = ANY(${len(args)})")
+        # CONTENT-class floor: a non-owner sees step bodies ONLY for the agents sees() lets it read (the grant-derived
+        # public tier for anon, the inside tier for a member; src/astryx/core/tier.py). POSITIVE `agent = ANY(...)`:
+        # fail-closed, a private or unknown agent yields zero rows (?agent=canopus returns []). Never the complement
+        # (NOT IN private): a new private agent would leak through that.
+        see = sees(request)
+        ok = sorted(a for a in agent_meta().keys() if see(a))
+        args.append(ok); cond.append(f"agent = ANY(${len(args)})")
+        args.append(await _scope.steps_open(pool, request))   # a turn woken on a person's chat is theirs, or not shown
+        cond.append(_scope.steps_sql(f"${len(args)}"))
     if agent:
         args.append(agent); cond.append(f"agent = ${len(args)}")
     if kind:
@@ -937,19 +1223,24 @@ async def usage():
 
 
 @app.get("/api/tools")
-async def tools():
-    """The org's toolbox: wire tools, registry servers (from mcp/manifest.json,
-    regenerate with mcp/scan.py), and composite DAGs with their wiring."""
-    servers = [{"server": "astryx (the wire)", "tools": [
-        {"name": "send", "description": "Send a message on the wire (every agent holds this)."},
-        {"name": "subscribe", "description": "Watch another agent's milestones and errors."},
-        {"name": "query_steps", "description": "Read any agent's step history."}]}]
-    manifest = REPO / "mcp" / "manifest.json"
-    if manifest.is_file():
+async def tools(request: Request):
+    """The org's toolbox: EVERY tool server in mcp/registry.json (the one list, owner 11-17) with who gets it and its
+    tools as mcp/scan.py last listed them (mcp/manifest.json; a server not scanned yet shows with none), and composite
+    DAGs with their wiring."""
+    listed = {}
+    for f in ("manifest.json", "manifest.local.json"):      # the framework's, and the org's own (gitignored) servers
         try:
-            servers += json.loads(manifest.read_text()).get("servers", [])
+            listed |= {s["server"]: s for s in json.loads((REPO / "mcp" / f).read_text()).get("servers", [])}
         except Exception:
             pass
+    inside = insider(request)                               # anonymous: a granted server's name and who, not its tools
+    try:
+        reg = json.loads((REPO / "mcp" / "registry.json").read_text())
+    except Exception:
+        reg = {}
+    servers = [{**(listed.get(n, {"tools": []}) if inside or e.get("who") == "every" else {"tools": []}),   # nothing
+                "server": n, "who": e.get("who", "grant"), **({"optin": e["optin"]} if e.get("optin") else {})}  # else
+               for n, e in reg.items()]                     # of a granted server (not even a scan error) to anyone
     dags = []
     for f in sorted((REPO / "mcp" / "compose" / "dags").glob("*.json")):
         try:
@@ -1021,11 +1312,12 @@ class CharterEdit(BaseModel):
 
 
 @app.get("/api/agents/{name}/charter")
-async def charter(name: str):
+async def charter(name: str, request: Request):
     """An agent's instructions file. Org work is transparent; charters are org
-    work. Only files inside agents/ are served, never local.md."""
+    work. Only files inside agents/ are served, never local.md. A member reads the
+    charters sees() lets her read; a refused one is a 404, never a hint."""
     f = _charter_path(name)
-    if not f:
+    if not f or not sees(request)(f.stem):
         return Response(status_code=404)
     return {"name": f.stem, "charter": f.read_text(), "live": f.stem in tmux_alive()}
 
@@ -1050,110 +1342,7 @@ async def charter_put(name: str, edit: CharterEdit, request: Request):
                      else "saved — applies on next spawn")}
 
 
-# ---------------------------------------------------------- per-agent runtime / provider
-# Each resident is its own `claude` process and may run on a different provider (Anthropic
-# direct, a GLM/Huawei endpoint, an OpenAI-compatible gateway) with its own key + model map.
-# The owner sets that here; spawn.sh injects it into homes/<name>/.claude/settings.json's env
-# block on the next respawn (see src/astryx/core/runtime_env.py). SECRETS NEVER TRANSIT THIS API:
-# runtime.json stores the NAME of the .env key holding the token, never the value — read
-# redacts, write refuses a token value. No entry for an agent → it uses the org's default.
-RUNTIME_PATH = ESTATE / "runtime.json"
-
-
-def _load_runtime() -> dict:
-    if not RUNTIME_PATH.exists():
-        return {}
-    try:
-        d = json.loads(RUNTIME_PATH.read_text())
-        return d if isinstance(d, dict) else {}
-    except (ValueError, OSError):
-        return {}
-
-
-def _env_key_names() -> list[str]:
-    """NAMES only of .env keys (never values) — lets the UI pick which key holds the token."""
-    return list(config.read_env(ESTATE / ".env"))    # the ONE .env reader, per line (plan-10224 ENVREAD)
-
-
-class RuntimeEdit(BaseModel):
-    base_url: str | None = None
-    token_env: str | None = None
-    models: dict | None = None          # {opus, sonnet, haiku}
-    effort: str | None = None
-
-
-@app.get("/api/agents/{name}/runtime")
-async def agent_runtime(name: str):
-    """This agent's provider/auth override, TOKEN REDACTED. token_present says whether the
-    named .env key actually resolves; env_keys offers the .env key NAMES for the picker. No
-    entry → all-empty → the agent runs on the org's ambient default."""
-    f = _charter_path(name)
-    if not f:
-        return Response(status_code=404)
-    entry = _load_runtime().get(f.stem) or {}
-    token_env = entry.get("token_env") or ""
-    env_names = _env_key_names()
-    return {"name": f.stem,
-            "base_url": entry.get("base_url") or "",
-            "token_env": token_env,
-            "token_present": bool(token_env) and token_env in env_names,
-            "models": entry.get("models") or {},
-            "effort": entry.get("effort") or "",
-            "env_keys": env_names,
-            "configured": bool(entry),
-            "org_login": _org_login(),
-            "live": f.stem in tmux_alive()}
-
-
-def _org_login() -> dict:
-    """The ORG's login beneath every agent's entry (plan-10224 ORGAUTH), NAMES only: {cli, key, billing, supported,
-    note, source}. key = the .env key spliced into an agent with no base_url of its own, or None (the ambient login);
-    source says the billing in words. runtime_env.org_login is the one rule; never a value."""
-    from astryx.core import runtime_env
-    try:
-        d = runtime_env.org_login(config.read_env(ESTATE / ".env"))
-    except OSError:
-        return {"cli": "claude", "key": None, "billing": "ambient", "supported": True, "note": None,
-                "source": "unreadable"}
-    return {**d, "source": runtime_env.BILLING_WORDS[d["billing"]]}
-
-
-@app.put("/api/agents/{name}/runtime")
-async def agent_runtime_put(name: str, edit: RuntimeEdit, request: Request):
-    """Owner sets an agent's provider/key/model map from the UI. Writes runtime.json
-    (gitignored); the token stays in .env, we store only token_env's NAME. An all-empty edit
-    REMOVES the entry (revert to the org default). Applies on the agent's next respawn."""
-    if not owner_call(request):
-        return Response(status_code=403)
-    f = _charter_path(name)
-    if not f:
-        return Response("no such agent", status_code=404)
-    data = _load_runtime()
-    models = {k: v for k, v in (edit.models or {}).items()
-              if k in ("opus", "sonnet", "haiku") and v}
-    entry: dict = {}
-    if edit.base_url and edit.base_url.strip():
-        entry["base_url"] = edit.base_url.strip()
-    if edit.token_env and edit.token_env.strip():
-        entry["token_env"] = edit.token_env.strip()
-    if models:
-        entry["models"] = models
-    if edit.effort and edit.effort.strip():
-        entry["effort"] = edit.effort.strip()
-    # a base_url with no token_env is a half-config that would fail-safe to default at spawn —
-    # refuse it here so the owner gets an immediate honest error, not a silent fallback.
-    if entry.get("base_url") and not entry.get("token_env"):
-        return Response("a custom base_url needs token_env (the .env key holding its token)",
-                        status_code=400)
-    if entry:
-        data[f.stem] = entry
-    else:
-        data.pop(f.stem, None)          # all-empty → this agent reverts to the org default
-    atomic_write(RUNTIME_PATH, json.dumps(data, indent=2) + "\n")
-    live = f.stem in tmux_alive()
-    return {"ok": True, "name": f.stem, "configured": bool(entry), "live": live,
-            "note": ("saved — respawn the agent to apply" if live
-                     else "saved — applies on next spawn")}
+# per-agent runtime: an agent's harness, key and model are its CONNECTION (observatory/api/vault.py, Harness and Keys)
 
 
 # ---------------------------------------------------------- agent lifecycle & profile
@@ -1306,7 +1495,7 @@ def unit_state(unit: str) -> dict:
 # ---------------------------------------------------------------- tools: details (owner, via the gate)
 # A tool's arguments and full docstring come from its server's SOURCE (mcp/<srv>/server.py, the file
 # mcp/registry.json launches), read with ast — never imported, so a broken server can't break this.
-_WIRE_SERVER = "astryx (the wire)"
+_WIRE_SERVER = "astryx"   # the wire: mcp/registry.json names it like every server
 _WIRE_TOOLS = {"send": "to, body, intent?, thread?", "subscribe": "agent, filter?", "query_steps": "agent?, limit?"}
 
 
@@ -1635,7 +1824,7 @@ async def people_answer(body: PeopleAnswer, request: Request):
         await pool.execute(
             "INSERT INTO social_relation (org, pid, kind, closeness, confidence, updated_at) "
             "VALUES (COALESCE((SELECT org FROM social_person WHERE id=$1 LIMIT 1), 'local'), $1, $2, $3, 'owner', now()) "
-            "ON CONFLICT (org, pid) DO UPDATE SET kind=EXCLUDED.kind, closeness=EXCLUDED.closeness, "
+            "ON CONFLICT (tenant, org, pid) DO UPDATE SET kind=EXCLUDED.kind, closeness=EXCLUDED.closeness, "
             "confidence='owner', updated_at=now()", body.pid, body.kind, body.closeness)
     await pool.execute(
         "INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES "
@@ -1748,6 +1937,9 @@ class OwnerMsg(BaseModel):
     to: str
     body: str
     thread: str | None = None
+    # the whole recipient list when the human tagged several agents (owner 11-13): each row is stamped with the team,
+    # the FIRST named leads (bridges/common.team_stamp, the one stamp every surface writes)
+    team: list[str] | None = None
 
 
 @app.get("/api/auth/role")
@@ -1761,20 +1953,69 @@ async def auth_role(request: Request):
 
 @app.get("/api/whoami")
 async def whoami(request: Request):
+    """owner (as ever) + who the viewer is on the wire (cog-who): role here (None for the key door or the public face)
+    and handle (the from_agent their messages carry: 'owner', cv-<label>.<uid>, or None)."""
+    reach = getattr(request.state, "reach", set())
     return {"owner": owner_call(request),
-            "vega": _charter_path("vega") is not None}
+            "vega": _charter_path("vega") is not None,
+            "role": "owner" if owner_call(request) else getattr(request.state, "role", None),
+            "handle": wire_handle(request),
+            # what this person may use and reach (owner 11-17): the UI shows only these, the gate refuses the rest
+            "caps": getattr(request.state, "caps", {}),
+            "reach": None if reach is None else sorted(reach)}
 
 
 @app.post("/api/messages")
 async def owner_send(m: OwnerMsg, request: Request):
-    if not owner_call(request):
+    """A human's message onto the wire. The owner writes as 'owner' exactly as before; a signed-in member writes as
+    their own handle, with {surface, display_name, role} in delivery (canvas's stamp), so the agent knows who asked."""
+    sender = wire_handle(request)
+    if sender is None:
         return Response(status_code=403)
     if not m.body.strip() or not m.to.strip():
         return Response(status_code=400)
-    row = await pool.fetchrow(
-        "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
-        "VALUES ('owner', $1, $2, 'chat', $3) RETURNING *",
-        m.to.strip().lower(), m.thread, m.body.strip())
+    meta = asker_meta(request)
+    team = [t.strip().lower() for t in (m.team or []) if t and t.strip()]
+    team = list(dict.fromkeys(team)) if m.to.strip().lower() in team else []
+    reach = reaches(request)
+    out = [n for n in [m.to.strip().lower(), *team] if not reach(n)]
+    if out:                                    # a member scoped to part of the tree writes to that part only (11-17)
+        return JSONResponse({"error": f"you can't message {', '.join(out)}: it is outside the agents you were given"},
+                            status_code=403)
+    if _scope.of(request) is not None and _scope.personal(m.thread) and await pool.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM messages WHERE thread = $1)", m.thread):
+        # a member talks in a person's chat only if it is open to her (hers, shared with her, a project's or a canvas's
+        # she sees): posting made her a party, so knowing a chat's id was a key to all of it (access-core 2)
+        if m.thread not in await _scope.load(pool, request):
+            return JSONResponse({"error": "that conversation isn't shared with you"}, status_code=403)
+    stamp = {"team": team, "lead": team[0]} if len(team) > 1 else {}
+    if (rl := _ws.REPLY_LINE.match(m.body.strip())):
+        # A REPLY names a message (owner 11-17): only one the SENDER may read, by its own author, is a reference; the
+        # agent reads the stamp, never the line (medic 12990: the line alone would make it a deputy past the wall)
+        got = await pool.fetchrow("SELECT id, from_agent, from_org, to_agent, to_org, thread FROM messages "
+                                  f"WHERE id = $1 AND {NOT_RETRACTED_SQL}", int(rl.group(1)))
+        if _scope.of(request) is not None and got:
+            await _scope.load(pool, request)
+        if not got or got["from_agent"] != rl.group(2) or not _scope.message_ok(request, dict(got)):
+            return JSONResponse({"error": "you can reply only to a message you can read"}, status_code=400)
+        stamp["reply_to"] = got["id"]
+    if stamp:
+        meta = {**(meta or {}), **stamp}
+    if meta is None:                           # the owner: the very row it always was
+        row = await pool.fetchrow(
+            "INSERT INTO messages (from_agent, to_agent, thread, intent, body) "
+            "VALUES ('owner', $1, $2, 'chat', $3) RETURNING *",
+            m.to.strip().lower(), m.thread, m.body.strip())
+    elif sender == "owner":                    # the owner tagging a team: his row, plus the stamp
+        row = await pool.fetchrow(
+            "INSERT INTO messages (from_agent, to_agent, thread, intent, body, delivery) "
+            "VALUES ('owner', $1, $2, 'chat', $3, $4::jsonb) RETURNING *",
+            m.to.strip().lower(), m.thread, m.body.strip(), json.dumps(meta))
+    else:
+        row = await pool.fetchrow(
+            "INSERT INTO messages (from_agent, to_agent, thread, intent, body, delivery) "
+            "VALUES ($4, $1, $2, 'chat', $3, $5::jsonb) RETURNING *",
+            m.to.strip().lower(), m.thread, m.body.strip(), sender, json.dumps(meta))
     return msg(row)
 
 
@@ -1796,13 +2037,14 @@ class VegaMsg(BaseModel):
     history: list[dict] = []       # [{role: 'visitor'|'vega', text}], client-kept
 
 vega_hits: dict[str, list[float]] = {}
-_COG = orgs.multi()          # resolved once at start, as ESTATE is
+_COG = _SEAT is not None     # behind the cog's front (one org under a cog block too, orgs.here), resolved once
 
 
 def _client(request: Request) -> str:
     """The visitor a per-visitor cap counts. One org: the peer address, exactly as before. In a cog this observatory
     sits behind the cog's front (observatory/front.py), so its peer is always 127.0.0.1: the front's own
-    x-astryx-front-client (the address IT saw; it overwrites any a caller sends) is read, and only from 127.0.0.1."""
+    x-astryx-front-client (the address IT saw; it overwrites any a caller sends) is read, and only from 127.0.0.1.
+    A cog of ONE org sits behind the front as well (_SEAT), so its visitors are counted apart too."""
     peer = request.client.host if request.client else "?"
     if _COG and peer == "127.0.0.1":
         return request.headers.get("x-astryx-front-client") or peer
@@ -1826,9 +2068,9 @@ async def vega(m: VegaMsg, request: Request):
     vega_hits[ip] = hits
 
     ov = await overview()
-    milestones = await pool.fetch(
-        "SELECT agent, content FROM steps WHERE kind='milestone' "
-        "ORDER BY id DESC LIMIT 8")
+    milestones = await pool.fetch(                    # a visitor's: none from a turn opened on a person's chat
+        f"SELECT agent, content FROM steps WHERE kind='milestone' AND {_scope.steps_sql('$1')} "
+        "ORDER BY id DESC LIMIT 8", [])
     history = "\n".join(
         f"{'Visitor' if h.get('role') != 'vega' else 'You'}: {str(h.get('text', ''))[:500]}"
         for h in m.history[-8:])
@@ -1979,9 +2221,9 @@ async def turn_detail(turn_id: int):
 
 # ============================================================ profiles
 @app.get("/api/agents/{name}/profile")
-async def agent_profile(name: str):
+async def agent_profile(name: str, request: Request):
     meta = agent_meta()
-    if name not in meta:
+    if name not in meta or not sees(request)(name):     # its recent steps and presence are insides (sees())
         return Response(status_code=404)
     hits = [p for p in (ESTATE / "agents").rglob(f"{name}.md")
             if not p.name.endswith(".example.md")
@@ -2023,7 +2265,7 @@ async def agent_profile(name: str):
     pr = await pool.fetchrow("SELECT * FROM presence WHERE agent=$1", name)
     recent = await pool.fetch(
         "SELECT ts, kind, content FROM steps WHERE agent=$1 AND kind IN ('tool','milestone','error') "
-        "ORDER BY id DESC LIMIT 8", name)
+        f"AND {_scope.steps_sql('$2')} ORDER BY id DESC LIMIT 8", name, await _scope.steps_open(pool, request))
     # who this agent actually talks to, both directions on the wire — its relationships
     rel = await pool.fetch("""
         SELECT peer, sum(n)::bigint AS n FROM (
@@ -2081,8 +2323,8 @@ async def agent_avatar(name: str):
         ch = None
     pic = next((ch.parent / f"avatar{x}" for x in _AVATAR_TYPES
                 if ch and ch.parent.name == ch.stem and (ch.parent / f"avatar{x}").is_file()), None)
-    if not pic:
-        return Response(status_code=404)
+    if not pic:                                     # no face drawn yet: a quiet, cacheable miss (the <img> falls
+        return Response(status_code=204, headers={"cache-control": "public, max-age=300"})   # back to the portrait)
     return FileResponse(pic, media_type=_AVATAR_TYPES[pic.suffix], headers={
         "cache-control": "public, max-age=300", "x-content-type-options": "nosniff",
         "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox"})
@@ -2095,27 +2337,32 @@ def _presence(r) -> dict:
 
 @app.get("/api/presence")
 async def presence_all(request: Request):
-    """Where every agent's attention is (src/astryx/core/presence.py). Owner-only: a surface name can
-    carry a private canvas or thread."""
-    if not is_owner(request):
+    """Where every agent's attention is (src/astryx/core/presence.py). For the org's insiders: a surface names a
+    canvas or thread, which every insider reads anyway (11-15: a member's chat drew every agent asleep while db
+    worked, on this 403). Rows of an agent sees() refuses are left out; the public face gets none."""
+    if not insider(request):
         return Response(status_code=403)
-    return [_presence(r) for r in await pool.fetch("SELECT * FROM presence ORDER BY updated_at DESC")]
+    see = sees(request)
+    return [_presence(r) for r in await pool.fetch("SELECT * FROM presence ORDER BY updated_at DESC") if see(r["agent"])]
 
 
 
 @app.get("/api/pulse")
 async def pulse(request: Request):
     """Each agent's heartbeat: steps per hour over the last 24h, oldest first (24 buckets). The
-    agent cards draw it as a line, so a glance says who has been working and when. Owner-only:
-    an activity RATE is exactly what the anonymous floor zeroes (plan-18)."""
-    if not is_owner(request):
+    agent cards draw it as a line, so a glance says who has been working and when. Not public:
+    an activity RATE is exactly what the anonymous floor zeroes (plan-18). Insiders read it for the agents sees()
+    lets them read."""
+    if not insider(request):
         return Response(status_code=403)
+    see = sees(request)
     rows = await pool.fetch(
         "SELECT agent, least(23, floor(extract(epoch from now() - ts) / 3600))::int AS h, count(*) AS n "
         "FROM steps WHERE ts > now() - interval '24 hours' GROUP BY 1, 2")
     out: dict[str, list[int]] = {}
     for r in rows:
-        out.setdefault(r["agent"], [0] * 24)[23 - r["h"]] = r["n"]
+        if see(r["agent"]):
+            out.setdefault(r["agent"], [0] * 24)[23 - r["h"]] = r["n"]
     return out
 
 # ============================================================ system monitor
@@ -2447,33 +2694,15 @@ async def sqlfile_del(path: str):
 
 
 # ------------------------------------------------------------ wire routing
-# A channel's inbound map is bridges/routes-<channel>.json (the bridges re-read it
-# per message, so an edit here is live with no restart). These endpoints let the
+# A channel's inbound map is its rows in the route table (astryx.core.routes; each bridge re-reads it every few
+# seconds, so an edit here is live with no restart). These endpoints let the
 # owner SEE the wiring and change it — including binding an agent to a contact,
 # resolved through the same provider layer the agents use so a name never
 # silently fuzzy-matches the wrong person (the "Ali Owner" class). Owner-only.
-BRIDGES = ESTATE / "bridges"           # the routes-*.json files are org estate (data/estate_partition.json)
-
-
-def _wire_channels() -> list[str]:
-    """Channels with a routes file: routes-<channel>.json (examples excluded).
-    Derived from the filesystem, so a new channel appears here for free."""
-    return sorted(p.name[len("routes-"):-len(".json")]
-                  for p in BRIDGES.glob("routes-*.json")
-                  if not p.name.endswith(".example.json"))
-
-
-def _routes_file(channel: str) -> Path | None:
-    safe = "".join(c for c in channel if c.isalnum()).lower()
-    return BRIDGES / f"routes-{safe}.json" if safe else None
-
-
-def _read_routes(channel: str) -> list[dict]:
-    f = _routes_file(channel)
-    try:
-        return json.loads(f.read_text()) if f and f.is_file() else []
-    except Exception:
-        return []
+async def _wire_channels() -> list[str]:
+    """The channels whose routes the rail manages: every channel the owner connects (core/channels.py), and any other
+    with routes in the table (the frontends bridge). Routes are rows (astryx.core.routes, owner 11-16)."""
+    return sorted({c.name for c in _channels.connectable()} | set(await _routes.channels_in_use(pool)))
 
 
 class RouteSet(BaseModel):
@@ -2712,31 +2941,31 @@ async def growbot_proxy(path: str, request: Request):
 @app.get("/api/wire/routes")
 async def wire_routes():
     """Every channel's full route table (enabled AND disabled — the owner manages
-    both). trusted_key names the per-channel sender-trust field (jids vs numeric
-    ids) so the editor renders the right control. `etag` is the file's sha256: the PUT's If-Match (plan-11860 E4);
+    both). `etag` is the routes' version (route_version): the PUT's If-Match (plan-11860 E4);
     `problems` is the one validator's verdict on the table as it stands (E2), so a hand edit shows here."""
     out = []
-    for ch in _wire_channels():
-        routes = _read_routes(ch)
-        key = "trusted_jids" if (ch == "whatsapp"
-                                 or any("trusted_jids" in r for r in routes)) else "trusted_ids"
-        out.append({"channel": ch, "routes": routes, "trusted_key": key, "etag": etag(_routes_file(ch)),
-                    "problems": _routing.validate(routes, set(agent_meta()))})
+    for ch in await _wire_channels():
+        routes = await _routes.standing(pool, ch)
+        c = _channels.BY_NAME.get(ch)
+        # the channel's own rules ride with its table (core/channels.py), so the web holds none: which chat ids are a
+        # group or one person, and whether its people are phone numbers
+        out.append({"channel": ch, "routes": routes, "etag": await _routes.version(pool, ch),
+                    "problems": _routing.validate(routes, set(agent_meta())),
+                    "group": c.group if c else ".+", "dm": c.dm if c else "", "numbers": bool(c and c.numbers)})
     return out
 
 
 @app.put("/api/wire/routes/{channel}")
 async def wire_routes_put(channel: str, body: RouteSet, request: Request):
-    """Replace a channel's route table: THE one write path for routing (the Wiring tab and the floor both call it).
-    plan-11860 E4: the caller names the version it read (If-Match: the GET's etag; absent is 428, stale is 409), the
-    table passes the ONE validator every bridge resolves by (bridges/routing.py: a chat routes once, an agent with
-    several routes names its home), it is written atomically (E3), and the answer is the change AS THE BRIDGES WILL
-    SEE IT (added / removed / moved / doorbell), read from the same resolver. Unknown keys (a discord webhook, a note)
-    are preserved verbatim."""
+    """Replace a channel's OWNER routes: THE one write path for routing (the rail calls it; astryx.core.routes.put, rows
+    in the one route table). plan-11860 E4: the caller names the version it read (If-Match: the GET's etag; absent is
+    428, stale is 409), the routes pass the ONE validator every bridge resolves by (bridges/routing.py: a chat routes
+    once, an agent with several routes names its home), they are written in one transaction, and the answer is the
+    change AS THE BRIDGES WILL SEE IT (added / removed / moved / doorbell). Unknown keys (a discord webhook, a note)
+    are kept verbatim in the row's rule. A connection on a chat now routed here ends (the owner's route wins)."""
     if not owner_call(request):
         return Response(status_code=403)
-    f = _routes_file(channel)
-    if not f or channel not in _wire_channels():
+    if channel not in await _wire_channels():
         return Response("unknown channel", status_code=404)
     want = request.headers.get("if-match", "").strip().strip('"')
     if not want:
@@ -2744,12 +2973,12 @@ async def wire_routes_put(channel: str, body: RouteSet, request: Request):
     problems = _routing.validate(body.routes, set(agent_meta()))
     if problems:
         return JSONResponse({"error": problems[0], "problems": problems}, status_code=400)
-    before = _read_routes(channel)
+    before = await _routes.standing(pool, channel)
     try:
-        tag = atomic_write(f, json.dumps(body.routes, indent=2, ensure_ascii=False) + "\n", if_match=want)
-    except Conflict:
+        tag = await _routes.put(pool, channel, body.routes, want)
+    except _routes.Conflict:
         return JSONResponse({"error": "the routes changed since you loaded them; reload and try again",
-                             "etag": etag(f)}, status_code=409)
+                             "etag": await _routes.version(pool, channel)}, status_code=409)
     return {"ok": True, "channel": channel, "count": len(body.routes), "etag": tag,
             "diff": _routing.diff(before, body.routes)}
 
@@ -2772,7 +3001,126 @@ def glyphs_of(tables: dict[str, list]) -> list[dict]:
 
 @app.get("/api/floor/glyphs")
 async def floor_glyphs():
-    return glyphs_of({ch: _read_routes(ch) for ch in _wire_channels() if re.fullmatch(r"[a-z]{2,20}", ch)})
+    return glyphs_of({ch: await _routes.standing(pool, ch) for ch in await _wire_channels() if re.fullmatch(r"[a-z]{2,20}", ch)})
+
+
+# ---------------------------------------------------------------- identities and connections (identity-channels P3)
+# One person, many accounts (astryx.core.identity); an agent's door to a person is a CONNECTION, a `route` row
+# (astryx.core.connect). "Your channels": a signed-in person (or the owner) sees the accounts linked to them and adds
+# one: that account is asked to reply YES (through seed), and the YES links it. The rail lists the agents' connections;
+# the owner can end any.
+class MyChannel(BaseModel):
+    channel: str
+    account: str
+
+
+def _me_sync(who: str) -> dict:
+    import psycopg
+    with psycopg.connect(DSN, autocommit=True) as c:
+        linked = c.execute("SELECT h.channel, h.account FROM identity_handle h JOIN identity i ON i.id = h.identity_id "
+                           "AND i.tenant = h.tenant WHERE i.wire_name = %s AND h.channel <> 'web' ORDER BY 1, 2", (who,)).fetchall()
+        asked = c.execute("SELECT channel, chat, expires_at FROM route WHERE purpose = 'link' AND person = %s "
+                          "AND expires_at > now() UNION ALL SELECT channel, chat, expires FROM link_pending "
+                          "WHERE person = %s AND expires > now() ORDER BY 3", (who, who)).fetchall()
+    title = lambda ch: _channels.BY_NAME[ch].title if ch in _channels.BY_NAME else ch  # noqa: E731
+    return {"who": who, "linked": [{"channel": ch, "title": title(ch), "account": a} for ch, a in linked],
+            "asked": [{"channel": ch, "title": title(ch), "account": a, "until": t.isoformat() if t else None} for ch, a, t in asked],
+            "channels": [{"channel": c.name, "title": c.title, "numbers": c.numbers, "proof": c.link}
+                         for c in _channels.linkable()]}
+
+
+@app.get("/api/me/channels")
+async def my_channels(request: Request):
+    who = wire_handle(request)
+    if who is None:
+        return Response(status_code=403)
+    return await asyncio.to_thread(_me_sync, who)
+
+
+@app.post("/api/me/channels")
+async def my_channel_link(body: MyChannel, request: Request):
+    """Link one of MY accounts: that account is asked (by seed) to reply YES; nothing links until it does."""
+    who = wire_handle(request)
+    if who is None:
+        return Response(status_code=403)
+    if body.channel not in {c.name for c in _channels.linkable()} or not body.account.strip():
+        return JSONResponse({"error": "pick a channel and type the account (a WhatsApp number in full, +92…)"}, status_code=400)
+    from bridges.providers import registry
+    from astryx.core import connect as _connect
+
+    def search(q, ch=""):
+        return asyncio.run(registry.search_contacts(q, [ch] if ch else None))
+
+    def deliver(ch, chat, text):                  # a link code: through the provider, never a messages row
+        return asyncio.run(registry.send(f"{ch}:{chat}", text)).ok
+
+    acct = getattr(request.state, "uid", "") or ("owner-key" if who == "owner" else "")
+
+    def go():
+        import psycopg
+        with psycopg.connect(DSN, autocommit=True) as c:
+            # the signed-in person IS an account (its 'web' handle): the one thing a link may join to (identity_link)
+            c.execute("SELECT identity_who('web', %s, %s)", (acct, who))
+            return _connect.run(c, "seed", "link", who, body.channel, account=body.account.strip(), search=search,
+                                by=who, timeout="1d", deliver=deliver)
+    said = await asyncio.to_thread(go)
+    return {"ok": said.startswith(("asked", "sent a code")), "said": said, **await asyncio.to_thread(_me_sync, who)}
+
+
+class MyCode(BaseModel):
+    channel: str
+    account: str
+    code: str
+
+
+@app.post("/api/me/channels/confirm")
+async def my_channel_confirm(body: MyCode, request: Request):
+    """The code sent to one of MY accounts (a channel that only sends: email, SMS), typed back: right, and the link lands
+    at once through link_land, the landing a YES uses too; astryx confirms to the account through its provider."""
+    who = wire_handle(request)
+    if who is None:
+        return Response(status_code=403)
+    from astryx.core import connect as _connect
+    from bridges.providers import registry
+
+    def go():
+        import psycopg
+        with psycopg.connect(DSN, autocommit=True) as c:
+            got = _connect.confirm_code(c, who, body.channel, body.account.strip(), body.code)
+            if isinstance(got, str):
+                return got, None
+            try:
+                return None, c.execute("SELECT link_land_code(%s)", (got,)).fetchone()[0]
+            except psycopg.Error as e:
+                return str(e).splitlines()[0][:200], None
+    why, person = await asyncio.to_thread(go)
+    if person:
+        await registry.send(f"{body.channel}:{body.account.strip()}", _connect.linked_text(body.channel, person))
+    landed = person
+    return {"ok": landed is not None, "said": why or "linked", **await asyncio.to_thread(_me_sync, who)}
+
+
+@app.get("/api/wire/connections")
+async def wire_connections(request: Request):
+    """Every live connection and pending link, for the rail (owner only: rows name people)."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    rows = await pool.fetch("SELECT id, channel, chat, agent, purpose, person, opened_by, note, expires_at FROM route "
+                            "WHERE purpose <> 'standing' AND expires_at > now() ORDER BY channel, opened")
+    return [{**dict(r), "expires_at": r["expires_at"].isoformat()} for r in rows]
+
+
+@app.delete("/api/wire/connections/{cid}")
+async def wire_connection_end(cid: int, request: Request):
+    """The owner ends a connection; its agent is told on the wire."""
+    if not owner_call(request):
+        return Response(status_code=403)
+    r = await pool.fetchrow("DELETE FROM route WHERE id = $1 AND purpose <> 'standing' RETURNING agent, channel, person", cid)
+    if r is None:
+        return Response(status_code=404)
+    await pool.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body) VALUES ('owner', $1, NULL, 'chat', $2)",
+                       r["agent"], f"[connect] the owner ended your connection to {r['person']} on {r['channel']}.")
+    return {"ok": True}
 
 
 @app.get("/api/wire/contacts")
@@ -2788,9 +3136,12 @@ async def wire_contacts(q: str, channel: str = ""):
         found = await registry.search_contacts(q, [channel] if channel else None)
     except Exception as e:
         return {"matches": [], "error": str(e)[:200]}
+    # a number typed in (WhatsApp) carries its registration: True, False (no account: shown, not offered), None (not
+    # asked); every other match is a known chat, registered by having one
     matches = [{"channel": c.channel, "label": c.label, "number": c.number,
-                "handle": c.handle, "native": c.handle.split(":", 1)[1]}
-               for c in found if c.handle and ":" in c.handle]
+                "handle": c.handle, "native": c.handle.split(":", 1)[1] if ":" in c.handle else c.number or "",
+                "registered": c.raw.get("registered", True) if isinstance(c.raw, dict) else True}
+               for c in found if (c.handle and ":" in c.handle) or (isinstance(c.raw, dict) and c.raw.get("registered") is False)]
     return {"matches": matches, "count": len(matches)}
 
 
@@ -3178,7 +3529,7 @@ async def memory_chat_replies(thread: str, after: int = 0, request: Request = No
         return Response(status_code=400)          # estate, "ask memory about this person" (pid-keyed), the Library's desk
     rows = await pool.fetch(
         "SELECT id, from_agent, body, ts FROM messages WHERE thread=$1 AND to_agent='owner' AND to_org='local' "
-        "AND from_agent<>'owner' AND id > $2 ORDER BY id LIMIT 10", thread, after)
+        "AND from_agent<>'owner' AND id > $2 AND status IS DISTINCT FROM 'retracted' ORDER BY id LIMIT 10", thread, after)
     # TO the local owner, from anyone (memory→steward isn't his; owner@peer never left, so it isn't delivered here)
     if rows:
         # Serving the reply IS its delivery — this screen is the surface the thread
@@ -3239,15 +3590,16 @@ async def thread_read(r: ThreadRead, request: Request):
     (upto), so a reply that lands between render and this call is not marked unseen. NEVER a row a bridge
     delivers (t-, wa:, threadless, tg:, dc:, cv:, tier releases, ear-; bridges/owner_surfaces.py, a4 #57418):
     marking it here would stop the bridge from ever sending it to his phone."""
-    if not owner_call(request):
+    me = wire_handle(request)                  # the owner marks his rows, a member hers (cog-who), never another's
+    if me is None:
         return Response(status_code=403)
     if not r.thread.strip():
         return Response(status_code=400)
     rows = await pool.fetch(
         "UPDATE messages SET status='delivered', delivered_at=now(), "
         "delivery=jsonb_build_object('ok', true, 'handle', 'observatory:thread') "
-        "WHERE thread=$1 AND id <= $2 AND to_agent='owner' AND to_org='local' AND from_agent<>'owner' "
-        f"AND status='pending' AND NOT {OWNER_ROW_BRIDGED_SQL} RETURNING id", r.thread, r.upto)
+        "WHERE thread=$1 AND id <= $2 AND to_agent=$3 AND to_org='local' AND from_agent<>$3 "
+        f"AND status='pending' AND NOT {OWNER_ROW_BRIDGED_SQL} RETURNING id", r.thread, r.upto, me)
     return {"marked": sorted(x["id"] for x in rows)}
 
 
@@ -3417,7 +3769,8 @@ async def cog_new_org(m: NewOrg, request: Request):
     thread = NEW_ORG_THREAD + key
     body = f"COG NEW ORG key={key} name={name} purpose={purpose or '-'}"
     async with pool.acquire() as c, c.transaction():
-        await c.execute("SELECT pg_advisory_xact_lock(hashtext($1))", thread)
+        # keyed by the org too (cog-rls slice 3): an advisory lock is database-wide, a thread name is not
+        await c.execute("SELECT pg_advisory_xact_lock(hashtext(coalesce(cog.tenant(), '') || ':' || $1))", thread)
         # fetchrow, not fetchval: sqlguard's shim counts a fetchrow's rows, so this WHERE can show both sides and climb to
         # RESPONSIVE; a fetchval reads rows=-1 and is capped at EXECUTED (a3 #61777). A row is truthy, None isn't.
         if await c.fetchrow("SELECT id FROM messages WHERE thread = $1 AND ts > now() - interval '1 day' "
@@ -3473,16 +3826,33 @@ def _jsonb(v):
     return v
 
 
+def insider_sees_event(data: dict, see, message_ok=lambda d: True) -> bool:
+    """An insider's live feed: every event, short of an agent sees() keeps the owner's (the personal tier). Its steps
+    and presence carry its name; messages, dags and resyncs are the wire's, which insiders read whole, short of what a
+    member given part of the tree may read (message_ok: scope.message_ok, the positive rule)."""
+    if data.get("type") == "message":
+        return message_ok(data)
+    return data.get("type") not in ("step", "presence") or see(data.get("agent") or "")
+
+
 @app.get("/api/events")
 async def events(request: Request):
     # EventSource cannot send headers, so owner mode rides ?key=. Anonymous
     # streams carry ONLY boundary-crossing message events; steps/dags are the
-    # agents' insides and stay owner-only.
+    # agents' insides: the owner's, and an insider's per sees().
     owner = (bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY) or _signed_owner(request)
+    inside = owner or insider(request)                  # a member sees the org's stream too (cog-who: no walls inside)
+    see, mine = sees(request), (lambda d: _scope.message_ok(request, d))
+    if inside and not owner and _scope.of(request) is not None:
+        await _scope.load(pool, request)              # the people's chats open to this member, held for the connection
 
     async def visible(data: dict) -> bool:
         if owner:
             return True
+        if inside:
+            return insider_sees_event(data, see, mine)
+        if data.get("type") == "resync":
+            return True               # carries nothing: "the tap was down, catch up" (listen_task)
         # Same ONE rule as /api/messages — see anonymous_can_see(). This site previously
         # carried its own copy of the predicate and kept the old, leaking version after
         # the SQL side was fixed; it now has no copy to keep.
@@ -3494,14 +3864,19 @@ async def events(request: Request):
         q: asyncio.Queue = asyncio.Queue()
         sse_clients.add(q)
         try:
-            yield ": hello\n\n"
+            # the hello is a named ping too: from its first byte the client knows this server pings, so its watchdog
+            # is armed at once (a proxy that holds the socket open after the API died answers nothing ever again)
+            yield "event: ping\ndata: {}\n\n"
             while True:
                 try:
                     data = await asyncio.wait_for(q.get(), timeout=25)
                     if await visible(data):
                         yield f"data: {json.dumps(data)}\n\n"
                 except asyncio.TimeoutError:
-                    yield ": ping\n\n"
+                    # a NAMED event, not a comment: EventSource never surfaces comments, so a client could not tell a
+                    # quiet stream from a half-dead socket (a laptop that slept, a changed network). A named event
+                    # fires no onmessage (old clients ignore it); the workspace's watchdog hears it (store.tsx).
+                    yield "event: ping\ndata: {}\n\n"
                 if await request.is_disconnected():
                     return
         finally:
@@ -3536,7 +3911,8 @@ def _upstream(stem: str, fixed: int) -> str | None:
 CANVAS_UP = _upstream("astryx-canvas", 8091)   # this org's canvas (its registry port in a cog)
 # In a cog the viewer reaches this observatory under the front's /o/<org>/ (S3c canvas): the prefix is THIS org's
 # registry name, computed, never read from a request (nothing a caller sends can move a redirect). One org: "".
-CANVAS_PRE = f"/o/{orgs.name()}" if _COG else ""
+CANVAS_PRE = f"/o/{_SEAT}" if _COG else ""
+_wscv.CANVAS_PRE = CANVAS_PRE                  # the workspace serves canvas pages with this kit prefix
 _canvas_http: httpx.AsyncClient | None = None
 
 
@@ -3584,10 +3960,15 @@ async def _pipe(url: str, request: Request, owner_key: bool, down: str):
     # reached at. The scheme is uvicorn's, resolved from its pinned trusted peer. Canvas gets only its own session
     # cookie, never the observatory's owner key (it has its own session); the ear gets the key and no cookie.
     front = _COG and (request.client.host if request.client else "") == "127.0.0.1"
-    host = (request.headers.get("x-forwarded-host") if front else None) or request.headers.get("host", "")
+    host = _relay.viewer_host(request, bool(_COG))
+    # cog-gaps: canvas recognizes the front's sign-in. The front's signed identity is NOT on the allowlist (D3); it is
+    # passed to canvas alone, explicitly, and only when it came from the front itself and _who VERIFIED it for this
+    # org (request.state.uid). Canvas verifies it again with the cog's public keys (bridges/canvas.py signed_viewer).
+    vouched = request.headers.get(_identity.HEADER) if (front and not owner_key and getattr(request.state, "uid", None)) else None
     headers = [(k, v) for k, v in _relay.headers(
         request.headers.items(), host=host, proto=request.url.scheme,
-        cookies=() if owner_key else {_relay.canvas_cookie(orgs.name())})
+        cookies=() if owner_key else {_relay.canvas_cookie(_SEAT)},
+        extra=[(_identity.HEADER, vouched)] if vouched else ())
         if owner_key or k.lower() != "x-obs-key"]
     upstream = _canvas_http.build_request(
         request.method, url, params=request.query_params,
@@ -3599,7 +3980,7 @@ async def _pipe(url: str, request: Request, owner_key: bool, down: str):
     done = BackgroundTasks()
     done.add_task(r.aclose)
     resp = StreamingResponse(r.aiter_raw(), status_code=r.status_code, background=done)
-    resp.raw_headers = _relay.response_headers(r.headers.raw, orgs.name())   # its own canvas cookie only (N1)
+    resp.raw_headers = _relay.response_headers(r.headers.raw, _SEAT)   # its own canvas cookie only (N1)
     return resp
 
 
@@ -3737,9 +4118,9 @@ async def hands_vnc(ws: WebSocket, agent: str):
 #   E8  WhatsApp has no token: wacli pairs by QR. The link state is read first (a constant, read-only argv); unknown
 #       means refuse; a linked phone is never replaced from here. Pairing streams over a fetch carrying x-obs-key.
 ENV_FILE = ESTATE / ".env"                     # the org's .env (a seam: the oracle points it at a fixture file)
-CHANNEL_TOKEN_KEY = {"telegram": "TG_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
-_TOKEN_SHAPE = {"telegram": re.compile(r"^\d{5,16}:[A-Za-z0-9_-]{30,64}$"),
-                "discord": re.compile(r"^[A-Za-z0-9_-]{20,40}\.[A-Za-z0-9_-]{4,10}\.[A-Za-z0-9_-]{20,60}$")}
+# the bot channels and their tokens, from the one channel table (core/channels.py)
+CHANNEL_TOKEN_KEY = {c.name: c.token_key for c in _channels.connectable() if c.token_key}
+_TOKEN_SHAPE = {c.name: re.compile(rf"^(?:{c.token_shape})$") for c in _channels.connectable() if c.token_key}
 _PROBE_TRANSPORT = None                         # a seam: the oracle hands httpx a MockTransport
 _account_cache: dict[str, tuple[float, str, dict | None]] = {}
 ACCOUNT_TTL = 300
@@ -3810,6 +4191,19 @@ def _bridge(channel: str) -> dict:
                 out["health"] = json.loads(h.read() or b"{}")
     except Exception:  # noqa: BLE001 — unknown health is "not connected", never an error page
         pass
+    if out["health"] is None:
+        # NO SYSTEMD (a container run by resume.sh, owner 11-15: the rail said "one step left" for a WhatsApp that was
+        # delivering): the bridge's own port, THIS org's (the registry in a cog, the unit table's on one org), answers
+        try:
+            stem = f"astryx-{channel}"
+            port = orgs.port(stem) or (orgs._units().get(stem) or {}).get("port")
+            if port:
+                import urllib.request
+                with urllib.request.urlopen(f"http://127.0.0.1:{int(port)}/health", timeout=2) as h:
+                    out["health"] = json.loads(h.read() or b"{}")
+                    out["active"] = True
+        except Exception:  # noqa: BLE001 — still unknown: "not connected"
+            pass
     return out
 
 
@@ -3846,10 +4240,12 @@ async def channels_status(request: Request):
     except OSError:
         env_mtime = 0.0
     out = []
-    for ch in ("whatsapp", "telegram", "discord"):
+    for ch in (c.name for c in _channels.connectable()):
         b = await asyncio.to_thread(_bridge, ch)
-        row = {"channel": ch, "routes": ch in _wire_channels()}
-        if ch == "whatsapp":
+        c = _channels.BY_NAME[ch]                 # what the screen needs to connect it, from the one table
+        row = {"channel": ch, "routes": True, "title": c.title, "numbers": c.numbers,
+               "connect": "token" if c.token_key else "link", "steps": list(c.steps)}
+        if ch not in CHANNEL_TOKEN_KEY:            # linked another way: WhatsApp's QR
             link = await asyncio.to_thread(_wa_link)
             state = ("connected" if link["state"] == "linked" and b["health"] else
                      "activation-needed" if link["state"] == "linked" else
@@ -3867,6 +4263,15 @@ async def channels_status(request: Request):
                        activate=_activate_cmd(ch, b) if state in ("activation-needed", "written") else None,
                        invite=_discord_invite(acct["id"]) if (ch == "discord" and acct) else None)
         out.append(row)
+    # every other bridge with routes (the frontends bridge, a new one): its routes and its own health, no token
+    # flow here; then the BUILT-INS (the channel rail, owner 11-15: "I treat chat as a channel"): they are not routed per
+    # chat, so `fixed` says the rail shows what they do instead of a control
+    extra = [c for c in await _wire_channels() if c not in {x.name for x in _channels.connectable()}]
+    for ch, b in zip(extra, await asyncio.gather(*(asyncio.to_thread(_bridge, c) for c in extra))):   # together: a down bridge costs seconds
+        out.append({"channel": ch, "routes": True, "state": "connected" if b["health"] else "unknown", "account": None})
+    out += [{"channel": "web", "fixed": True, "state": "connected", "shows": "everything, always"},
+            {"channel": "canvas", "fixed": True, "state": "connected", "shows": "everything, always"},
+            {"channel": "terminal", "fixed": True, "state": "connected", "shows": "not mirrored into chat yet"}]
     return out
 
 
@@ -3888,7 +4293,7 @@ async def channel_token(channel: str, body: ChannelToken, request: Request):
     key = CHANNEL_TOKEN_KEY.get(channel)
     if not key:
         return JSONResponse({"ok": False, "error": "This channel connects without a token."}, status_code=404)
-    title, token = channel.capitalize(), body.token.strip()
+    title, token = _channels.BY_NAME[channel].title, body.token.strip()
     if not _TOKEN_SHAPE[channel].match(token):
         return JSONResponse({"ok": False, "error": f"That doesn't look like a {title} bot token. Copy the whole token and paste it again."},
                             status_code=400)

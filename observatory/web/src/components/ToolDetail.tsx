@@ -493,7 +493,10 @@ function TriggerBody({ agent, name }: { agent: string; name: string }) {
   const { d, err } = useFetch<TriggerFull>(`/triggers/${encodeURIComponent(agent)}/${encodeURIComponent(name)}`)
   if (err) return <Empty title="Trigger not found" hint={err} tone="bad" />
   if (!d) return <Loading />
-  const state = d.state && typeof d.state === 'object' && Object.keys(d.state as object).length ? JSON.stringify(d.state, null, 2) : null
+  // ctx.log's lines (pulse_run.Ctx.log) are shown as runs, not as part of what it remembers
+  const { _log, ...kept } = (d.state && typeof d.state === 'object' ? d.state : {}) as { _log?: { ts: string; line: string }[] }
+  const runs = Array.isArray(_log) ? [..._log].reverse() : []
+  const state = Object.keys(kept).length ? JSON.stringify(kept, null, 2) : null
   return (
     <>
       <div className="flex items-center gap-3">
@@ -538,6 +541,19 @@ function TriggerBody({ agent, name }: { agent: string; name: string }) {
           </div>
         ) : <div className="text-[12.5px] text-ink-mute">It hasn't fired on the wire lately — its condition hasn't crossed.</div>}
       </section>
+      {runs.length > 0 && (
+        <section>
+          <SectionHead title="Quiet runs" count={runs.length} />
+          <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto">
+            {runs.map((r, i) => (
+              <div key={i} className="flex gap-3 text-[12.5px]">
+                <span className="text-ink-mute shrink-0 w-16">{ago(r.ts)}</span>
+                <span className="text-ink-dim min-w-0 break-words">{r.line}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </>
   )
 }

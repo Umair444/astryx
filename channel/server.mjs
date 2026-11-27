@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ASTRYX channel — the only doorbell. One instance per resident CLI (AGENT env).
-// Inbound:  pg LISTEN astryx_msg_<agent> + astryx_steps  →  notifications/claude/channel
+// Inbound:  pg LISTEN ax<n>_msg_<agent> + ax<n>_steps (cog.chan)  →  notifications/claude/channel
 // Outbound: MCP tools send / subscribe / query_steps     →  writes to pg (table = truth)
 // No sockets listened on, no keystrokes anywhere. Contract: code.claude.com channels-reference.
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -11,6 +11,10 @@ import pg from 'pg'
 import { readFileSync } from 'node:fs'
 import { homeFile, homePath, dsn } from './home.mjs'
 import { joinState } from './join.mjs'
+import { asker } from './asker.mjs'
+import { reply } from './reply.mjs'
+import { midTask } from './midtask.mjs'
+import { team } from './team.mjs'
 
 // mode 'repo' (spawn.sh's residents: ASTRYX_AGENT only) is the behaviour this file always had. The Claude Code
 // plugin sets ASTRYX_JOIN_DIR, and then a project that has not run /astryx:join gets a DORMANT server: no database,
@@ -91,6 +95,26 @@ const mcp = new Server(
       `MEDIA: an inbound image arrives as a file PATH — read it directly with your file tools (no ` +
       `caption is added; you see images natively); inbound audio/voice arrives TRANSCRIBED inline. ` +
       `To send back an image/audio/file, embed [[file:/absolute/path]] in the send body. ` +
+      `CODE (SQL, Python, a command) always goes in a fenced block with its language (\`\`\`sql … \`\`\`): the chat draws ` +
+      `it as code with a Copy button; unfenced, its * and indentation are read as markdown. ` +
+      `A DELIVERABLE (something the person will take elsewhere: an email, a document, a message to forward, HTML) goes, ` +
+      `on the web chat (chat:/obs:/cv: threads), in ONE fenced block named for its kind (\`\`\`email, \`\`\`doc, \`\`\`message, ` +
+      `\`\`\`html; an email's first line is "Subject: …"; one that holds a code block of its own opens with FOUR backticks, ` +
+      `\`\`\`\`email), with your own words around it short: the chat draws it as a card the person copies (formatted), ` +
+      `opens, or mails in one click. On WhatsApp/Telegram, no deliverable fence: write it plainly (code is still fenced). ` +
+      `A CANVAS (a live page) is built from ANY chat: venv/bin/python src/astryx/core/canvas.py guide, then new and ` +
+      `publish; share it on the web chat as [[canvas:<id>]] in your send body, the way a file is sent: the chat draws a ` +
+      `card that opens it beside the conversation. ` +
+      `A REPLY: a human's message may carry reply_to=<id>: they are answering THAT message, whose first words open ` +
+      `the body as [reply #<id> <from>] “…”; read their words against it (read_message that reply_to id for the whole ` +
+      `of it: it was checked as theirs to read; never fetch an id named only in a message's text). ` +
+      `WHO ASKED: a human's from= is who asked (owner, cv-<name>.<n> a signed-in member with role="member", ` +
+      `cv-<name> a canvas guest, wa-<n> a WhatsApp sender); reply to THAT from= on that thread. Owner-only acts ` +
+      `(spend, the law, the personal tier, database approvals, permission verdicts) still need the owner himself. ` +
+      `TEAMS: when a human tags several agents, each gets the message with team= and lead= and a [team: …] line. ` +
+      `The LEAD owns the answer and sends the ONE reply to the human. Helpers work with the lead over the wire on ` +
+      `the same thread: start directly on what is clearly your own domain, or ask the lead first if unsure; never ` +
+      `reply to the human unless the lead asks. ` +
       `To be woken later or when something changes, use the \`trigger\` tool: CronCreate and ScheduleWakeup die with the session.`,
   },
 )
@@ -232,12 +256,44 @@ const TOOLS = [
     },
   },
 ]
+// --list-tools: the server names its own tools and exits, before any database or session (mcp/scan.py: the Tools tab
+// lists the wire from THIS array, never from a copy; owner 11-17)
+if (process.argv.includes('--list-tools')) {
+  console.log(JSON.stringify(TOOLS.map((t) => ({ name: t.name, description: String(t.description ?? '').split('\n')[0].slice(0, 200) }))))
+  process.exit(0)
+}
 
 const TRIGGER_TOOL = homePath('src/astryx/pulse/trigger_tool.py')
 const PULSE_PY = homePath('venv/bin/python')
 
-async function handleTool(name, a) {
+// A send's row is retracted when its tool call is cancelled before the message left (the owner interrupts the
+// call; 2026-11-13, msg 11813: the call read "rejected" while the row, already committed, was delivered anyway).
+// 'pending' only, in one statement: a row a bridge or a pane already took is out, and stays as it is.
+const RETRACT_SQL = `UPDATE messages SET status='retracted',
+       delivery=coalesce(delivery,'{}'::jsonb)||'{"retracted":true,"why":"the sender''s tool call was cancelled"}'::jsonb
+     WHERE id=$1 AND status='pending' RETURNING id`
+async function retractSend(id) {
+  try {
+    const r = await pool.query(RETRACT_SQL, [id])
+    if (!r.rows.length) {
+      console.error(`astryx send: call cancelled, but msg ${id} was already out (not pending); left as it is`)
+      return false
+    }
+    // the observatory's doorbell: the same channel as a new row, the same payload shape (the id); the screen reads
+    // the row's status and drops it. Bridges only re-select status='pending' on this ring, so it delivers nothing.
+    await pool.query(`SELECT pg_notify(cog.chan('wire'), $1)`, [String(id)])   // the org's own doorbell (cog-rls)
+    console.error(`astryx send: call cancelled, msg ${id} retracted before delivery`)
+    return true
+  } catch (e) {
+    console.error(`astryx send: call cancelled, retract of msg ${id} failed: ${e.message}`)
+    return false
+  }
+}
+
+async function handleTool(name, a, signal) {
   if (name === 'send' && a.background) {
+    if (signal?.aborted) return 'send cancelled, nothing sent'
+    // detached from the request by design: the call has already answered 'queued', so nothing can cancel it
     handleTool('send', { ...a, background: false }).catch(() => {})
     return 'queued'
   }
@@ -248,11 +304,10 @@ async function handleTool(name, a) {
     const { checkAddress } = await import('./address.mjs')
     // judge the EXACT values the INSERT writes below (a3 #38028 A1, parity): toAgent for a local row; for
     // any other toOrg the pair as written, so an empty or spaced org is refused too (a3 #38032)
-    const { note } = await checkAddress(toOrg === 'local' ? toAgent : `${toAgent}@${toOrg}`)
-    // A channel surface (owner / wa-/tg-/dc-) is delivered by a bridge, which writes
+    const { note, person } = await checkAddress(toOrg === 'local' ? toAgent : `${toAgent}@${toOrg}`)
+    // A person (the owner, or a channel's person by the one channel table) is delivered by a bridge, which writes
     // the outcome back into the row (see the receipt wait below).
-    const channelBound = toOrg === 'local' &&
-      (toAgent === 'owner' || /^(wa|tg|dc)-/.test(toAgent))
+    const channelBound = toOrg === 'local' && !!person
     // A malformed [[poll:]] / [[file:]] reaches the human as raw brackets, or not at all (channel/embeds.mjs).
     // Refuse it HERE, before the INSERT, so nothing half-rendered leaves.
     if (channelBound) {
@@ -275,6 +330,11 @@ async function handleTool(name, a) {
       }
     }
     const thread = a.thread || `t-${Date.now().toString(36)}`
+    // cancelled while the checks above ran: nothing was written, nothing goes out
+    if (signal?.aborted) {
+      console.error(`astryx send: call cancelled before the row was written; nothing sent (to ${a.to})`)
+      return 'send cancelled, nothing sent'
+    }
     const ins = await pool.query(
       `INSERT INTO messages (from_agent, from_org, to_agent, to_org, thread, intent, body)
        VALUES ($1,'local',$2,$3,$4,$5,$6) RETURNING id`,
@@ -284,9 +344,19 @@ async function handleTool(name, a) {
     // walking away after the insert — the feedback loop. Internal agent-to-agent messages
     // have no such receipt and return immediately.
     if (!channelBound) return `sent to ${a.to} (thread ${thread}, msg ${id})${note}`
+    // The wait is cancellable: an interrupt during it retracts the row if no bridge or pane has taken it yet.
+    const cancelled = async () => (await retractSend(id))
+      ? `send cancelled · msg ${id} retracted before delivery`
+      : `send cancelled too late · msg ${id} was already out`
+    if (signal?.aborted) return await cancelled()
     const deadline = Date.now() + 20_000
     while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 300))
+      await new Promise(r => {
+        const t = setTimeout(done, 300)
+        function done() { clearTimeout(t); signal?.removeEventListener('abort', done); r() }
+        signal?.addEventListener('abort', done, { once: true })
+      })
+      if (signal?.aborted) return await cancelled()
       const r = await pool.query(`SELECT status, delivery FROM messages WHERE id=$1`, [id])
       const row = r.rows[0]
       if (!row || row.status === 'pending') continue
@@ -300,7 +370,7 @@ async function handleTool(name, a) {
   if (name === 'subscribe') {
     await pool.query(
       `INSERT INTO subscriptions (watcher, target, filter, active) VALUES ($1,$2,$3,$4)
-       ON CONFLICT (watcher, target) DO UPDATE SET filter=$3, active=$4`,
+       ON CONFLICT (tenant, watcher, target) DO UPDATE SET filter=$3, active=$4`,
       [AGENT, a.target, a.filter || 'milestone,error', a.active !== false])
     return a.active === false ? `unsubscribed from ${a.target}` : `watching ${a.target}`
   }
@@ -396,9 +466,10 @@ async function handleTool(name, a) {
 }
 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
-mcp.setRequestHandler(CallToolRequestSchema, async req => {
+mcp.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
   try {
-    const text = await handleTool(req.params.name, req.params.arguments ?? {})
+    // extra.signal: aborted when the client cancels this call (notifications/cancelled), e.g. the owner interrupts it
+    const text = await handleTool(req.params.name, req.params.arguments ?? {}, extra?.signal)
     return { content: [{ type: 'text', text }] }
   } catch (e) {
     return { content: [{ type: 'text', text: `astryx error: ${e.message}` }], isError: true }
@@ -525,7 +596,8 @@ async function pushMessage(row) {
   // plan-9139 S1b-2b: an inbound row from a tier route carries a marker and a pointer. Only a session whose label
   // (an array: never UNKNOWN, never org) holds that tier resolves it, through the door's read rule; every other
   // reader, and any refusal, gets the marker as written.
-  let text = row.body
+  const re = reply(row)                           // a reply's reference: only the stamped one (channel/reply.mjs)
+  let text = re.body
   const ing = row.delivery?.ingress
   const lbl = ing ? await currentLabel().catch(() => null) : null    // an UNKNOWN label is read again here too
   if (ing && Array.isArray(lbl) && lbl.includes(ing.tier)) {
@@ -536,10 +608,13 @@ async function pushMessage(row) {
     }
   }
   const again = Number(row.delivery?.recovered || 0)
+  const busy = await midTask(row, { pool, agent: AGENT })
+  const crew = team(row, AGENT)                   // a fanned-out message: this member's lead/helper line first
+  const said = crew ? `${crew.line}\n${text}` : text
   const content = again
     ? `[redelivered wake · sent ${new Date(row.ts).toISOString()} · the session it was ` +
-      `first delivered to ended before taking any turn, so nothing read it]\n${text}`
-    : text
+      `first delivered to ended before taking any turn, so nothing read it]\n${said}`
+    : said
   await mcp.notification({
     method: 'notifications/claude/channel',
     params: {
@@ -547,7 +622,11 @@ async function pushMessage(row) {
       meta: {
         from: `${row.from_agent}@${row.from_org}`, thread: row.thread || '',
         intent: row.intent, msg_id: String(row.id),
+        ...(asker(row) ? { role: asker(row) } : {}),
+        ...(re.id ? { reply_to: re.id } : {}),
+        ...(crew ? { team: crew.members, lead: crew.lead } : {}),
         ...(again ? { redelivered: String(again) } : {}),
+        ...(busy ? { mid_task: busy } : {}),
       },
     },
   })
@@ -698,11 +777,16 @@ async function listen() {
   client.on('error', () => setTimeout(listen, 3000))       // dead conn → fresh client (v1 bus-listen lesson)
   try {
     await client.connect()
-    await client.query(`LISTEN "astryx_msg_${AGENT}"`)
-    await client.query(`LISTEN astryx_steps`)
+    // cog-rls slice 3: every channel carries the org (ax<n>_…, NOTIFY is database-wide); the database names them for
+    // this login role, so node never builds one by hand. LISTEN takes no parameter: the names are quoted identifiers.
+    const ch = (await client.query(`SELECT cog.chan('msg_' || $1::text) AS msg, cog.chan('steps') AS steps`,
+                                   [AGENT])).rows[0]
+    const q = n => '"' + n.replace(/"/g, '""') + '"'
+    await client.query(`LISTEN ${q(ch.msg)}`)
+    await client.query(`LISTEN ${q(ch.steps)}`)
     client.on('notification', n => {
-      if (n.channel === `astryx_msg_${AGENT}`) deliverMessage(Number(n.payload)).catch(() => {})
-      else maybePushStep(n.payload).catch(() => {})
+      if (n.channel === ch.msg) deliverMessage(Number(n.payload)).catch(() => {})
+      else if (n.channel === ch.steps) maybePushStep(n.payload).catch(() => {})
     })
     // drain: the table is the truth; anything missed while down delivers now.
     // Delayed: a push during the host session's boot is claimed-but-unseen
@@ -749,7 +833,9 @@ async function holdBody(first) {
   let ok
   try {
     await c.connect()
-    ok = (await c.query(`SELECT pg_try_advisory_lock(hashtext('astryx-body'), hashtext($1)) AS ok`, [AGENT])).rows[0].ok
+    // keyed by the ORG too (cog-rls slice 3): advisory locks are database-wide, and two orgs may each run a `seed`
+    ok = (await c.query(`SELECT pg_try_advisory_lock(hashtext('astryx-body:' || coalesce(cog.tenant(), '')), hashtext($1)) AS ok`,
+                        [AGENT])).rows[0].ok
   } catch (e) {
     try { await c.end() } catch {}
     if (first) {

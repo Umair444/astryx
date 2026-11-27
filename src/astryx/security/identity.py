@@ -81,16 +81,31 @@ def load_verifiers(home: Path) -> dict[str, VerifyKey]:
     return out
 
 
-def mint(key: SigningKey, sub: str, aud: str, now: float | None = None) -> str:
+def mint(key: SigningKey, sub: str, aud: str, now: float | None = None, name: str | None = None,
+         email: str | None = None) -> str:
+    """`name` (cog-who): the account's own label, its email's local part, a WHO fact the front is the authority for
+    (I1), carried so the backend can say which human asked. `email`: the address the account signed up with, PROVEN by
+    the front's code, so the org links it as that person's email channel (owner 11-18). Each omitted when None: the
+    claims are then exactly D1's."""
     now = int(time.time() if now is None else now)
-    body = json.dumps({"sub": sub, "aud": aud, "iat": now, "exp": now + TTL, "kid": kid_of(key.verify_key)},
-                      separators=(",", ":"), sort_keys=True).encode()
+    claims = {"sub": sub, "aud": aud, "iat": now, "exp": now + TTL, "kid": kid_of(key.verify_key)}
+    if name:
+        claims["name"] = name
+    if email:
+        claims["email"] = email
+    body = json.dumps(claims, separators=(",", ":"), sort_keys=True).encode()
     return f"{_b64(body)}.{_b64(key.sign(body).signature)}"
 
 
 def verify(token: str, verifiers: dict, aud: str, now: float | None = None) -> str | None:
     """The token's sub when it is signed by a key in `verifiers` (by its kid), names THIS org as aud, and is inside
     its window; else None. Every refusal is the same None: the caller answers public-only (D2)."""
+    c = claims(token, verifiers, aud, now)
+    return c["sub"] if c else None
+
+
+def claims(token: str, verifiers: dict, aud: str, now: float | None = None) -> dict | None:
+    """verify's whole answer: {sub, name, email} (each '' when the token carries none or not a string), or None."""
     now = time.time() if now is None else now
     try:
         b, s = token.split(".")
@@ -105,6 +120,7 @@ def verify(token: str, verifiers: dict, aud: str, now: float | None = None) -> s
             return None
         if p["aud"] != aud or not (iat - SKEW <= now < exp) or exp - iat > TTL:
             return None
-        return sub
+        name, email = p.get("name"), p.get("email")
+        return {"sub": sub, "name": name if isinstance(name, str) else "", "email": email if isinstance(email, str) else ""}
     except (ValueError, KeyError, TypeError, BadSignatureError):
         return None

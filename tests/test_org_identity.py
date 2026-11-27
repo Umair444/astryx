@@ -171,7 +171,7 @@ if m:
         cur = conn.cursor()
         cur.execute("INSERT INTO peers (org, pubkey, status, notes) "
                     "VALUES ('local','deadbeef','introduced','ORACLE FIXTURE') "
-                    "ON CONFLICT (org) DO NOTHING")
+                    "ON CONFLICT (tenant, org) DO NOTHING")
         got = cur.execute(
             f"SELECT {pred} FROM (SELECT %s::text AS from_org) t", ("local",)).fetchone()[0]
         check("a PEER that claimed 'local' still renders as FOREIGN", got is True,

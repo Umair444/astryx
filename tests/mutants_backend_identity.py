@@ -18,16 +18,16 @@ MUTANTS = {
     "B2 any role is the owner (a member of B opens B's owner routes)":
         ('    return getattr(request.state, "role", None) == "owner"', '    return getattr(request.state, "role", None) is not None'),
     "B3 the role is not read from this org's members (every verified identity is an owner)":
-        ('    return uid, await pool.fetchval("SELECT role FROM members WHERE uid = $1", uid)', '    return uid, "owner"'),
+        ('        return uid, await _members.role_of(pool, uid)', '        return uid, "owner"'),
     "B4 the gate judges before it reads the identity":
         ("    request.state.uid, request.state.role = await _who(request)", "    request.state.uid, request.state.role = None, None"),
     "B5 the event stream ignores the signed-in owner (an EventSource can only send the cookie)":
         ('    owner = (bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY) or _signed_owner(request)',
          '    owner = bool(OBS_KEY) and request.query_params.get("key", "") == OBS_KEY'),
     "B6 the verifier accepts any org's token (aud = None checks nothing: the token's own aud is taken)":
-        ("    uid = _identity.verify(tok, _keys(), _AUD)\n", "    uid = _identity.verify(tok, _keys(), _identity.json.loads(_identity._unb64(tok.split('.')[0])).get('aud'))\n"),
+        ("    c = _identity.claims(tok, _keys(), _AUD)\n", "    c = _identity.claims(tok, _keys(), _identity.json.loads(_identity._unb64(tok.split('.')[0])).get('aud'))\n"),
     "B7 the backend's Set-Cookie pipe passes every cookie (its own relay to canvas)":
-        ("    resp.raw_headers = _relay.response_headers(r.headers.raw, orgs.name())", "    resp.raw_headers = list(r.headers.raw)"),
+        ("    resp.raw_headers = _relay.response_headers(r.headers.raw, _SEAT)", "    resp.raw_headers = list(r.headers.raw)"),
     "B8 a members lookup that fails is a 500 (an org whose schema.sql isn't re-applied breaks its public face)":
         ("    except (asyncpg.PostgresError, OSError) as e:   # no members table yet", "    except ZeroDivisionError as e:   # no members table yet"),
 }

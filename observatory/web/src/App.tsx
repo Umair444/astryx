@@ -3,36 +3,43 @@ import { AppShell, Burger, Group, Popover, Text, TextInput, Tooltip } from '@man
 import { useDisclosure, useMediaQuery } from '@mantine/hooks'
 import { saveObsKey } from './api'
 import { LOGIN, signInHref } from './auth'
+import { canAdmin, useMe, whoLabel } from './me'
 import { StoreProvider, useStore } from './store'
+import { can, talks } from './types'
 import { CogProvider, useCog } from './cog'
 import { CogChooser, CogSwitcher } from './components/CogBuilding'
 import Sidebar from './components/Sidebar'
-import NetworkView from './components/NetworkView'
-import FloorView from './components/FloorView'
-import PeopleView from './components/PeopleView'
-import WireView from './components/WireView'
-import GoalsView from './components/GoalsView'
-import EconomyView from './components/EconomyView'
-import ToolsView from './components/ToolsView'
 import { DesktopOverlay } from './ui/hands'
-import SystemView from './components/SystemView'
-import TheatreView from './components/TheatreView'
-import MemoryView from './components/MemoryView'
-import GrowbotView from './components/GrowbotView'
-import FaceView from './components/FaceView'
 import AgentDrawer from './components/AgentDrawer'
-import ChatApp from './chat/ChatApp'
+import ChatGate from './chat/Gate'                 // /chat: the sign-in door + the workspace as its own lazy chunk
 import ChatSheet from './components/ChatSheet'
 import { AnimatePresence } from 'motion/react'
 import VegaChat from './components/VegaChat'
 import PulseStrip from './components/PulseStrip'
 import EarControl from './components/EarControl'
-import VoicePilot from './components/VoicePilot'
+import CallButton from './call/CallButton'
+import CallLayer from './call/CallLayer'
 import RoomLayer from './ui/room'
 import Palette from './components/Palette'
 import { PilotHost } from './pilot'
 import PilotConfirm from './pilot/Confirm'
 import { Orb } from './ui/kit'
+
+/* every view is its own chunk (iteration 8 of the chat workspace): /chat downloads none of them, and a tab downloads
+   only itself; the shell (header, sidebar, store) stays in the main bundle */
+const NetworkView = lazy(() => import('./components/NetworkView'))
+const FloorView = lazy(() => import('./components/FloorView'))
+const PeopleView = lazy(() => import('./components/PeopleView'))
+const WireView = lazy(() => import('./components/WireView'))
+const GoalsView = lazy(() => import('./components/GoalsView'))
+const EconomyView = lazy(() => import('./components/EconomyView'))
+const ToolsView = lazy(() => import('./components/ToolsView'))
+const SystemView = lazy(() => import('./components/SystemView'))
+const TheatreView = lazy(() => import('./components/TheatreView'))
+const MemoryView = lazy(() => import('./components/MemoryView'))
+const GrowbotView = lazy(() => import('./components/GrowbotView'))
+const FaceView = lazy(() => import('./components/FaceView'))
+const AdminView = lazy(() => import('./components/AdminView'))
 
 /* SIGN-IN (goal 11859 U3), behind the LOGIN build flag until forge's U1U2 lands: off, none of it is in the build (the
    imports below are never made, so no /auth request exists), and the key door below is the only way in, as before. */
@@ -42,13 +49,15 @@ const Auth = LOGIN ? {
   Orgs: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.OrgListScreen }))),
   Account: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.AccountMenu }))),
   Chooser: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.AuthChooser }))),
+  Accept: lazy(() => import('./components/AuthScreens').then((m) => ({ default: m.AcceptScreen }))),
 } : null
 
 /* the sign-in pages are whole screens, outside the shell (as the face is) */
 function authPage() {
   if (!Auth) return null
   const p = location.hash.replace(/^#\/?/, '').split(/[/?]/)[0]
-  const Page = p === 'sign-in' ? Auth.SignIn : p === 'signed-out' ? Auth.SignedOut : p === 'orgs' ? Auth.Orgs : null
+  const Page = p === 'sign-in' || p === 'sign-up' ? Auth.SignIn : p === 'signed-out' ? Auth.SignedOut : p === 'orgs' ? Auth.Orgs
+    : p === 'accept' ? Auth.Accept : null
   return Page ? <Suspense fallback={<div className="min-h-dvh bg-deck" />}><Page /></Suspense> : null
 }
 
@@ -66,6 +75,7 @@ export type Route =
   | { tab: 'face' }
   | { tab: 'floor' }
   | { tab: 'chat'; thread?: string }
+  | { tab: 'admin' }
 
 function parseHash(): Route {
   const h = location.hash.replace(/^#\/?/, '')
@@ -77,11 +87,13 @@ function parseHash(): Route {
   if (tab === 'tools') return { tab: 'tools' }
   if (tab === 'monitor') return { tab: 'monitor' }
   if (tab === 'theatre') return { tab: 'theatre' }
+  if (tab === 'mind') return { tab: 'economy' }
   if (tab === 'memory') return { tab: 'memory' }
   if (tab === 'growbot') return { tab: 'growbot' }
   if (tab === 'face') return { tab: 'face' }
   if (tab === 'network') return { tab: 'network' }
   if (tab === 'chat') return { tab: 'chat', thread: a || undefined }
+  if (tab === 'admin') return { tab: 'admin' }
   return { tab: 'floor' }          // the Floor is home: the org as a place
 }
 
@@ -105,6 +117,7 @@ const TABS: { key: Route['tab']; label: string; icon: string }[] = [
   { key: 'memory', label: 'Memory', icon: '⬢' },
   { key: 'growbot', label: 'GrowBot', icon: '🤖' },
   { key: 'monitor', label: 'System', icon: '❐' },
+  { key: 'admin', label: 'Admin', icon: '◈' },
 ]
 
 /* The read-only badge doubles as the discreet door: clicking it lets the
@@ -253,10 +266,15 @@ function Shell() {
     })
   const isDesktop = useMediaQuery('(min-width: 48em)', true)
   const { overview, who, whoChecked } = useStore()
+  const me = useMe()             // signed in: your name and the org's in place of 'local' (owner 11-13)
   const cog = useCog()
   // the Floor and the Network are the org's public faces; everything else is the owner's
-  const tabs = who.owner ? TABS : TABS.filter((t) => t.key === 'network' || t.key === 'floor')
-  const locked = !who.owner && route.tab !== 'network' && route.tab !== 'floor'
+  // cog-who: a signed-in member also has the chat workspace (the route itself is ChatGate's, which admits them);
+  // the Admin pane: an account panel, so it opens to a SIGNED-IN owner or admin of this org (never the key alone)
+  const admin = canAdmin(me)
+  const tabs = (who.owner ? TABS : TABS.filter((t) => t.key === 'network' || t.key === 'floor' || t.key === 'admin' || (t.key === 'chat' && talks(who))))
+    .filter((t) => t.key !== 'admin' || admin)
+  const locked = !who.owner && route.tab !== 'network' && route.tab !== 'floor' && !(route.tab === 'admin' && admin)
   const openAgent = (n: string) => (who.owner ? setTalking(n) : setAgentOpen(n))
 
   useEffect(() => {
@@ -270,13 +288,24 @@ function Shell() {
 
   // The creature face is a MODE, not a tab: fullscreen, no chrome — the whole
   // phone becomes the robot's face (it does its own key gate).
-  if (route.tab === 'face') return <FaceView />
+  if (route.tab === 'face') return <Suspense fallback={null}><FaceView /></Suspense>
+  // THE CALL (iteration 17): the pilot's host, its confirm and the call layer sit BESIDE whichever surface is up, at
+  // the same place in the tree for the chat workspace and the observatory, so a live call survives moving between
+  // them (a remount would hang up). The chat workspace is a fullscreen route, so before this none of it was there.
+  const beside = (
+    <>
+      <PilotHost route={route} agentOpen={agentOpen} setAgentOpen={setAgentOpen} />
+      {who.owner && <PilotConfirm />}
+      {can(who, 'call') && <CallLayer selected={talking ?? agentOpen} />}
+    </>
+  )
   // /chat is a WORKSPACE, not a tab (plan-11884): fullscreen, its own rail, its own keys
-  if (route.tab === 'chat') return <ChatApp thread={route.thread ?? null} go={(t) => nav({ tab: 'chat', thread: t ?? undefined })} />
+  if (route.tab === 'chat') return <>{<ChatGate thread={route.thread ?? null} go={(t) => nav({ tab: 'chat', thread: t ?? undefined })} />}{beside}</>
   const page = authPage()
   if (page) return page
 
   return (
+    <>
     <AppShell
       header={{ height: 48 }}
       navbar={{ width: 264, breakpoint: 'sm', collapsed: { mobile: !navOpened, desktop: !deskNav } }}
@@ -297,14 +326,14 @@ function Shell() {
                 name and live count, as always */}
             {cog.cog ? <CogSwitcher /> : overview && (
               <>
-                <span className="hidden sm:inline font-mono text-ink-dim">{overview.org}</span>
+                <span className="hidden sm:inline font-mono text-ink-dim">{whoLabel(me, overview.org)}</span>
                 <span className="flex items-center gap-1">
                   <span className={`w-2 h-2 rounded-full ${overview.live > 0 ? 'bg-good animate-pulse' : 'bg-ink-mute/40'}`} />
                   {overview.live} live
                 </span>
               </>
             )}
-            {who.owner && <VoicePilot hidden />}
+            <CallButton />
             {who.owner && <EarControl view={route.tab} />}
             {Auth && <Suspense fallback={null}><Auth.Account /></Suspense>}
             <KeyBadge />
@@ -324,7 +353,7 @@ function Shell() {
               <LockPanel />
             ) : null
           ) : (
-            <>
+            <Suspense fallback={null}>
               {route.tab === 'floor' && <FloorView onOpenAgent={openAgent} talking={talking} />}
               {route.tab === 'network' && <NetworkView onOpenAgent={openAgent} />}
               {route.tab === 'agents' && <PeopleView />}
@@ -336,7 +365,8 @@ function Shell() {
               {route.tab === 'theatre' && <TheatreView />}
               {route.tab === 'memory' && <MemoryView />}
               {route.tab === 'growbot' && <GrowbotView />}
-            </>
+              {route.tab === 'admin' && <AdminView />}
+            </Suspense>
           )}
         </div>
       </AppShell.Main>
@@ -349,6 +379,7 @@ function Shell() {
           {tabs.map((t) => (
             <button
               key={t.key}
+              data-tab={t.key}
               ref={(el) => {
                 if (el && route.tab === t.key) el.scrollIntoView({ inline: 'center', block: 'nearest' })
               }}
@@ -362,9 +393,7 @@ function Shell() {
         </div>
       </AppShell.Footer>
 
-      <PilotHost route={route} agentOpen={agentOpen} setAgentOpen={setAgentOpen} />
       <Palette />
-      {who.owner && <PilotConfirm />}
       <AnimatePresence>
         {who.owner && talking && (
           <ChatSheet key={talking} name={talking} onClose={() => setTalking(null)} onProfile={() => setAgentOpen(talking)} />
@@ -380,13 +409,17 @@ function Shell() {
           private tab is redundant, not merely mispositioned. */}
       {route.tab !== 'memory' && !(route.tab === 'wire' && who.owner) && <VegaChat />}
     </AppShell>
+    {beside}
+    </>
   )
 }
 
 export default function App() {
   return (
     <CogProvider chooser={(cog) => Auth
-      ? <Suspense fallback={null}><Auth.Chooser cog={cog} fallback={<CogChooser cog={cog} />} /></Suspense>
+      // a one-time link (#/accept) is opened before any org is chosen: it names its own org, and walks into it after
+      ? <Suspense fallback={null}>{/^#\/accept\b/.test(location.hash) ? <Auth.Accept />
+        : <Auth.Chooser cog={cog} fallback={<CogChooser cog={cog} />} />}</Suspense>
       : <CogChooser cog={cog} />}>
       <StoreProvider>
         <Shell />

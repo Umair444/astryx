@@ -13,5 +13,5 @@ MUTANTS = {
     "X2 deliver() skips the org-route check":
         ("        if not await door_org_ok(pool, row, \"discord\", routes(), cid):", "        if False:"),
     "X3 the live_steps job starts on any route that asks":
-        ("    if live_steps_ok(route) and trusted:", "    if route.get(\"live_steps\") and trusted:"),
+        ("    if live_steps_ok(route):", "    if route.get(\"live_steps\"):"),
 }

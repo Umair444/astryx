@@ -153,7 +153,21 @@ def _check_pair(v: str, src: str, path, environ) -> None:
                          "database, which an empty DSN reaches (correction 1(ii))")
     home = Path(path).parent if path else paths.home()
     mine = orgs.org_of(home, environ)
-    owner = next((o for o, e in reg.items() if e["db"] == db), None)
+    user = info.get("user")
+    # cog-rls slice 2: under row-level security the ROLE is the org's identity. A DSN whose user is another org's role
+    # binds that org's rows wherever the database is; one whose org carries a role must log in AS that role.
+    by_role = next((o for o, e in reg.items() if e.get("role") and e["role"] == user), None)
+    if by_role is not None and by_role != mine:
+        raise ForeignDSN(f"the DSN in {src} logs in as org {by_role}'s role, and this HOME is "
+                         f"{mine or 'no registered org'} (cog-rls)")
+    if mine is not None and reg[mine].get("role"):
+        if user != reg[mine]["role"]:
+            raise ForeignDSN(f"{src} logs in as {user!r}, and the registry binds {mine} to role {reg[mine]['role']!r}")
+        if db != reg[mine]["db"]:
+            raise ForeignDSN(f"{src} names database {db!r}, and the registry gives {mine} {reg[mine]['db']!r}")
+        return
+    owners = [o for o, e in reg.items() if e["db"] == db]
+    owner = owners[0] if len(owners) == 1 else (mine if mine in owners else (owners[0] if owners else None))
     if owner is not None and owner != mine:
         raise ForeignDSN(f"the DSN in {src} binds org {owner}'s database, and this HOME is "
                          f"{mine or 'no registered org'} (correction 2)")
@@ -196,8 +210,24 @@ def unset_env(key: str, path: Path | None = None) -> bool:
 
 
 def _write_env(key: str, new: str | None, path: Path | None) -> bool:
-    """The ONE .env writer: `new` replaces the key's first line (or is appended), or None removes the key."""
-    p = Path(path) if path else env_path()
+    """The ONE .env writer: `new` replaces the key's first line (or is appended), or None removes the key. Under an
+    exclusive lock on <.env>.lock (init.sh's appends take the same lock), so two writers never lose each other's key;
+    the new file is fsynced before it replaces the old and the directory after, so a crash leaves one whole .env, old
+    or new, never a torn one (medic 12364 R2: a torn .env takes down the pulse and every bridge)."""
+    import fcntl
+    # a LINKED .env (a worktree's, by the house rule: ln -s, never copy) is written where it points: replacing the link
+    # would leave the real one stale and a full private copy of every secret in the linking tree (medic 12463)
+    p = (Path(path) if path else env_path()).resolve()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    lock = os.open(p.with_name(p.name + ".lock"), os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _write_env_locked(p, key, new)
+    finally:
+        os.close(lock)
+
+
+def _write_env_locked(p: Path, key: str, new: str | None) -> bool:
     try:
         text = p.read_text()
     except FileNotFoundError:
@@ -220,13 +250,19 @@ def _write_env(key: str, new: str | None, path: Path | None) -> bool:
         if lines and not lines[-1].endswith("\n"):
             lines[-1] += "\n"
         lines.append(new)
-    p.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".env.", dir=p.parent)
     try:
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write("".join(lines))
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, p)
+        dfd = os.open(p.parent, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
     except BaseException:
         try:
             os.unlink(tmp)
@@ -262,8 +298,10 @@ def _main(argv) -> int:
             print(get(argv[1], "", f, env_first="--file" not in argv))
         elif argv[:1] == ["estate"]:
             print(paths.estate())
+        elif argv[:1] == ["set"] and len(argv) == 2:
+            set_env(argv[1], sys.stdin.read().rstrip("\n"), f)   # the value on stdin: argv is visible to every ps
         else:
-            print("usage: python -m astryx.config dsn [--file] | get KEY [--file] | estate", file=sys.stderr)
+            print("usage: python -m astryx.config dsn [--file] | get KEY [--file] | estate | set KEY  (value on stdin)", file=sys.stderr)
             return 2
     except (LookupError, RuntimeError) as e:
         print(f"astryx.config: {e}", file=sys.stderr)

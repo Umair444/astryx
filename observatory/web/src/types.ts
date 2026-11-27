@@ -46,6 +46,7 @@ export interface Msg {
   body: string
   status: string | null
   turn_id?: number | null // the turn that produced this message (peel-open)
+  lead?: string | null    // a message to a TEAM of agents: the one that leads and replies (the first named)
 }
 
 export interface ThreadInfo {
@@ -68,6 +69,8 @@ export interface Step {
   goal_id: number | null
   tokens_in: number | null
   tokens_out: number | null
+  turn_msgs?: number[] | null    // the msg_ids that opened this step's turn (hooks/step.py; /api/chat/work only)
+  sub?: { id?: string; type?: string; desc?: string } | null   // a helper (sub-agent) the agent launched did it
 }
 
 export type GoalState = 'proposed' | 'active' | 'hibernated' | 'done' | 'refused'
@@ -289,6 +292,8 @@ export interface ToolInfo {
 }
 
 export interface ToolServer {
+  who?: 'every' | 'grant' | 'opt-in'   // who gets it (mcp/registry.json, the one list): every agent, by grant, or opt-in
+  optin?: string                         // the .env switch an opt-in server waits on
   server: string
   tools: ToolInfo[]
 }
@@ -388,7 +393,30 @@ export interface TriggerRow {
 export interface WhoAmI {
   owner: boolean
   vega: boolean
+  role?: string | null     // cog-who: this org's members role ('owner' for the key door too); absent on old servers
+  handle?: string | null   // the viewer's wire name: 'owner', or a member's cv-<label>.<uid>
+  caps?: Record<string, number | null>   // what this person may use (owner 11-17): feature -> their daily minutes
+  reach?: string[] | null  // the agents they may reach; null = every agent
 }
+
+/* owner 11-17: what a person may use and which agents they reach, as the server resolved it (/api/whoami). The UI
+   shows only these; the server refuses the rest, so a hidden button and a 403 can't disagree. */
+export const can = (w: WhoAmI, feature: 'dictate' | 'call') => w.owner || !!w.caps && feature in w.caps
+export const reaches = (w: WhoAmI, agent: string) => w.owner || w.reach == null || w.reach.includes(agent)
+
+/* cog-who: who may use the chat workspace — the owner, or a signed-in member (no privacy within an org, owner 11-13).
+   And a HUMAN party of a row: the owner, or a named web human (cv-<x>: a member or a canvas guest). The chat's 'owner'
+   comparisons mean "the human side", so they use this. */
+export const talks = (w: WhoAmI) => w.owner || w.role === 'member' || w.role === 'admin'
+// every person's chats: the owner's view alone (owner 11-17, msg 12970: a normal chat is its starter's; scope.py)
+export const seesEveryone = (w: WhoAmI) => w.owner
+export const isHuman = (n: string | null | undefined): boolean => !!n && (n === 'owner' || n.startsWith('cv-'))
+/* cog-gaps: a human's words sit on the RIGHT only when they are the viewer's own (from === her handle); another
+   human's (the owner's in a member's view, a member's in the owner's) sit on the LEFT under their name. The name is
+   read off the handle: 'owner' -> 'Owner', cv-<label>.<uid> -> its label, cv-<guest> -> the guest's name. */
+export const ownWords = (from: string | null | undefined, me: string | null | undefined): boolean => !!from && from === (me || 'owner')
+export const humanName = (h: string): string => h === 'owner' ? 'Owner'
+  : h.replace(/^cv-/, '').replace(/\.\d+$/, '').replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
 /* /api/events SSE payloads */
 /* src/astryx/core/presence.py — where an agent's attention is right now (owner-only) */
@@ -404,8 +432,10 @@ export interface Presence {
 export type WireEvent =
   | ({ type: 'presence' } & Presence)
   | ({ type: 'message' } & Msg)
+  | { type: 'message_retracted'; id: number }   // the sender's send was cancelled before the row left: drop it
   | { type: 'step'; id: number; agent: string; kind: string }
   | DagEvent
+  | { type: 'resync' }            // the server's LISTEN tap was down: what it missed never came, so catch up
 
 /* GET /api/system — host stats for the Monitor tab */
 export interface SysInfo {
@@ -481,27 +511,28 @@ export interface TurnDetail {
   events: TurnEvent[]
 }
 
-/* GET/PUT /api/wire/routes — a channel's inbound map (bridges/routes-<ch>.json).
+/* GET/PUT /api/wire/routes — a channel's inbound map (its owner routes: rows of the route table).
    Extra keys (a discord webhook) ride the index signature and are preserved. */
 export interface WireRoute {
   chat: string
   agent: string
   enabled?: boolean
   open?: boolean
-  live_steps?: boolean
+  live_steps?: boolean    // the older form of show (true = steps)
+  show?: 'steps' | 'replies'
   note?: string
   webhook?: string
-  trusted_jids?: string[]
-  trusted_ids?: number[]
   [k: string]: unknown
 }
 
 export interface ChannelRoutes {
   channel: string
   routes: WireRoute[]
-  trusted_key: 'trusted_jids' | 'trusted_ids'
   etag: string          // the file's sha256: the PUT's If-Match (plan-11860 E4)
   problems: string[]    // the one validator's verdict on the table as it stands (E2)
+  group: string         // the channel's rules (core/channels.py): a chat id that is a group (regex, whole id)
+  dm: string
+  numbers: boolean      // its people are phone numbers
 }
 
 /* PUT /api/wire/routes/<channel> — the change as the bridges will see it */
@@ -519,6 +550,7 @@ export interface ContactMatch {
   number: string | null
   handle: string
   native: string // the platform chat id (handle minus the channel: prefix)
+  registered: boolean | null // a number typed in: has a WhatsApp account, has none, or not asked; a known chat is true
 }
 
 /* GET /api/agents/{name}/profile — an agent AS A PERSON (main.py agent_profile).

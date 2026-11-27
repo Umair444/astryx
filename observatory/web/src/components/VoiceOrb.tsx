@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import AgentFace from './AgentFace'
 import { useTheme } from '../theme'
 import { CONFIRM_ARM_MS } from '../pilot/core'
 
 /* plan-9000 S2 SURFACE: the voice orb the ear pill expands into. Visual only: it opens no socket, spends nothing and
-   sends nothing. The wiring (VoicePilot) feeds it props, a bind for the confirm button, and onDismiss(nonce).
+   sends nothing. The call dock (call/CallDock.tsx) uses its ConfirmPrompt; fixtures/voice-orb.html renders the whole orb.
 
    THE CONFIRM decides nothing itself. Its button is handed to `bind`, which in the app is pilot/Confirm.tsx's
    bindPilotConfirm: the executor's dwell starts at that bind, and the button's NATIVE click goes to pilot.confirm,
@@ -202,10 +202,11 @@ function Faces({ agents }: { agents: OrbAgent[] }) {
 // ------------------------------------------------------------------ the confirm
 const human = (s: string) => s.replace(/[_-]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
 
-function ConfirmPrompt({ confirm, bind, onDismiss }: {
+export function ConfirmPrompt({ confirm, bind, onDismiss, to = null }: {
   confirm: OrbConfirm
   bind: OrbBind
   onDismiss: (nonce: string) => void
+  to?: ReactNode                                             // who a send goes to: a row from app state, never model prose
 }) {
   const btn = useRef<HTMLButtonElement>(null)
   const [entered, setEntered] = useState(false)                    // the entrance has finished; bind from here
@@ -227,6 +228,7 @@ function ConfirmPrompt({ confirm, bind, onDismiss }: {
       className="rounded-2xl border border-line bg-deck-2 px-4 py-3.5">
       <div className="text-[11px] uppercase tracking-[.08em] text-ink-mute">Needs your tap</div>
       <div className="lib-display text-[22px] leading-tight text-ink mt-1">{human(confirm.action)}</div>
+      {to}
       {args.length > 0 && (
         <dl className="mt-2 flex flex-wrap gap-1.5">
           {args.map(([k, v]) => (

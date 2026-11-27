@@ -1,0 +1,59 @@
+/* Charts (iteration 9). The categorical order is the dataviz reference palette, VALIDATED against this app's own
+   surfaces (validate_palette.js: light on #ffffff, dark on the Astryx #07091a — all hard gates pass; three light
+   slots sit under 3:1, so the table view and the legend/direct labels carry identity there: the relief rule).
+   Dark is SELECTED, not inverted: the same eight hues stepped for a dark surface. Text never wears a series colour. */
+.ws-chart {
+  --ch-surface: var(--t-bg);
+  --ch-ink: var(--t-fg);
+  --ch-ink2: var(--t-dim);
+  --ch-mute: color-mix(in srgb, var(--t-fg) 52%, var(--t-bg));
+  --ch-grid: color-mix(in srgb, var(--t-fg) 9%, var(--t-bg));
+  --ch-axis: color-mix(in srgb, var(--t-fg) 26%, var(--t-bg));
+  --ch-1: #2a78d6; --ch-2: #eb6834; --ch-3: #1baf7a; --ch-4: #eda100;
+  --ch-5: #e87ba4; --ch-6: #008300; --ch-7: #6250d6; --ch-8: #e34948;
+  background: var(--ch-surface);
+}
+:root[data-theme="dark"] .ws-chart {
+  --ch-1: #3987e5; --ch-2: #d95926; --ch-3: #199e70; --ch-4: #c98500;
+  --ch-5: #d55181; --ch-6: #008300; --ch-7: #9085e9; --ch-8: #e66767;
+}
+.ws-chart svg { display: block; overflow: visible; font-family: "Inter Variable", Inter, system-ui, sans-serif; }
+.ws-chart .c-grid { stroke: var(--ch-grid); stroke-width: 1; shape-rendering: crispEdges; }
+.ws-chart .c-base { stroke: var(--ch-axis); stroke-width: 1; shape-rendering: crispEdges; }
+.ws-chart .c-tick { fill: var(--ch-mute); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ws-chart .c-cat { fill: var(--ch-ink2); font-size: 12px; }
+.ws-chart .c-val { fill: var(--ch-ink2); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.ws-chart .c-lab { fill: var(--ch-ink2); font-size: 11.5px; font-weight: 500; }
+.ws-chart .c-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.ws-chart .c-area { opacity: .1; }
+.ws-chart .c-dot { stroke: var(--ch-surface); stroke-width: 2; }
+.ws-chart .c-cross { stroke: var(--ch-axis); stroke-width: 1; shape-rendering: crispEdges; }
+.ws-chart .c-band { fill: var(--t-fg); opacity: 0; }
+.ws-chart .c-band[data-on="1"] { opacity: .045; }
+.ws-chart .c-bar { transition: opacity 120ms; }
+.ws-chart [data-hover="1"] .c-bar:not([data-on="1"]) { opacity: .62; }
+.ws-chart .c-plot:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 70%, transparent); outline-offset: 4px; border-radius: 6px; }
+@media (forced-colors: active) { .ws-chart .c-line { stroke: CanvasText; } }
+
+.ws-chart-tip { position: absolute; z-index: 5; pointer-events: none; min-width: 140px; max-width: 280px; padding: 8px 10px; border-radius: 10px;
+  background: var(--t-panel); border: 1px solid var(--t-line); box-shadow: 0 10px 30px -12px rgba(0,0,0,.4); font-size: 12px; color: var(--t-dim); }
+.ws-chart-tip .t-head { color: var(--t-dim); margin-bottom: 4px; font-size: 11.5px; }
+.ws-chart-tip .t-row { display: flex; align-items: center; gap: 8px; line-height: 1.55; }
+.ws-chart-tip .t-row b { color: var(--t-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.ws-chart-tip .t-row span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-chart-key { display: inline-block; flex: none; }
+.ws-chart-key[data-k="line"] { width: 14px; height: 2px; border-radius: 2px; }
+.ws-chart-key[data-k="bar"] { width: 10px; height: 10px; border-radius: 3px; }
+.ws-chart-key[data-k="scatter"] { width: 9px; height: 9px; border-radius: 9999px; }
+
+.ws-select { height: 28px; padding: 0 24px 0 9px; border-radius: 8px; font-size: 12.5px; color: var(--t-fg); background: var(--t-panel);
+  border: 1px solid var(--t-line); appearance: none; max-width: 180px; text-overflow: ellipsis;
+  background-image: linear-gradient(45deg, transparent 50%, var(--t-mute) 50%), linear-gradient(135deg, var(--t-mute) 50%, transparent 50%);
+  background-position: calc(100% - 13px) 12px, calc(100% - 9px) 12px; background-size: 4px 4px; background-repeat: no-repeat; }
+.ws-select:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 60%, transparent); outline-offset: 1px; }
+.ws-serie { height: 26px; padding: 0 9px 0 7px; border-radius: 9999px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--t-line); color: var(--t-dim); max-width: 200px; }
+.ws-serie[aria-pressed="true"] { color: var(--t-fg); border-color: color-mix(in srgb, var(--t-fg) 22%, var(--t-line)); background: var(--t-panel); }
+.ws-serie[aria-pressed="false"] .ws-chart-key { opacity: .3; }
+.ws-serie:disabled { opacity: .45; }
+

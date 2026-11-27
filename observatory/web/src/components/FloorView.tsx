@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, MotionConfig, motion } from 'motion/react'
-import { RoomOrb } from '../ui/kit'
+import { LiveDot, RoomOrb } from '../ui/kit'
 import { useStore } from '../store'
 import { api, displayName, fmtAgo } from '../api'
 import type { AgentRow, Msg, Presence } from '../types'
@@ -9,7 +9,8 @@ import AgentFace from './AgentFace'
 import { HandBadge } from '../ui/hands'
 import { FRESH_PRESENCE, moodOf, nowLine } from '../ui/life'
 import InfluenceLayer, { KIND_HUE, KIND_LABEL, influenceLine, type Geometry, type Influence } from './InfluenceLayer'
-import ChannelDock from './ChannelDock'
+import ChannelRail from './ChannelRail'
+import { paintPlane, useCamera } from '../ui/camera'
 import RouteToast from './RouteToast'
 import { GlyphStack } from '../ui/glyphs'
 import { useAttention } from '../ui/attend'
@@ -118,49 +119,19 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
     api<Influence>(`/influence?window=${win}`).then(j => {
       if (!live) return
       setInf(j)
-      // an UNMEASURED kind starts OFF (and stays marked so when it's switched on), never hidden (seed #60095)
-      setKinds(k => k ?? new Set(j.kinds.filter(x => x.measured).map(x => x.kind)))
+      // every drawable kind starts ON; an UNMEASURED one is drawn dashed and marked so on its pill, never counted
+      // (seed #60095). Starting it OFF left the floor bare when every kind sat under the 50% floor (owner 15477)
+      setKinds(k => k ?? new Set(j.kinds.filter(x => KIND_LABEL[x.kind]).map(x => x.kind)))
     }).catch(() => {})
     return () => { live = false }
   }, [who.owner, win])
 
-  // the camera: the room is a place you move around in — drag to pan, wheel/trackpad or pinch to
-  // zoom about the pointer, buttons for the same. A drag that starts on a face never opens it.
-  /* The camera is a REF painted straight onto the plane (owner 10-22: "lags are bad"). A pan, pinch or wheel used to
-     setState per pointer event, re-rendering every agent on the floor 60+ times a second. Now a gesture writes the
-     plane's transform directly, and React's copy settles 140 ms after the last move (for the zoom controls). camRef
-     is the one truth: a re-render mid-gesture paints from it, never from a stale state. */
-  const [, setCamState] = useState({ x: 0, y: 0, k: 1 })
-  const camRef = useRef({ x: 0, y: 0, k: 1 })
-  const camCommit = useRef(0)
-  const camTransform = (c: { x: number; y: number; k: number }) => `translate3d(${c.x}px, ${c.y}px, 0) scale(${c.k})`
-  const camGlide = useRef(0)
-  // glide: the transition is written onto the plane BEFORE the transform, in the same frame, so a room open/close
-  // glides; a React-state transition would land a render too late and the move would snap (a3 #62258 R1).
-  // will-change is held only while the camera moves, so a zoom re-rasterises crisp when it settles (a3 N1).
-  const setCam = (u: { x: number; y: number; k: number } | ((c: { x: number; y: number; k: number }) => { x: number; y: number; k: number }), glide = false) => {
-    const n = typeof u === 'function' ? u(camRef.current) : u
-    camRef.current = n
-    const p = plane.current
-    if (p) {
-      if (glide) {
-        p.style.transition = 'transform .5s cubic-bezier(.2,.8,.2,1)'
-        clearTimeout(camGlide.current)
-        camGlide.current = window.setTimeout(() => { if (plane.current) plane.current.style.transition = '' }, 520)
-      }
-      p.style.willChange = 'transform'
-      p.style.transform = camTransform(n)
-    }
-    clearTimeout(camCommit.current)
-    camCommit.current = window.setTimeout(() => { setCamState(n); if (plane.current) plane.current.style.willChange = '' }, glide ? 560 : 140)
-  }
+  // the camera: the room is a place you move around in (ui/camera.ts: the one camera every map in the observatory
+  // shares). The plane is painted straight from the gesture; a drag that starts on a face never opens it.
+  const plane = useRef<HTMLDivElement>(null)
+  const paint = useMemo(() => paintPlane(plane), [])
+  const { camRef, setCam, zoomBy, bind: camBind, forgetDrag } = useCamera({ box, paint, min: 0.35, max: 2.5 })
   const placed = useRef(false)
-  const drag = useRef<{ pts: Map<number, { x: number; y: number }>; moved: number; pinch0?: { d: number; k: number } }>({ pts: new Map(), moved: 0 })
-
-  const zoomAt = (k: number, px: number, py: number) => setCam(c => {
-    const nk = Math.min(2.5, Math.max(0.35, k))
-    return { k: nk, x: px - (px - c.x) * (nk / c.k), y: py - (py - c.y) * (nk / c.k) }
-  })
   /* the camera frames the FOCUSED org's room, centred on it (owner 10-19: "the center of floor to the focused org only,
      not the overall cog center"); its siblings sit beside it, a pan away. `whole` frames every room (the ⤢ control).
      One org: the one room, exactly as before. */
@@ -172,60 +143,11 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
   }
 
   useEffect(() => {
-    const el = box.current
-    if (!el) return
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault()
-      const r = el.getBoundingClientRect()
-      const c = camRef.current
-      // a pinch (ctrlKey) or a notched mouse wheel zooms; a two-finger trackpad scroll pans
-      const wheel = e.deltaMode !== 0 || (e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 50)
-      if (e.ctrlKey || e.metaKey || wheel)
-        zoomAt(c.k * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX - r.left, e.clientY - r.top)
-      else setCam({ ...c, x: c.x - e.deltaX, y: c.y - e.deltaY })
-    }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-  }, [])
-
-  const onPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0 && e.pointerType === 'mouse') return
-    const d = drag.current
-    if (d.pts.size === 0) d.moved = 0
-    d.pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
-    if (d.pts.size === 2) {
-      const [a, b] = [...d.pts.values()]
-      d.pinch0 = { d: Math.hypot(a.x - b.x, a.y - b.y), k: camRef.current.k }
-    }
-  }
-  const onPointerMove = (e: React.PointerEvent) => {
-    const d = drag.current
-    const last = d.pts.get(e.pointerId)
-    if (!last) return
-    const dx = e.clientX - last.x, dy = e.clientY - last.y
-    d.pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
-    d.moved += Math.abs(dx) + Math.abs(dy)
-    if (d.moved > 4 && !box.current!.hasPointerCapture(e.pointerId)) box.current!.setPointerCapture(e.pointerId)
-    if (d.pts.size === 2 && d.pinch0) {
-      const [a, b] = [...d.pts.values()]
-      const r = box.current!.getBoundingClientRect()
-      zoomAt(d.pinch0.k * Math.hypot(a.x - b.x, a.y - b.y) / d.pinch0.d, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top)
-    } else if (d.moved > 4) setCam(c => ({ ...c, x: c.x + dx, y: c.y + dy }))
-  }
-  const onPointerUp = (e: React.PointerEvent) => {
-    const d = drag.current
-    d.pts.delete(e.pointerId)
-    if (d.pts.size < 2) d.pinch0 = undefined
-  }
-  // a drag that ends over a face must not count as a click on it
-  const swallowDragClick = (e: React.MouseEvent) => { if (drag.current.moved > 4) { e.stopPropagation(); e.preventDefault() } }
-
-  useEffect(() => {
     const el = box.current!
     const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }))
     ro.observe(el)
     const t = setInterval(() => setNow(Date.now()), 3000)
-    return () => { ro.disconnect(); clearInterval(t); clearTimeout(camCommit.current); clearTimeout(camGlide.current) }
+    return () => { ro.disconnect(); clearInterval(t) }
   }, [])
 
   const clusters = useMemo(() => clustersOf(agents), [agents])
@@ -249,7 +171,6 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
      a click opens it IN PLACE (one at a time; Esc or a click on the floor closes it), and its Focus button walks you
      in. One org: one slot, one.w wide, exactly the room as before. */
   const [open, setOpen] = useState<string | null>(null)
-  const plane = useRef<HTMLDivElement>(null)
   const [peek, setPeek] = useState<string | null>(null)
   const order = [me, ...rooms.map((_, i) => i).filter(i => i !== me)]
   const slots: Record<number, { cx: number; w: number }> = {}
@@ -407,9 +328,9 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
     <div className="h-full flex flex-col">
       <div className="h-12 shrink-0 flex items-center gap-4 px-5 border-b border-line text-[13px]">
         <span className="font-semibold text-ink">The Floor</span>
-        <span className="flex items-center gap-1.5 text-ink-dim"><i className="w-2 h-2 rounded-full bg-cyan animate-pulse" />{working} working</span>
-        <span className="flex items-center gap-1.5 text-ink-dim"><i className="w-2 h-2 rounded-full bg-good" />{awake} awake</span>
-        <span className="text-ink-mute">{agents.length - awake} asleep</span>
+        <span className="flex items-center gap-1.5 text-ink-dim"><LiveDot state="working" />{working} working</span>
+        <span className="flex items-center gap-1.5 text-ink-dim"><LiveDot state="awake" />{awake} awake</span>
+        <span className="flex items-center gap-1.5 text-ink-mute"><LiveDot state="asleep" />{agents.length - awake} asleep</span>
         {overview && <span className="text-ink-mute hidden md:inline">· {overview.messages_24h} messages today</span>}
         {cross.length > 0 && <span className="text-ink-mute hidden md:inline" title="messages between this org and the other rooms of its cog in the last 14 days: the lines in the companion hue">
           · {cross.reduce((s, t) => s + t.n, 0)} across the cog</span>}
@@ -427,11 +348,11 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
             </span>
             {inf.kinds.filter(k => KIND_LABEL[k.kind]).map(k => (
               <button key={k.kind} onClick={() => toggleKind(k.kind)} aria-pressed={kinds.has(k.kind)}
-                title={k.measured ? `${KIND_LABEL[k.kind]}: measured on ${Math.round((k.coverage ?? 0) * 100)}% of its domain`
-                  : `${KIND_LABEL[k.kind]}: UNMEASURED, coverage ${k.coverage == null ? 'none' : Math.round(k.coverage * 100) + '%'} is under the 50% floor; drawn dashed, never counted`}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 ${kinds.has(k.kind) ? 'border-line-2 text-ink-dim' : 'border-line text-ink-mute opacity-60'}`}>
+                title={k.measured ? `${KIND_LABEL[k.kind]}: measured on ${Math.floor((k.coverage ?? 0) * 100)}% of its domain`
+                  : `${KIND_LABEL[k.kind]}: UNMEASURED, coverage ${k.coverage == null ? 'none' : Math.floor(k.coverage * 100) + '%'} is under the 50% floor; drawn dashed, never counted`}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 ${kinds.has(k.kind) ? 'border-line-2 text-ink-dim' : 'border-dashed border-line text-ink-mute'}`}>
                 <i className="w-2 h-2 rounded-full" style={{ background: KIND_HUE[k.kind] }} />
-                {KIND_LABEL[k.kind]}{!k.measured && <span className="text-ink-mute"> · unmeasured{k.coverage != null && ` ${Math.round(k.coverage * 100)}%`}</span>}
+                {KIND_LABEL[k.kind]}{!k.measured && <span className="text-ink-mute"> · unmeasured{k.coverage != null && ` ${Math.floor(k.coverage * 100)}%`}</span>}
               </button>
             ))}
             <span className="inline-flex rounded-lg border border-line overflow-hidden" role="group" aria-label="window">
@@ -447,10 +368,9 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
         </div>
       )}
       <div ref={box} className="relative flex-1 min-h-0 overflow-hidden floor-bg select-none touch-none cursor-grab active:cursor-grabbing"
-        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
-        onClickCapture={swallowDragClick} onDoubleClick={(e) => { if (e.target === e.currentTarget) fit() }}
+        {...camBind} onDoubleClick={(e) => { if (e.target === e.currentTarget) fit() }}
         onClick={(e) => { if (open && (e.target === e.currentTarget || e.target === plane.current)) setOpen(null) }}>
-       <div ref={plane} className="absolute left-0 top-0 origin-top-left" style={{ width: room.w, height: room.h, transform: camTransform(camRef.current),
+       <div ref={plane} className="absolute left-0 top-0 origin-top-left" style={{ width: room.w, height: room.h, transform: `translate3d(${camRef.current.x}px, ${camRef.current.y}px, 0) scale(${camRef.current.k})`,
          transition: glide ? 'transform .5s cubic-bezier(.2,.8,.2,1)' : undefined }}>
         {/* the ring itself, and each department as a band along it */}
         <svg className="absolute left-0 top-0 pointer-events-none" width={room.w} height={room.h}>
@@ -547,7 +467,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
               <div className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5 z-10" style={{ left: scx, top: ring.cy }}>
                 <span className="text-[13px] font-medium text-ink">{r.org ?? r.name} <span className="text-ink-mute font-normal">· same cog</span></span>
                 <span className="text-[10.5px] text-ink-mute font-mono">{r.name}
-                  {d?.badge && <span className="opacity-70" title="the org's Ed25519 identity, from its gateway"> · {d.badge}</span>}
+                  {d?.badge && <span title="the org's Ed25519 identity, from its gateway"> · {d.badge}</span>}
                 </span>
                 {status}
                 <span className="flex items-center gap-2">
@@ -603,7 +523,7 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
           </div>
           <span className="text-[10px] text-ink-mute">
             {rooms.length > 1 && <>cog · {rooms.length} orgs · </>}org {rooms[me]?.name ?? overview?.org}
-            {(homeBadge ?? rooms[me]?.badge) && <span className="font-mono opacity-70" title="the org's Ed25519 identity, from its gateway"> · {homeBadge ?? rooms[me].badge}</span>}
+            {(homeBadge ?? rooms[me]?.badge) && <span className="font-mono" title="the org's Ed25519 identity, from its gateway"> · {homeBadge ?? rooms[me].badge}</span>}
           </span>
         </div>
 
@@ -705,12 +625,12 @@ export default function FloorView({ onOpenAgent, talking = null }: { onOpenAgent
           <div className="absolute inset-0 grid place-items-center text-ink-mute text-sm">the floor is empty — no agents yet</div>
         )}
        </div>
-       {who.owner && <ChannelDock />}
+       {who.owner && <ChannelRail />}
        <RouteToast />
        <div className="absolute left-3 bottom-3 flex flex-col rounded-xl border border-line bg-deck-2/90 backdrop-blur overflow-hidden z-30 cursor-default"
-         onPointerDown={(e) => { e.stopPropagation(); drag.current.moved = 0 }}>
-         {([['+', 'zoom in', () => zoomAt(camRef.current.k * 1.25, size.w / 2, size.h / 2)],
-            ['−', 'zoom out', () => zoomAt(camRef.current.k / 1.25, size.w / 2, size.h / 2)],
+         onPointerDown={(e) => { e.stopPropagation(); forgetDrag() }}>
+         {([['+', 'zoom in', () => zoomBy(1.25)],
+            ['−', 'zoom out', () => zoomBy(1 / 1.25)],
             ['⤢', 'fit the whole floor', () => fit(0, true)]] as const).map(([g, t, f]) => (
            <button key={t} title={t} aria-label={t} onClick={f}
              className="w-8 h-8 grid place-items-center text-ink-dim hover:text-ink hover:bg-deck text-[15px] border-b border-line last:border-b-0">{g}</button>

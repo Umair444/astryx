@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import PeopleGraph from './PeopleGraph'
+import FederationLayer from './FederationLayer'
 import AgentFace from './AgentFace'
 import { ScrollArea } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
@@ -8,6 +9,7 @@ import '@xyflow/react/dist/style.css'
 import { displayName, fmtTokens, shortModel } from '../api'
 import { useStore } from '../store'
 import { useTheme } from '../theme'
+import { useCamera } from '../ui/camera'
 import type { AgentRow, Presence } from '../types'
 import { LiveDot, Orb, Panel, RoomOrb, Tabs, ViewHeader, useNow } from '../ui/kit'
 import { moodOf, nowLine, type Mood } from '../ui/life'
@@ -170,7 +172,10 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
   /* Two layers of one network: AGENTS (orgs and residents) and PEOPLE — the social
    * graph the network has observed, the FB shape. Owner-only for now: it carries real
    * names; the anonymized public form is a separate ruling. */
-  const [layer, setLayer] = useState<'agents' | 'people'>('agents')
+  /* FEDERATION is the third layer (cog-rebuild P4, owner 11-13): the map one level up (fed ⊃ cog ⊃ org ⊃ group ⊃
+     agent) with the other feds as peers, introduce, and trust/untrust/block. A peer's orb on the map opens it there. */
+  const [layer, setLayer] = useState<'agents' | 'people' | 'federation'>('agents')
+  const [focusPeer, setFocusPeer] = useState<string | null>(null)
   const isMobile = useMediaQuery('(max-width: 48em)')
   const [flashEdges, setFlashEdges] = useState<Edge[]>([])
 
@@ -193,6 +198,14 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
   const [peekSib, setPeekSib] = useState<string | null>(null)
   // opening (or closing) a sibling reframes the map to hold its people, a glide unless motion is reduced
   const [rf, setRf] = useState<ReactFlowInstance | null>(null)
+  // the observatory's one camera (ui/camera.ts; owner 11-15: "zooming and moving is very good in the floor tab, not in
+  // network"): React Flow's own pan and zoom are off, the camera's gestures paint its viewport, and a fitView React
+  // Flow does by itself is adopted as the camera's truth (onMove)
+  const flowBox = useRef<HTMLDivElement>(null)
+  const rfRef = useRef<ReactFlowInstance | null>(null)
+  rfRef.current = rf
+  const { bind: camBind, adopt } = useCamera({ box: flowBox, min: 0.15, max: 1.6,
+    paint: (c) => { void rfRef.current?.setViewport({ x: c.x, y: c.y, zoom: c.k }) } })
   useEffect(() => {
     if (!rf || !siblings.length) return
     const still = matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -548,7 +561,9 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
         position: { x: r2 * Math.cos(ang) - PEER_W / 2, y: r2 * Math.sin(ang) - PEER_H / 2 },
         data: {
           label: (
-            <div className="w-full h-full flex flex-col items-center gap-2 pt-1">
+            <button type="button" disabled={!who.owner} title={who.owner ? `${p.org}: open in Federation` : undefined}
+              onClick={() => { setFocusPeer(p.org); setLayer('federation') }}
+              className={`w-full h-full flex flex-col items-center gap-2 pt-1 ${who.owner ? 'cursor-pointer' : 'cursor-default'}`}>
               <span className={p.status === 'active' || p.status === 'trusted' ? '' : 'opacity-60 saturate-50'}>
                 <Orb size={64} tone="accent2" />
               </span>
@@ -558,7 +573,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
                   {p.status} · rep {p.reputation}
                 </div>
               </div>
-            </div>
+            </button>
           ),
         },
         style: bare(PEER_W, PEER_H),
@@ -590,7 +605,7 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
   )
   const layerTabs = who.owner ? (
     <Tabs id="net-layer" value={layer} onChange={setLayer}
-      items={[{ id: 'agents', label: 'Agents' }, { id: 'people', label: 'People' }] as const} />
+      items={[{ id: 'agents', label: 'Agents' }, { id: 'people', label: 'People' }, { id: 'federation', label: 'Federation' }] as const} />
   ) : null
 
   if (isMobile) {
@@ -695,7 +710,13 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
               })}
             </div>
           )}
-          {fedPeers.length > 0 && (
+          {who.owner && (
+            <div className="mt-6">
+              <div className="text-[11px] uppercase tracking-[0.14em] text-ink-dim mb-2">Federation</div>
+              <FederationLayer onOpenAgent={onOpenAgent} focus={focusPeer} compact />
+            </div>
+          )}
+          {!who.owner && fedPeers.length > 0 && (
             <div className="mt-6">
               <div className="text-[11px] uppercase tracking-[0.14em] text-ink-dim mb-2">Federation peers</div>
               {fedPeers.map((p) => (
@@ -727,8 +748,12 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
       </div>
       {who.owner && layer === 'people' ? (
         <div className="absolute inset-0 pt-[118px]"><PeopleGraph /></div>
+      ) : who.owner && layer === 'federation' ? (
+        <ScrollArea className="absolute inset-0" type="scroll">
+          <div className="px-4 pt-[132px] pb-8 max-w-[1400px] mx-auto"><FederationLayer onOpenAgent={onOpenAgent} focus={focusPeer} /></div>
+        </ScrollArea>
       ) : (
-      <div className="absolute inset-0">
+      <div ref={flowBox} className="absolute inset-0" {...camBind}>
         <ReactFlow
           key={layoutKey}
           nodes={flow.nodes}
@@ -739,11 +764,14 @@ export default function NetworkView({ onOpenAgent }: { onOpenAgent: (n: string) 
           fitViewOptions={{ padding: 0.2 }}
           minZoom={0.15}
           maxZoom={1.6}
-          // the floor's hands (owner 10-19: "the scroll in network tab is a little slow"): a two-finger scroll PANS at
-          // the floor's pace, a pinch (or ctrl/cmd + wheel) zooms; nodes off screen aren't rendered while it moves
-          panOnScroll
-          panOnScrollSpeed={1.1}
-          zoomOnPinch
+          // the camera above owns every gesture; React Flow only draws, and reports its own fits back
+          panOnDrag={false}
+          panOnScroll={false}
+          zoomOnScroll={false}
+          zoomOnPinch={false}
+          zoomOnDoubleClick={false}
+          preventScrolling={false}
+          onMove={(_e, vp) => adopt({ x: vp.x, y: vp.y, k: vp.zoom })}
           onlyRenderVisibleElements
           nodesDraggable={false}
           nodesConnectable={false}

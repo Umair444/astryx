@@ -272,26 +272,129 @@ body {
 @media (prefers-reduced-motion: reduce) { .chat-halo, .chat-caret { animation: none; } .chat-halo { opacity: .45; } }
 
 
-/* SIGN-IN (goal 11859 U3, components/AuthScreens.tsx): ORBIT's language in tokens only. One display face for the one
-   headline; every control shows keyboard focus as a ring in the second accent; nothing animates on its own. */
+/* SIGN-IN (goal 11859 U3, components/AuthScreens.tsx; redesigned for the owner 11-13 in canvas's language: Instrument
+   Serif display, the violet→blue italic on ONE phrase, a soft lavender sky, 16px radii). Tokens only, so every theme
+   restyles it. Every control shows keyboard focus as a ring in the second accent. The one thing that moves on its own is
+   the orb's breath; hovers ease in 120ms; prefers-reduced-motion stills both (the block at the end). */
 .auth-display { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; font-size: clamp(40px, 9vw, 52px); line-height: 1.02; letter-spacing: -0.01em; color: var(--t-fg); }
-.auth-field {
-  width: 100%; height: 44px; padding: 0 14px; border-radius: 12px; font-size: 15px; color: var(--t-fg);
-  background: var(--t-panel); border: 1px solid var(--t-line2); outline: none;
+
+/* the room: the sky beside the door on a wide screen; on a phone the sky is a short band above the door */
+.auth-room { min-height: 100dvh; display: grid; grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
+@media (min-width: 1024px) { .auth-room { grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); } }
+.auth-sky {
+  position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 22px; padding: 20px 16px 26px;
+  background: color-mix(in srgb, var(--t-bg2) 55%, var(--t-bg)); border-bottom: 1px solid var(--t-line);
 }
+@media (min-width: 1024px) {
+  .auth-sky { justify-content: space-between; gap: 0; padding: 40px 56px 56px; border-bottom: 0; border-right: 1px solid var(--t-line); min-height: 100dvh; position: sticky; top: 0; }
+}
+.auth-sky-glow {
+  position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(60% 50% at 30% 38%, color-mix(in srgb, var(--t-accent) 16%, transparent), transparent 70%),
+    radial-gradient(50% 45% at 78% 72%, color-mix(in srgb, var(--t-accent2) 12%, transparent), transparent 70%);
+}
+.auth-wordmark { font-family: "Instrument Serif", Georgia, serif; font-size: 28px; line-height: 1; letter-spacing: -0.01em; color: var(--t-fg); }
+.auth-sky-stage { position: relative; display: none; place-items: center; height: 240px; }
+@media (min-width: 1024px) { .auth-sky-stage { display: grid; } }
+.auth-orbits { position: absolute; left: 50%; top: 50%; width: min(600px, 100%); transform: translate(-50%, -50%); overflow: visible; }
+.auth-hero-line {
+  font-family: "Instrument Serif", Georgia, serif; font-size: clamp(34px, 4.6vw, 64px); line-height: 1.02;
+  letter-spacing: -0.015em; color: var(--t-fg); max-width: 13ch;
+}
+@media (max-width: 1023px) { .auth-hero-line { font-size: 34px; max-width: none; } }
+.auth-sig {
+  font-style: italic; padding-right: .06em; white-space: nowrap;
+  background: linear-gradient(100deg, var(--t-accent), var(--t-accent2)); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.auth-live { display: flex; align-items: center; gap: 8px; min-height: 20px; margin-top: 22px; font-size: 13px; color: var(--t-dim); }
+.auth-live-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--t-good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-good) 22%, transparent); }
+
+/* the orb: canvas's breathing sphere, here in tokens (--orb is the hue it glows in; the accent unless an org sets its own) */
+.auth-orb {
+  --orb: var(--t-accent); display: inline-grid; place-items: center; border-radius: 999px; flex: none;
+  background:
+    radial-gradient(circle at 34% 28%, color-mix(in srgb, var(--t-on) 62%, var(--orb)) 0%, transparent 34%),
+    radial-gradient(circle at 50% 58%, var(--orb) 0%, color-mix(in srgb, var(--orb) 72%, var(--t-accent2)) 62%, color-mix(in srgb, var(--orb) 40%, var(--t-bg)) 100%);
+}
+.auth-monogram.auth-orb {
+  background:
+    radial-gradient(circle at 32% 26%, color-mix(in srgb, var(--t-on) 45%, var(--orb)) 0%, transparent 42%),
+    radial-gradient(circle at 50% 60%, var(--orb) 0%, color-mix(in srgb, var(--orb) 68%, var(--t-accent)) 100%);
+}
+.auth-orb-mark { width: 22px; height: 22px; }
+.auth-orb-hero {
+  position: relative; width: 132px; height: 132px;
+  box-shadow: 0 0 70px -6px color-mix(in srgb, var(--t-accent) 70%, transparent), 0 0 0 1px color-mix(in srgb, var(--t-on) 14%, transparent) inset;
+  animation: auth-breathe 5.4s cubic-bezier(.45,0,.55,1) infinite;
+}
+@keyframes auth-breathe { 0%, 100% { transform: scale(.965); } 50% { transform: scale(1.03); } }
+.auth-monogram { width: 40px; height: 40px; box-shadow: 0 6px 16px -8px var(--orb); }
+.auth-monogram > span { font-family: "Instrument Serif", Georgia, serif; font-size: 21px; line-height: 1; color: var(--t-on); text-shadow: 0 1px 2px color-mix(in srgb, var(--t-bg) 45%, transparent); }
+
+/* the door */
+.auth-door { display: grid; place-items: center; padding: 32px 16px 40px; }
+@media (min-width: 1024px) { .auth-door { padding: 56px 48px; } }
+.auth-card {
+  position: relative; display: flex; align-items: center; gap: 14px; width: 100%; padding: 14px 16px; border-radius: 16px;
+  border: 1px solid var(--t-line); background: var(--t-panel);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--t-fg) 5%, transparent);
+  transition: border-color 120ms ease-out, background-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+.auth-card[data-one] { border-color: color-mix(in srgb, var(--t-accent) 30%, var(--t-line)); background: color-mix(in srgb, var(--t-accent) 5%, var(--t-panel)); }
+label.auth-card { cursor: pointer; }
+label.auth-card:hover { border-color: var(--t-line2); }
+label.auth-card[data-checked] {
+  border-color: color-mix(in srgb, var(--t-accent) 60%, var(--t-line));
+  background: color-mix(in srgb, var(--t-accent) 6%, var(--t-panel));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 14%, transparent);
+}
+label.auth-card:has(input:focus-visible) { outline: 2px solid var(--t-accent2); outline-offset: 2px; }
+.auth-cards { display: grid; gap: 8px; }
+.auth-cards[data-many] { gap: 6px; max-height: 272px; overflow-y: auto; padding: 4px; margin: -4px; scrollbar-width: thin; }
+.auth-cards[data-many] .auth-card { padding: 9px 12px; gap: 12px; border-radius: 14px; }
+.auth-cards[data-many] .auth-monogram { width: 32px; height: 32px; }
+.auth-cards[data-many] .auth-monogram > span { font-size: 17px; }
+.auth-tick { width: 18px; height: 18px; border-radius: 999px; border: 1.5px solid var(--t-line2); flex: none; }
+[data-checked] > .auth-tick { border: 5px solid var(--t-accent); }
+.auth-well { position: relative; }
+.auth-field {
+  width: 100%; height: 50px; padding: 0 16px; border-radius: 14px; font-size: 16px; color: var(--t-fg);
+  background: var(--t-panel); border: 1px solid var(--t-line2); outline: none;
+  transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+.auth-field[data-trailing] { padding-right: 52px; }
+.auth-field-sm { height: 42px; font-size: 14px; border-radius: 12px; }
+.auth-field::placeholder { color: var(--t-mute); }
 .auth-field:hover { border-color: color-mix(in srgb, var(--t-line2) 60%, var(--t-dim)); }
+.auth-field:focus { border-color: color-mix(in srgb, var(--t-accent) 70%, var(--t-line2)); }
 .auth-field[aria-invalid="true"] { border-color: color-mix(in srgb, var(--t-bad) 65%, var(--t-line2)); }
-.auth-field:focus-visible, .auth-primary:focus-visible, .auth-link:focus-visible, .auth-org:focus-visible, .auth-chip:focus-visible {
+.auth-reveal {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%); display: grid; place-items: center;
+  width: 40px; height: 40px; border-radius: 10px; color: var(--t-mute); transition: color 120ms ease-out, background-color 120ms ease-out;
+}
+.auth-reveal:hover { color: var(--t-fg); background: var(--t-panel2); }
+.auth-error { display: flex; gap: 8px; align-items: flex-start; min-height: 0; font-size: 14px; line-height: 1.45; color: var(--t-bad); }
+.auth-error[data-shown] {
+  padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--t-bad) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--t-bad) 22%, transparent);
+}
+.auth-error:not([data-shown]) { margin-top: 0 !important; }
+.auth-field:focus-visible, .auth-primary:focus-visible, .auth-link:focus-visible, .auth-org:focus-visible, .auth-chip:focus-visible, .auth-reveal:focus-visible {
   outline: 2px solid var(--t-accent2); outline-offset: 2px;
 }
 .auth-primary {
-  display: inline-flex; align-items: center; justify-content: center; height: 44px; padding: 0 20px; border-radius: 12px;
+  display: inline-flex; align-items: center; justify-content: center; height: 50px; padding: 0 20px; border-radius: 14px;
   font-size: 15px; font-weight: 600; color: var(--t-on); background: var(--t-accent); text-decoration: none;
+  box-shadow: 0 10px 24px -14px var(--t-accent), inset 0 1px 0 color-mix(in srgb, var(--t-on) 18%, transparent);
+  transition: background-color 120ms ease-out, box-shadow 120ms ease-out;
 }
 .auth-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--t-accent) 88%, var(--t-fg)); }
 .auth-primary:disabled { opacity: .72; cursor: default; }
 .auth-link { color: var(--t-accent2); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, var(--t-accent2) 45%, transparent); border-radius: 4px; }
 .auth-link:hover { text-decoration-color: var(--t-accent2); }
+.auth-quiet { color: var(--t-dim); text-decoration-color: color-mix(in srgb, var(--t-dim) 35%, transparent); }
+.auth-quiet:hover { color: var(--t-fg); text-decoration-color: var(--t-fg); }
 .auth-chip {
   display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px 0 4px; border-radius: 999px;
   font-size: 12px; color: var(--t-dim); border: 1px solid var(--t-line); text-decoration: none;
@@ -310,3 +413,24 @@ a.auth-chip { padding: 0 12px; }
 .auth-seat { position: relative; width: 22px; height: 22px; border-radius: 999px; border: 1px dashed var(--t-line2); flex: none; }
 .auth-seat::after { content: ""; position: absolute; right: -3px; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 999px; background: var(--t-dim); }
 .auth-seat[data-current]::after { background: var(--t-accent); }
+
+/* reduced motion: the orb holds still and nothing eases */
+@media (prefers-reduced-motion: reduce) {
+  .auth-orb-hero { animation: none; }
+  .auth-card, .auth-field, .auth-reveal, .auth-primary { transition: none; }
+}
+
+/* the channel rail's controls (components/ChannelRail.tsx): an on/off switch and a two-way choice */
+.ws-switch { position: relative; width: 30px; height: 18px; border-radius: 999px; background: var(--t-line); transition: background .15s; }
+.ws-switch > span { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 999px; background: var(--t-panel); box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s; }
+.ws-switch[data-on] { background: var(--t-good, #22c55e); }
+.ws-switch[data-on] > span { transform: translateX(12px); }
+.ws-switch:disabled { opacity: .5; }
+.ws-seg { display: inline-flex; border: 1px solid var(--t-line); border-radius: 8px; padding: 1px; gap: 1px; }
+.ws-seg > button { font-size: 11.5px; padding: 1px 8px; border-radius: 6px; color: var(--t-mute, inherit); }
+.ws-seg > button[aria-checked="true"] { background: color-mix(in srgb, var(--t-accent) 18%, transparent); color: var(--t-fg); font-weight: 500; }
+.ws-seg > button:not([aria-checked="true"]):hover { color: var(--t-fg); }
+
+/* a surface whose controls size from their own utilities: Mantine's global `input, button { font: inherit }` (the chat
+   loads it) is unlayered and beats every layered text-[…] size (the chat's own twin: gate.css .ws-gate) */
+.ax-controls :where(button, input, select, textarea) { font: revert-layer; }

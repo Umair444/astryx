@@ -18,9 +18,9 @@ routes through any http/socks5 proxy — either unblocks without a code change.
 Surface claim: only rows on tg: threads (or to tg-<id>). Un-threaded owner
 messages remain WhatsApp's (the home surface).
 
-Config: TG_BOT_TOKEN in .env; routes-telegram.json (trusted_ids = Telegram
-USER ids — sender-gated, never chat-gated). Unknown senders are dropped but
-logged, so bootstrapping a route is: DM the bot, read the journal, add it.
+Config: TG_BOT_TOKEN in .env; its routes are rows (astryx.core.routes). A sender's name is its PERSON's (common.identity_of: the owner's
+own accounts are `owner`); a closed chat takes the owner only, an open one anyone as tg-<id>. Unknown chats are
+dropped but logged, so bootstrapping a route is: DM the bot, read the journal, add it.
 
 Run: uvicorn bridges.telegram:app --host 127.0.0.1 --port 8478   (repo root)
 """
@@ -36,11 +36,12 @@ import httpx
 from fastapi import FastAPI
 
 from .embed_root import Refused, owner_only, read_checked
-from .common import (HERE, Outcome, reacted_message, reaction_signal, route_target, describe_media, env, listen,
-                     load_routes, media_path,
+from .common import (HERE, Outcome, reacted_message, reaction_signal, route_target, wire_chat, describe_media, env, listen,
+                     Book, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
-                     step_line, update_poll_votes, vote_body, wire_insert,
+                     update_poll_votes, vote_body, wire_insert,
                      door_open, door_org_ok, live_steps_ok, released)
+from .progress import Progress
 from .providers.telegram import TelegramProvider
 
 PROVIDER = TelegramProvider()          # Bot API send logic
@@ -51,16 +52,18 @@ API_BASE = env("TG_API_BASE", "https://api.telegram.org")
 PROXY = env("TG_PROXY") or None
 API = f"{API_BASE}/bot{TOKEN}"
 FILE_API = f"{API_BASE}/file/bot{TOKEN}"
+from .common import signed  # noqa: E402  the sender label (one bot speaks for every agent), as WhatsApp's
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
-ROUTES_FILE = ESTATE / "bridges" / "routes-telegram.json"
+from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
+from .common import identity_of, link_reply, renew  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
+BOOK = Book("telegram")      # this bridge's routes, from the route table (common.Book)
 
 pool: asyncpg.Pool | None = None
 http: httpx.AsyncClient | None = None
-jobs: dict[str, dict] = {}            # agent -> live progress job
 
 
 def routes() -> list[dict]:
-    return load_routes(ROUTES_FILE)
+    return BOOK.routes()
 
 
 async def tg(method: str, **params) -> dict:
@@ -92,15 +95,17 @@ async def deliver(row):
     agent = row["from_agent"]
     text, files = split_files(stamped[1] if stamped else row["body"])
     text, polls = split_polls(text, max_options=10)
+    text = signed(agent, text, routes().chat(chat))   # one bot for every agent: name the sender (plain text, no bold)
     out = Outcome()
     try:
-        job = jobs.pop(agent, None)
+        # a reply is not the end of the work: the job stays bubble-less for further steps (bridges/progress.py)
+        ph = await progress.take(agent, chat, keep=live_steps_ok(routes().chat(chat)))
         sent = False
-        if text and job and job["chat"] == chat and job["ph_id"]:
+        if text and ph:
             try:                                   # replace the progress bubble
                 await tg("editMessageText", chat_id=int(chat),
-                         message_id=job["ph_id"], text=text[:4096])
-                out.sent(job["ph_id"])
+                         message_id=ph, text=text[:4096])
+                out.sent(ph)
                 sent = True
             except Exception:
                 pass                               # falls through to a normal send below
@@ -127,6 +132,7 @@ async def deliver(row):
                                     files={field: (name, data)}, timeout=300)
                 if not r.json().get("ok"):
                     raise RuntimeError(str(r.json().get("description", "sendfile not ok"))[:120])
+                out.sent((r.json().get("result") or {}).get("message_id"))   # a reply quoting the file finds its agent
             except Exception as e:
                 out.failed("file", e)
                 await tg("sendMessage", chat_id=int(chat),
@@ -174,25 +180,25 @@ async def deliver(row):
                            out.receipt(f"telegram:{chat}", text, door="org-unstamped"))
 
 
-async def on_step(ev: dict):
-    agent, kind = ev.get("agent", ""), ev.get("kind", "")
-    job = jobs.get(agent)
-    if not job:
-        return
-    line = await step_line(pool, ev.get("id", 0), kind, agent=agent)
-    if not line or line == job.get("sent"):
-        return
-    job["sent"] = line
-    try:
-        if job["ph_id"] is None:
-            msg = await tg("sendMessage", chat_id=int(job["chat"]), text=line)
-            job["ph_id"] = msg["message_id"]
-        else:
-            await tg("editMessageText", chat_id=int(job["chat"]),
-                     message_id=job["ph_id"], text=line)
-        await tg("sendChatAction", chat_id=int(job["chat"]), action="typing")
-    except Exception:
-        pass
+async def _post(agent: str, chat: str, line: str):
+    return (await tg("sendMessage", chat_id=int(chat), text=signed(agent, line, routes().chat(chat))))["message_id"]
+
+
+async def _edit(agent: str, chat: str, ph, line: str):
+    await tg("editMessageText", chat_id=int(chat), message_id=ph, text=signed(agent, line, routes().chat(chat)))
+
+
+async def _finish(agent: str, chat: str, ph, steps: int):
+    await tg("deleteMessage", chat_id=int(chat), message_id=ph)      # Telegram leaves no trace of a deleted message
+
+
+async def _typing(chat: str):
+    await tg("sendChatAction", chat_id=int(chat), action="typing")
+
+
+# the live steps bubble: one lifecycle for every channel (bridges/progress.py); Telegram's four acts
+progress = Progress(lambda: pool, post=_post, edit=_edit, finish=_finish, typing=_typing)
+on_step = progress.on_step
 
 
 # -------------------------------------------------------------------- inbound
@@ -214,14 +220,14 @@ async def fetch_file(file_id: str, name: str, kind: str = "") -> str:
 
 async def on_message(msg: dict):
     chat = str(msg.get("chat", {}).get("id", ""))
-    route = routes().chat(chat)
+    route = routes().chat(chat)                   # the owner's routes and the agents' connections: one table
     sender = msg.get("from", {}) or {}
     uid = sender.get("id")
     if route is None:
         print(f"telegram: no route for chat {chat} "
               f"(from {uid} @{sender.get('username')}) — dropped", flush=True)
         return
-    trusted = uid in route.get("trusted_ids", [])
+    await renew(pool, route)                       # a connection lives on while someone writes
     text = (msg.get("text") or msg.get("caption") or "").strip()
     for kind, name_key in (("document", "file_name"), ("photo", None),
                            ("voice", None), ("audio", "file_name"), ("video", "file_name")):
@@ -235,14 +241,14 @@ async def on_message(msg: dict):
             break
     if not text:
         return
-    if trusted:
-        who = "owner"
-    else:
+    who = await identity_of(pool, "telegram", uid, f"tg-{uid}", route)   # the one minter: a linked person's name
+    if await link_reply(pool, "telegram", route, uid, text):      # YES to "link this account to <person>"
+        return
+    if who != "owner":
         if not route.get("open"):
-            print(f"telegram: untrusted sender {uid} on closed chat {chat} — dropped",
+            print(f"telegram: sender {uid} on closed chat {chat} — dropped (the owner only)",
                   flush=True)
             return
-        who = f"tg-{uid}"
         text = f"{sender.get('first_name') or uid}: {text}"
     # INBOUND CONTEXT (same shape as WhatsApp): sender identity + reply/quote, carried in meta
     # so an agent sees WHO sent it (from_agent collapses a trusted sender to 'owner') and WHAT
@@ -258,10 +264,12 @@ async def on_message(msg: dict):
         meta["reply_to_body"] = ((rep.get("text") or rep.get("caption") or "").strip()
                                  or await resolve_quoted_body(pool, rid))
     said = text
-    agent, text = await route_target(pool, f"tg:{chat}", text, route["agent"])
-    await wire_insert(pool, who, "telegram", agent, f"tg:{chat}", "chat", text, meta, route=route, said=said)
-    if live_steps_ok(route) and trusted:           # S1c: never on a tiered route (its second egress)
-        jobs[agent] = {"chat": chat, "ph_id": None, "sent": ""}
+    agents = await wire_chat(pool, who, "telegram", route["agent"], f"tg:{chat}", text, meta, route=route, said=said)
+    # progress shows for ANYONE's ask on an org route (owner 11-15: "it should appear to everyone"), scoped to the work
+    # this chat asked for: on_step's step_line(thread=...) drops a step whose turn another thread opened (medic 12159)
+    if live_steps_ok(route):                      # S1c: never on a tiered route (its second egress)
+        for agent in agents:                       # a team: each member's live steps
+            progress.open(agent, chat, f"tg:{chat}")
         try:
             await tg("sendChatAction", chat_id=int(chat), action="typing")
         except Exception:
@@ -288,11 +296,10 @@ async def on_poll_answer(pa: dict):
     old = await update_poll_votes(pool, pid, agg, voters)
     chat = rec["chat"]                             # "tg:<chat_id>"
     route = routes().chat(chat.removeprefix("tg:"))
-    trusted = route and user.get("id") in route.get("trusted_ids", [])
     name = user.get("first_name") or str(user.get("id"))
     changes = [f'{name} → {", ".join(picked) if picked else "(retracted)"}']
     await wire_insert(
-        pool, "owner" if trusted else f"tg-{user.get('id')}", "telegram",
+        pool, await identity_of(pool, "telegram", user.get("id"), f"tg-{user.get('id')}", route), "telegram",
         rec["agent"] or (route and route["agent"]) or "seed", chat, "poll",
         vote_body(rec["question"], changes, agg), route=route)
 
@@ -305,14 +312,13 @@ async def on_message_reaction(mr: dict):
     if route is None:
         return
     uid = (mr.get("user") or {}).get("id")
-    trusted = uid in route.get("trusted_ids", [])
-    if not trusted and not route.get("open"):
+    who = await identity_of(pool, "telegram", uid, f"tg-{uid}", route)
+    if who != "owner" and not route.get("open"):
         return
     new = mr.get("new_reaction") or []
     if not new:                                    # reaction cleared, not added
         return
     emoji = " ".join(r.get("emoji", "") for r in new if r.get("type") == "emoji") or "reacted"
-    who = "owner" if trusted else f"tg-{uid}"
     agent, snippet = await reacted_message(pool, f"tg:{chat}", mr.get("message_id"))
     await reaction_signal(pool, "telegram", f"tg:{chat}", who, emoji,
                           agent or route["agent"], snippet)
@@ -338,19 +344,26 @@ async def poll_updates():
 
 
 # ---------------------------------------------------------------------- app
+# the rows this bridge delivers (its listen predicate; tests/test_bridge_door runs it on a fixture DB)
+CLAIM = ("((to_agent='owner' OR to_agent LIKE 'tg-%') "
+         "AND (thread LIKE 'tg:%' OR to_agent LIKE 'tg-%')) "
+         f"OR {address.reaches_sql('telegram')} "   # a linked person, answered here under their person's name
+         # plan-9139 S1c: a release this bridge's route was stamped for (its thread, tier-<sender>, names none)
+         "OR (to_agent='owner' AND thread LIKE 'tier-%' AND delivery->'release'->>'channel' = 'telegram')")
+
+
 @asynccontextmanager
 async def lifespan(_):
     global pool, http
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
+    await BOOK.refresh(pool)                       # the routes, before the first message
+    _book = asyncio.create_task(BOOK.follow(pool))   # then every few seconds (a rail edit lands with no restart)
     http = httpx.AsyncClient(proxy=PROXY)
     t1 = asyncio.create_task(poll_updates())
     t2 = asyncio.create_task(listen(
-        DSN, "((to_agent='owner' OR to_agent LIKE 'tg-%') "
-             "AND (thread LIKE 'tg:%' OR to_agent LIKE 'tg-%')) "
-             # plan-9139 S1c: a release this bridge's route was stamped for (its thread, tier-<sender>, names none)
-             "OR (to_agent='owner' AND thread LIKE 'tier-%' AND delivery->'release'->>'channel' = 'telegram')",
-        deliver, on_step))
+        DSN, CLAIM, deliver, on_step))
     yield
+    _book.cancel()
     t1.cancel(); t2.cancel()
     await http.aclose()
     await pool.close()
@@ -361,4 +374,4 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "routes": len(routes()), "jobs": list(jobs)}
+    return {"ok": True, "routes": len(routes()), "jobs": sorted({a for a, _c in progress.jobs})}

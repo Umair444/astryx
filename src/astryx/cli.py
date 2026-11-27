@@ -25,6 +25,7 @@ from pathlib import Path
 
 import astryx
 from astryx import config, orgs, paths, tree
+from astryx.core import channels as _channels
 from astryx.ui import UI
 
 RUNNER = subprocess.run            # seam: tests replace it
@@ -34,14 +35,28 @@ OBS_URL = "http://localhost:8090/"
 FULL_CONTROL = ("Agents get full control of this machine: sudo, and Claude Code in bypassPermissions mode. "
                 "That is the design. Run ASTRYX on a dedicated VM or machine, never on your daily laptop.")
 
-CHANNELS = {
-    "telegram": {"key": "TG_BOT_TOKEN", "ask": "Telegram bot token (from @BotFather)",
-                 "routes": "bridges/routes-telegram.json", "unit": "astryx-telegram"},
-    "discord": {"key": "DISCORD_BOT_TOKEN", "ask": "Discord bot token (Developer Portal → Bot → Reset Token)",
-                "routes": "bridges/routes-discord.json", "unit": "astryx-discord"},
-    "whatsapp": {"key": "WA_WEBHOOK_SECRET", "ask": "WhatsApp webhook secret (press Enter to generate one)",
-                 "routes": "bridges/routes-whatsapp.json", "unit": "astryx-whatsapp", "generate": True},
-}
+# the channels `astryx connect` wires, from the one channel table (core/channels.py): the .env key it asks for (a bot
+# token, or a secret this org generates) and its unit. Its routes are rows (astryx.core.routes), made on the rail
+CHANNELS = {c.name: {"key": c.token_key or c.secret_key, "ask": c.token_ask or c.secret_ask,
+                     "unit": f"astryx-{c.name}", "generate": not c.token_key}
+            for c in _channels.connectable()}
+
+
+def _standing(ctx) -> dict[str, list[dict]] | None:
+    """The owner's routes per channel, from the route table (None: the database didn't answer)."""
+    try:
+        import psycopg
+
+        from astryx.core import routes as table
+        out: dict[str, list[dict]] = {}
+        with psycopg.connect(config.dsn(_env_file(ctx), env_first=False), connect_timeout=5) as c:
+            for ch, chat, agent, rule in c.execute("SELECT channel, chat, agent, rule FROM route WHERE purpose = 'standing' "
+                                                   "ORDER BY channel, id").fetchall():
+                out.setdefault(ch, []).append(table.as_route({"chat": chat, "agent": agent, "rule": rule,
+                                                              "purpose": "standing", "id": None, "person": None}))
+        return out
+    except Exception:  # noqa: BLE001 — said as "not read", never as "no routes"
+        return None
 
 
 class CliError(Exception):
@@ -253,8 +268,8 @@ def cmd_doctor(ctx: Ctx, a) -> int:
 
 
 def org_checks(ctx: Ctx) -> int:
-    """The org's two shared tables, judged by their ONE authorities (plan-11860 E2/E5): every routes file by the
-    validator every bridge resolves through, and the .env for a key held twice (read_env is first-wins, systemd's
+    """The org's two shared tables, judged by their ONE authorities (plan-11860 E2/E5): every channel's routes (rows of
+    the route table) by the validator every bridge resolves through, and the .env for a key held twice (read_env is first-wins, systemd's
     EnvironmentFile last-wins: a duplicate is a value two readers disagree on). Names and problems only, never a value.
     Returns how many failed."""
 
@@ -262,19 +277,15 @@ def org_checks(ctx: Ctx) -> int:
     from bridges import routing                                         # the SAME validator the bridges and the PUT use
     ui, bad = ctx.ui, 0
     ui.section("org tables")
-    for name, ch in CHANNELS.items():
-        f = ctx.root / ch["routes"]
-        if not f.is_file():
-            continue
-        try:
-            rows = json.loads(f.read_text())
-            probs = routing.validate(rows, {p.stem for p in (ctx.home / "agents").rglob("*.md")
-                                            if not p.name.endswith(".example.md")} or None)
-        except ValueError as e:
-            probs = [f"does not parse ({type(e).__name__}): the bridges keep their last good table until it does"]
+    tables = _standing(ctx)
+    if tables is None:
+        ui.step("skip", "routes: the route table didn't answer", fix="check ASTRYX_DSN and the database (astryx doctor)")
+    for name, rows in (tables or {}).items():
+        probs = routing.validate(rows, {p.stem for p in (ctx.home / "agents").rglob("*.md")
+                                        if not p.name.endswith(".example.md")} or None)
         bad += bool(probs)
-        ui.step("fail" if probs else "ok", f"routes: {ch['routes']}", detail="; ".join(probs) or None,
-                fix="edit it in the observatory's Wiring tab (it validates), or by hand" if probs else None)
+        ui.step("fail" if probs else "ok", f"routes: {name} ({len(rows)})", detail="; ".join(probs) or None,
+                fix="fix it on the Floor's Channels rail (it validates)" if probs else None)
     dups = config.duplicate_keys(_env_file(ctx))
     bad += bool(dups)
     ui.step("fail" if dups else "ok", ".env holds each key once",
@@ -312,11 +323,18 @@ def _pulse_next() -> str:
 
 
 def _overview() -> dict | None:
-    try:
-        with urllib.request.urlopen(OBS_URL + "api/overview", timeout=3) as r:
-            return json.loads(r.read().decode())
-    except Exception:
-        return None
+    # a cog's front speaks TLS on :8090 (its own certificate, often self-signed: loopback only, so unverified is fine
+    # here); a one-org host without one still answers plain http. Try TLS first, then plain.
+    import ssl
+    loose = ssl.create_default_context()
+    loose.check_hostname, loose.verify_mode = False, ssl.CERT_NONE
+    for url, ctx in ((OBS_URL.replace("http://", "https://", 1), loose), (OBS_URL, None)):
+        try:
+            with urllib.request.urlopen(url + "api/overview", timeout=3, context=ctx) as r:
+                return json.loads(r.read().decode())
+        except Exception:
+            continue
+    return None
 
 
 def cmd_status(ctx: Ctx, a) -> int:
@@ -501,16 +519,16 @@ def cmd_connect(ctx: Ctx, a) -> int:
 
 
 def _channel_next(ctx: Ctx, name: str) -> int:
-    ch, ui, root = CHANNELS[name], ctx.ui, ctx.need_root()
+    ch, ui = CHANNELS[name], ctx.ui
+    ctx.need_root()
     if name == "whatsapp":
         if not config.is_set("WA_CLI", _env_file(ctx)):
             config.set_env("WA_CLI", "docker exec wacli-sync wacli", _env_file(ctx))
         ui.note("  the rest of WhatsApp (wacli in docker, the QR, the bridge):")
         return init_sh(ctx, "channels")
-    routes = root / ch["routes"]
-    ui.step("ok" if routes.is_file() else "skip", f"routes: {ch['routes']}",
-            fix=None if routes.is_file() else f"create {ch['routes']} (your chats and trusted senders; "
-                                              "see bridges/routes.example.json)")
+    n = len((_standing(ctx) or {}).get(name, []))
+    ui.step("ok" if n else "skip", f"routes: {n} chat(s) on {name}",
+            fix=None if n else "route your chats on the Floor's Channels rail (find a chat, pick its agent)")
     ui.note("  then generate and start the bridge:")
     ui.cmd("astryx init")
     ui.cmd(f"sudo ./scripts/deploy.sh units && sudo systemctl enable --now {ch['unit']}")
@@ -518,17 +536,17 @@ def _channel_next(ctx: Ctx, name: str) -> int:
 
 
 def cmd_channels(ctx: Ctx, a) -> int:
-    root = ctx.need_root()
+    ctx.need_root()
     ctx.ui.header("channels", "credentials show only as set / missing")
     env = config.read_env(_env_file(ctx))
-    rows = []
+    rows, tables = [], _standing(ctx)
     for name, ch in CHANNELS.items():
         state = out(["systemctl", "is-active", orgs.unit(ch["unit"])]) or "inactive"   # this org's (S3b)
         rows.append((name, "set" if env.get(ch["key"]) else "missing",
-                     "yes" if (root / ch["routes"]).is_file() else "no", state))
+                     "?" if tables is None else str(len(tables.get(name, []))), state))
     ctx.ui.table("", ["channel", "credential", "routes", "bridge"], rows)
     ctx.ui.blank()
-    ctx.ui.dim("  connect one: astryx connect telegram|discord|whatsapp")
+    ctx.ui.dim(f"  connect one: astryx connect {'|'.join(CHANNELS)}")
     return 0
 
 
@@ -585,7 +603,7 @@ VERBS = [
     ("pause", cmd_pause, "pause or resume the org's clock"),
     ("spawn", cmd_spawn, "bring an agent to life (or resume it)"),
     ("retire", cmd_retire, "how to retire an agent"),
-    ("connect", cmd_connect, "wire a channel (telegram|discord|whatsapp), or watch an agent"),
+    ("connect", cmd_connect, f"wire a channel ({'|'.join(CHANNELS)}), or watch an agent"),
     ("channels", cmd_channels, "which channels are wired"),
     ("federate", cmd_federate, "join the network of orgs"),
     ("join", cmd_join, "introduce this org to a peer"),
@@ -627,7 +645,7 @@ def parser() -> argparse.ArgumentParser:
     sp["pause"].add_argument("until", nargs="?", help='when it ends, e.g. "tomorrow 9am"')
     sp["spawn"].add_argument("agent")
     sp["retire"].add_argument("agent")
-    sp["connect"].add_argument("target", metavar="telegram|discord|whatsapp|<agent>")
+    sp["connect"].add_argument("target", metavar="|".join(CHANNELS) + "|<agent>")
     sp["connect"].add_argument("--replace", action="store_true", help="replace a credential that is already set")
     sp["join"].add_argument("url", metavar="PEER_URL")
     sp["federate"].set_defaults(rest=[])   # every argument the CLI doesn't know passes to the wizard, in order (main)

@@ -29,6 +29,7 @@ if not __package__:  # run by path: the checkout root goes first on sys.path so 
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.realpath(__file__))))))
 from astryx.paths import repo_root  # noqa: E402
 import ast
+import subprocess
 import sys
 from pathlib import Path
 
@@ -53,15 +54,30 @@ def parse() -> dict:
     return groups
 
 
+def _py_files(root: Path = REPO) -> list:
+    """The .py files git tracks under `root`: the repo a clone and CI see. Never a gitignored tree (an org's private
+    data, a home's own virtualenv, trigger bodies) nor an untracked scratch file: their imports are the org's, not
+    this manifest's. On a host that kept a virtualenv under an ignored dir, the rglob read thousands of
+    site-packages files and doctor stood at ✗ while CI was green (medic 11-17). A new file is judged once it's added.
+    No git (an export, a tarball), or a root git tracks nothing in (a gitignored dir, seed 12737: an empty list
+    would pass on no files): every .py outside .git and venv, as before."""
+    try:
+        out = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "*.py"], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        out = None
+    files = [root / f for f in out.stdout.decode(errors="surrogateescape").split("\0") if f] \
+        if out is not None and out.returncode == 0 else []
+    if files:
+        return files
+    # no git, or a root git tracks nothing in (an ignored dir): read it, never pass on no files
+    return [p for p in root.rglob("*.py") if ".git" not in p.parts and "venv" not in p.parts]
+
+
 def _first_party_roots(root: Path = REPO) -> set:
     """Import roots that resolve to a file INSIDE the repo — never a dependency. A
     module's own stem (bridges/transcribe.py → `transcribe`, imported as `transcribe`
     from within bridges/) and every top-level package dir count."""
-    roots = set()
-    for p in root.rglob("*.py"):
-        if ".git" in p.parts or "venv" in p.parts:
-            continue
-        roots.add(p.stem)
+    roots = {p.stem for p in _py_files(root)}
     for p in root.iterdir():
         # rglob, not glob: a package dir whose python lives only in SUBdirs is still
         # first-party. `triggers/` holds no top-level .py (every body is triggers/<agent>/),
@@ -79,12 +95,10 @@ def _imported_roots(root: Path = REPO) -> set:
     function-local `from faster_whisper import ...` is invisible to a `^import` grep;
     transcribe.py:33 is exactly that). Relative imports (level>0) are first-party."""
     roots = set()
-    for p in root.rglob("*.py"):
-        if ".git" in p.parts or "venv" in p.parts:
-            continue
+    for p in _py_files(root):
         try:
             tree = ast.parse(p.read_text())
-        except (SyntaxError, UnicodeDecodeError):
+        except (SyntaxError, UnicodeDecodeError, OSError):   # OSError: tracked, deleted in the worktree
             continue
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):

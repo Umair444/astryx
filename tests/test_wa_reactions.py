@@ -43,7 +43,7 @@ spec.loader.exec_module(wa)
 
 CHAT = "wa-test-group@g.us"               # fake-in-shape ids (no digit run: privacy_gate (c)); /hook only compares them
 OWNER = "wa-test-owner@lid"
-ROUTE = {"chat": CHAT, "agent": "seed", "enabled": True, "open": False, "trusted_jids": [OWNER]}
+ROUTE = {"chat": CHAT, "agent": "seed", "enabled": True, "open": False}
 fails = []
 
 
@@ -86,6 +86,10 @@ class World:
     def install(self):
         wa.seen_msgids.clear()
         wa.routes = lambda: Routes([self.route] if self.route else [])   # the resolved table (plan-11860 E2)
+
+        async def identity_of(pool, channel, account, fallback, route=None):     # the one minter (identity_who): the owner's number
+            return "owner" if account == OWNER else fallback          # is the owner's handle, everyone else as minted
+        wa.identity_of = identity_of
 
         async def wacli(*args):
             self.store_reads += 1

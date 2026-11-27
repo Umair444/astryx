@@ -13,16 +13,16 @@ ORACLE = REPO / "tests" / "test_observatory_thread_read.py"
 ENV = "OBS_MAIN_SRC"
 MUTANTS = {
     "R2 a blank thread gets through (only an empty one is 400)": ("if not r.thread.strip():", "if not r.thread:"),
-    "R3 drops to_agent='owner' (a p1→steward row is marked read)":
-        ("AND id <= $2 AND to_agent='owner' AND to_org='local'", "AND id <= $2 AND to_org='local'"),
+    "R3 drops to_agent=<viewer> (a p1→steward row is marked read)":
+        ("AND id <= $2 AND to_agent=$3 AND to_org='local'", "AND id <= $2 AND $3::text IS NOT NULL AND to_org='local'"),
     "R4 drops to_org='local' (an owner@peer row is marked though it never left)":
-        ("AND id <= $2 AND to_agent='owner' AND to_org='local'", "AND id <= $2 AND to_agent='owner'"),
+        ("AND id <= $2 AND to_agent=$3 AND to_org='local'", "AND id <= $2 AND to_agent=$3"),
     "R5 drops from_agent<>'owner' (the owner's own row is marked)":
-        ("AND to_org='local' AND from_agent<>'owner' ", "AND to_org='local' "),
+        ("AND to_org='local' AND from_agent<>$3 ", "AND to_org='local' "),
     "R6 drops upto (a reply the pane never rendered is marked)":
-        ("WHERE thread=$1 AND id <= $2 AND to_agent='owner'", "WHERE thread=$1 AND $2::bigint > 0 AND to_agent='owner'"),
+        ("WHERE thread=$1 AND id <= $2 AND to_agent=$3", "WHERE thread=$1 AND $2::bigint > 0 AND to_agent=$3"),
     "R7 scoped by sender, not thread (every reply to the owner is marked)":
-        ("WHERE thread=$1 AND id <= $2 AND to_agent='owner'", "WHERE $1::text IS NOT NULL AND id <= $2 AND to_agent='owner'"),
+        ("WHERE thread=$1 AND id <= $2 AND to_agent=$3", "WHERE $1::text IS NOT NULL AND id <= $2 AND to_agent=$3"),
     "R8 drops status='pending' (a bridge's delivery is re-handled as observatory:thread)":
         ("f\"AND status='pending' AND NOT {OWNER_ROW_BRIDGED_SQL}", "f\"AND NOT {OWNER_ROW_BRIDGED_SQL}"),
     "R10 drops the bridged exclusion (a t-/wa:/tg:/dc:/cv:/tier/ear row is marked before its bridge sends it)":

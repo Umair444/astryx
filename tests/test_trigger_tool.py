@@ -61,8 +61,11 @@ CREATE TABLE triggers (
 CREATE INDEX triggers_due ON triggers (next_fire) WHERE enabled;
 """
 OLD_RM = "UPDATE triggers SET enabled=false WHERE agent='a' AND name='h45'"         # an on row
+# The plan-12214 window: a pre-off_reason body (no off_reason/watch/… columns) still writes the expanded table. Its
+# conflict target is the tenant-leading key since cog-rls slice 1: a body still saying ON CONFLICT (agent, name) fails
+# against the widened key ("no unique constraint matching"), so every running trigger tool is restarted with that apply.
 OLD_SET = ("INSERT INTO triggers (agent, name, schedule, kind, check_src, note, next_fire) "
-           "VALUES ('a','brand_new','* * * * *','heartbeat',null,null, now()) ON CONFLICT (agent, name) DO UPDATE "
+           "VALUES ('a','brand_new','* * * * *','heartbeat',null,null, now()) ON CONFLICT (tenant, agent, name) DO UPDATE "
            "SET schedule='* * * * *', enabled=true, next_fire=now()")
 OLD_REENABLE = "UPDATE triggers SET enabled=true WHERE agent='a' AND name='h1'"     # an old trigger_set on a retired row
 
@@ -120,7 +123,7 @@ def migration(fx):
             except psycopg.Error as e:
                 check(f"X5 an old body's {label} still works in the window", False, e)
         c.execute("INSERT INTO triggers (agent,name,schedule,kind) VALUES ('a','spawned','0 9 * * *','heartbeat') "
-                  "ON CONFLICT (agent,name) DO NOTHING")
+                  "ON CONFLICT (tenant,agent,name) DO NOTHING")
         check("X6 spawn.sh's insert still works", c.execute("SELECT enabled FROM triggers WHERE name='spawned'").fetchone()[0] is True)
         # normalize (B5): the backfill's classes, from `enabled` alone; it never turns a row on
         pulse.normalize(c)
@@ -465,6 +468,18 @@ def tick_rules(c):
     pulse.process(c, [t], tool._now(), hot=False)
     check("A8 a row another claim already fired doesn't fire twice", wakes("dl") == n, wakes("dl"))
     c.execute("UPDATE triggers SET off_reason=NULL, enabled=true WHERE name='dl'")
+    # insurance 12803: an at's one-shot never rides onto a schedule, and a fired row re-arms on the schedule it already had
+    set_ok(c, name="ra", at="2099-01-01T17:00", note="recheck")
+    set_ok(c, name="ra", schedule="0 11 * * *")
+    check("A11 an at moved onto a schedule repeats: once is off", row("ra")["once"] is False, row("ra"))
+    c.execute("UPDATE triggers SET off_reason='fired', enabled=false, once=true WHERE name='ra'")
+    r = set_ok(c, name="ra", schedule="0 11 * * *", once=False)
+    t = row("ra")
+    check("A12 a fired row set again with its own schedule is on, as the reply's next fire says",
+          t["enabled"] and t["off_reason"] is None and t["once"] is False, (t, r))
+    set_ok(c, name="rb", schedule="0 9 * * *", once=True)
+    set_ok(c, name="rb", schedule="0 10 * * *")
+    check("A13 a once set on a schedule stays when the time moves (set is a PATCH; medic 12807)", row("rb")["once"] is True, row("rb"))
     t = dict(_due_row(c, "dl"))
     c.execute("UPDATE triggers SET enabled=false WHERE name='dl'")        # an old trigger_rm: enabled only
     pulse.process(c, [t], tool._now(), hot=False)
@@ -530,7 +545,7 @@ def tick_rules(c):
     set_ok(c, name="sh", at="2099-01-01T17:00", note="n")
     c.execute("UPDATE triggers SET next_fire=now()-interval '1 hour' WHERE name='sh'")
     saved = pulse.pressure
-    pulse.pressure = lambda conn: True
+    pulse.pressure = lambda conn: lambda agent: True
     n = wakes("sh")
     _tick(c)
     check("F1 hot gauge: the deadline waits, unfired, unretired", wakes("sh") == n and row("sh")["enabled"] is True)

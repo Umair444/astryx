@@ -12,18 +12,32 @@ THE RULE. The type is SNIFFED from the bytes, never taken from a filename:
     is therefore a page of characters, not a document (nosniff + the sandbox keep it so);
   - only an ATTACHMENT, or bytes off the allowlist, is application/octet-stream with Content-Disposition: attachment;
   - ALWAYS X-Content-Type-Options: nosniff and Content-Security-Policy: sandbox; default-src 'none'.
+ONE OPT-IN, `svg` (the observatory's /api/chat/file): a file NAMED .svg whose bytes ARE an SVG document (is_svg) is
+served as image/svg+xml, so the panel's <img> can draw it (an <img> never runs an SVG's script, and the page shows it
+from a data: URL, an opaque origin, never a same-origin blob: document). Its CSP stays a sandbox with nothing to fetch
+or run (SVG_CSP: inline styles and data: images only), so a direct open is inert too; anything else named .svg stays
+text/plain.
 ONE NAMED EXEMPTION, `frame_pdf` (canvas's in-page PDF viewer only, canvas/web/src/Media.tsx): a sandboxed document
 can't run the browser's PDF viewer, so a MAGIC-VERIFIED PDF asked for in a frame drops the CSP sandbox (nosniff stays).
 /chat never passes it: there a PDF is a download (plan-11884 D2).
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi.responses import FileResponse
 
 CSP = "sandbox; default-src 'none'"
+SVG_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+SVG_TYPE = "image/svg+xml"
 HEAD = 4096
+_SVG_ROOT = re.compile(rb"^(?:\xef\xbb\xbf)?\s*(?:<\?xml[^>]*\?>\s*|<!--.*?-->\s*|<!DOCTYPE[^>]*>\s*)*<svg[\s>/]", re.S | re.I)
+
+
+def is_svg(head: bytes) -> bool:
+    """The bytes are an SVG document: text whose root element (after an XML declaration, comments, a doctype) is <svg."""
+    return sniff(head) == "text/plain; charset=utf-8" and bool(_SVG_ROOT.match(head))
 
 
 def sniff(head: bytes) -> str | None:
@@ -76,10 +90,16 @@ def sniff_file(path: Path) -> str | None:
 
 
 def serve_untrusted(path: Path, *, inline: bool = True, filename: str | None = None,
-                    frame_pdf: bool = False) -> FileResponse:
+                    frame_pdf: bool = False, svg: bool = False) -> FileResponse:
     """Serve `path` (already authorised by the caller) under THE RULE above."""
     kind = sniff_file(path)
     headers = {"X-Content-Type-Options": "nosniff", "Content-Security-Policy": CSP, "Cache-Control": "no-store"}
+    if svg and inline and path.suffix.lower() == ".svg" and kind and kind.startswith("text/"):
+        with open(path, "rb") as f:
+            if is_svg(f.read(HEAD)):
+                headers["Content-Security-Policy"] = SVG_CSP
+                return FileResponse(path, media_type=SVG_TYPE, headers=headers, content_disposition_type="inline",
+                                    filename=filename or path.name)
     if kind and inline:
         if frame_pdf and kind == "application/pdf":
             del headers["Content-Security-Policy"]

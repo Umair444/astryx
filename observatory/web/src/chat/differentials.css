@@ -1,0 +1,106 @@
+/* The differentials loop (iteration 7): version-aware chips, turn actions, the "changes" card, send-changes and the
+   review bar. Colour keeps to DESIGN.md's rule: it carries meaning only, here the diff's (good = added, bad = removed)
+   and the accent for "a newer version". Every value is a theme token, so dark mode is designed, not inverted. */
+
+/* ── a chip that carries a newer version: "v3 · updated" + What changed, one joined control ─────────────────────── */
+.ws-chip-wrap > .ws-chip { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.ws-chip-ver { color: var(--t-accent); font-weight: 500; }
+.ws-chip-diff { display: inline-flex; align-items: center; gap: 6px; padding: 0 11px 0 10px; font-size: 12px; font-weight: 500;
+  color: var(--t-accent); border: 1px solid var(--t-line); border-left: 0; white-space: nowrap;
+  background: color-mix(in srgb, var(--t-accent) 5%, color-mix(in srgb, var(--t-panel) 80%, transparent)); transition: background .12s, border-color .12s; }
+.ws-chip-diff:hover { background: color-mix(in srgb, var(--t-accent) 11%, var(--t-panel)); border-color: var(--t-line2); }
+/* the chip's last segment: download */
+.ws-chip-dl { display: grid; place-items: center; width: 34px; color: var(--t-dim); border: 1px solid var(--t-line); border-left: 0;
+  border-radius: 0 12px 12px 0; background: color-mix(in srgb, var(--t-panel) 80%, transparent); transition: background .12s, color .12s, border-color .12s; }
+.ws-chip-dl:hover { color: var(--t-fg); background: var(--t-panel); border-color: var(--t-line2); }
+.ws-chip-dl:disabled { opacity: .45; }
+.ws-chip-dl.is-failed { color: var(--t-bad); }
+.ws-chip-dl:focus-visible, .ws-chip-diff:focus-visible, .ws-turn-acts button:focus-visible, .ws-pick:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent); outline-offset: 1px; }
+@media (max-width: 480px) { .ws-chip-diff span { display: none; } .ws-chip-diff { padding: 0 10px; } }
+
+/* ── a turn's actions: a small floating toolbar on hover (agents), inline beside the time (the owner) ─────────────── */
+.ws-turn { position: relative; }
+.ws-turn-acts { position: absolute; top: -10px; right: 0; z-index: 2; display: flex; align-items: center; gap: 1px; padding: 2px;
+  background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 10px; box-shadow: 0 6px 18px -10px rgba(0,0,0,.35);
+  opacity: 0; pointer-events: none; transition: opacity .12s; }
+.ws-turn:hover > .ws-turn-acts, .ws-turn:focus-within > .ws-turn-acts, .ws-turn-acts:has(.ws-turn-said) { opacity: 1; pointer-events: auto; }
+.ws-turn-acts button { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 7px; border-radius: 7px; font-size: 12px;
+  color: var(--t-dim); transition: background .12s, color .12s; }
+.ws-turn-acts button:hover:not(:disabled) { background: color-mix(in srgb, var(--t-fg) 6%, transparent); color: var(--t-fg); }
+.ws-turn-said { padding: 0 8px 0 4px; font-size: 11.5px; color: var(--t-mute); white-space: nowrap; }
+.ws-turn-acts.is-inline { position: static; padding: 0; background: none; border: 0; box-shadow: none; }
+/* in an agent turn's header row: at its far end, the row's own height (no jump when they appear) */
+.ws-turn-head > .ws-turn-acts { margin-left: auto; flex-shrink: 0; margin-block: -2px; }
+/* a continued turn has no header: its toolbar floats in the gap above it, clear of the prose */
+.ws-turn.is-cont > .ws-turn-acts { top: -18px; }
+.ws-turn-acts.is-inline button { height: 22px; padding: 0 5px; }
+[data-turn]:hover .ws-turn-acts.is-inline, [data-turn]:focus-within .ws-turn-acts.is-inline { opacity: 1; pointer-events: auto; }
+/* no hover (a phone): the actions sit quietly under each answer, always reachable */
+@media (hover: none) {
+  .ws-turn { display: flex; flex-direction: column; }
+  .ws-turn > .ws-turn-acts { order: 9; position: static; align-self: flex-start; margin-top: 4px; opacity: .75; pointer-events: auto;
+    background: none; border: 0; box-shadow: none; padding: 0; margin-left: -6px; }
+  .ws-turn-acts.is-inline { opacity: .75; pointer-events: auto; }
+}
+
+/* ── the "changes" card in the chat, and a unified diff's lines ─────────────────────────────────────────────────── */
+.ws-changes { white-space: normal; min-width: 0; }
+.ws-mine:has(> .ws-changes) { width: min(580px, 80%); }
+.ws-changes-glyph { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0;
+  background: color-mix(in srgb, var(--t-accent) 12%, transparent); color: var(--t-accent); }
+.ws-difflines { max-width: 100%; margin-top: 6px; padding: 6px 0; max-height: 340px; overflow: auto; white-space: pre; text-align: left;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.55; color: var(--t-dim);
+  background: var(--t-panel); border: 1px solid var(--t-line); border-radius: 10px; }
+.ws-difflines > span { display: block; padding: 0 12px; min-width: max-content; }
+.ws-difflines > .is-add { background: color-mix(in srgb, var(--t-good) 13%, transparent); color: var(--t-fg); }
+.ws-difflines > .is-del { background: color-mix(in srgb, var(--t-bad) 12%, transparent); color: var(--t-fg); }
+.ws-difflines > .is-hunk { color: var(--t-mute); background: color-mix(in srgb, var(--t-fg) 4%, transparent); }
+.ws-changes-diff > summary { cursor: pointer; font-size: 12px; color: var(--t-mute); list-style: none; }
+.ws-changes-diff > summary::before { content: "›"; display: inline-block; margin-right: 6px; transition: transform .12s; }
+.ws-changes-diff[open] > summary::before { transform: rotate(90deg); }
+.ws-changes-diff > summary:hover { color: var(--t-fg); }
+
+/* ── the panel: send my changes, and the review of an agent's version ────────────────────────────────────────────── */
+.ws-send-changes { flex-shrink: 0; padding: 12px 16px 12px; border-bottom: 1px solid var(--t-line);
+  background: color-mix(in srgb, var(--t-accent) 4%, var(--t-panel)); }
+.ws-pick { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px 0 4px; border-radius: 999px; font-size: 12.5px;
+  color: var(--t-dim); border: 1px solid var(--t-line); background: var(--t-panel); transition: background .12s, border-color .12s; }
+.ws-pick:hover { border-color: var(--t-line2); color: var(--t-fg); }
+.ws-pick[aria-checked="true"] { color: var(--t-fg); border-color: color-mix(in srgb, var(--t-accent) 50%, var(--t-line));
+  background: color-mix(in srgb, var(--t-accent) 10%, var(--t-panel)); }
+.ws-reviewbar { background: color-mix(in srgb, var(--t-accent) 6%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--t-accent) 18%, var(--t-line)); }
+.ws-sendbar { background: color-mix(in srgb, var(--t-good) 7%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--t-good) 20%, var(--t-line)); }
+
+/* ── a message that did not send ─────────────────────────────────────────────────────────────────────────────────── */
+.ws-unsent { border-style: dashed; border-color: color-mix(in srgb, var(--t-bad) 45%, var(--t-line)); }
+.ws-link-btn { color: var(--t-dim); font-weight: 500; text-underline-offset: 2px; }
+.ws-link-btn:hover { color: var(--t-fg); text-decoration: underline; }
+
+/* ── per-change review in the diff (iteration 10): each change keeps or undoes on its own ─────────────────────────── */
+.ws-hunk-pick { position: absolute; top: 3px; right: 6px; z-index: 1; height: 22px; padding: 0 8px; border-radius: 7px;
+  font-family: "Inter Variable", Inter, sans-serif; font-size: 11.5px; line-height: 20px; color: var(--t-dim);
+  background: var(--t-panel); border: 1px solid var(--t-line); opacity: 0; transition: opacity 120ms ease-out, color 120ms ease-out; }
+.ws-diff-cell:hover .ws-hunk-pick, .ws-hunk-pick:focus-visible, .ws-hunk-pick[data-undone="true"] { opacity: 1; }
+.ws-hunk-pick:hover { color: var(--t-fg); border-color: var(--t-line2); }
+.ws-hunk-pick:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent); outline-offset: 1px; }
+.ws-hunk-pick[data-undone="true"] { color: var(--t-fg); }
+.ws-diff-undone { color: color-mix(in srgb, var(--t-fg) 70%, transparent); background: color-mix(in srgb, var(--t-fg) 3.5%, transparent);
+  box-shadow: inset 2px 0 0 var(--t-line2); padding-block: 3px; margin-block: 2px; }
+.ws-diff-cell > .relative > .ws-diff-undone { margin: 0 -20px; padding: 2px 20px; }
+@media (hover: none) { .ws-hunk-pick { opacity: .85; } }
+@media (prefers-reduced-motion: reduce) { .ws-hunk-pick { transition: none; } }
+/* the change's text keeps clear of its button */
+.ws-diff-cell:has(> .ws-hunk-pick) { padding-right: 112px; }
+.ws-diff-cell > .relative:has(> .ws-hunk-pick) > :first-child { padding-right: 112px; }
+
+/* where else a turn worked: quiet thread tags, not underlined ids */
+.ws-elsewhere { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 6px; font-size: 11.5px; color: var(--t-dim);
+  background: color-mix(in srgb, var(--t-fg) 4.5%, transparent); transition: background-color 120ms ease-out, color 120ms ease-out; }
+.ws-elsewhere:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 8%, transparent); }
+.ws-elsewhere:focus-visible { outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent); outline-offset: 1px; }
+/* a named thread (GET /api/ws/thread-titles) reads as words: one line, clipped; the wire id lives in its title */
+.ws-elsewhere.is-named { display: inline-block; line-height: 20px; max-width: min(36ch, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+
+/* the panel's toolbar stays ONE row: in a narrow panel "From db · 3 KB" steps aside (the version menu names the author) */
+.ws-pbody { container-type: inline-size; }
+@container (max-width: 600px) { .ws-pfrom { display: none !important; } }

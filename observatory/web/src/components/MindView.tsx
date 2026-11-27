@@ -1,0 +1,348 @@
+import { useEffect, useState } from 'react'
+import { api, apiSend, displayName, fmtAgo } from '../api'
+import { useStore } from '../store'
+import AgentFace from './AgentFace'
+import { Empty, LiveDot, Panel, Skeleton } from '../ui/kit'
+
+/* THE ORG'S MIND (src/astryx/mind/mind.py, owner 11-15: "humans don't start work because someone tells them; they do it
+   because they want to"). What the org FEELS (itches read from each agent's own log, and the surprises and wonders an
+   agent noted itself), what it WANTS (each agent's pressure, and whether it is free to think), and what it has
+   UNDERSTOOD (insights: one name, one thought, where it lives, what it was built on). Nobody assigns any of it, and
+   the Economy tab's first section shows the org thinking. GET /api/mind, re-read every 20 s.
+   THE OWNER'S ACTS (owner-only, each one POST; observatory/api/mind.py): let the org think now (a tick: whoever wants
+   to and is free wakes), let an itch go or retire an idea (with the reason, which the org keeps), and share a question
+   with an agent (it becomes that agent's wonder, thought about only if it wants to). None of them assigns work. */
+
+interface Evidence { agent?: string; at?: string; calls?: number; line?: string }
+interface Itch {
+  id: number; agent: string; kind: 'tedium' | 'surprise' | 'wonder'; what: string; n: number; also: string[]
+  strength: number; state: 'open' | 'resolved' | 'dropped'; thinks: number; last_think: string | null; why: string | null
+  insight_id: number | null; source: string; evidence: Evidence[]; payback?: number; ease?: number | null
+}
+interface Insight {
+  id: number; name: string; thought: string; kind: string; lives: string; author: string; born: string
+  from_itch: number[]; builds_on: number[]; verified: string; state: 'alive' | 'retired'; epitaph: string | null
+  uses: number; used_by_others: number; built_upon: number
+}
+interface Win { used: number; left: number; need: number; spare: number; resets_at: string; tired: number; dry_at: string | null }
+interface Drive { agent: string; pull?: number; pressure: number; itches: number; busy: boolean; idle_min: number | null; waiting: number; thought_h_ago: number | null }
+interface Mind {
+  energy: { known?: boolean; tired?: number; word?: string; say?: string; binding?: 'h5' | 'd7'; windows?: Partial<Record<'h5' | 'd7', Win>>; hourly?: number[] }
+  drives: Drive[]; itches: Itch[]; insights: Insight[]
+  yields: Record<string, { trials: number; kept: number; let_go: number; open: number; yield: number }>
+  heat: { hand_calls: number; felt_as_tedium: number; share: number; days: number }
+  thinking: { tokens: number; total: number; wakes: number; share: number }
+  rules: { pressure: number; idle_min: number; rest_h: number; max_thinks: number }
+}
+
+/* the mind's senses, in words: each wake is a trial of the sense that raised it (mind.py yields) */
+const SENSES: Record<string, string> = {
+  shape: 'the very same thing done by hand again', tool: 'a tool called by hand again and again', sense: 'a watcher that keeps waking it for nothing', ask: 'the same ask again',
+  surprise: 'a surprise it noted', wonder: 'a question it asked itself',
+}
+
+const KIND: Record<Itch['kind'], { label: string; tone: string }> = {
+  tedium: { label: 'tedium', tone: 'var(--t-warn)' },
+  surprise: { label: 'surprise', tone: 'var(--t-accent)' },
+  wonder: { label: 'wonder', tone: 'var(--t-good)' },
+}
+
+/* why an agent is, or isn't, free to think right now: the rule that holds it, in words */
+function mood(d: Drive, m: Mind): { word: string; tone: 'working' | 'awake' | 'asleep' } {
+  if (d.thought_h_ago !== null && d.thought_h_ago < 1) return { word: 'thinking now', tone: 'working' }
+  if (!m.energy.known) return { word: 'waiting: the org can\'t read its energy', tone: 'asleep' }
+  if (d.busy) return { word: 'at work', tone: 'working' }
+  if (d.waiting) return { word: 'someone is waiting on it', tone: 'awake' }
+  if ((d.pull ?? d.pressure) < m.rules.pressure) return { word: d.pressure >= m.rules.pressure ? 'too tired for this much curiosity' : 'content', tone: 'asleep' }
+  if (d.thought_h_ago !== null && d.thought_h_ago < m.rules.rest_h) return { word: `resting (thought ${d.thought_h_ago} h ago)`, tone: 'awake' }
+  if (d.idle_min !== null && d.idle_min < m.rules.idle_min) return { word: 'just finished work', tone: 'awake' }
+  return { word: 'wants to think', tone: 'awake' }
+}
+
+/* ENERGY, AS A FEELING (owner 11-15: "humans don't know what 60% is, they get tired"). Tired = what the org will need
+   before a limit resets over what is left in it (astryx.econ.energy). Each limit is one bar: used, what the usual hours
+   ahead will need, and what would go unused at the reset. The day strip is the org's usual burn by hour: the quiet
+   hours are where its own thinking costs least. Nothing switches on any of it. */
+const clock = (iso: string) => {
+  const d = new Date(iso)
+  const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return d.toDateString() === new Date().toDateString() ? t : `${d.toLocaleDateString([], { weekday: 'short' })} ${t}`
+}
+function Energy({ e, thinking }: { e: Mind['energy']; thinking?: Mind['thinking'] }) {
+  if (!e.known) return (
+    <Panel className="p-4">
+      <div className="text-[11px] uppercase tracking-wider text-ink-mute">Energy</div>
+      <div className="mt-1 text-[22px] font-semibold text-ink">Unknown</div>
+      <div className="text-[12.5px] text-ink-dim mt-1">{e.say ?? 'No reading of the limits yet.'} Nobody starts work of its own until there is one.</div>
+    </Panel>
+  )
+  const rows = ([['h5', 'The 5 hours'], ['d7', 'The week']] as const).flatMap(([k, label]) => (e.windows?.[k] ? [{ k, label, w: e.windows[k] as Win }] : []))
+  const hourly = e.hourly ?? []
+  const top = Math.max(1, ...hourly)
+  const off = Math.round(-new Date().getTimezoneOffset() / 60)        // the strip is drawn in the viewer's own hours
+  const local = Array.from({ length: 24 }, (_, h) => hourly[(((h - off) % 24) + 24) % 24] ?? 0)
+  const nowH = new Date().getHours()
+  return (
+    <Panel className="p-4">
+      <div className="flex flex-wrap gap-x-8 gap-y-4">
+        <div className="min-w-[220px] flex-1">
+          <div className="text-[11px] uppercase tracking-wider text-ink-mute">Energy</div>
+          <div className="mt-1 text-[22px] font-semibold text-ink capitalize">{e.word}</div>
+          <div className="text-[12.5px] text-ink-dim mt-1 leading-relaxed">
+            How tired the org is: what it will need before a limit resets, over what is left. Tiredness bends what it does and never stops it.
+            {thinking && <>{' '}{(thinking.share * 100).toFixed(1)}% of this week's energy went to thinking it started itself ({thinking.wakes} wake{thinking.wakes === 1 ? '' : 's'}).</>}
+          </div>
+        </div>
+        <div className="min-w-[260px] flex-[2] flex flex-col gap-3">
+          {rows.map(({ k, label, w }) => {
+            const need = Math.max(0, Math.min(w.left, w.need)), spare = Math.max(0, w.left - w.need)
+            return (
+              <div key={k}>
+                <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
+                  <span className="text-ink">{label}{e.binding === k && rows.length > 1 ? <span className="text-ink-mute"> · the tighter one</span> : null}</span>
+                  <span className="text-ink-dim text-right">
+                    {w.dry_at ? `runs out around ${clock(w.dry_at)}, before its reset at ${clock(w.resets_at)}`
+                      : `about ${Math.round(spare)}% would go unused at the reset, ${clock(w.resets_at)}`}
+                  </span>
+                </div>
+                <div className="mt-1.5 flex h-2.5 w-full overflow-hidden rounded-full bg-deck-3" role="img"
+                  aria-label={`${label}: ${Math.round(w.used)}% used, about ${Math.round(w.need)}% needed before the reset, ${Math.round(spare)}% spare`}>
+                  <div style={{ width: `${w.used}%`, background: 'var(--t-mute)' }} title={`${Math.round(w.used)}% used`} />
+                  <div style={{ width: `${need}%`, background: 'var(--t-warn)' }} title={`about ${Math.round(w.need)}% usually needed before the reset`} />
+                  <div style={{ width: `${spare}%`, background: 'var(--t-good)', opacity: 0.55 }} title={`${Math.round(spare)}% would go unused`} />
+                </div>
+              </div>
+            )
+          })}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-ink-mute">
+            <span><i className="inline-block h-2 w-2 rounded-full mr-1.5 align-middle" style={{ background: 'var(--t-mute)' }} />used</span>
+            <span><i className="inline-block h-2 w-2 rounded-full mr-1.5 align-middle" style={{ background: 'var(--t-warn)' }} />the usual hours ahead will need</span>
+            <span><i className="inline-block h-2 w-2 rounded-full mr-1.5 align-middle" style={{ background: 'var(--t-good)', opacity: 0.55 }} />would go unused</span>
+          </div>
+        </div>
+        {hourly.length === 24 && (
+          <div className="min-w-[240px] flex-1">
+            <div className="text-[12.5px] text-ink">The org's usual day</div>
+            <div className="mt-1.5 flex items-end gap-[2px] h-12" role="img" aria-label="The org's usual energy use by hour of the day">
+              {local.map((v, h) => (
+                <div key={h} className="flex-1 rounded-sm" title={`${String(h).padStart(2, '0')}:00, about ${(v / 1e6).toFixed(1)}M tokens`}
+                  style={{ height: `${Math.max(4, (v / top) * 100)}%`, background: h === nowH ? 'var(--t-accent)' : 'var(--t-mute)', opacity: h === nowH ? 1 : 0.45 }} />
+              ))}
+            </div>
+            <div className="mt-1 flex justify-between text-[11px] text-ink-mute"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>
+            <div className="text-[11.5px] text-ink-mute mt-1">Its quiet hours are when thinking of its own costs least.</div>
+          </div>
+        )}
+      </div>
+    </Panel>
+  )
+}
+
+export default function MindView() {
+  const [m, setM] = useState<Mind | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [open, setOpen] = useState<number | null>(null)
+  const { who } = useStore()
+  const [said, setSaid] = useState<string | null>(null)        // what the last act did, in words
+  const [busy, setBusy] = useState(false)
+  const [ask, setAsk] = useState<{ kind: 'drop' | 'retire'; id: number } | null>(null)   // the one reason being typed
+  const [why, setWhy] = useState('')
+  const [q, setQ] = useState({ agent: '', what: '' })
+  const load = () => api<Mind>('/mind').then((x) => { setM(x); setErr(null) }).catch((e) => setErr(String((e as Error).message || e)))
+  useEffect(() => {
+    load()
+    const t = setInterval(load, 20_000)
+    return () => clearInterval(t)
+  }, [])
+  async function act(words: (r: Record<string, unknown>) => string, path: string, body?: unknown) {
+    setBusy(true)
+    try { setSaid(words(await apiSend<Record<string, unknown>>('POST', path, body ?? {}))); setAsk(null); setWhy(''); await load() }
+    catch (e) { setSaid(`Not done: ${String((e as Error).message || e)}`) }
+    setBusy(false)
+  }
+  const think = () => act((r) => (r.woke ? `${displayName(String(r.woke))} woke to think: ${String(r.what)}.` : `Nobody woke: ${String(r.why)}.`), '/mind/tick')
+
+  const alive = m?.insights.filter((i) => i.state === 'alive') ?? []
+  const openItches = m?.itches.filter((i) => i.state === 'open') ?? []
+  const settled = m?.itches.filter((i) => i.state !== 'open') ?? []
+  const top = Math.max(1, ...(m?.drives.map((d) => d.pressure) ?? [1]))
+  const insightName = (id: number | null) => m?.insights.find((i) => i.id === id)?.name
+
+  const reason = (kind: 'drop' | 'retire', id: number, label: string, done: string) => (
+    ask?.kind === kind && ask.id === id ? (
+      <form className="flex items-center gap-1.5 mt-2" onSubmit={(e) => { e.preventDefault(); if (why.trim()) void act(() => done, kind === 'drop' ? `/mind/itch/${id}/drop` : `/mind/insight/${id}/retire`, { why }) }}>
+        <input autoFocus value={why} onChange={(e) => setWhy(e.currentTarget.value)} placeholder="Why? The org keeps the reason" aria-label="the reason"
+          className="flex-1 min-w-0 rounded-lg bg-deck-3/70 border border-line px-2.5 py-1.5 text-[12.5px] text-ink placeholder:text-ink-mute outline-none focus:border-cyan/60" />
+        <button disabled={busy || !why.trim()} className="rounded-lg px-2.5 py-1.5 text-[12.5px] text-ink bg-deck-3 border border-line disabled:opacity-40">{label}</button>
+        <button type="button" onClick={() => { setAsk(null); setWhy('') }} className="text-[12px] text-ink-mute hover:text-ink px-1">Cancel</button>
+      </form>
+    ) : who.owner ? (
+      <button onClick={() => { setAsk({ kind, id }); setWhy('') }} className="mt-2 text-[12px] text-ink-mute hover:text-ink underline underline-offset-2">{label}</button>
+    ) : null
+  )
+
+  return (
+      <div>
+        {err && <Panel className="p-4 mb-4 text-[13px] text-bad">The mind isn't answering: {err}</Panel>}
+        {!m && !err && <Skeleton className="block h-40 w-full" />}
+        {m && (
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+              <p className="text-[13.5px] text-ink-dim max-w-[760px] leading-relaxed flex-1 min-w-[280px]">
+                Nobody assigns any of this. An itch is something an agent lived through in its own work. Itches build
+                pressure, and an agent that is free wakes itself to think about its strongest one. A tired org puts curiosity down first and keeps thinking about what gives energy back. What it
+                understands, it keeps as one named idea the whole org can use.
+              </p>
+              {who.owner && (
+                <button onClick={think} disabled={busy} title="Feel now, and let whoever wants to think and is free wake. It happens by itself every hour."
+                  className="rounded-xl px-3.5 py-2 text-[13px] font-medium text-ink bg-deck-3 border border-line hover:border-line-2 disabled:opacity-50">
+                  {busy ? 'Asking…' : 'Let it think now'}
+                </button>
+              )}
+            </div>
+            {said && <Panel className="p-3 text-[13px] text-ink flex items-center gap-3"><span className="flex-1" role="status">{said}</span>
+              <button onClick={() => setSaid(null)} className="text-ink-mute hover:text-ink text-[12px]">Dismiss</button></Panel>}
+
+            <Energy e={m.energy} thinking={m.thinking} />
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Panel className="p-4">
+                <div className="text-[11px] uppercase tracking-wider text-ink-mute">Heat</div>
+                <div className="mt-1 text-[22px] font-semibold text-ink">{Math.round(m.heat.share * 100)}%</div>
+                <div className="text-[12.5px] text-ink-dim mt-1">{m.heat.felt_as_tedium.toLocaleString()} of {m.heat.hand_calls.toLocaleString()} tool calls in {m.heat.days} days
+                  were a repetition the org already feels as tedium. It falls as ideas replace hand work.</div>
+              </Panel>
+              <Panel className="p-4">
+                <div className="text-[11px] uppercase tracking-wider text-ink-mute">Understood</div>
+                <div className="mt-1 text-[22px] font-semibold text-ink">{alive.length} idea{alive.length === 1 ? '' : 's'}</div>
+                <div className="text-[12.5px] text-ink-dim mt-1">{alive.filter((i) => i.used_by_others > 0).length} used by another agent,
+                  {' '}{alive.filter((i) => i.built_upon > 0).length} built upon. {settled.filter((i) => i.state === 'dropped').length} itches let go.</div>
+              </Panel>
+            </div>
+
+            <section>
+              <h2 className="text-[13px] font-semibold text-ink mb-2">Who wants to think</h2>
+              <Panel className="p-2">
+                {m.drives.length === 0 && <div className="p-4 text-[13px] text-ink-mute">No agent feels anything yet.</div>}
+                {m.drives.map((d) => {
+                  const md = mood(d, m)
+                  return (
+                    <div key={d.agent} className="flex items-center gap-3 px-2.5 py-2 rounded-xl">
+                      <AgentFace name={d.agent} size={26} />
+                      <span className="w-28 shrink-0 text-[13.5px] text-ink truncate">{displayName(d.agent)}</span>
+                      <span className="flex-1 min-w-0 h-2 rounded-full bg-deck-3 overflow-hidden" title={`pressure ${d.pressure} from ${d.itches} itches; it wakes above ${m.rules.pressure}`}>
+                        <span className="block h-full rounded-full" style={{ width: `${Math.max(2, (d.pressure / top) * 100)}%`, background: d.pressure >= m.rules.pressure ? 'var(--t-accent)' : 'var(--t-line)' }} />
+                      </span>
+                      <span className="w-12 text-right tabular-nums text-[12.5px] text-ink-dim">{Math.round(d.pressure)}</span>
+                      <span className="w-64 max-sm:hidden flex items-center gap-1.5 text-[12.5px] text-ink-dim"><LiveDot state={md.tone} />{md.word}</span>
+                    </div>
+                  )
+                })}
+              </Panel>
+            </section>
+
+            <section>
+              <h2 className="text-[13px] font-semibold text-ink mb-1">How well its senses work</h2>
+              <p className="text-[12.5px] text-ink-mute mb-2 max-w-[760px]">Every wake is a trial. A sense whose wakes end in kept ideas is trusted more; one whose itches are let go fades. The mind tunes itself this way, hour after hour.</p>
+              <Panel className="p-2">
+                {Object.entries(m.yields ?? {}).sort((a, b) => b[1].trials - a[1].trials).map(([k, v]) => (
+                  <div key={k} className="flex items-center gap-3 px-2.5 py-1.5 text-[13px]">
+                    <span className="flex-1 min-w-0 text-ink truncate">{SENSES[k] ?? k}</span>
+                    <span className="w-24 text-right text-ink-dim tabular-nums">{v.open} open</span>
+                    <span className="w-44 text-right text-ink-dim tabular-nums max-sm:hidden">{v.trials} trial{v.trials === 1 ? '' : 's'}: {v.kept} kept, {v.let_go} let go</span>
+                    <span className="w-24 text-right tabular-nums text-ink" title="(kept + 1) / (trials + 2): one trial decides nothing">trust {Math.round(v.yield * 100)}%</span>
+                  </div>
+                ))}
+              </Panel>
+            </section>
+
+            <section>
+              <h2 className="text-[13px] font-semibold text-ink mb-2">What it has understood</h2>
+              {m.insights.length === 0
+                ? <Panel className="p-2"><Empty title="No idea kept yet" hint="When an agent sees one thought that makes many cases the same thing, it keeps it here, and the whole org hears of it." /></Panel>
+                : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {m.insights.map((i) => (
+                      <Panel key={i.id} className={`p-4 ${i.state === 'retired' ? 'opacity-60' : ''}`}>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10.5px] uppercase tracking-wider font-semibold" style={{ color: 'var(--t-accent)' }}>{i.kind}</span>
+                          <span className="text-[14.5px] font-semibold text-ink truncate">{i.name}</span>
+                          <span className="ml-auto flex items-center gap-1.5 text-[12px] text-ink-mute shrink-0"><AgentFace name={i.author} size={18} />{displayName(i.author)} · {fmtAgo(i.born)}</span>
+                        </div>
+                        <p className="text-[13.5px] text-ink mt-1.5 leading-relaxed">{i.thought}</p>
+                        <div className="text-[12px] text-ink-mute mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                          {i.lives && <span className="font-mono truncate max-w-full">{i.lives}</span>}
+                          <span>{i.uses} use{i.uses === 1 ? '' : 's'}{i.used_by_others ? `, ${i.used_by_others} other agent${i.used_by_others === 1 ? '' : 's'}` : ''}</span>
+                          {i.builds_on.length > 0 && <span>built on {i.builds_on.map((b) => insightName(b) ?? `#${b}`).join(', ')}</span>}
+                          {i.built_upon > 0 && <span>{i.built_upon} built upon it</span>}
+                        </div>
+                        {i.verified && <div className="text-[12px] text-ink-dim mt-1.5">Checked: {i.verified}</div>}
+                        {i.epitaph && <div className="text-[12px] text-ink-dim mt-1.5">Retired: {i.epitaph}</div>}
+                        {i.state === 'alive' && reason('retire', i.id, 'Retire this idea', `${i.name} is retired; its reason is kept.`)}
+                      </Panel>
+                    ))}
+                  </div>
+                )}
+            </section>
+
+            {who.owner && (
+              <section>
+                <h2 className="text-[13px] font-semibold text-ink mb-1">Share a question</h2>
+                <p className="text-[12.5px] text-ink-mute mb-2 max-w-[760px]">Something you wonder about. It becomes that agent's own wonder, not a task: it thinks about it when it is free and wants to.</p>
+                <form className="flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); if (q.agent && q.what.trim().length >= 8) void act(() => { setQ({ agent: q.agent, what: '' }); return `${displayName(q.agent)} now wonders about it too.` }, '/mind/wonder', q) }}>
+                  <select value={q.agent} onChange={(e) => setQ({ ...q, agent: e.currentTarget.value })} aria-label="which agent"
+                    className="rounded-lg bg-deck-3/70 border border-line px-2.5 py-2 text-[13px] text-ink outline-none">
+                    <option value="">Which agent…</option>
+                    {m.drives.map((d) => <option key={d.agent} value={d.agent}>{displayName(d.agent)}</option>)}
+                  </select>
+                  <input value={q.what} onChange={(e) => setQ({ ...q, what: e.currentTarget.value })} placeholder="I wonder why…" aria-label="your question"
+                    className="flex-1 min-w-[240px] rounded-lg bg-deck-3/70 border border-line px-3 py-2 text-[13px] text-ink placeholder:text-ink-mute outline-none focus:border-cyan/60" />
+                  <button disabled={busy || !q.agent || q.what.trim().length < 8} className="rounded-lg px-3.5 py-2 text-[13px] text-ink bg-deck-3 border border-line disabled:opacity-40">Share</button>
+                </form>
+              </section>
+            )}
+
+            <section>
+              <h2 className="text-[13px] font-semibold text-ink mb-2">What it feels</h2>
+              <Panel className="p-2">
+                {m.itches.length === 0 && <div className="p-4 text-[13px] text-ink-mute">Nothing felt yet.</div>}
+                {[...openItches, ...settled].map((i) => (
+                  <div key={i.id} className={`rounded-xl ${i.state === 'open' ? '' : 'opacity-60'}`}>
+                    <button onClick={() => setOpen(open === i.id ? null : i.id)} aria-expanded={open === i.id}
+                      className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left hover:bg-deck-3/50">
+                      <AgentFace name={i.agent} size={22} />
+                      <span className="text-[10.5px] uppercase tracking-wider font-semibold w-16 shrink-0" style={{ color: KIND[i.kind].tone }}>{KIND[i.kind].label}</span>
+                      <span className="flex-1 min-w-0 text-[13px] text-ink truncate">
+                        <span className="text-ink-dim">{displayName(i.agent)}: </span>{i.what}
+                        {i.also.length > 0 && <span className="text-ink-mute"> · also {i.also.map(displayName).join(', ')}</span>}
+                      </span>
+                      <span className="shrink-0 text-[12px] text-ink-mute">
+                        {i.state === 'resolved' ? `understood: ${insightName(i.insight_id) ?? 'an idea'}`
+                          : i.state === 'dropped' ? 'let go'
+                          : `${(i.payback ?? 0) >= 1 ? `gives back ${Math.round(i.payback ?? 0)}× · ` : ''}${i.thinks ? `thought about ${i.thinks}×` : 'not thought about yet'}`}
+                      </span>
+                    </button>
+                    {open === i.id && (
+                      <div className="px-11 pb-3 text-[12.5px] text-ink-dim">
+                        {i.why && <div className="mb-1.5">Why it was let go: {i.why}</div>}
+                        {i.state === 'open' && <div className="mb-2">{reason('drop', i.id, 'Let it go', `That itch of ${displayName(i.agent)}'s is let go; the reason is kept.`)}</div>}
+                        {i.evidence.length > 0 && <div className="text-ink-mute mb-1">Side by side:</div>}
+                        <ul className="flex flex-col gap-1">
+                          {i.evidence.map((e, k) => (
+                            <li key={k} className="leading-snug">
+                              <span className="text-ink">{displayName(e.agent ?? i.agent)}</span>
+                              {e.at && <span className="text-ink-mute"> {e.at}</span>}{e.calls ? <span className="text-ink-mute"> ({e.calls} calls)</span> : null}: {e.line}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </Panel>
+            </section>
+          </div>
+        )}
+      </div>
+  )
+}

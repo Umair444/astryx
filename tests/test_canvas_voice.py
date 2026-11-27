@@ -59,7 +59,7 @@ def main(url):
     names = [a for a in roster() if a != "seed"]           # this org's own agents, not one org's example names
     private = next((a for a in names if not tier.is_content_public(a)), None)
     public = next((a for a in names if tier.is_content_public(a)), None)
-    anyone = public or private or "seed"                    # /users refuses an agent the tree doesn't hold
+    anyone = public or private or "seed"                    # an agent this tree holds
     with TestClient(b.root, base_url="http://testserver") as cl:
         jars = {}
 
@@ -73,17 +73,23 @@ def main(url):
             jars[n] = {c.name: c.value for c in cl.cookies.jar}
 
         who("anon").post(f"{A}/login", json={"key": "test-owner-key"}, headers=H); keep("owner")
-        t = who("owner").post(f"{A}/users", json={"name": "vguest", "agents": [anyone]}, headers=H).json()
-        who("anon").post(f"{A}/login", json={"key": t["token"]}, headers=H); keep("guest")
+        real_signed = b.signed_viewer               # a MEMBER signed in at the cog's front (no invitees: 11-17)
 
-        g = who("guest")
-        arm("voice is owner-only: a guest is refused on every voice ACTION route",
+        async def signed(request):
+            return b.Viewer("vguest.7", role="member", label="vguest", account="7@fx", reach={anyone}) \
+                if request.headers.get("x-test-member") else await real_signed(request)
+        b.signed_viewer = signed
+
+        g = who("anon")
+        g.headers["x-test-member"] = "1"
+        arm("voice is owner-only: a member is refused on every voice ACTION route",
             all(r.status_code == 403 for r in (g.post(f"{A}/voice/session", headers=H),
                                               g.get(f"{A}/voice/agents"), g.get(f"{A}/voice/org"),
                                               g.post(f"{A}/voice/ask", json={"agent": "seed", "message": "hi"}, headers=H))))
         gs = g.get(f"{A}/voice/status").json()
-        arm("…and status tells a guest voice is unavailable (so its client falls back to local whisper)",
+        arm("…and status tells a member voice is unavailable (so its client falls back to local whisper)",
             gs.get("available") is False and gs.get("reason"), gs)
+        g.headers.pop("x-test-member", None)
         o = who("owner")
         bare = o.get(f"{A}/voice/org").json()
         arm("org_status on a quiet org: no busy agents, no canvases", not bare.get("canvases") and not bare.get("busy"), bare)

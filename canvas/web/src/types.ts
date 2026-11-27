@@ -39,6 +39,7 @@ export interface Canvas {
   title: string
   agent: string
   user: string
+  yours?: boolean                  // its maker or the owner: crew, share, roll back, archive (server-set)
   tier: 'org' | 'personal'
   shared_with: string[]
   crew?: string[]
@@ -60,7 +61,5 @@ export interface Presence {
 }
 
 export type Route =
-  | { view: 'home'; agent?: string; fresh?: number }
-  | { view: 'chat'; thread: string }
+  | { view: 'home'; paint?: string }   // paint: open New canvas with this agent (the chat's /canvas)
   | { view: 'canvas'; id: number }
-  | { view: 'people' }

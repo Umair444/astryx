@@ -22,8 +22,8 @@ MUTANTS = {
     "Q2 siblings are never seeded (B's door has no A: every sibling row dies)":
         ("    if len(ctxs) < 2:\n        return\n", "    if True:\n        return\n"),
     "Q3 seeding overwrites a local grant (an org's own trust decision reset to introduced)":
-        ("                       ON CONFLICT (org) DO NOTHING\"\"\", s.name, s.pub)",
-         "                       ON CONFLICT (org) DO UPDATE SET status='introduced', caps_granted='[]'\"\"\", s.name, s.pub)"),
+        ("                       ON CONFLICT (tenant, org) DO NOTHING\"\"\", s.name, s.pub)",
+         "                       ON CONFLICT (tenant, org) DO UPDATE SET status='introduced', caps_granted='[]'\"\"\", s.name, s.pub)"),
     "Q4 the envelope's from is not the sending org's federation name":
         ("        \"from\": f\"{row['from_agent']}@{ctx.name}\",", "        \"from\": f\"{row['from_agent']}@local\","),
     "Q5 a cog org's DSN is read environment-first (the cog process's DSN becomes every org's)":

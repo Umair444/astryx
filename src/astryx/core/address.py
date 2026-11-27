@@ -34,18 +34,44 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(repo_root(__file__)))
-from astryx.core import charter, orgname  # noqa: E402
+from astryx.core import channels, charter, orgname  # noqa: E402
 
-# (class, pattern, consumer file, the to_agent predicate that consumer runs)
+# (class, pattern, consumer file, the to_agent predicate that consumer runs). A CHANNEL's people come from the one
+# channel table (core/channels.py: <person>-<id>, delivered by bridges/<name>.py), so a new channel is addressable by
+# its row there; the rest are this org's own places and people
 SURFACES = (
     ("owner",       re.compile(r"^owner$"),                 "bridges/whatsapp.py", "to_agent='owner'"),
-    ("whatsapp",    re.compile(r"^wa-[^\s@]+$"),            "bridges/whatsapp.py", "to_agent LIKE 'wa-%'"),
-    ("telegram",    re.compile(r"^tg-[^\s@]+$"),            "bridges/telegram.py", "to_agent LIKE 'tg-%'"),
-    ("discord",     re.compile(r"^dc-[^\s@]+$"),            "bridges/discord.py",  "to_agent LIKE 'dc-%'"),
-    ("canvas user", re.compile(r"^cv-[^\s@]+$"),            "bridges/canvas.py",   "to_agent LIKE 'cv-%'"),
+    *((c.name, re.compile(rf"^{c.person}-[^\s@]+$"), f"bridges/{c.name}.py", f"to_agent LIKE '{c.person}-%'")
+      for c in channels.CHANNELS),
     ("canvas page", re.compile(r"^canvas-\d+$"),            "bridges/canvas.py",   "to_agent LIKE 'canvas-%'"),
     ("room",        re.compile(r"^room$"),                  "observatory/api/room.py", "to_agent='room'"),
 )
+
+
+# the surfaces where a PERSON speaks: the owner and every channel's people (a canvas page and the room are places)
+PERSONS = ("owner", *(c.name for c in channels.CHANNELS))
+
+
+def person_sql(col: str, params: bool = True, org: str | None = None) -> str:
+    """One SQL predicate: `col` names a person, from SURFACES (the one table of who is who). `params`: the statement
+    carries bind parameters, so a LIKE's % is doubled for the driver. `org`, the row's from_org column: the person is
+    OURS, not a federated peer's (the gateway takes a peer's from_agent from its own envelope, so a peer can call itself
+    'owner' or 'wa-<any number>'; medic 12607): an org with a peers row is never one of our people."""
+    out = [pred.replace("to_agent", col) for cls, _rx, _f, pred in SURFACES if cls in PERSONS]
+    who = "(" + " OR ".join(o.replace("%", "%%") if params else o for o in out) + ")"
+    return who if org is None else f"({who} AND NOT EXISTS (SELECT 1 FROM peers p WHERE p.org = {org}))"
+
+
+def reaches_sql(channel: str) -> str:
+    """SQL (no bind parameters): a row to one of our PEOPLE on `channel`'s threads. That channel's bridge delivers it
+    whatever the name's own prefix: a linked person writes and is answered under their person's name (identity-channels
+    P1: Faran's WhatsApp is cv-faran.2 on wa:), so a bridge claims by its THREAD, never by a name's prefix alone."""
+    return f"(thread LIKE '{channels.BY_NAME[channel].thread}:%' AND {person_sql('to_agent', params=False)})"
+
+
+def elsewhere_sql(channel: str) -> str:
+    """SQL: the row's thread belongs to ANOTHER channel (that bridge's reaches_sql delivers it, not this one)."""
+    return "(" + " OR ".join(f"coalesce(thread, '') LIKE '{c.thread}:%'" for c in channels.CHANNELS if c.name != channel) + ")"
 
 
 def surface_of(name: str) -> str | None:
@@ -83,6 +109,8 @@ def check(to: str, agents_dir: Path = charter.AGENTS) -> tuple[bool, str]:
     if not name:
         return False, "empty recipient"
     roster = charter.roster(agents_dir)
+    if surface_of(name) in PERSONS:
+        return True, "person"                               # a channel's person: its bridge delivers it and writes a receipt
     if name in roster or surface_of(name):
         return True, "ok"
     hint = suggest(name, roster)

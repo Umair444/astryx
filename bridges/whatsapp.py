@@ -20,8 +20,8 @@ Platform translation ONLY; everything shared lives in common.py:
             from the linked phone must still count); votes wake the ASKING
             agent with the delta.
 
-Config: .env for secrets, routes-whatsapp.json for chats (trusted_jids =
-sender JIDs stamped `owner`; others are `wa-<number>` on open routes).
+Config: .env for secrets; its routes are rows (astryx.core.routes). A sender's name is its PERSON's (common.identity_of: the
+owner's own numbers are `owner`, a linked member's their name); an unlinked sender is `wa-<number>`, on open routes.
 
 Run: uvicorn bridges.whatsapp:app --host "$(scripts/docker_host_ip.sh)" --port 8477  (repo root)
      (the docker host address: 172.17.0.1 on docker-ce Linux; ASTRYX_DOCKER_HOST_IP overrides)
@@ -42,12 +42,13 @@ import asyncpg
 from fastapi import FastAPI, Request, Response
 
 from .embed_root import Refused, owner_only, read_checked
-from .common import (HERE, MEDIA_DIR, Outcome, route_target, describe_media,
-                     env, listen, load_routes,
+from .common import (HERE, MEDIA_DIR, Outcome, route_target, wire_chat, describe_media,
+                     env, listen, Book,
                      reacted_message, reaction_signal,
                      record_poll, resolve_quoted_body, split_files, split_polls,
-                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert,
+                     update_poll_votes, vote_body, vote_changes, wire_insert,
                      door_open, door_org_ok, live_steps_ok, released)
+from .progress import Progress
 from .pulse_witness import PulseWitness
 from .providers.whatsapp import WhatsAppProvider, run_wacli
 
@@ -59,18 +60,38 @@ WA_CLI = shlex.split(env("WA_CLI", "docker exec wacli-sync wacli"))
 DATA_HOST = env("WA_DATA_HOST")       # wacli store dir on the host (media on/off switch)
 DATA_CTR = env("WA_DATA_CTR", "/data")    # same dir as the wacli process sees it
 WA_DOCKER = WA_CLI[2] if WA_CLI[:2] == ["docker", "exec"] else ""
-from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
-ROUTES_FILE = ESTATE / "bridges" / "routes-whatsapp.json"
+# OUR OWN ids on WhatsApp: the linked number and its LID (a group tags us as either), comma-separated digits. A route
+# whose rule says "wake": "tagged" reaches its agent only when a message tags one of them or replies to our message
+WA_SELF_IDS = {x.strip() for x in env("WA_SELF_IDS", "").split(",") if x.strip().isdigit()}
 
-JOB_TIMEOUT = 1800    # lifecycle GC only: forget a job nobody answered in 30 min
+
+def tags_us(text: str, m: dict) -> bool:
+    """A message ADDRESSED to us on a mention-only surface: it @-tags our number or LID, or it replies to a message we
+    sent (wacli flattens the quote to ReplyToSenderJID). Without our ids configured nothing can be told apart: refuse."""
+    if not WA_SELF_IDS:
+        return False
+    if any(re.search(rf"@{i}(?!\d)", text or "") for i in WA_SELF_IDS):
+        return True
+    q = (jid_str(m.get("ReplyToSenderJID")) or "").split("@")[0].split(":")[0]
+    return q in WA_SELF_IDS
+from .common import signed as _signed  # noqa: E402  the sender label, one rule for every shared-identity channel
+from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
+from astryx.core import address, channels  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
+from .common import identity_of, link_reply, renew  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
+BOOK = Book("whatsapp")      # this bridge's routes, from the route table (common.Book)
+
 
 pool: asyncpg.Pool | None = None
 seen_msgids: dict[str, float] = {}       # webhook dedup (wacli retries)
-jobs: dict[str, dict] = {}               # agent -> live progress job
+
+
+def wa_name(jid: str) -> str:
+    """An unlinked WhatsApp sender's wire name: wa-<the number's digits>."""
+    return f"wa-{''.join(c for c in str(jid).split('@')[0] if c.isdigit()) or 'unknown'}"
 
 
 def routes() -> list[dict]:
-    return load_routes(ROUTES_FILE)
+    return BOOK.routes()
 
 
 #: A destination we can address DETERMINISTICALLY: a WhatsApp JID, or a bare phone number.
@@ -127,6 +148,12 @@ def _under(p: Path, root: Path) -> bool:
         return False
 
 
+def _partial(name: str) -> bool:
+    """wacli's download in progress (`.wacli-download-<n>`: still encrypted or short) shares the message's dir with the
+    finished file for a moment; taking it delivered an unreadable voice note (owner 14855, 11-19). Wait past it."""
+    return name.startswith(".wacli-download-")
+
+
 async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
     """Inbound attachment -> host Path (or an excuse string). sync
     --download-media already saves every file under store/media/<chat>/<msgid>/,
@@ -142,7 +169,7 @@ async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
             # ANY file under the message's dir: wacli names a photo message-*, but a document keeps
             # its own filename (store/media/<chat>/<msgid>/document/resume.pdf, msg 62886)
             files = [p for p in base.rglob("*") if p.is_file() and os.access(p, os.R_OK)
-                     and _under(p, base)]
+                     and _under(p, base) and not _partial(p.name)]
         except PermissionError:
             files = []
         if files:
@@ -153,7 +180,7 @@ async def fetch_media(chat: str, msgid: str, media: str) -> Path | str:
                     "docker", "exec", WA_DOCKER, "find", f"{DATA_CTR}/{rel}", "-type", "f",
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
                 out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-                ctr_path = (out.decode().splitlines() or [""])[0].strip()
+                ctr_path = next((l.strip() for l in out.decode().splitlines() if not _partial(Path(l.strip()).name)), "")
                 if ctr_path:
                     MEDIA_DIR.mkdir(exist_ok=True)
                     dst = MEDIA_DIR / f"{msgid}-{Path(ctr_path).name}"   # two resume.pdf never collide
@@ -201,10 +228,16 @@ async def send_files(chat: str, files: list[str], out: Outcome | None = None, *,
         dst = outbox / f"{int(time.time())}-{name}"
         try:
             dst.write_bytes(data)
-            await wacli("send", "file", "--to", chat,
-                        "--file", f"{DATA_CTR}/astryx-outbox/{dst.name}")
+            res = await wacli("--json", "send", "file", "--to", chat,
+                              "--file", f"{DATA_CTR}/astryx-outbox/{dst.name}")
         except Exception as e:
             _fail(e)
+            continue
+        if out is not None:                    # its id, so a reply quoting the file reaches its agent (medic 15971)
+            try:
+                out.sent(find_id(json.loads(res)))
+            except ValueError:
+                out.sent()
 
 
 # ---------------------------------------------------------------------- polls
@@ -253,7 +286,7 @@ app = FastAPI()
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "routes": len(routes()), "jobs": list(jobs)}
+    return {"ok": True, "routes": len(routes()), "jobs": sorted({a for a, _c in progress.jobs})}
 
 
 async def stored_text(chat: str, msgid: str, waits=(2, 5, 12)) -> str:
@@ -298,9 +331,10 @@ async def hook(request: Request):
         return Response(status_code=400)
 
     chat = jid_str(m.get("Chat"))
-    route = routes().chat(chat)
+    route = routes().chat(chat)                   # the owner's routes and the agents' connections: one table
     if route is None:
         return {"ok": True}                       # not a surface we serve
+    await renew(pool, route)                      # a connection lives on while someone writes
 
     msgid = m.get("ID") or ""
     now = time.time()
@@ -325,8 +359,7 @@ async def hook(request: Request):
             ask = (rec and rec["agent"]) or route["agent"]
             changes = vote_changes(old, d.get("voters", []))
             voter_jid = jid_str(m.get("SenderJID"))
-            sender = "owner" if voter_jid in route.get("trusted_jids", []) \
-                else f"wa-{''.join(c for c in voter_jid.split('@')[0] if c.isdigit()) or 'x'}"
+            sender = await identity_of(pool, "whatsapp", voter_jid, wa_name(voter_jid), route)
             await wire_insert(pool, sender, "whatsapp", ask, f"wa:{chat}", "poll",
                               vote_body(d.get("question", "?"), changes,
                                         d.get("aggregates", {})), route=route)
@@ -342,7 +375,7 @@ async def hook(request: Request):
         sender_jid = jid_str(m.get("SenderJID"))
         await wire_insert(
             pool,
-            "owner" if sender_jid in route.get("trusted_jids", []) else "wa-x",
+            await identity_of(pool, "whatsapp", sender_jid, wa_name(sender_jid), route),
             "whatsapp", route["agent"], f"wa:{chat}", "poll",
             f'posted a poll ({msgid}): "{pc.get("Question")}" — '
             + " | ".join(pc.get("Options", [])), route=route)
@@ -359,7 +392,8 @@ async def hook(request: Request):
         emoji = (m.get("ReactionEmoji") or "").strip()
         if not emoji or (msgid and msgid in seen_msgids):
             return {"ok": True}
-        if not (m.get("FromMe") or jid_str(m.get("SenderJID")) in route.get("trusted_jids", [])):
+        rj = jid_str(m.get("SenderJID"))
+        if not (m.get("FromMe") or await identity_of(pool, "whatsapp", rj, wa_name(rj), route) == "owner"):
             return {"ok": True}
         agent, snippet = await reacted_message(pool, f"wa:{chat}", m["ReactionToID"])
         if agent is None:
@@ -373,6 +407,12 @@ async def hook(request: Request):
         return {"ok": True}                       # our own sends echo back; drop
 
     text = (m.get("Text") or "").strip()
+    # A MENTION-ONLY surface (rule "wake": "tagged"; owner 15092: a busy team group must not burn an agent's tokens on
+    # chatter): a message reaches the agent only when it tags us. Decided before any media is fetched or described; an
+    # event with no text yet (an undecryptable first copy) is decided below, once its text is known
+    quiet = route.get("wake") == "tagged"
+    if quiet and (text or (m.get("Media") or {}).get("Type") or m.get("MediaType")) and not tags_us(text, m):
+        return {"ok": True}
     # media rides as a nested object in the webhook payload: Media.Type
     media = ((m.get("Media") or {}).get("Type") or m.get("MediaType") or "").strip()
     if not media and msgid and not m.get("ReactionToID") and not m.get("ReactionEmoji") and not m.get("Revoked"):
@@ -386,7 +426,7 @@ async def hook(request: Request):
         # writes a later event for this id there BEFORE posting it). Fetch it from there. A reaction is
         # keyed on ReactionToID, not the emoji: a removal (or an undecryptable reaction) has none.
         text = await stored_text(chat, msgid)
-    if not text:
+    if not text or (quiet and not tags_us(text, m)):
         return {"ok": True}
     if msgid and msgid in seen_msgids:
         # re-checked AFTER the awaits above: wacli gives a POST 5s, so the store poll outlives it and the
@@ -396,14 +436,12 @@ async def hook(request: Request):
         seen_msgids[msgid] = now
 
     sender_jid = jid_str(m.get("SenderJID"))
-    trusted = sender_jid in route.get("trusted_jids", [])
-    if trusted:
-        sender = "owner"
-    else:
-        if not route.get("open"):                 # closed surface: trusted only
+    sender = await identity_of(pool, "whatsapp", sender_jid, wa_name(sender_jid), route)    # the one minter: a linked person's name
+    if await link_reply(pool, "whatsapp", route, sender_jid, text):    # YES to "link this number to <person>"
+        return {"ok": True}
+    if sender != "owner":
+        if not route.get("open"):                 # closed surface: the owner only
             return {"ok": True}
-        digits = "".join(c for c in sender_jid.split("@")[0] if c.isdigit())
-        sender = f"wa-{digits or 'unknown'}"
         text = f"{m.get('PushName') or sender_jid}: {text}"
 
     # INBOUND CONTEXT (carried in meta so an agent sees WHO sent it and WHAT it replied to;
@@ -422,13 +460,14 @@ async def hook(request: Request):
                                  or await resolve_quoted_body(pool, rid))
 
     said = text
-    agent, text = await route_target(pool, f"wa:{chat}", text, route["agent"])
 
-    await wire_insert(pool, sender, "whatsapp", agent, f"wa:{chat}", "chat", text, meta, route=route, said=said)
+    agents = await wire_chat(pool, sender, "whatsapp", route["agent"], f"wa:{chat}", text, meta, route=route, said=said)
 
-    if live_steps_ok(route) and trusted:          # S1c: never on a tiered route (its second egress)
-        jobs[agent] = {"chat": chat, "thread": f"wa:{chat}", "opened": now,
-                       "ph_id": None, "latest": "", "sent": "", "busy": False}
+    # progress shows for ANYONE's ask on an org route (owner 11-15: "it should appear to everyone"), scoped to the work
+    # this chat asked for: on_step's step_line(thread=...) drops a step whose turn another thread opened (medic 12159)
+    if live_steps_ok(route):                      # S1c: never on a tiered route (its second egress)
+        for agent in agents:                      # a team: each member's live steps show it working
+            progress.open(agent, chat, f"wa:{chat}")
         asyncio.get_event_loop().create_task(typing(chat))
     return {"ok": True}
 
@@ -441,53 +480,27 @@ async def typing(chat: str):
 
 
 # ------------------------------------------------------------------- progress
-async def on_step(ev: dict):
-    """A hook event landed for an agent with an open job. No clocks here: every
-    event updates the target line and pokes the worker; the worker coalesces."""
-    agent = ev.get("agent", "")
-    job = jobs.get(agent)
-    if not job:
-        return
-    if time.time() - job["opened"] > JOB_TIMEOUT:
-        jobs.pop(agent, None)
-        return
-    line = await step_line(pool, int(ev.get("id", 0)), ev.get("kind", ""), agent=agent,
-                           label=agent)
-    if not line:
-        return
-    job["latest"] = line
-    if not job["busy"]:
-        asyncio.get_event_loop().create_task(worker(agent))
+async def _post(agent: str, chat: str, line: str):
+    out = await wacli("--json", "send", "text", "--to", chat, "--message", signed(agent, line, chat))
+    return find_id(json.loads(out))
 
 
-async def worker(agent: str):
-    """Serialized editor for one job: always pushes the latest line, skipping
-    intermediates. WhatsApp round-trip time is the only rate limit."""
-    job = jobs.get(agent)
-    if not job or job["busy"]:
-        return
-    job["busy"] = True
-    try:
-        while job is jobs.get(agent) and job["latest"] != job["sent"]:
-            raw = job["latest"]
-            line = signed(agent, raw, job["chat"])
-            await typing(job["chat"])
-            try:
-                if job["ph_id"] is None:
-                    out = await wacli("--json", "send", "text",
-                                      "--to", job["chat"], "--message", line)
-                    try:
-                        job["ph_id"] = find_id(json.loads(out))
-                    except Exception:
-                        pass
-                else:
-                    await wacli("messages", "edit", "--chat", job["chat"],
-                                "--id", job["ph_id"], "--message", line)
-            except Exception:
-                pass
-            job["sent"] = raw
-    finally:
-        job["busy"] = False
+async def _edit(agent: str, chat: str, ph, line: str):
+    await wacli("messages", "edit", "--chat", chat, "--id", ph, "--message", signed(agent, line, chat))
+
+
+async def _finish(agent: str, chat: str, ph, steps: int):
+    """A bubble of steps only, at its turn's end: one true closing line, not a revoke (a revoke leaves a "This message
+    was deleted" tombstone in the group, read as a retraction; medic 12418)."""
+    await wacli("messages", "edit", "--chat", chat, "--id", ph,
+                "--message", signed(agent, f"✓ finished · {steps} step{'s' if steps != 1 else ''}", chat))
+
+
+# the live steps bubble: one lifecycle for every channel (bridges/progress.py); WhatsApp's four acts
+# WhatsApp edits a message only for 15 min, and its "finished" line stays, so a reopened job edits it back
+progress = Progress(lambda: pool, post=_post, edit=_edit, finish=_finish, typing=typing,
+                    edit_window=15 * 60, finish_keeps=True)
+on_step = progress.on_step
 
 
 # ------------------------------------------------------------------- outbound
@@ -495,18 +508,14 @@ def signed(agent: str, text: str, chat) -> str:
     """WhatsApp shows one number for every agent, so the text names its sender: a bold
     label line, then the body. Idempotent (an edited bubble is never signed twice). A route
     with `"signed": false` stays unlabelled: an agent speaking there in the owner's voice."""
-    route = routes().chat(chat)
-    if route is not None and route.get("signed") is False:
-        return text
-    label = f"▸ *{agent}*\n"
-    return text if not text or text.startswith(label) else label + text
+    return _signed(agent, text, routes().chat(chat), "*")     # bridges/common.signed, WhatsApp's bold
 
 
 _skipped_threads: set = set()
 
 # The owner doorbell's HOME surface, pinned by NAME (forge, plan-2457 msg 13041). The
 # un-routed fallback used to be `next(iter(routes()))` — the FIRST route positionally —
-# so reordering routes-whatsapp.json (an edit that looks like formatting) would have
+# so reordering the routes (an edit that looks like formatting) would have
 # silently moved every un-routed owner-bound message: both org-dark alarms redirecting
 # to the career seat's direct number, or worse, the FAMILY group at index 2. Nothing
 # pinned it. Same family as the 2026-07-25 name-fuzzy misdelivery documented above,
@@ -529,8 +538,11 @@ async def deliver(row):
         if stamped is None:
             return
         chat = stamped[0]["chat"]
-    elif thread[:3] in ("tg:", "dc:") or (row["to_agent"] or "")[:3] in ("tg-", "dc-"):
-        return                       # another bridge's surface (telegram/discord)
+    elif any(thread.startswith(f"{c.thread}:") or (not thread.startswith("wa:")
+                                                    and (row["to_agent"] or "").startswith(f"{c.person}-"))
+             for c in channels.CHANNELS if c.name != "whatsapp"):
+        return                       # another bridge's surface (the one channel table), judged by the THREAD first: a
+        #                              linked person answered here under another channel's name (cv-x.2 on wa:) is ours
     elif thread.startswith("wa:"):
         chat = thread[3:]            # the thread carries the destination
         if not _is_addressable(chat):
@@ -607,7 +619,7 @@ async def deliver(row):
             _skipped_threads.add(row["id"])
             print(f"whatsapp: REFUSED un-routed doorbell msg {row['id']} — no route for "
                   f"sender {row['from_agent']!r} and no {HOME_AGENT!r} home route in "
-                  f"routes-whatsapp.json; refusing to guess a destination", flush=True)
+                  f"the routes; refusing to guess a destination", flush=True)
     if not chat:
         return
     if not stamped and not await door_org_ok(pool, row, "whatsapp", routes(), chat):
@@ -618,15 +630,15 @@ async def deliver(row):
     text = signed(agent, text, chat)
     out = Outcome()
     try:
-        job = jobs.pop(agent, None)
-        while job and job["busy"]:                # let an in-flight edit finish
-            await asyncio.sleep(0.2)
+        # a reply is not the end of the work (owner 11-15): the job stays, bubble-less, so further steps for THIS chat
+        # open a new bubble under the reply (bridges/progress.py)
+        ph = await progress.take(agent, chat, keep=live_steps_ok(routes().chat(chat)))
         sent = False
-        if text and job and job["chat"] == chat and job["ph_id"] and len(text) < 3500:
+        if text and ph and len(text) < 3500:
             try:                                  # reuse the live progress bubble
                 await wacli("messages", "edit", "--chat", chat,
-                            "--id", job["ph_id"], "--message", text)
-                out.sent(job["ph_id"])
+                            "--id", ph, "--message", text)
+                out.sent(ph)
                 sent = True
             except Exception:
                 pass                              # falls through to a normal send below
@@ -683,10 +695,17 @@ async def deliver(row):
 
 
 # ---------------------------------------------------------------------- app
+# the rows this bridge delivers (its listen predicate; tests/test_bridge_door runs it on a fixture DB): the owner's,
+# a wa- person's, and one of our people on a wa: thread (a linked person, answered under their person's name)
+CLAIM = f"(to_agent='owner' OR to_agent LIKE 'wa-%' OR {address.reaches_sql('whatsapp')})"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global pool
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=2)
+    await BOOK.refresh(pool)                       # the routes, before the first message
+    _book = asyncio.create_task(BOOK.follow(pool))   # then every few seconds (a rail edit lands with no restart)
 
     # The pulse-liveness witness rides listen()'s own loop (no second timer). It reads
     # max(triggers.last_eval) and, if the one clock looks dead, doorbells the owner
@@ -703,9 +722,10 @@ async def lifespan(app: FastAPI):
 
     witness = PulseWitness(_read_pulse_age, _ring_owner)
     task = asyncio.create_task(listen(
-        DSN, "(to_agent='owner' OR to_agent LIKE 'wa-%')", deliver, on_step,
+        DSN, CLAIM, deliver, on_step,
         on_idle=witness.tick))
     yield
+    _book.cancel()
     task.cancel()
     await pool.close()
 

@@ -20,7 +20,18 @@ export interface ChatRef {
   kind: ChatKind
   agent: string | null      // null: a chat found by search, not routed yet
   enabled: boolean
+  show: Show                // what the chat sees of the work: live steps then the reply, or the reply only
+  home?: boolean            // the agent's doorbell: where its own un-threaded messages arrive
+  open?: boolean            // anyone in the chat may write (off: its trusted senders only)
+  note?: string
+  tier?: string | null      // a tiered chat: replies only
 }
+export type Show = 'steps' | 'replies'
+/* a route's `show`, else its older live_steps flag (bridges read it the same way: release.shows_steps) */
+export const showOf = (r: WireRoute): Show =>
+  tierOf(r) ? 'replies' : r.show !== undefined && r.show !== null ? (r.show === 'steps' ? 'steps' : 'replies') : r.live_steps ? 'steps' : 'replies'
+/* a TIERED route (a member's private chat): it shows replies only, steps would bypass its door (routing.validate) */
+export const tierOf = (r: WireRoute): string | null => { const k = Object.keys(r).find((x) => x.toLowerCase().includes('tier')); return k ? String(r[k]) : null }
 export interface Toast { id: number; text: string; undo?: () => Promise<void> }
 
 interface State {
@@ -36,10 +47,12 @@ let loadingRoutes: Promise<void> | null = null
 let loadingGlyphs: Promise<void> | null = null
 let toastSeq = 0
 
+// a channel's own rules ride with its route table (the server's one channel table, core/channels.py): which chat ids
+// are groups, and whether its people are phone numbers. The web keeps no channel's rules of its own
+const tableOf = (channel: string) => state.data?.find((c) => c.channel === channel)
 export function kindOf(channel: string, chat: string): ChatKind {
-  if (channel === 'whatsapp') return chat.endsWith('@g.us') ? 'group' : 'person'
-  if (channel === 'telegram') return chat.startsWith('-') ? 'group' : 'person'
-  return 'group'
+  const g = tableOf(channel)?.group ?? '.+'
+  return g && new RegExp(`^(?:${g})$`).test(chat) ? 'group' : 'person'
 }
 
 // a route's note is written "<who> -> <agent> (<why>)"; the who is the chat's name. Else a short form of its id.
@@ -47,12 +60,13 @@ export function labelOf(r: WireRoute, channel: string): string {
   const n = (r.note ?? '').split(/\s+->\s+|\s+→\s+/)[0].trim()
   if (n) return n.length > 40 ? n.slice(0, 39) + '…' : n
   const id = String(r.chat).split('@')[0]
-  return channel === 'whatsapp' && /^\d{8,}$/.test(id) ? `+${id}` : id
+  return tableOf(channel)?.numbers && /^\d{8,}$/.test(id) ? `+${id}` : id
 }
 
 export function refOf(r: WireRoute, channel: string): ChatRef {
   return { channel, chat: String(r.chat), label: labelOf(r, channel), kind: kindOf(channel, String(r.chat)),
-           agent: r.agent, enabled: r.enabled !== false }
+           agent: r.agent, enabled: r.enabled !== false, show: showOf(r), home: r.home === true, open: r.open !== false,
+           note: r.note ?? '', tier: tierOf(r) }
 }
 
 export function loadRoutes(force = false) {
@@ -116,7 +130,7 @@ export function diffWords(d: RouteDiff, label: (chat: string) => string): string
 async function put(channel: string, mutate: (rows: WireRoute[]) => WireRoute[]): Promise<RouteDiff> {
   await loadRoutes(true)              // the table as it is NOW, and its etag
   const table = state.data?.find((x) => x.channel === channel)
-  if (!table) throw new Error(`No ${channel} routes file yet. Connect ${channel} first.`)
+  if (!table) throw new Error(`${channel} isn't connected yet. Connect it first.`)
   try {
     const r = await apiSend<{ diff: RouteDiff }>('PUT', `/wire/routes/${encodeURIComponent(channel)}`,
       { routes: mutate(table.routes) }, { 'if-match': table.etag })
@@ -146,8 +160,7 @@ export async function routeChat(c: ChatRef, to: string) {
   const d = await put(c.channel, (rows) => {
     const i = rows.findIndex((r) => String(r.chat) === c.chat)
     if (i >= 0) return rows.map((r, k) => (k === i ? { ...r, agent: to, enabled: true } : r))
-    const key = state.data?.find((x) => x.channel === c.channel)?.trusted_key ?? 'trusted_ids'
-    return [...rows, { chat: c.chat, agent: to, enabled: true, open: true, live_steps: true, [key]: [],
+    return [...rows, { chat: c.chat, agent: to, enabled: true, open: true, show: 'steps',
                        note: `${c.label} -> ${to} (routed from the floor)` } as WireRoute]
   })
   const undo = prevAgent && prevAgent !== to
@@ -166,6 +179,41 @@ export async function unrouteChat(c: ChatRef) {
   const back = removed as WireRoute | null
   toast(diffWords(d, (chat) => (chat === c.chat ? c.label : labeller(c.channel)(chat))),
     back ? () => put(c.channel, (rows) => [...rows, back]).then((d2) => toast(diffWords(d2, labeller(c.channel)))) : undefined)
+}
+
+/* Change one chat's OWN settings (enabled, show, a note…) through the same one write; `undefined` removes a key (show
+   replaces live_steps, so a write of show drops the old flag). Undo puts the old values back. */
+export async function patchChat(c: ChatRef, patch: Partial<WireRoute>, words: string) {
+  let before: Partial<WireRoute> = {}
+  const apply = (p: Partial<WireRoute>) => (rows: WireRoute[]) => rows.map((r) => {
+    if (String(r.chat) !== c.chat) return r
+    const next: WireRoute = { ...r, ...p }
+    for (const k of Object.keys(p)) if (p[k] === undefined) delete next[k]
+    return next
+  })
+  await put(c.channel, (rows) => {
+    const r = rows.find((x) => String(x.chat) === c.chat)
+    before = Object.fromEntries(Object.keys(patch).map((k) => [k, r?.[k]]))
+    return apply(patch)(rows)
+  })
+  toast(words, async () => {
+    let found = false
+    await put(c.channel, (rows) => { found = rows.some((r) => String(r.chat) === c.chat); return apply(before)(rows) })
+    toast(found ? `Undone: ${c.label} is as it was` : `${c.label} is no longer routed: nothing to undo`)
+  })
+}
+
+/* Make this chat its agent's HOME (doorbell) on its channel: exactly one home per agent, so the others lose the flag in
+   the same write (the validator refuses two, or none when an agent has several chats). */
+export async function homeChat(c: ChatRef) {
+  const d = await put(c.channel, (rows) => rows.map((r) => {
+    if (r.agent !== c.agent) return r
+    const next: WireRoute = { ...r }
+    if (String(r.chat) === c.chat) next.home = true
+    else delete next.home
+    return next
+  }))
+  toast(diffWords(d, labeller(c.channel)) === 'Nothing changed' ? `${c.label} is ${displayName(c.agent ?? '')}'s home chat` : diffWords(d, labeller(c.channel)))
 }
 
 export const DRAG_MIME = 'application/x-astryx-chat'

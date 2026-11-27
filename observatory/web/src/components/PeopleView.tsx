@@ -19,8 +19,9 @@ import type {
 } from '../types'
 import { type AvatarStatus } from './Avatar'
 import AgentFace from './AgentFace'
-import RuntimeEditor from './RuntimeEditor'
+import AgentConnection from './harness/AgentConnection'
 import { Action, Empty, FaceStack, LiveDot, Panel, SectionHead, Skeleton, Spark, ViewHeader, useNow } from '../ui/kit'
+import HarnessKeys from './harness/HarnessKeys'
 import { moodOf, nowLine, type Mood } from '../ui/life'
 import { canvasBase } from '../cog'
 import { CogPending, NewOrgButton } from './CogNewOrg'
@@ -350,9 +351,9 @@ function CharterSection({ name, isOwner }: { name: string; isOwner: boolean }) {
 }
 
 /* ------------------------------------------------------------------ runtime section */
-/* Same shared RuntimeEditor the agent side-drawer uses — so the Agents tab and the drawer
-   show one identical provider/key editor (owner-only, collapsible like the charter). */
-function RuntimeSection({ name, live }: { name: string; live: boolean }) {
+/* The same connection editor the agent side-drawer uses (harness · key · model), owner-only, collapsible like the
+   charter. */
+function RuntimeSection({ name }: { name: string }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="border border-line rounded-lg bg-deck">
@@ -361,11 +362,11 @@ function RuntimeSection({ name, live }: { name: string; live: boolean }) {
         className="w-full flex items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-[0.15em] text-ink-mute hover:text-ink-dim"
       >
         <span className="w-3">{open ? '▾' : '▸'}</span> Runtime
-        <span className="ml-auto text-[10px] normal-case tracking-normal">provider · key · models</span>
+        <span className="ml-auto text-[10px] normal-case tracking-normal">harness · key · model</span>
       </button>
       {open && (
         <div className="px-3 pb-3">
-          <RuntimeEditor name={name} live={live} />
+          <AgentConnection name={name} />
         </div>
       )}
     </div>
@@ -553,7 +554,7 @@ function ProfileModal({
             {/* runtime — provider/key/model map (owner-only), the same editor as the drawer */}
             {who.owner && (
               <div className="mt-3">
-                <RuntimeSection name={p.name} live={status === 'live'} />
+                <RuntimeSection name={p.name} />
               </div>
             )}
 
@@ -678,6 +679,7 @@ export default function PeopleView() {
         />
 
         {who.owner && <CogPending tick={orgTick} />}
+        {who.owner && <HarnessKeys />}
 
         {!roster.length && (
           agents.length === 0

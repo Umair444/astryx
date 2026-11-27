@@ -11,6 +11,7 @@ import { LiveDot, Orb, useNow } from '../ui/kit'
 import { moodOf, nowLine } from '../ui/life'
 import { HandBadge } from '../ui/hands'
 import { canvasBase } from '../cog'
+import { canAdmin, useMe, whoLabel } from '../me'
 
 export const LINKS: { tab: Route['tab']; label: string; icon: string; hint: string }[] = [
   { tab: 'floor', label: 'Floor', icon: '◉', hint: 'the org as a room' },
@@ -18,18 +19,23 @@ export const LINKS: { tab: Route['tab']; label: string; icon: string; hint: stri
   { tab: 'agents', label: 'Agents', icon: '◍', hint: 'the people of the org' },
   { tab: 'wire', label: 'The Wire', icon: '✦', hint: 'every conversation' },
   { tab: 'goals', label: 'Goals', icon: '◎', hint: 'what the org is pursuing' },
-  { tab: 'economy', label: 'Economy', icon: '⬡', hint: 'effort, value, spend' },
+  { tab: 'economy', label: 'Economy', icon: '⬡', hint: 'what the org wants, understands, spends' },
   { tab: 'tools', label: 'Tools', icon: 'ƒ', hint: 'what the org has built' },
   { tab: 'theatre', label: 'Theatre', icon: '❝', hint: 'the org, narrated' },
   { tab: 'memory', label: 'Memory', icon: '⬢', hint: 'what the org knows' },
   { tab: 'growbot', label: 'GrowBot', icon: '❀', hint: 'the plant' },
   { tab: 'monitor', label: 'System', icon: '❐', hint: 'host, services, database' },
+  { tab: 'admin', label: 'Admin', icon: '⚙', hint: 'people, roles, invites' },
 ]
 
 export default function Sidebar({ route, onOpenAgent }: { route: Route; onOpenAgent: (n: string) => void }) {
   const { overview, agents, presence, who } = useStore()
+  const me = useMe()             // signed in: your name and the org's in place of 'local' (owner 11-13)
   const now = useNow(5000)
-  const links = who.owner ? LINKS : LINKS.filter((l) => l.tab === 'network' || l.tab === 'floor')
+  // Admin: a signed-in owner or admin of this org only (its account panel; me.ts canAdmin)
+  const admin = canAdmin(me)
+  const links = (who.owner ? LINKS : LINKS.filter((l) => l.tab === 'network' || l.tab === 'floor' || l.tab === 'admin'))
+    .filter((l) => l.tab !== 'admin' || admin)
 
   // who is working first — the sidebar is a live roster, not an alphabet
   const cast = useMemo(() => {
@@ -46,22 +52,26 @@ export default function Sidebar({ route, onOpenAgent }: { route: Route; onOpenAg
         <Orb size={30} />
         <div className="min-w-0">
           <div className="text-[16px] font-semibold tracking-[0.02em] text-ink leading-tight">astryx</div>
-          <div className="text-[11px] text-ink-mute truncate">{overview?.org ?? 'observatory'}</div>
+          <div className="text-[11px] text-ink-mute truncate">{whoLabel(me, overview?.org ?? 'observatory')}</div>
         </div>
       </a>
       <ScrollArea className="flex-1" type="scroll">
         <div className="px-3 pb-3">
           {/* the front door: talk to agents, watch them paint (bridges/canvas.py, proxied at /canvas/) */}
-          <a href={canvasBase()} className="ax-action mb-4 flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13px] font-medium no-underline">
-            <span className="w-4 text-center">✎</span>
-            <span className="flex-1">Open Canvas</span>
-            <span className="opacity-80">↗</span>
-          </a>
+          {/* ...and the owner's chats (#/chat), side by side as two short doors (owner 11-13) */}
+          <div className="mb-4 grid grid-cols-2 gap-2">
+            <a href={canvasBase()} className="ax-action flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-medium no-underline">
+              <span>✎</span><span>Canvas</span><span className="opacity-80">↗</span>
+            </a>
+            <a href="#/chat" className="ax-action flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-medium no-underline">
+              <span>❝</span><span>Chats</span>
+            </a>
+          </div>
           <nav className="flex flex-col gap-0.5">
             {links.map((l) => {
               const on = route.tab === l.tab
               return (
-                <button key={l.tab} onClick={() => nav({ tab: l.tab } as Route)}
+                <button key={l.tab} data-tab={l.tab} onClick={() => nav({ tab: l.tab } as Route)}
                   className={`relative w-full flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] transition-colors ${on ? 'text-ink' : 'text-ink-dim hover:text-ink hover:bg-deck-3/60'}`}>
                   {on && <motion.span layoutId="nav-on" className="absolute inset-0 rounded-lg"
                     style={{ background: 'color-mix(in srgb, var(--t-accent) 14%, var(--t-panel2))', boxShadow: 'inset 2px 0 0 var(--t-accent)' }}
@@ -90,7 +100,7 @@ export default function Sidebar({ route, onOpenAgent }: { route: Route; onOpenAg
                 {cast.map(({ a, mood }) => {
                   const { line } = nowLine(a, presence[a.agent], mood, now)
                   return (
-                    <button key={a.agent} onClick={() => onOpenAgent(a.agent)}
+                    <button key={a.agent} data-agent={a.agent} onClick={() => onOpenAgent(a.agent)}
                       className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-deck-3/60 transition-colors group">
                       <AgentFace name={a.agent} size={24} dim={mood === 'asleep'} />
                       <span className="min-w-0 flex-1">

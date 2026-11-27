@@ -1,0 +1,527 @@
+#!/usr/bin/env python3
+"""astryx · etl MCP server — the ETL box as typed tools (owner 14837/14915: "create the tools").
+
+An ETL estate of this shape: a Windows box running Task Scheduler jobs and Prefect deployments, reached through its
+Jupyter (box.py), with Prefect's own database readable as a Postgres key. Reads come from Prefect's database directly
+(typed, cheap) and from fixed snippets on the box; acts are fixed snippets too, the caller's arguments only ever a
+JSON value the snippet decodes and checks.
+
+Reads are open to every seat granted `etl`. Acts are the etl seats' (local.md, the etl composite exception): their
+deploy gate (a second seat's PASS on the thread) is law, not this server's to enforce; the ledger records every call.
+
+Config (.env): ETL_JUPYTER (default SMS_JUPYTER), ETL_ROOT (the repo on the box), ETL_TASK_FOLDER (e.g. \\BI Jobs\\),
+ETL_PREFECT (prefect.exe on the box), ETL_GIT (git.exe on the box), ETL_PF_KEY (the creds key of Prefect's database).
+"""
+from __future__ import annotations
+
+import json
+import math
+import os
+import re
+import sys
+from pathlib import Path
+
+from mcp.server.fastmcp import FastMCP
+
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.append(str(REPO / "src"))
+import box  # noqa: E402
+
+mcp = FastMCP("etl")
+SEATS = {"etl-architect", "etl-reviewer", "etl-ops"}
+UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def _env() -> dict:
+    """The org's .env (only the ETL_* and SMS_JUPYTER lines), read once; the process env wins."""
+    out = {}
+    try:
+        for line in (REPO / ".env").read_text().splitlines():
+            k, _, v = line.partition("=")
+            if k.startswith("ETL_") or k == "SMS_JUPYTER":
+                out[k] = v.strip()
+    except OSError:
+        pass
+    out.update({k: v for k, v in os.environ.items() if k.startswith("ETL_")})
+    for k, v in out.items():
+        os.environ.setdefault(k, v)
+    return out
+
+
+CFG = _env()
+ROOT = CFG.get("ETL_ROOT", "")
+FOLDER = CFG.get("ETL_TASK_FOLDER", "\\BI Jobs\\")
+PREFECT = CFG.get("ETL_PREFECT", "prefect")
+GIT = CFG.get("ETL_GIT", "git")
+
+
+def _me() -> str:
+    return os.environ.get("ASTRYX_AGENT", "unknown")
+
+
+def _refuse() -> str | None:
+    return None if _me() in SEATS else f"refused: acting on the ETL is the etl seats' ({', '.join(sorted(SEATS))})"
+
+
+def _pf():
+    """Prefect's database, read-only."""
+    import psycopg
+    c = json.loads((REPO / "creds/database_creds.json").read_text())[CFG.get("ETL_PF_KEY", "pf")]
+    cn = psycopg.connect(host=c["host"], port=c["port"], dbname=c["database"], user=c["user"],
+                         password=c["password"], connect_timeout=10, autocommit=True)
+    cn.execute("SET default_transaction_read_only = on; SET statement_timeout = '60s'")
+    return cn
+
+
+def _rows(sql: str, params: dict) -> list[dict]:
+    with _pf() as cn:
+        cur = cn.execute(sql, params)
+        cols = [d.name for d in cur.description]
+        return [{k: _plain(v) for k, v in zip(cols, r)} for r in cur.fetchall()]
+
+
+def _plain(v):
+    """A value the wire carries: times as ISO text, uuids/decimals/intervals as text, json as itself."""
+    if v is None or isinstance(v, (str, int, float, bool, list, dict)):
+        return v
+    return v.isoformat() if hasattr(v, "isoformat") else str(v)
+
+
+# ------------------------------------------------------------------ Prefect (from its database)
+
+@mcp.tool()
+def etl_deployments(name_like: str = "", days: int = 30, only_failing: bool = False) -> list[dict] | str:
+    """Every Prefect deployment ('flow/deployment') with its schedules, paused flag, entrypoint and path, and its last
+    `days` of runs: runs, fails (FAILED or CRASHED), last state, last run and last success. name_like filters by
+    substring. Failing first."""
+    try:
+        rows = _rows("""
+            WITH r AS (
+              SELECT deployment_id, count(*) AS runs,
+                     count(*) FILTER (WHERE state_type IN ('FAILED','CRASHED')) AS fails,
+                     max(start_time) FILTER (WHERE state_type = 'COMPLETED') AS last_success,
+                     (array_agg(state_type ORDER BY coalesce(start_time, expected_start_time) DESC))[1] AS last_state,
+                     max(coalesce(start_time, expected_start_time)) AS last_run
+                FROM prefect.flow_run
+               WHERE coalesce(start_time, expected_start_time) BETWEEN now() - make_interval(days => %(days)s) AND now()
+               GROUP BY deployment_id)
+            SELECT f.name || '/' || d.name AS deployment, d.paused, d.entrypoint, d.path, d.work_queue_name,
+                   coalesce((SELECT json_agg(json_build_object('schedule', s.schedule, 'active', s.active))
+                               FROM prefect.deployment_schedule s WHERE s.deployment_id = d.id), '[]') AS schedules,
+                   coalesce(r.runs, 0) AS runs, coalesce(r.fails, 0) AS fails, r.last_state, r.last_run, r.last_success
+              FROM prefect.deployment d JOIN prefect.flow f ON f.id = d.flow_id LEFT JOIN r ON r.deployment_id = d.id
+             WHERE (f.name || '/' || d.name) ILIKE %(like)s
+             ORDER BY coalesce(r.fails, 0) DESC, 1""", {"days": max(1, min(days, 365)), "like": f"%{name_like}%"})
+        return [r for r in rows if r["fails"]] if only_failing else rows
+    except Exception as e:
+        return f"error: Prefect's database: {type(e).__name__}: {str(e)[:300]}"
+
+
+@mcp.tool()
+def etl_flow_run_logs(flow_run_id: str, tail: int = 100, min_level: int = 0) -> dict | str:
+    """One flow run: its deployment, state and times, and its last `tail` log lines (min_level 40 = errors only)."""
+    if not UUID.match(flow_run_id or ""):
+        return "error: flow_run_id is a uuid"
+    try:
+        run = _rows("""SELECT fr.id, fr.name, f.name || '/' || coalesce(d.name, '?') AS deployment, fr.state_type,
+                              fr.state_name, fr.start_time, fr.end_time, fr.total_run_time::text AS run_time
+                         FROM prefect.flow_run fr JOIN prefect.flow f ON f.id = fr.flow_id
+                         LEFT JOIN prefect.deployment d ON d.id = fr.deployment_id WHERE fr.id = %(id)s""",
+                    {"id": flow_run_id})
+        if not run:
+            return "error: no such flow run"
+        logs = _rows("""SELECT timestamp, level, name, left(message, 2000) AS message FROM prefect.log
+                         WHERE flow_run_id = %(id)s AND level >= %(lv)s ORDER BY timestamp DESC LIMIT %(n)s""",
+                     {"id": flow_run_id, "lv": min_level, "n": max(1, min(tail, 1000))})
+        return {**run[0], "logs": logs[::-1]}
+    except Exception as e:
+        return f"error: Prefect's database: {type(e).__name__}: {str(e)[:300]}"
+
+
+_CAUSES = [("memory", r"MemoryError|Not enough space|Errno 12\\]|out of memory"),
+           ("size", r"sheet is too large"),
+           ("git", r"does not match the configured repository|could not read Username"),
+           ("import", r"ImportError|ModuleNotFoundError|frozen importlib|site-packages[\\/][^\\/]+[\\/].*__init__\.py"),
+           ("sql", r"Execution failed on sql|teradatasql|psycopg|OperationalError|DatabaseError|ProgrammingError|goCreateConnection"),
+           ("creds", r"KeyError"),
+           ("file", r"FileNotFoundError|No such file"),
+           ("timeout", r"TimeoutError|timed out|Timeout"),
+           ("empty", r"'NoneType' object"),
+           ("monitor", r"error occurred while monitoring flow run"),
+           ("exit", r"exited with status code")]
+_EXC = re.compile(r"^\s*((?:[A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt)|ERROR)\b.*)$")
+_BEARER = re.compile(r"(?i)\bBearer\s+\S+")                  # a token runs to the next space
+_URL_CRED = re.compile(r"://[^\s/]*@")              # up to the LAST @ before the host: a password may hold an @
+_KV_CRED = re.compile(r"""(?im)(?<![A-Za-z])([A-Za-z0-9_]*(?:password|passwd|pwd|secret|token|api_?key)[A-Za-z0-9_]*|[A-Za-z0-9]*_pass)(['"]?\s*(?:=(?!=)|:)\s*)(?:(['"])(?:(?!\3).)*(?:\3|$)|[^\s'",;)}]+)""")
+
+
+def _mask(text: str) -> str:
+    """Credentials out of an error text, before it reaches the wire: a URL's user:pass@, key=value / key: 'value'
+    pairs (traceback source lines carry connect(..., password=...)), then every org secret in any of its forms."""
+    q = lambda m: m.group(3) or ""            # a quoted value keeps its quotes, whatever it held
+    text = _KV_CRED.sub(lambda m: f"{m.group(1)}{m.group(2)}{q(m)}***{q(m)}", _BEARER.sub("Bearer ***", _URL_CRED.sub("://***@", text or "")))
+    try:
+        from astryx.security.secretset import redact
+        return redact(text)
+    except Exception:          # no org layer importable here: the two patterns above still hold
+        return text
+
+
+def _cause(text: str) -> tuple[str, str]:
+    """(cause class, one line) for an error text: the class from the first matching pattern, the line the last
+    exception line (a run.bat log ends with its banner, so the plain last line is rarely the error)."""
+    text = _mask(text)
+    cause = next((c for c, rx in _CAUSES if re.search(rx, text)), "other")
+    lines = [l.strip() for l in text.splitlines() if l.strip() and not set(l.strip()) <= set("=-~^ ")]
+    exc = [m.group(1) for m in map(_EXC.match, lines) if m]
+    return cause, ((exc or lines or [""])[-1])[:200]
+
+
+@mcp.tool()
+def etl_failures(hours: int = 24, detail: str = "") -> dict | str:
+    """What failed in the last `hours`, one row per job: Prefect deployments (FAILED/CRASHED runs) and run.bat
+    reports (prefect.reporting_logs status not success), each with fails, first/last time, a cause class (memory, git,
+    size, import, sql, creds, file, timeout, empty, monitor, exit, other) and the last error line; plus counts per cause.
+    detail=<job name> returns that job's failed runs with each one's error tail instead."""
+    try:
+        h = {"h": max(1, min(hours, 24 * 30))}
+        flows = _rows("""
+            SELECT f.name || '/' || coalesce(d.name, '?') AS job, fr.id AS flow_run_id, fr.state_type AS state,
+                   coalesce(fr.end_time, fr.state_timestamp) AS at,
+                   (SELECT right(l.message, 1500) FROM prefect.log l WHERE l.flow_run_id = fr.id AND l.level >= 40
+                     ORDER BY l.timestamp DESC LIMIT 1) AS error
+              FROM prefect.flow_run fr JOIN prefect.flow f ON f.id = fr.flow_id
+              LEFT JOIN prefect.deployment d ON d.id = fr.deployment_id
+             WHERE fr.state_type IN ('FAILED','CRASHED')
+               AND coalesce(fr.end_time, fr.state_timestamp) > now() - make_interval(hours => %(h)s)
+             ORDER BY 4 DESC""", h)
+        reports = _rows("""
+            SELECT report_name AS job, start_time AS at, exit_code, status AS state, right(error_message, 1500) AS error
+              FROM prefect.reporting_logs
+             WHERE lower(coalesce(status, '')) NOT IN ('success', 'succeeded', 'completed', 'ok')
+               AND start_time > now() - make_interval(hours => %(h)s)
+             ORDER BY start_time DESC""", h)
+    except Exception as e:
+        return f"error: Prefect's database: {type(e).__name__}: {str(e)[:300]}"
+    if detail:
+        runs = [dict(r, kind=k, error=_mask(r["error"])) for k, rows in
+                (("flow", flows), ("report", reports)) for r in rows if r["job"] == detail]
+        return {"job": detail, "runs": runs[:10], "more": max(0, len(runs) - 10)} if runs else \
+            f"error: no failure of {detail!r} in the last {h['h']}h (names as the digest lists them)"
+    causes: dict[str, int] = {}
+
+    def digest(rows):
+        jobs: dict[str, dict] = {}
+        for r in rows:                                    # newest first: the first row seen is the last failure
+            j = jobs.get(r["job"])
+            if not j:
+                cause, line = _cause(r["error"])
+                j = jobs[r["job"]] = {"job": r["job"], "fails": 0, "last": r["at"], "cause": cause, "error": line}
+                causes[cause] = causes.get(cause, 0) + 1
+            j["fails"] += 1
+            j["first"] = r["at"]
+        return sorted(jobs.values(), key=lambda j: (-j["fails"], j["job"]))
+
+    return {"hours": h["h"], "causes": causes, "flows": digest(flows), "reports": digest(reports)}
+
+
+# ------------------------------------------------------------------ the box (fixed snippets through Jupyter)
+
+_JOBS = r'''
+import subprocess, csv, io, json
+r = subprocess.run(["schtasks", "/query", "/fo", "csv", "/v"], capture_output=True, text=True, timeout=180)
+jobs = {}
+for row in csv.DictReader(io.StringIO(r.stdout)):
+    n = row.get("TaskName") or ""
+    hay = " ".join((n, row.get("Task To Run") or "", row.get("Start In") or "")).lower()
+    if n == "TaskName" or not n.lower().startswith(ARGS["folder"].lower()) or ARGS["like"].lower() not in hay:
+        continue
+    j = jobs.setdefault(n, {"name": n, "state": row.get("Scheduled Task State"), "status": row.get("Status"),
+        "next_run": row.get("Next Run Time"), "last_run": row.get("Last Run Time"), "last_result": row.get("Last Result"),
+        "run_as": row.get("Run As User"), "task_to_run": row.get("Task To Run"), "start_in": row.get("Start In"),
+        "schedules": []})
+    j["schedules"].append({k: row.get(k) for k in ("Schedule Type", "Start Time", "Days", "Repeat: Every") if row.get(k)})
+if not ARGS["like"]:  # no filter: counts, not 600 rows
+    by = {}
+    for j in jobs.values():
+        k = (j["name"].rsplit("\\", 1)[0] + "\\", j["state"])
+        by[k] = by.get(k, 0) + 1
+    print(json.dumps({"count": len(jobs), "by_folder_state": [{"folder": f, "state": s, "jobs": c}
+                      for (f, s), c in sorted(by.items())], "hint": "pass name_like (a name or a path part) for rows",
+                      "rc": r.returncode}))
+else:
+    print(json.dumps({"jobs": sorted(jobs.values(), key=lambda j: j["name"]), "rc": r.returncode}))
+'''
+
+
+@mcp.tool()
+async def etl_jobs(name_like: str = "") -> dict:
+    """The Task Scheduler jobs under the ETL folder (ETL_TASK_FOLDER) whose name, command or start-in dir contains
+    name_like, one row each: state (Enabled/Disabled), status, next and last run, last result (0 = success; run.bat
+    drops python's exit code, so read reporting_logs too), the command, its start-in dir and its schedule(s).
+    With no name_like: counts per folder and state only."""
+    return await box.run(_JOBS, {"folder": FOLDER, "like": name_like or ""}, timeout=200)
+
+
+_BOX = r'''
+import shutil, subprocess, json
+out = {"disks": {}}
+for d in ("C:\\", "D:\\"):
+    try:
+        u = shutil.disk_usage(d); out["disks"][d[0]] = {"free_gb": round(u.free / 2**30, 1), "total_gb": round(u.total / 2**30, 1)}
+    except Exception as e:
+        out["disks"][d[0]] = str(e)
+ps = lambda c: subprocess.run(["powershell", "-NoProfile", "-Command", c], capture_output=True, text=True, timeout=60).stdout
+try:
+    o = json.loads(ps("Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize,"
+                      "@{n='boot';e={$_.LastBootUpTime.ToString('s')}} | ConvertTo-Json"))
+    out["memory_free_gb"] = round(int(o["FreePhysicalMemory"]) / 2**20, 1)
+    out["memory_total_gb"] = round(int(o["TotalVisibleMemorySize"]) / 2**20, 1)
+    out["booted"] = o["boot"]
+except Exception as e:
+    out["memory"] = f"unread: {e}"
+try:
+    p = json.loads(ps("Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='prefect.exe'\" | "
+                      "Select-Object ProcessId,CommandLine | ConvertTo-Json") or "[]")
+    p = p if isinstance(p, list) else [p]
+    w = [x for x in p if "worker" in (x.get("CommandLine") or "") and "prefect" in (x.get("CommandLine") or "").lower()]
+    out["prefect_workers"] = [{"pid": x["ProcessId"], "cmd": (x.get("CommandLine") or "")[-160:]} for x in w]
+except Exception as e:
+    out["prefect_workers"] = f"unread: {e}"
+if ARGS["root"]:
+    g = lambda *a: subprocess.run([ARGS["git"], "--no-optional-locks", "-C", ARGS["root"]] + list(a), capture_output=True,
+                                 text=True, timeout=60)
+    st = g("status", "--porcelain", "--untracked-files=no").stdout.splitlines()
+    out["repo"] = {"head": g("rev-parse", "HEAD").stdout.strip(), "branch": g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip(),
+                   "modified_tracked": len(st), "files": [l[3:] for l in st[:20]]}
+print(json.dumps(out))
+'''
+
+
+@mcp.tool()
+async def etl_box() -> dict:
+    """The ETL box's health: free/total GB per drive, memory, boot time, the Prefect worker processes alive, and its ETL
+    repo: HEAD, branch, and the tracked files modified on the box (a pull is fast-forward only: edits there block it)."""
+    return await box.run(_BOX, {"git": GIT, "root": ROOT}, timeout=180)
+
+
+_TAIL = r'''
+import json, os, ntpath
+q = ARGS["path"]
+# checked as TEXT before anything touches it: realpath opens its path on Windows, and a UNC path (\\host\share) would
+# make the box authenticate to that host first (medic 14956). Relative, no drive, no '..' segment, or nothing
+bad = (not q or ntpath.isabs(q) or ntpath.splitdrive(q)[0] or q.startswith(("\\\\", "//"))
+       or any(s in (".", "..") for s in q.replace("/", "\\").split("\\")))
+root = os.path.realpath(ARGS["root"]) if not bad else ""
+p = os.path.realpath(os.path.join(root, q)) if not bad else ""
+if bad or not root or not (p == root or p.startswith(root + os.sep)):
+    print(json.dumps({"error": "the path is outside the ETL root"}))
+elif not os.path.isfile(p):
+    print(json.dumps({"error": "no such file"}))
+else:
+    with open(p, "rb") as f:
+        f.seek(0, 2); size = f.tell(); f.seek(max(0, size - 262144)); data = f.read().decode("utf-8", "replace")
+    print(json.dumps({"path": p, "bytes": size, "lines": data.splitlines()[-ARGS["n"]:]}))
+'''
+
+
+@mcp.tool()
+async def etl_log_tail(path: str, lines: int = 100) -> dict:
+    """The last `lines` of a file on the box, under the ETL root (ETL_ROOT; a relative path is taken from it): a job's
+    log, a run.bat's <REPORT>_log.txt, ETL_log.txt."""
+    if not ROOT:
+        return {"error": "ETL_ROOT is not configured"}
+    return await box.run(_TAIL, {"root": ROOT, "path": path, "n": max(1, min(lines, 2000))})
+
+
+# ------------------------------------------------------------------ acts (the etl seats)
+
+_TASK = r'''
+import subprocess, json
+import csv, io
+n, op = ARGS["name"], ARGS["op"]
+# the job must be one the folder's listing names, exactly: a prefix test alone would pass '<folder>..\\<any task>'
+# (medic 14956; schtasks refuses '..' today, but this doesn't rest on it)
+names = {(r[0] if r else "").lower(): r[0] for r in csv.reader(io.StringIO(subprocess.run(
+    ["schtasks", "/query", "/fo", "csv", "/nh"], capture_output=True, text=True, timeout=120).stdout)) if r}
+f = ARGS["folder"].lower()
+if not n.lower().startswith(f) or any(s in (".", "..") for s in n.split("\\")):
+    print(json.dumps({"error": "the job is outside the ETL folder"}))
+elif n.lower() not in names:
+    print(json.dumps({"error": "no such job"}))
+else:
+    n = names[n.lower()]
+    argv = {"run": ["/run", "/tn", n], "stop": ["/end", "/tn", n], "enable": ["/change", "/tn", n, "/enable"],
+            "disable": ["/change", "/tn", n, "/disable"]}[op]
+    r = subprocess.run(["schtasks"] + argv, capture_output=True, text=True, timeout=60)
+    print(json.dumps({"job": n, "op": op, "rc": r.returncode, "out": (r.stdout + r.stderr).strip()[-500:]}))
+'''
+
+
+async def _task(name: str, op: str) -> dict | str:
+    return _refuse() or await box.run(_TASK, {"name": name or "", "op": op, "folder": FOLDER})
+
+
+@mcp.tool()
+async def etl_job_run(name: str) -> dict | str:
+    """Start a Task Scheduler job now (its full name, e.g. '\\BI Jobs\\umair.fiaz\\merchant_active'). etl seats only."""
+    return await _task(name, "run")
+
+
+@mcp.tool()
+async def etl_job_stop(name: str) -> dict | str:
+    """Stop a running Task Scheduler job. etl seats only."""
+    return await _task(name, "stop")
+
+
+@mcp.tool()
+async def etl_job_enable(name: str, on: bool) -> dict | str:
+    """Enable (on=true) or disable (on=false) a Task Scheduler job. Retiring a job disables it for 7 days first
+    (local.md). etl seats only."""
+    return await _task(name, "enable" if on else "disable")
+
+
+_PREFECT = r'''
+import subprocess, json
+import os
+env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")      # the CLI's rich output crashed on cp1252
+r = subprocess.run([ARGS["exe"]] + ARGS["argv"], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                   timeout=120, env=env)
+print(json.dumps({"rc": r.returncode, "out": (r.stdout + r.stderr).strip()[-1500:]}))
+'''
+
+
+_PARAM = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
+
+@mcp.tool()
+async def etl_flow_run(deployment: str, params: dict | None = None) -> dict | str:
+    """Start a Prefect deployment now ('flow/deployment', as etl_deployments names it), optionally with flow
+    parameters for this run only (a backfill: {"run_date": "2026-11-15"}); scalar values only. Returns the new
+    flow_run_id. etl seats only."""
+    no = _refuse()
+    if no:
+        return no
+    params = params or {}
+    if not isinstance(params, dict) or len(params) > 20 or not all(
+            isinstance(k, str) and _PARAM.match(k) and (v is None or isinstance(v, (bool, int))
+                                                        or (isinstance(v, float) and math.isfinite(v))
+                                                        or (isinstance(v, str) and len(v) <= 200))
+            for k, v in params.items()):
+        return "error: params is a flat object of at most 20 names to scalar values (strings up to 200 chars)"
+    known = etl_deployments(name_like=deployment, days=1)
+    if isinstance(known, str):
+        return known
+    if deployment not in {d["deployment"] for d in known}:
+        return f"error: no deployment named {deployment!r}"
+    argv = ["deployment", "run", deployment] + (["--params", json.dumps(params)] if params else [])
+    out = await box.run(_PREFECT, {"exe": PREFECT, "argv": argv}, timeout=150)
+    m = re.search(r"UUID:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", str(out.get("out", "")))
+    return dict(out, flow_run_id=m.group(1)) if m else out          # the CLI prints the new run as "UUID: <id>"
+
+
+@mcp.tool()
+async def etl_flow_cancel(flow_run_id: str) -> dict | str:
+    """Cancel a running Prefect flow run (by its uuid). etl seats only."""
+    no = _refuse()
+    if no:
+        return no
+    if not UUID.match(flow_run_id or ""):
+        return "error: flow_run_id is a uuid"
+    return await box.run(_PREFECT, {"exe": PREFECT, "argv": ["flow-run", "cancel", flow_run_id]}, timeout=150)
+
+
+_HEAD = r"""
+import subprocess, json
+g = lambda *a: subprocess.run([ARGS["git"], "--no-optional-locks", "-C", ARGS["root"]] + list(a), capture_output=True,
+                             text=True, timeout=60)
+st = g("status", "--porcelain", "--untracked-files=no").stdout.splitlines()
+print(json.dumps({"head": g("rev-parse", "HEAD").stdout.strip(), "branch": g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip(),
+                  "dirty": [l[3:] for l in st]}))
+"""
+
+_PULL = r"""
+import base64, hashlib, json, os, subprocess, tempfile
+g = lambda *a: subprocess.run([ARGS["git"], "-C", ARGS["root"]] + list(a), capture_output=True, text=True, timeout=180)
+out = {"before": g("rev-parse", "HEAD").stdout.strip()}
+data = base64.b64decode(ARGS["bundle"])
+path = os.path.join(tempfile.gettempdir(), "etl_box_pull_" + ARGS["sha256"][:12] + ".bundle")  # outside the ETL tree
+try:
+    if out["before"] != ARGS["expect_before"]:
+        out["error"] = "the box moved since it was read: nothing changed"
+    elif hashlib.sha256(data).hexdigest() != ARGS["sha256"]:
+        out["error"] = "the bundle arrived damaged (sha256 differs): nothing changed"
+    else:
+        with open(path, "wb") as f:
+            f.write(data)
+        r = g("fetch", "--no-tags", path, "+refs/remotes/origin/main:refs/remotes/bundle/main")
+        if r.returncode:
+            out["error"] = "fetch from the bundle failed: " + (r.stdout + r.stderr).strip()[-500:]
+        else:
+            r = g("merge", "--ff-only", ARGS["target"])
+            out["merge"] = (r.stdout + r.stderr).strip()[-800:]
+            if r.returncode:
+                out["error"] = "merge --ff-only refused: nothing changed"
+finally:
+    if os.path.exists(path):
+        os.remove(path)
+    out["bundle_removed"] = not os.path.exists(path)
+out["after"] = g("rev-parse", "HEAD").stdout.strip()
+out["ok"] = "error" not in out and out["after"] == ARGS["target"]
+print(json.dumps(out))
+"""
+LOCAL = Path(CFG.get("ETL_LOCAL_REPO") or REPO / "homes" / "etl-architect" / "etl_system")
+BUNDLE_MAX = 20 * 2**20
+
+
+def _git(*a: str, binary: bool = False):
+    import subprocess
+    return subprocess.run(["git", "-C", str(LOCAL), *a], capture_output=True, text=not binary, timeout=180)
+
+
+@mcp.tool()
+async def etl_box_pull() -> dict | str:
+    """Deploy merged code: bring the box's ETL repo (ETL_ROOT) to GitHub's main, fast-forward only. The box has no
+    GitHub credential, so main travels as a git bundle built here from origin/main (never a branch or a working tree),
+    checked by sha256 on arrival, fetched, `merge --ff-only`, then deleted. Refuses a diverged box, and a box whose
+    local edits touch a file the deploy changes; other local edits are kept and listed. Returns the head before and
+    after. A deploy follows a second etl seat's PASS (local.md). etl seats only."""
+    import base64
+    import hashlib
+    no = _refuse()
+    if no:
+        return no
+    if not ROOT:
+        return "error: ETL_ROOT is not configured"
+    box_ = await box.run(_HEAD, {"git": GIT, "root": ROOT}, timeout=120)
+    if "error" in box_:
+        return box_
+    if box_["branch"] != "main":
+        return {"error": f"the box is on '{box_['branch']}', not main: nothing changed", **box_}
+    f = _git("fetch", "--no-tags", "origin", "main")
+    if f.returncode:
+        return {"error": "fetching origin/main here failed: " + (f.stdout + f.stderr).strip()[-300:]}
+    target = _git("rev-parse", "origin/main").stdout.strip()
+    base = {"before": box_["head"], "target": target, "local_edits": box_["dirty"]}
+    if box_["head"] == target:
+        return {**base, "after": target, "ok": True, "note": "already at main"}
+    if _git("merge-base", "--is-ancestor", box_["head"], target).returncode:
+        return {**base, "error": "the box's head is not in main's history (diverged): nothing changed"}
+    changed = set(_git("diff", "--name-only", box_["head"], target).stdout.split("\n")) - {""}
+    clash = sorted(changed & set(box_["dirty"]))
+    if clash:
+        return {**base, "error": "the box's local edits touch files this deploy changes: nothing changed", "clash": clash}
+    b = _git("bundle", "create", "-", f"{box_['head']}..refs/remotes/origin/main", binary=True)
+    if b.returncode or not b.stdout:
+        return {**base, "error": "bundle create failed: " + (b.stderr or b"").decode(errors="replace")[-300:]}
+    if len(b.stdout) > BUNDLE_MAX:
+        return {**base, "error": f"the bundle is {len(b.stdout) >> 20} MB, over {BUNDLE_MAX >> 20} MB: nothing sent"}
+    res = await box.run(_PULL, {"git": GIT, "root": ROOT, "bundle": base64.b64encode(b.stdout).decode(),
+                                "sha256": hashlib.sha256(b.stdout).hexdigest(), "target": target,
+                                "expect_before": box_["head"]}, timeout=300)
+    return {**base, **res, "changed_files": len(changed)}
+
+
+if __name__ == "__main__":
+    mcp.run()

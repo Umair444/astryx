@@ -16,9 +16,9 @@ collision precisely BECAUSE it's a package module run from the repo root
 
 Surface claim: only rows on dc: threads (or to dc-<id>).
 
-Config: DISCORD_BOT_TOKEN in .env; routes-discord.json (trusted_ids = Discord
-USER ids — sender-gated, never room-gated). Unknown chats/senders dropped but
-logged for easy route bootstrapping.
+Config: DISCORD_BOT_TOKEN in .env; its routes are rows (astryx.core.routes). A sender's name is its PERSON's (common.identity_of: the
+owner's own accounts are `owner`); a closed channel takes the owner only, an open one anyone as dc-<id>. Unknown
+chats dropped but logged for easy route bootstrapping.
 
 Run: uvicorn bridges.discord:app --host 127.0.0.1 --port 8479   (repo root)
 """
@@ -37,19 +37,22 @@ import httpx
 from fastapi import FastAPI
 
 from .embed_root import Refused, owner_only, read_checked
-from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_signal, route_target, describe_media, env, listen,
-                     load_routes, media_path,
+from .common import (HERE, Outcome, agent_exists, reacted_message, reaction_signal, route_target, wire_chat, describe_media, env, listen,
+                     Book, media_path,
                      record_poll, resolve_quoted_body, split_files, split_polls,
-                     step_line, update_poll_votes, vote_body, vote_changes, wire_insert,
+                     update_poll_votes, vote_body, vote_changes, wire_insert,
                      door_open, door_org_ok, live_steps_ok, released)
 
 DSN = env("ASTRYX_DSN")
 TOKEN = env("DISCORD_BOT_TOKEN")
+from .progress import Progress  # noqa: E402
+from .common import signed  # noqa: E402  the sender label when the BOT speaks (a webhook names the agent itself)
 from .common import ESTATE  # noqa: E402  the org's estate (its HOME in a cog of several orgs), plan-11324 S3a
-ROUTES_FILE = ESTATE / "bridges" / "routes-discord.json"
+from astryx.core import address  # noqa: E402  reaches_sql: a linked person answered on this channel's threads
+from .common import identity_of  # noqa: E402  the one minter of a sender's wire name (identity-channels P1)
+BOOK = Book("discord")      # this bridge's routes, from the route table (common.Book)
 
 pool: asyncpg.Pool | None = None
-jobs: dict[str, dict] = {}            # agent -> live progress job
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -57,7 +60,7 @@ client = discord.Client(intents=intents)
 
 
 def routes() -> list[dict]:
-    return load_routes(ROUTES_FILE)
+    return BOOK.routes()
 
 
 # Per-agent identity: Discord webhooks let every message carry its own display
@@ -130,14 +133,17 @@ async def deliver(row):
         ch = client.get_channel(int(cid)) or await client.fetch_channel(int(cid))
         route = routes().chat(cid)
         hook = route.get("webhook") if route else None
-        job = jobs.pop(agent, None)
+        if not hook:                               # the bot speaks for every agent: name the sender, as WhatsApp does
+            text = signed(agent, text, route, "**")
+        # a reply is not the end of the work: the job stays bubble-less for further steps (bridges/progress.py)
+        ph = await progress.take(agent, cid, keep=live_steps_ok(route))
         sent = False
-        if text and job and job["chat"] == cid and job.get("ph"):
+        if text and ph:
             try:                                   # replace the progress bubble
-                if hook and isinstance(job["ph"], str):
-                    sent = await hook_edit(hook, job["ph"], text)
-                elif not isinstance(job["ph"], str):
-                    await job["ph"].edit(content=text[:2000])
+                if hook and isinstance(ph, str):
+                    sent = await hook_edit(hook, ph, text)
+                elif not isinstance(ph, str):      # a bot placeholder (no webhook, or its fallback): named
+                    await ph.edit(content=(signed(agent, text, route, "**") if hook else text)[:2000])
                     sent = True
             except Exception:
                 pass
@@ -145,8 +151,8 @@ async def deliver(row):
             for i in range(0, len(text), 2000):    # discord hard message cap
                 chunk = text[i:i + 2000]
                 mid = await hook_send(hook, agent, chunk) if hook else None
-                if not mid:                        # no webhook (or it failed): bot sends
-                    m = await ch.send(chunk)
+                if not mid:                        # no webhook (or it failed): bot sends, the sender named
+                    m = await ch.send(signed(agent, chunk, route, "**")[:2000] if hook else chunk)
                     mid = str(getattr(m, "id", "") or "")
                 if not mid:                        # neither path produced an id
                     out.failed("text", "no message id returned by webhook or bot send")
@@ -164,8 +170,11 @@ async def deliver(row):
                 await ch.send(f"(file {p.name} was NOT sent — {e})")
                 continue
             try:                                   # webhook so media carries the agent's name
-                if not (hook and await hook_file(hook, agent, name, data)):
-                    await ch.send(file=discord.File(io.BytesIO(data), filename=name))
+                fid = await hook_file(hook, agent, name, data) if hook else None
+                if not fid:
+                    m = await ch.send(file=discord.File(io.BytesIO(data), filename=name))
+                    fid = str(getattr(m, "id", "") or "")
+                out.sent(fid)                      # a reply quoting the file finds its agent (medic 15971)
             except Exception as e:
                 out.failed("file", e)
                 await ch.send(f"(file {p.name} failed to send)")
@@ -220,31 +229,41 @@ async def deliver(row):
                            out.receipt(f"discord:{cid}", text, door="org-unstamped"))
 
 
-async def on_step(ev: dict):
-    agent, kind = ev.get("agent", ""), ev.get("kind", "")
-    job = jobs.get(agent)
-    if not job:
-        return
-    line = await step_line(pool, ev.get("id", 0), kind, agent=agent)
-    if not line or line == job.get("sent"):
-        return
-    job["sent"] = line
-    try:
-        route = routes().chat(job["chat"])
-        hook = route.get("webhook") if route else None
-        ch = client.get_channel(int(job["chat"]))
-        if job.get("ph") is None:
-            # webhook placeholder carries the agent's own name; job["ph"] is a
-            # str (webhook message id) or a discord.Message (bot fallback)
-            job["ph"] = (await hook_send(hook, agent, line)) if hook \
-                else await ch.send(line)
-        elif isinstance(job["ph"], str):
-            await hook_edit(hook, job["ph"], line)
-        else:
-            await job["ph"].edit(content=line)
+async def _post(agent: str, cid: str, line: str):
+    """A webhook bubble carries the agent's own name (its id is a str); the bot's fallback is a Message, named."""
+    route = routes().chat(cid)
+    hook = route.get("webhook") if route else None
+    if hook:
+        return await hook_send(hook, agent, line)
+    ch = client.get_channel(int(cid)) or await client.fetch_channel(int(cid))
+    return await ch.send(signed(agent, line, route, "**"))
+
+
+async def _edit(agent: str, cid: str, ph, line: str):
+    route = routes().chat(cid)
+    if isinstance(ph, str):
+        await hook_edit(route.get("webhook"), ph, line)
+    else:
+        await ph.edit(content=signed(agent, line, route, "**"))
+
+
+async def _finish(agent: str, cid: str, ph, steps: int):          # Discord leaves no trace of a deleted message
+    if isinstance(ph, str):
+        async with httpx.AsyncClient() as hx:
+            await hx.delete(f"{routes().chat(cid).get('webhook')}/messages/{ph}", timeout=60)
+    else:
+        await ph.delete()
+
+
+async def _typing(cid: str):
+    ch = client.get_channel(int(cid))
+    if ch:
         await ch.typing()
-    except Exception:
-        pass
+
+
+# the live steps bubble: one lifecycle for every channel (bridges/progress.py); Discord's four acts
+progress = Progress(lambda: pool, post=_post, edit=_edit, finish=_finish, typing=_typing)
+on_step = progress.on_step
 
 
 # -------------------------------------------------------------------- inbound
@@ -259,7 +278,6 @@ async def on_message(msg: discord.Message):
               f"(#{getattr(msg.channel, 'name', 'DM')}, from {msg.author.id} "
               f"{msg.author.name}) — dropped", flush=True)
         return
-    trusted = msg.author.id in route.get("trusted_ids", [])
     text = (msg.content or "").strip()
     for a in msg.attachments:
         dst = media_path("dc", a.filename)
@@ -272,14 +290,12 @@ async def on_message(msg: discord.Message):
         text = f"{text}\n{got}" if text else got
     if not text:
         return
-    if trusted:
-        who = "owner"
-    else:
+    who = await identity_of(pool, "discord", msg.author.id, f"dc-{msg.author.id}", route)   # the one minter
+    if who != "owner":
         if not route.get("open"):
-            print(f"discord: untrusted sender {msg.author.id} on closed "
-                  f"channel {cid} — dropped", flush=True)
+            print(f"discord: sender {msg.author.id} on closed "
+                  f"channel {cid} — dropped (the owner only)", flush=True)
             return
-        who = f"dc-{msg.author.id}"
         text = f"{msg.author.display_name}: {text}"
     # INBOUND CONTEXT (same shape as WhatsApp): sender identity + reply/quote in meta, so an
     # agent sees WHO sent it (from_agent collapses a trusted sender to 'owner') and WHAT it
@@ -295,10 +311,12 @@ async def on_message(msg: discord.Message):
         rbody = resolved.content if isinstance(resolved, discord.Message) else ""
         meta["reply_to_body"] = (rbody or "").strip() or await resolve_quoted_body(pool, ref.message_id)
     said = text
-    agent, text = await route_target(pool, f"dc:{cid}", text, route["agent"])
-    await wire_insert(pool, who, "discord", agent, f"dc:{cid}", "chat", text, meta, route=route, said=said)
-    if live_steps_ok(route) and trusted:           # S1c: never on a tiered route (its second egress)
-        jobs[agent] = {"chat": cid, "ph": None, "sent": ""}
+    agents = await wire_chat(pool, who, "discord", route["agent"], f"dc:{cid}", text, meta, route=route, said=said)
+    # progress shows for ANYONE's ask on an org route (owner 11-15: "it should appear to everyone"), scoped to the work
+    # this chat asked for: on_step's step_line(thread=...) drops a step whose turn another thread opened (medic 12159)
+    if live_steps_ok(route):                      # S1c: never on a tiered route (its second egress)
+        for agent in agents:                       # a team: each member's live steps
+            progress.open(agent, cid, f"dc:{cid}")
         try:
             await msg.channel.typing()
         except Exception:
@@ -336,9 +354,8 @@ async def _poll_event(payload):
         return
     cid = str(payload.channel_id)
     route = routes().chat(cid)
-    trusted = route and payload.user_id in route.get("trusted_ids", [])
     await wire_insert(
-        pool, "owner" if trusted else f"dc-{payload.user_id}", "discord",
+        pool, await identity_of(pool, "discord", payload.user_id, f"dc-{payload.user_id}", route), "discord",
         rec["agent"] or (route and route["agent"]) or "seed", f"dc:{cid}", "poll",
         vote_body(rec["question"], changes, agg), route=route)
 
@@ -364,10 +381,9 @@ async def on_raw_reaction_add(payload):
     route = routes().chat(cid)
     if route is None:
         return
-    trusted = payload.user_id in route.get("trusted_ids", [])
-    if not trusted and not route.get("open"):
+    who = await identity_of(pool, "discord", payload.user_id, f"dc-{payload.user_id}", route)
+    if who != "owner" and not route.get("open"):
         return
-    who = "owner" if trusted else f"dc-{payload.user_id}"
     # Resolve the sender and text from Discord itself: agents post under their own
     # webhook name, so it works even for messages whose id we didn't store. Fall
     # back to our records, then the channel default.
@@ -391,18 +407,25 @@ async def on_raw_reaction_add(payload):
 
 
 # ---------------------------------------------------------------------- app
+# the rows this bridge delivers (its listen predicate; tests/test_bridge_door runs it on a fixture DB)
+CLAIM = ("((to_agent='owner' OR to_agent LIKE 'dc-%') "
+         "AND (thread LIKE 'dc:%' OR to_agent LIKE 'dc-%')) "
+         f"OR {address.reaches_sql('discord')} "   # a linked person, answered here under their person's name
+         # plan-9139 S1c: a release this bridge's route was stamped for (its thread, tier-<sender>, names none)
+         "OR (to_agent='owner' AND thread LIKE 'tier-%' AND delivery->'release'->>'channel' = 'discord')")
+
+
 @asynccontextmanager
 async def lifespan(_):
     global pool
     pool = await asyncpg.create_pool(DSN, min_size=1, max_size=4)
+    await BOOK.refresh(pool)                       # the routes, before the first message
+    _book = asyncio.create_task(BOOK.follow(pool))   # then every few seconds (a rail edit lands with no restart)
     t1 = asyncio.create_task(client.start(TOKEN))
     t2 = asyncio.create_task(listen(
-        DSN, "((to_agent='owner' OR to_agent LIKE 'dc-%') "
-             "AND (thread LIKE 'dc:%' OR to_agent LIKE 'dc-%')) "
-             # plan-9139 S1c: a release this bridge's route was stamped for (its thread, tier-<sender>, names none)
-             "OR (to_agent='owner' AND thread LIKE 'tier-%' AND delivery->'release'->>'channel' = 'discord')",
-        deliver, on_step))
+        DSN, CLAIM, deliver, on_step))
     yield
+    _book.cancel()
     t1.cancel(); t2.cancel()
     await client.close()
     await pool.close()
@@ -414,4 +437,4 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/health")
 async def health():
     return {"ok": True, "connected": client.is_ready(), "routes": len(routes()),
-            "jobs": list(jobs)}
+            "jobs": sorted({a for a, _c in progress.jobs})}

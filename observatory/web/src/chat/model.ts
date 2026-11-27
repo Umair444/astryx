@@ -1,5 +1,5 @@
 import { api, obsKey } from '../api'
-import type { Msg, Step } from '../types'
+import { isHuman, type Msg, type Step } from '../types'
 
 /* /chat's data layer (plan-11884). A chat is ONE wire thread, `chat:<id>`. Nothing here writes a message except
    through the store's send (POST /api/messages): one row per recipient, all on the same thread (R4). */
@@ -25,25 +25,74 @@ export function mentions(body: string, roster: string[]): string[] {
   return out
 }
 
-/* who is in a chat: every non-owner party of its rows, first-seen order */
+/* who is in a chat: the agents THE HUMAN wrote to here, first-seen order (before the human has written, the agents
+   that wrote to the human). An agent's reply alone, or an agent→agent row (seed correcting finance, a handoff), stays
+   in the history and draws its divider, but never makes its sender a recipient: the human's next message would copy
+   them in silently (workspace.py's `asked` is the same rule for the list) */
 export function participants(rows: Msg[], roster: string[]): string[] {
   const known = new Set(roster)                     // agents only: pulse, a canvas, a federation peer never join
-  const out: string[] = []
-  for (const m of rows) for (const n of [m.from, m.to]) if (n && known.has(n) && !out.includes(n)) out.push(n)
-  return out
+  // the agents the human wrote to: a helper the lead brought in answers here but never joins the human's "To" (a member
+  // 11-18: "the other agents it is calling is his thing"); before the human has written, whoever wrote to the human
+  const pick = (side: (m: Msg) => string | null) => {
+    const out: string[] = []
+    for (const m of rows) { const n = side(m); if (n && known.has(n) && !out.includes(n)) out.push(n) }
+    return out
+  }
+  const asked = pick((m) => (isHuman(m.from) ? m.to : null))
+  return asked.length ? asked : pick((m) => (isHuman(m.to) ? m.from : null))
 }
 
 /* the body every recipient gets: alone, the text as typed; with others, a first line naming the team, so each agent
    knows who else hears this thread and can answer them on it */
-export function bodyFor(text: string, to: string[], me: string): string {
-  if (to.length < 2) return text
-  return `[chat with ${to.filter((n) => n !== me).map((n) => '@' + n).join(' ')} — everyone here reads this thread; reply on it]\n${text}`
+/* a message to several agents is a TEAM: the server stamps each row {team, lead} and every agent reads its own lead/
+   helper line (channel/team.mjs), so the body stays the human's words. The old "[chat with …]" prefix is still
+   stripped on display for rows written before (stripEmbeds). */
+export function bodyFor(text: string, _to: string[], _me: string): string { return text }
+/* the order rows are written in: helpers first, the lead (first named) LAST, so a bare follow-up goes to the lead */
+export function teamOrder(to: string[]): string[] { return to.length > 1 ? [...to.slice(1), to[0]] : [...to] }
+
+/* A REPLY (owner 11-17: "giving agent the refernce of chat; instead of whole chat"): a person's message may open with
+   the one message it answers, as one line: [reply #<id> <from>] “<its first words>”. The agent reads the reference
+   (read_message <id> for the whole); the chat draws it as a chip that jumps to that message. */
+export interface Reply { id: number; from: string; quote: string }
+export const REPLY_QUOTE = 160
+const REPLY = /^\[reply #(\d{1,12}) ([\w.@-]{1,80})\] “(.*)”(?:\n|$)/
+export const replyLine = (r: Reply) => {
+  const q = r.quote.replace(/\s+/g, ' ').trim()
+  return `[reply #${r.id} ${r.from}] “${q.length > REPLY_QUOTE ? `${q.slice(0, REPLY_QUOTE - 1)}…` : q}”`
+}
+export function parseReply(text: string): { reply: Reply; rest: string } | null {
+  const m = REPLY.exec(text)
+  return m ? { reply: { id: Number(m[1]), from: m[2], quote: m[3] }, rest: text.slice(m[0].length).trimStart() } : null
 }
 
 export const FILE_EMBED = /\[\[file:([^\]\n]+)\]\](?: \(([^)\n]{1,120})\))?/g    // an upload adds its display name
 export interface Embed { path: string; label?: string }
 export function embeds(body: string): Embed[] { return [...body.matchAll(FILE_EMBED)].map((m) => ({ path: m[1].trim(), label: m[2] })) }
-export function stripEmbeds(body: string): string { return body.replace(FILE_EMBED, '').replace(/^\[chat with [^\]]*\]\n/, '').trim() }
+/* an annotation ask's [[ann:<id>]] marker (artifacts/annotate/ask.ts) is the margin's, never the reader's */
+/* a project chat's first message opens with the project's context block (projects/context.ts): the agents', hidden here */
+export const PROJECT_BLOCK = /^\[project: [^\]\n]{1,80}\]\n(?:[\s\S]*?\n\[\/project\]\n?|[\s\S]*$)/
+/* a CANVAS shared in a message (owner 11-17: "an agent can show in chat that it is built and share it … like they send
+   a pdf"): [[canvas:<id>]] (or canvas-<id>, cv:canvas-<id>), drawn as a card that opens the canvas beside the chat */
+export const CANVAS_EMBED = /\[\[canvas:(?:cv:)?(?:canvas-)?(\d{1,9})\]\]/g
+const ANY_EMBED = new RegExp(`${FILE_EMBED.source}|${CANVAS_EMBED.source}`, 'g')
+export function stripEmbeds(body: string): string { return body.replace(FILE_EMBED, '').replace(CANVAS_EMBED, '').replace(/\s*\[\[ann:[\w.-]{1,80}\]\]/g, '').trimStart().replace(PROJECT_BLOCK, '').replace(/^\[chat with [^\]]*\]\n/, '').trim() }
+/* a body as it READS: its text runs and its [[file:]] embeds in place (thread/Inline.tsx draws a file where it was
+   embedded), cleaned exactly as stripEmbeds cleans: with no embed, the one text run IS stripEmbeds(body) */
+export type Part = { text: string } | { embed: Embed } | { canvas: number }
+export function parts(body: string): Part[] {
+  const clean = body.replace(/\s*\[\[ann:[\w.-]{1,80}\]\]/g, '').trimStart().replace(PROJECT_BLOCK, '').replace(/^\[chat with [^\]]*\]\n/, '')
+  const out: Part[] = []
+  let at = 0
+  const run = (s: string) => { const t = s.trim(); if (t) out.push({ text: t }) }
+  for (const m of clean.matchAll(ANY_EMBED)) {
+    run(clean.slice(at, m.index))
+    out.push(m[3] ? { canvas: Number(m[3]) } : { embed: { path: m[1].trim(), label: m[2] } })
+    at = m.index! + m[0].length
+  }
+  run(clean.slice(at))
+  return out
+}
 export const fileUrl = (path: string) => `/api/chat/file?path=${encodeURIComponent(path)}`
 export function kindOf(path: string): 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'other' {
   const e = path.toLowerCase().split('.').pop() ?? ''
@@ -64,8 +113,30 @@ export async function fetchFile(path: string): Promise<Response> {
   if (!r.ok) throw new Error(r.status === 404 ? 'that file is not readable from here' : `the file did not load (${r.status})`)
   return r
 }
+/* a file's size without its bytes: a one-byte Range read of the same gated route (Content-Range carries the total);
+   null when it can't tell */
+export async function fileSize(path: string): Promise<number | null> {
+  const r = await fetch(fileUrl(path), { headers: { 'x-obs-key': obsKey(), range: 'bytes=0-0' } })
+  if (r.status === 206) await r.arrayBuffer()                  // the one byte; a server that ignored the range: let go
+  else void r.body?.cancel().catch(() => {})
+  if (!r.ok) throw new Error(r.status === 404 ? 'that file is not readable from here' : `the file did not load (${r.status})`)
+  const n = Number(/\/(\d+)\s*$/.exec(r.headers.get('content-range') ?? '')?.[1] ?? (r.status === 200 ? r.headers.get('content-length') : NaN))
+  return Number.isFinite(n) ? n : null
+}
+/* An SVG (the server typed it image/svg+xml only after proving the bytes are one: serve.is_svg) is drawn from a data:
+   URL, never a blob: one. Inside the <img> both are inert, but a blob: URL carries THIS page's origin, so "Open image
+   in new tab" would run the SVG's script as a document beside the owner key; a data: document's origin is opaque. */
+const showing = new WeakMap<HTMLElement, Blob>()
 export function showMedia(el: HTMLImageElement | HTMLAudioElement | HTMLVideoElement, b: Blob) {
   if (el.src.startsWith('blob:')) URL.revokeObjectURL(el.src)
+  showing.set(el, b)
+  if (el instanceof HTMLImageElement && b.type.split(';')[0].trim() === 'image/svg+xml') {
+    el.removeAttribute('src')
+    const fr = new FileReader()
+    fr.onload = () => { if (showing.get(el) === b && typeof fr.result === 'string') el.src = fr.result }
+    fr.readAsDataURL(b)
+    return
+  }
   el.src = URL.createObjectURL(b)
 }
 export function download(b: Blob, name: string) {
@@ -88,7 +159,22 @@ export async function upload(file: Blob, name: string): Promise<Uploaded> {
 }
 
 /* ------------------------------------------------------------------------------------------------- projects */
-export interface Project { id: string; name: string; brief: string; agents: string[]; threads: string[] }
+/* iteration 5: a project = its instructions (the brief its team works under), its TEAM, its conversations (any owner
+   surface), its pinned files (artifact ids); created/updated are stamped by the server. Logic: projects/model.ts */
+export interface Project {
+  id: string; name: string; instructions: string; agents: string[]; threads: string[]; files: string[]
+  color?: string | null; emoji?: string | null; created?: string | null; updated?: string | null; missing?: string[]
+  by?: string | null; shared?: string[]   // the account that made it (none = the owner); the accounts it's shared with
+  yours?: boolean                         // the viewer made it, or is the owner: theirs to share (server-set)
+}
+/* who a project can be shared with: the org's members table, each by account (uid), named as the org knows them (the
+   sign-in's local part); /auth/people is the front's, asked for this org */
+export interface Person { uid: string; name: string }
+export async function loadPeople(org: string): Promise<Person[]> {
+  const r = await fetch(`/auth/people?org=${encodeURIComponent(org)}`, { credentials: 'same-origin', cache: 'no-store' })
+  if (!r.ok) return []
+  return ((await r.json())?.people ?? []) as Person[]
+}
 export interface Projects { etag: string; projects: Project[] }
 export const loadProjects = () => api<Projects>('/chat/projects')
 export async function saveProjects(etag: string, projects: Project[]): Promise<Projects> {
@@ -119,8 +205,9 @@ export async function loadCommands(): Promise<{ skills: Skill[]; tools: McpTool[
 /* D4: the thread's work at TURN level (server: /api/chat/work). A turn belongs to every thread it touched; its other
    threads come named. `live` is each agent's newest unlinked steps ("current work, any thread"); `unlinked` counts
    the older ones that were never filed. */
-export interface Turn { id: number; agent: string; started_at: string | null; ended_at: string | null; input_msg_id: number | null; elsewhere: string[]; steps: Step[] }
-export interface Work { turns: Turn[]; live: Record<string, Step[]>; unlinked: Record<string, number> }
+export interface Turn { id: number; agent: string; started_at: string | null; ended_at: string | null; input_msg_id: number | null; elsewhere: string[]; steps: Step[]
+  msgs?: number[] }               // this thread's rows the turn wrote (the server's back-filled turn_id; a live copy has none)
+export interface Work { turns: Turn[]; live: Record<string, Step[]>; unlinked: Record<string, number>; ended?: Record<string, string | null> }
 export const loadWork = (thread: string) => api<Work>(`/chat/work?thread=${encodeURIComponent(thread)}`)
 
 /* ------------------------------------------------------------------------------------------------- steps */

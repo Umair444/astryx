@@ -3,6 +3,7 @@ import LateReplies from './LateReplies'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, apiPost } from '../api'
 import { Empty, Orb, Panel, Skeleton } from '../ui/kit'
+import { paintGroup, svgPoint, useCamera } from '../ui/camera'
 
 /* The astryx network's SOCIAL graph — the FB shape, deliberately.
  *
@@ -33,47 +34,20 @@ export default function PeopleGraph() {
   const [err, setErr] = useState('')
   const [minW, setMinW] = useState(2)          // knows-edge threshold; storage keeps all
   const [sel, setSel] = useState<PNode | null>(null)
-  const [view, setView] = useState({ x: 0, y: 0, k: 1 })
   const [cy, setCy] = useState('')             // cypher input
   const [cyOut, setCyOut] = useState<string[] | null>(null)
   const [cyErr, setCyErr] = useState('')
   const svgRef = useRef<SVGSVGElement | null>(null)
-  const drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null)
+  const gRef = useRef<SVGGElement | null>(null)
 
   useEffect(() => {
     api<PGraph>(`/network/people?min_shared=1`).then(setG).catch((e) => setErr(String(e)))
   }, [])
 
-  /* Screen→user via the SVG's own CTM — the corrected zoom (see MemoryView for the
-   * incident: CSS pixels applied to user units drifted every zoom toward the origin). */
-  const toUser = (clientX: number, clientY: number) => {
-    const el = svgRef.current
-    if (!el) return null
-    const ctm = el.getScreenCTM()
-    if (!ctm) return null
-    const pt = el.createSVGPoint()
-    pt.x = clientX; pt.y = clientY
-    const u = pt.matrixTransform(ctm.inverse())
-    return { x: u.x, y: u.y }
-  }
-
-  useEffect(() => {
-    const el = svgRef.current
-    if (!el) return
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault()
-      const f = e.deltaY > 0 ? 0.9 : 1.1
-      const u = toUser(e.clientX, e.clientY)
-      setView((v) => {
-        const k = v.k * f
-        if (!Number.isFinite(k) || k <= 1e-6 || k >= 1e6) return v
-        if (!u) return { ...v, k }
-        return { k, x: u.x - (u.x - v.x) * f, y: u.y - (u.y - v.y) * f }
-      })
-    }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-  }, [g])
+  // the observatory's one camera (ui/camera.ts): pointer to user units through the svg's own CTM, painted on the <g>
+  const paintG = useMemo(() => paintGroup(gRef), [])
+  const toUserPt = useMemo(() => svgPoint(svgRef), [])
+  const { cam: view, camRef, setCam: setView, bind: camBind } = useCamera({ box: svgRef, paint: paintG, local: toUserPt, min: 0.02, max: 60 })
 
   const deg = useMemo(() => {
     const m = new Map<string, number>()
@@ -148,7 +122,7 @@ export default function PeopleGraph() {
           {minW}
         </label>
         {(Math.abs(view.k - 1) > 1e-3 || Math.abs(view.x) > 0.5) && (
-          <button onClick={() => setView({ x: 0, y: 0, k: 1 })}
+          <button onClick={() => setView({ x: 0, y: 0, k: 1 }, true)}
             className="px-3 py-1 rounded-full border border-cyan/40 text-cyan text-[11.5px] hover:bg-cyan/10">
             reset · {view.k.toFixed(2)}×
           </button>
@@ -158,17 +132,7 @@ export default function PeopleGraph() {
       <div className="flex-1 flex min-h-0">
         {confirming && <PeopleConfirm onClose={() => setConfirming(false)} />}
         <svg ref={svgRef} viewBox="-700 -540 1400 1080" preserveAspectRatio="xMidYMid meet"
-          className="flex-1 cursor-grab active:cursor-grabbing touch-none"
-          onMouseDown={(e) => { drag.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y } }}
-          onMouseUp={() => { drag.current = null }}
-          onMouseLeave={() => { drag.current = null }}
-          onMouseMove={(e) => {
-            if (!drag.current) return
-            const d = drag.current
-            const a = toUser(d.x, d.y), b = toUser(e.clientX, e.clientY)
-            if (!a || !b) return
-            setView((v) => ({ ...v, x: d.vx + (b.x - a.x), y: d.vy + (b.y - a.y) }))
-          }}>
+          className="flex-1 cursor-grab active:cursor-grabbing touch-none" {...camBind}>
           <defs>
             <radialGradient id="pg-halo">
               <stop offset="0" stopColor="var(--t-accent2)" stopOpacity="0.45" />
@@ -179,7 +143,7 @@ export default function PeopleGraph() {
               <stop offset="1" stopColor="var(--t-warn)" stopOpacity="0" />
             </radialGradient>
           </defs>
-          <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+          <g ref={gRef} transform={`translate(${camRef.current.x} ${camRef.current.y}) scale(${camRef.current.k})`}>
             <g fill="none">
               {shown.map((e, i) => {
                 const a = pos.get(e.src), b = pos.get(e.dst)

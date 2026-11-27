@@ -209,6 +209,16 @@ def live_dsn() -> str:
     tree's admin connection at another org's database (steward #60156 A1). It's a name of its own, never ASTRYX_DSN,
     which an oracle binds to a fixture; a fixture DSN in it is refused loud, not used as the admin."""
     base = REPO if os.environ.get("ASTRYX_SQLGUARD_ROOT") else paths.estate(__file__)
+    # THE TEST ROLE FIRST (cog-rls slice 2): once the org's ASTRYX_DSN is org_<key> (no CREATEDB, no CREATEROLE), the
+    # fixtures run as `astryx_test` (CREATEDB CREATEROLE BYPASSRLS, CONNECT on the maintenance database only, never on
+    # an org's), named by ASTRYX_TEST_DSN: the environment's (a run that pins its own test role), else the .env's.
+    # Absent both, the org's DSN as before, so a host that was never provisioned behaves exactly as it did.
+    t = os.environ.get("ASTRYX_TEST_DSN") or config.read_env(base / ".env").get("ASTRYX_TEST_DSN", "")   # org-home: the cluster's test role, not an org's: a run may pin its own
+    if t:
+        from astryx import orgs
+        if orgs.is_fixture(t):
+            raise ValueError("ASTRYX_TEST_DSN names a fixture database: it is the cluster's test role")
+        return t
     v = os.environ.get("ASTRYX_FIXTURE_ADMIN_DSN")
     if v and not (base / ".env").is_file():   # org-home: base is paths.estate() unless ASTRYX_SQLGUARD_ROOT names a tree
         from astryx import orgs

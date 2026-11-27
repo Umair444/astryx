@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Oracle for scripts/restore_drill.sh, the empty-data-dir restore rehearsal (#5497, seed #44479/#44481).
 
-  NOT RUN   with no docker on PATH, and with docker present but the declared image absent, the drill exits 2 and says
-            NOT RUN, naming why. It never exits 0 for a path it didn't walk.
+  NOT RUN   with no docker on PATH, and with docker present but neither the declared image nor the running postgres
+            container's, the drill exits 2 and says NOT RUN, naming why. With only the running one, it drills on that (seed 14901). It never exits 0 for a path it didn't walk.
   WIRING    restore_verify.sh runs the drill BEFORE its OK stamp, under a wall cap, and any non-zero (NOT RUN and a
             timeout included) sets fail=1, so the stamp reads FAILED.
   LIVE      a SMALL dump (a stamped fixture DB with one row in each core table) drilled end to end on a throwaway server
@@ -38,7 +38,7 @@ print("not run:")
 with tempfile.TemporaryDirectory() as td:
     nodock = Path(td) / "nodock"
     nodock.mkdir()
-    for tool in ("awk", "grep", "cut", "dirname", "mktemp", "bash", "cat", "psql", "tr"):
+    for tool in ("awk", "grep", "cut", "dirname", "mktemp", "bash", "cat", "psql", "tr", "sed", "tail", "rm"):
         w = shutil.which(tool)
         if w:
             (nodock / tool).symlink_to(w)
@@ -53,6 +53,38 @@ with tempfile.TemporaryDirectory() as td:
     check("docker present, the declared image absent → exit 2, NOT RUN, naming the image",
           r.returncode == 2 and "NOT RUN" in r.stderr and "not on this host" in r.stderr,
           f"rc {r.returncode}: {r.stderr[-200:]}")
+
+    # seed 14901: the declared image absent, the drill runs on the image this host's postgres container runs, and
+    # says so; a stub `docker run` that fails shows WHICH image it chose without starting anything
+    (stub / "docker").write_text('#!/bin/sh\ncase "$1 $2 $3" in\n  "image inspect run:1") exit 0 ;;\n'
+                                 '  "image inspect "*) exit 1 ;;\n  "inspect -f "*) echo run:1 ;;\n  run*) exit 1 ;;\nesac\nexit 0\n')
+    r = run([str(stub), str(nodock)])
+    check("the declared image absent, the running container's present → the drill takes the running one",
+          r.returncode == 2 and "docker run of run:1 failed" in r.stderr, f"rc {r.returncode}: {r.stderr[-200:]}")
+
+    # seed 14905: initdb's bootstrap superuser is the provisioner when its root-only DSN file is readable (the org's role
+    # is a restricted login inside), else the org's role; a stub `docker run` records its argv and fails, starting nothing
+    seen = Path(td) / "run.argv"
+    (stub / "docker").write_text('#!/bin/sh\ncase "$1" in\n  image) exit 0 ;;\n'
+                                 f'  run) printf "%s\\n" "$@" > {seen}; exit 1 ;;\nesac\nexit 0\n')
+    sup = Path(td) / "pg-super.dsn"
+    sup.write_text("postgresql://super_fx:pw@db.invalid:5432/postgres\n")
+
+    def boot(super_file):
+        seen.unlink(missing_ok=True)
+        r = subprocess.run(["bash", str(DRILL), "/dev/null"], cwd=REPO, capture_output=True, text=True, timeout=60,
+                           env={**os.environ, "PATH": f"{stub}:{nodock}", "ASTRYX_PG_SUPER_FILE": str(super_file)})
+        users = [a.split("=", 1)[1] for a in (seen.read_text().split() if seen.exists() else []) if a.startswith("POSTGRES_USER=")]
+        return r, users
+    r, users = boot(sup)
+    if not seen.exists() and ("ASTRYX_DSN" in r.stderr or "venv python" in r.stderr):
+        print("  SKIP  bootstrap role: this checkout has no .env/venv (link them to run it)")
+    else:
+        check("the provisioner's DSN file readable → initdb's bootstrap superuser is its user",
+              users == ["super_fx"], f"{users} {r.stderr[-200:]}")
+        r, users = boot(Path(td) / "absent.dsn")
+        check("…and without it, the org's own role, as before", len(users) == 1 and users[0] != "super_fx" and users[0],
+              f"{users} {r.stderr[-200:]}")
 
 print("wiring:")
 rv = (REPO / "scripts" / "restore_verify.sh").read_text()

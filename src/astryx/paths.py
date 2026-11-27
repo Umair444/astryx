@@ -117,7 +117,7 @@ def estate(file: str | Path | None = None) -> Path:
         if (a / "src" / "astryx").is_dir() or (a / "astryx.py").is_file():
             return a
     base = repo_root()
-    for k in range(len(f.parts) - 1, 0, -1):         # the LONGEST tail that is a code-tree file (mcp/gmail/server.py,
+    for k in range(len(f.parts) - 1, 0, -1):         # the LONGEST tail that is a code-tree file (mcp/mail/server.py,
         if (base / Path(*f.parts[-k:])).is_file():    # never a top-level server.py)
             return f.parents[k - 1]
     raise NoHome(f"{f} is in no astryx tree: no estate to read")

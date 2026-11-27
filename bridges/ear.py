@@ -389,7 +389,8 @@ def _replies(conn) -> list[dict]:
     polls this from every tab, so serving a reply is not its delivery (a4 #46445); /ear/api/replies/seen is."""
     rows = conn.execute(
         "SELECT id, from_agent, body, ts, status FROM messages WHERE to_agent = 'owner' AND thread = %s "
-        "AND ts > now() - %s::interval ORDER BY id DESC LIMIT 5", (f"ear-{ROOM}", REPLY_WINDOW)).fetchall()
+        "AND ts > now() - %s::interval AND status IS DISTINCT FROM 'retracted' "   # a cancelled send never shows
+        "ORDER BY id DESC LIMIT 5", (f"ear-{ROOM}", REPLY_WINDOW)).fetchall()
     return [{"id": r[0], "from": r[1], "body": r[2], "ts": r[3].isoformat(), "seen": r[4] != "pending"}
             for r in reversed(rows)]
 

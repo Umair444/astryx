@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""Oracle: rich copy (owner 11-15: an email copied out of a reply landed in Outlook as asterisks and pipes). A copy
+carries formatted HTML for a mail client or a document (inline-styled tables, bold, shaded code) and clean words for a
+plain editor (no markdown marks). The rules (chat/thread/clip.ts) are pure TS, run under node by tests/chat_clip_test.ts
+(tests/node_ts.py); the browser's clipboard itself is proven by the screenshot run (types text/html + text/plain).
+
+    venv/bin/python tests/test_chat_clip.py
+"""
+import re
+import shutil
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "tests"))
+from node_ts import run_ts, ts_unavailable  # noqa: E402
+
+
+def main() -> int:
+    if not shutil.which("node"):
+        print("  FAIL  node is installed")
+        return 1
+    if (why := ts_unavailable()):       # a clean clone (no npm ci): the node suite verifies nothing, not red
+        print(f"  SKIP  the node suite: {why}")
+        return 77
+    rc, out, err = run_ts(REPO / "tests/chat_clip_test.ts")
+    print(out.rstrip())
+    if rc:
+        print(err.strip()[-800:])
+    # the sanitizer can't run under node: its SETTING is pinned here (medic 12241 a): the copy sanitizes with the page's
+    # own PURIFY, and PURIFY forbids the style attribute, so a paste is never more permissive than what was seen
+    clip = (REPO / "observatory/web/src/chat/thread/clip.ts").read_text()
+    prose = (REPO / "observatory/web/src/chat/thread/Prose.tsx").read_text()
+    shared = ("DOMPurify.sanitize(clipMarkup(markdown), PURIFY)" in clip and "FORBID_ATTR: ['style']" in clip
+              and re.search(r"import \{[^}]*\bPURIFY\b[^}]*\} from './clip'", prose) is not None and "const PURIFY" not in prose)
+    print(f"  {'PASS' if shared else 'FAIL'}  the copy sanitizes with the page's own PURIFY (style forbidden), Prose imports it")
+    # a card's buttons act only on the answer's own map by the card's render id; nothing is read back from the page's
+    # data-* (medic 12245 F1), and the subject's html copy is escaped (12245 small 1)
+    own = ("own.get(btn?.closest<HTMLElement>('.ws-dl')?.dataset.dlId" in prose and "card.dataset" not in prose
+           and "copyRich(subject, escapeHtml(subject))" in prose and "randomUUID" not in prose and "getRandomValues" in prose)
+    print(f"  {'PASS' if own else 'FAIL'}  a card acts only on its render's own data (a raw-HTML card is inert); the subject copy is escaped")
+    shared = shared and own
+    return 1 if rc or "ALL PASS" not in out or not shared else 0
+
+
+def test_chat_clip():               # a pytest run collects this too
+    assert main() == 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

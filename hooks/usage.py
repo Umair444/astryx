@@ -2,8 +2,8 @@
 """astryx · usage hook — every wake tells the agent what it is carrying and what the org
 has left. UserPromptSubmit: stdout is injected alongside the prompt.
 
-ONE LINE OF NUMBERS, NO ADVICE (owner ruling 2026-08-21): context load + the org's plan
-gauges, and nothing else. The agent is intelligent; given "5h 99%" it will deprioritize by
+FACTS, NO ADVICE (owner ruling 2026-08-21): context load + how tired the org is (the plan
+gauges read as a forecast: astryx.econ.energy; the raw gauges when no feeling is known), and nothing else. The agent is intelligent; given "5h 99%" it will deprioritize by
 itself — an appended instruction would be the org second-guessing its own minds. This is
 proprioception, not supervision.
 
@@ -29,6 +29,7 @@ try:
 
     # ── context: last usage block in this session's own transcript ──────────────────
     total = 0
+    model = ""
     if tp and os.path.isfile(tp):
         size = os.path.getsize(tp)
         with open(tp, "rb") as fh:
@@ -45,6 +46,7 @@ try:
                 total = (u.get("input_tokens", 0)
                          + u.get("cache_read_input_tokens", 0)
                          + u.get("cache_creation_input_tokens", 0))
+                model = msg.get("model") or ""
 
     # ── the DB: window proof (agent's context high-water) + org plan gauges ─────────
     agent = None
@@ -54,6 +56,7 @@ try:
     plan = ""
     high = 0
     econ_line = ""
+    energy_line = ""
     try:
         import psycopg
         sys.path.insert(0, REPO)
@@ -78,29 +81,56 @@ try:
                 plan = (f" · plan 5h {g[0]:.0f}%"
                         + (f" (resets {reset}Z)" if reset else "")
                         + (f" · 7d {g[1]:.0f}%" if g[1] is not None else ""))
+            # ── [energy]: how tired the org is, as one fact (astryx.econ.energy; owner 11-15: "humans don't know what
+            # 60% is, they get tired"). It replaces the two raw gauges when the feeling is known; arithmetic on one kept
+            # row and the gauge read above, never an aggregate. Its own fail-open try.
+            try:
+                from astryx.econ import energy as _energy
+                energy_line, keep = _energy.prompt_line(conn, agent, paths.estate(__file__))   # its own login's
+                if not keep:
+                    plan = ""
+            except Exception:
+                conn.rollback()
             # ── [econ] line: the v2 MIRROR (goal 4227 S2) — this agent's OWN tools' use by
             # other agents, one precomputed econ row read (never an aggregate in the per-prompt
             # prompt budget), version-gated, no rank. Its OWN fail-open try — a meter must
             # never break the wake for every agent on the org.
             try:
                 sys.path.insert(0, REPO)
-                from nucleus.econ import econ_line as _render, econ_mirror
+                from astryx.econ.econ import ECON_NEUTRAL, econ_line as _render, econ_mirror
                 econ_line = _render(econ_mirror(conn, agent) if agent else None)
+                # a line that says nothing is not printed: the neutral token rode on every prompt of every agent
+                # while the econ table held no row at all (owner 11-15)
+                if econ_line == ECON_NEUTRAL:
+                    econ_line = ""
             except Exception:
                 econ_line = ""
     except Exception:
         pass
 
     if total:
+        # window = the running model's REAL context window. Opus 4.x is a 1M window
+        # (deployment-proven: seed's hook sits >780k uncompacted), so map opus→1M directly
+        # rather than waiting to OBSERVE >200k — else an opus agent still under 200k
+        # phantom-ceilings (reads 188k as "94% of 200k" when it is ~19% of 1M), which drove
+        # real over-caution org-wide (needless defers + self-compaction). Fall back to the
+        # evidence-based floor (an observed load of N proves the window >= N) for any
+        # non-opus/unknown model, staying conservative when the window is unproven.
         evidence = max(total, high)
-        limit = 1_000_000 if evidence > 200_000 else 200_000
-        proven = evidence > 200_000
+        if "opus" in (model or "").lower():
+            limit, proven = 1_000_000, True
+        elif evidence > 200_000:
+            limit, proven = 1_000_000, True
+        else:
+            limit, proven = 200_000, False
         pct = 100.0 * total / limit
         assumed = "" if proven else "an assumed "
         print(f"[usage] context ~{total:,} tokens (~{pct:.0f}% of "
               f"{assumed}{limit // 1000}k){plan}")
     elif plan:
         print(f"[usage]{plan}")
+    if energy_line:
+        print(energy_line)
     if econ_line:
         print(econ_line)
 except Exception:

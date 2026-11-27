@@ -1,0 +1,104 @@
+{
+ "_": "THE PROVIDER CATALOG (Harness and Keys, owner 11-16; docs/superpowers/specs/2026-11-16-harness-and-keys-design.md): one row per provider an org can hold a key for, the ONE source of every fact about it. src/astryx/core/catalog.py is its only reader. `auth`: login (signed in through a harness) or key (pasted, billed per token). `speaks`: {format: endpoint} — the API formats it serves and where; a harness that speaks a format (cli_adapters.json `speaks`) can run on any key whose provider serves it. `native`: the format this provider IS (its endpoint is the harness's built-in one, so no base URL is set). `shape`: a regex the whole key must match. `check`: one free authenticated GET that tells a good key from a rejected one (auth: bearer | x-api-key | x-goog-api-key); absent = not checkable. `models`: what the picker offers, the first the default; `tiers`: the model each of the harness's tier aliases (opus/sonnet/haiku) maps to on this provider. `custom`: the owner gives the endpoint. `billing`: subscription | metered (a metered key carries a daily cap). `usage`: oauth when its limits can be read (astryx.core.usage_refresh). What the Agents tab shows: `name`, `by`, `blurb`, `hex` (its mark's colour), `get` (where to make a key). Adding a provider is adding a row here.",
+ "providers": {
+  "claude": {
+   "name": "Claude account", "by": "Anthropic", "auth": "login", "mark": "anthropic", "hex": "#D97757",
+   "blurb": "Your Claude subscription (Pro, Max, Team). Its own limits, no per-token bill.",
+   "billing": "subscription", "usage": "oauth",
+   "shape": "sk-ant-oat\\d{2}-[A-Za-z0-9_-]{20,}",
+   "models": ["opus", "sonnet", "haiku"]
+  },
+  "anthropic": {
+   "name": "Anthropic API", "by": "Anthropic", "auth": "key", "mark": "anthropic", "hex": "#D97757",
+   "blurb": "Claude models billed per token from the Anthropic Console.",
+   "billing": "metered", "native": "anthropic",
+   "speaks": {"anthropic": "https://api.anthropic.com"},
+   "shape": "sk-ant-api\\d{2}-[A-Za-z0-9_-]{20,}",
+   "get": "https://console.anthropic.com/settings/keys",
+   "check": {"url": "https://api.anthropic.com/v1/models", "auth": "x-api-key", "headers": {"anthropic-version": "2023-06-01"}},
+   "models": ["opus", "sonnet", "haiku"]
+  },
+  "openrouter": {
+   "name": "OpenRouter", "by": "OpenRouter", "auth": "key", "mark": "openrouter", "hex": "#6467F2",
+   "blurb": "One key for hundreds of models from every lab.",
+   "billing": "metered",
+   "speaks": {"anthropic": "https://openrouter.ai/api", "openai": "https://openrouter.ai/api/v1"},
+   "shape": "sk-or-v1-[A-Za-z0-9]{32,}",
+   "get": "https://openrouter.ai/settings/keys",
+   "check": {"url": "https://openrouter.ai/api/v1/key", "auth": "bearer"},
+   "models": ["anthropic/claude-sonnet-4.5", "anthropic/claude-opus-4.1", "deepseek/deepseek-chat", "moonshotai/kimi-k2", "z-ai/glm-4.6"]
+  },
+  "deepseek": {
+   "name": "DeepSeek", "by": "DeepSeek", "auth": "key", "mark": "deepseek", "hex": "#4D6BFE",
+   "blurb": "DeepSeek's models, at a fraction of the price.",
+   "billing": "metered",
+   "speaks": {"anthropic": "https://api.deepseek.com/anthropic", "openai": "https://api.deepseek.com"},
+   "shape": "sk-[A-Za-z0-9]{24,}",
+   "get": "https://platform.deepseek.com/api_keys",
+   "check": {"url": "https://api.deepseek.com/models", "auth": "bearer"},
+   "models": ["deepseek-chat", "deepseek-reasoner"],
+   "tiers": {"opus": "deepseek-reasoner", "sonnet": "deepseek-chat", "haiku": "deepseek-chat"}
+  },
+  "moonshot": {
+   "name": "Kimi", "by": "Moonshot AI", "auth": "key", "mark": "moonshot", "hex": "#8B5CF6",
+   "blurb": "Moonshot's Kimi models, built for agentic coding.",
+   "billing": "metered",
+   "speaks": {"anthropic": "https://api.moonshot.ai/anthropic", "openai": "https://api.moonshot.ai/v1"},
+   "shape": "sk-[A-Za-z0-9]{24,}",
+   "get": "https://platform.moonshot.ai/console/api-keys",
+   "check": {"url": "https://api.moonshot.ai/v1/models", "auth": "bearer"},
+   "models": ["kimi-k2-turbo-preview", "kimi-k2-0905-preview"],
+   "tiers": {"opus": "kimi-k2-turbo-preview", "sonnet": "kimi-k2-turbo-preview", "haiku": "kimi-k2-turbo-preview"}
+  },
+  "zai": {
+   "name": "GLM", "by": "Z.ai", "auth": "key", "mark": "zai", "hex": "#2D7FF9",
+   "blurb": "Z.ai's GLM models.",
+   "billing": "metered",
+   "speaks": {"anthropic": "https://api.z.ai/api/anthropic", "openai": "https://api.z.ai/api/paas/v4"},
+   "shape": "[A-Za-z0-9._-]{24,}",
+   "get": "https://z.ai/manage-apikey/apikey-list",
+   "models": ["glm-4.6", "glm-4.5-air"],
+   "tiers": {"opus": "glm-4.6", "sonnet": "glm-4.6", "haiku": "glm-4.5-air"}
+  },
+  "openai": {
+   "name": "OpenAI", "by": "OpenAI", "auth": "key", "mark": "openai", "hex": "#10A37F",
+   "blurb": "GPT models billed per token from the OpenAI platform.",
+   "billing": "metered", "native": "openai",
+   "speaks": {"openai": "https://api.openai.com/v1"},
+   "shape": "sk-[A-Za-z0-9_-]{20,}",
+   "get": "https://platform.openai.com/api-keys",
+   "check": {"url": "https://api.openai.com/v1/models", "auth": "bearer"},
+   "models": ["gpt-5", "gpt-5-mini"]
+  },
+  "chatgpt": {
+   "name": "ChatGPT account", "by": "OpenAI", "auth": "login", "mark": "openai", "hex": "#10A37F",
+   "blurb": "Your ChatGPT plan, signed in through Codex.",
+   "billing": "subscription",
+   "models": ["gpt-5", "gpt-5-codex"]
+  },
+  "gemini": {
+   "name": "Gemini API", "by": "Google", "auth": "key", "mark": "gemini", "hex": "#4285F4",
+   "blurb": "Google's Gemini models from AI Studio.",
+   "billing": "metered", "native": "gemini",
+   "speaks": {"gemini": "https://generativelanguage.googleapis.com"},
+   "shape": "AIza[A-Za-z0-9_-]{30,}",
+   "get": "https://aistudio.google.com/apikey",
+   "check": {"url": "https://generativelanguage.googleapis.com/v1beta/models", "auth": "x-goog-api-key"},
+   "models": ["gemini-2.5-pro", "gemini-2.5-flash"]
+  },
+  "google": {
+   "name": "Google account", "by": "Google", "auth": "login", "mark": "gemini", "hex": "#4285F4",
+   "blurb": "Your Google account, signed in through Gemini CLI.",
+   "billing": "subscription",
+   "models": ["gemini-2.5-pro", "gemini-2.5-flash"]
+  },
+  "custom": {
+   "name": "Custom endpoint", "by": "", "auth": "key", "mark": "custom", "hex": "#8A8F98", "custom": true,
+   "blurb": "Any endpoint that speaks Anthropic's or OpenAI's API: a gateway, a proxy, a model you host.",
+   "billing": "metered",
+   "speaks": {"anthropic": "", "openai": ""},
+   "shape": "[A-Za-z0-9._~+/=:-]{8,512}",
+   "models": []
+  }
+ }
+}

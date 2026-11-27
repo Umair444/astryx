@@ -57,6 +57,7 @@ NON_VALUE_COLS = {
     "last_progress": "lagging liveness stamp", "dead_epochs": "progress-law counter",
     "done_at": "lifecycle stamp (W keys on it, but reading it is not reading a value)",
     "day": "econ key", "computed_at": "econ row time",
+    "tenant": "the owning org (cog-rls slice 1), a key part, not a quantity of value",
 }
 
 # ── the typed manifest (I2) ─────────────────────────────────────────────────────────────────

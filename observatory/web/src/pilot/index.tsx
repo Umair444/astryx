@@ -15,6 +15,8 @@ import { deskOf, freeDesks, openDesktop, openedDesktop, useDesks } from '../ui/h
 import { createExecutor, type Catalog, type Pending } from './core'
 import { makeHandlers, type PilotCtx } from './handlers'
 import { project } from './egress'
+import { chatCtl, queueChatIntent } from './chatctl'
+import { collectScreen, findOnScreen, locateOnScreen } from './screenDom'
 
 export const CATALOG = catalogJson as unknown as Catalog
 
@@ -42,6 +44,9 @@ if ((import.meta as unknown as { env: { DEV: boolean } }).env.DEV) (window as un
   // a plain object claiming every trusted field, aimed at the bound prompt: the executor must refuse it (a1 #44266)
   confirmForged: () => pilot.confirm(pilot.pending()?.nonce ?? '', { isTrusted: true, pointerType: 'mouse', currentTarget: document.querySelector('[data-pilot-allow]'), timeStamp: 1e9 }),
 }
+
+/** Hear every change of the pending confirm (voice.ts tells the model what the owner's tap decided). */
+export function onPilotPending(f: () => void): () => void { subs.add(f); return () => { subs.delete(f) } }
 
 export function usePilotPending(): Pending | null {
   return useSyncExternalStore((f) => { subs.add(f); return () => { subs.delete(f) } }, () => pending)
@@ -77,6 +82,11 @@ export function PilotHost({ route, agentOpen, setAgentOpen }: {
       deskOf: (agent) => deskOf(agent, live.current.desks)?.agent ?? null,
       freeDesks: () => freeDesks(live.current.desks),
       get: (path) => api(path),
+      chat: () => chatCtl(),
+      toChat: (intent) => { queueChatIntent(intent); nav(intent.kind === 'open' ? { tab: 'chat', thread: intent.thread } : { tab: 'chat' }) },
+      screen: () => collectScreen(live.current.route.tab) as unknown as Record<string, unknown>,
+      find: (words) => findOnScreen(words),
+      locate: (what, key) => locateOnScreen(what, key),
     }
     return () => { ctx = null }
   }, [setAgentOpen, setTheme, cycle])

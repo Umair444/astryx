@@ -377,7 +377,7 @@ def dm_refresh(budget_s: float = DM_NIGHTLY_S, limit: int | None = None) -> dict
             conn.execute(
                 "INSERT INTO social_edge (org, src, dst, rel, weight, first_ts, last_ts, mine, scanned_at) "
                 "VALUES (%s, 'owner', %s, 'dm', %s, %s, %s, %s, now()) "
-                "ON CONFLICT (org, src, dst, rel) DO UPDATE SET weight=EXCLUDED.weight, first_ts=EXCLUDED.first_ts, "
+                "ON CONFLICT (tenant, org, src, dst, rel) DO UPDATE SET weight=EXCLUDED.weight, first_ts=EXCLUDED.first_ts, "
                 "last_ts=EXCLUDED.last_ts, mine=EXCLUDED.mine, scanned_at=now()",
                 (org, pid(c["jid"]), st["n"], st["first"], st["last"], st["mine"]))
             done += 1

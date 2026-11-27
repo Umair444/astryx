@@ -99,7 +99,7 @@ def extract(body: dict) -> dict:
     return out
 
 
-def snapshot(timeout: int = 4) -> dict | None:
+def snapshot(timeout: int = 4, token: str | None = None, credential: str | None = None) -> dict | None:
     """A wire-safe account-usage snapshot for the Stop hook to store on the turn row.
 
       None                          -> nothing worth writing (no credential / no token);
@@ -112,24 +112,30 @@ def snapshot(timeout: int = 4) -> dict | None:
     subscription/rate_limit_tier come from the credential and are the plan NAME (e.g.
     'max') — not money, not the human-personal tier.
     """
-    if not CRED.exists():
-        return None
-    try:
-        oauth = (json.loads(CRED.read_text()).get("claudeAiOauth") or {})
-    except Exception:
-        return None
-    token = oauth.get("accessToken")
+    # a VAULT login (astryx.core.vault) is measured with its own token and tagged with its NAME, so each login's limits
+    # are its own reading (owner 11-16: agents on different Claude logins); without one, the host's login, untagged
+    oauth = {}
+    if token is None:
+        if not CRED.exists():
+            return None
+        try:
+            oauth = (json.loads(CRED.read_text()).get("claudeAiOauth") or {})
+        except Exception:
+            return None
+        token = oauth.get("accessToken")
     if not token:
         return None
+    tag = {"credential": credential} if credential else {}
     now = datetime.now(timezone.utc).isoformat()
     status, body, _err = fetch(token, timeout=timeout)
     if status != 200 or not isinstance(body, dict):
         state = "auth_rejected" if status in (401, 403) else "unavailable"
-        return {"fetched_at": now, "state": state}
+        return {"fetched_at": now, "state": state, **tag}
     return {
         "fetched_at": now,
         "state": "fresh",
         "subscription": oauth.get("subscriptionType"),
         "rate_limit_tier": oauth.get("rateLimitTier"),
         "data": extract(body),
+        **tag,
     }

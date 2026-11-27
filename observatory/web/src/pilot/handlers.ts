@@ -3,6 +3,8 @@
    validated, and the live app through `ctx` (bound by PilotHost). Results are small, plain data: they are what a
    voice reads back, so no URL, query string or key ever goes in one (C1). */
 import type { Handler, Json } from './core'
+import { avatar } from './avatarBus'
+import { matchTitle, type ChatCtl, type ChatIntent } from './chatctl'
 
 export interface PilotCtx {
   view: () => string                                       // the route's tab NAME
@@ -21,6 +23,12 @@ export interface PilotCtx {
   deskOf: (agent: string) => string | null                 // the desktop an agent is using now, if any
   freeDesks?: () => string[]                               // running pool desks nobody holds (owner 11-19: a released desk had no door)
   get: <T>(path: string) => Promise<T>
+  // the call (iteration 17): the chat workspace's controller while it is mounted, the screen, and where things are
+  chat: () => ChatCtl | null
+  toChat: (intent: ChatIntent) => void                     // go to /chat and do this once it has mounted
+  screen: () => Record<string, unknown>                    // pilot/screenDom.ts's raw description (egress masks it)
+  find: (words: string) => unknown | null                  // the visible element best matching these words
+  locate: (what: 'tab' | 'thread' | 'composer' | 'file' | 'agent' | 'search' | 'scroll' | 'theme', key?: string) => unknown | null
 }
 
 /** The element the owner is reading: the largest scrollable box inside the main area. */
@@ -41,14 +49,23 @@ function scroller(): HTMLElement | null {
 type Usage = { state: string; five_hour_pct?: number | null; seven_day_pct?: number | null; five_hour_reset?: string | null; seven_day_reset?: string | null; age_seconds?: number | null }
 type GoalRow = { id: number; title: string; state: string; owner: string }
 
+const said = (s: string) => s.replace(/_/g, ' ')
+async function threadList(ctx: PilotCtx): Promise<{ thread: string; title: string }[]> {
+  const c = ctx.chat()
+  if (c) return c.threads()
+  const r = await ctx.get<{ threads?: { thread: string; title: string }[] } | { thread: string; title: string }[]>('/ws/threads')
+  return Array.isArray(r) ? r : r.threads ?? []
+}
+
 export function makeHandlers(ctx: PilotCtx): Record<string, Handler> {
   return {
-    navigate: (a) => { ctx.navigate(a.view as string); return { view: a.view } },
+    navigate: (a) => { avatar.point(ctx.locate('tab', a.view as string), `opening ${a.view}`); ctx.navigate(a.view as string); return { view: a.view } },
     open_thread: (a) => { ctx.openThread(a.thread as string); return { thread: a.thread } },
     open_agent: (a) => {
       const want = (a.agent as string).trim().toLowerCase()
       const name = ctx.agents().find((n) => n.toLowerCase() === want)
       if (!name) throw new Error(`no agent named ${a.agent}`)
+      avatar.point(ctx.locate('agent', name), `opening ${name}`)
       ctx.openAgent(name)
       return { agent: name }
     },
@@ -58,11 +75,12 @@ export function makeHandlers(ctx: PilotCtx): Record<string, Handler> {
       if (ctx.agentOpen()) { ctx.openAgent(null); closed.push('agent') }
       return { closed }
     },
-    set_theme: (a) => { ctx.setTheme(a.theme as string); return { theme: a.theme } },
-    cycle_theme: (a) => { ctx.cycleTheme(a.direction === 'previous' ? -1 : 1); return { theme: ctx.theme() } },
+    set_theme: (a) => { avatar.point(ctx.locate('theme'), said(a.theme as string)); ctx.setTheme(a.theme as string); return { theme: a.theme } },
+    cycle_theme: (a) => { avatar.point(ctx.locate('theme'), 'new colours'); ctx.cycleTheme(a.direction === 'previous' ? -1 : 1); return { theme: ctx.theme() } },
     scroll: (a) => {
-      const el = scroller()
+      const el = (ctx.locate('scroll') as HTMLElement | null) ?? scroller()
       if (!el) return { scrolled: false }
+      avatar.work(el, `scrolling ${a.to}`)
       const page = el.clientHeight * 0.8
       const top = a.to === 'top' ? 0 : a.to === 'bottom' ? el.scrollHeight : el.scrollTop + (a.to === 'down' ? page : -page)
       el.scrollTo({ top, behavior: 'smooth' })
@@ -89,6 +107,62 @@ export function makeHandlers(ctx: PilotCtx): Record<string, Handler> {
       const rows = await ctx.get<GoalRow[]>('/goals')
       const hit = rows.filter((g) => g.state === a.state)
       return { state: a.state, count: hit.length, goals: hit.slice(0, 12).map((g) => ({ id: g.id, title: g.title.slice(0, 140), owner: g.owner })) }
+    },
+    read_screen: () => ctx.screen() as Json,
+    point_at: (a) => {
+      const el = ctx.find(a.target as string)
+      if (!el) throw new Error(`nothing on screen reads "${String(a.target).slice(0, 60)}"`)
+      avatar.point(el, '')
+      return { pointed: true, at: a.target }
+    },
+    open_conversation: async (a) => {
+      const hit = matchTitle(await threadList(ctx), a.title as string)
+      if (!hit) throw new Error(`no conversation titled like "${String(a.title).slice(0, 60)}"`)
+      const c = ctx.chat()
+      if (c) { avatar.point(ctx.locate('thread', hit.thread), 'opening it'); c.open(hit.thread) }
+      else ctx.toChat({ kind: 'open', thread: hit.thread })
+      return { opened: true, title: hit.title }
+    },
+    search: (a) => {
+      const c = ctx.chat()
+      if (c) { avatar.point(ctx.locate('search'), 'searching'); c.search(a.query as string) }
+      else ctx.toChat({ kind: 'search', query: a.query as string })
+      return { searching: true }
+    },
+    open_file: (a) => {
+      const c = ctx.chat()
+      if (!c) throw new Error('files open in the chat workspace: open a conversation first')
+      const hit = matchTitle(c.files().map((f) => ({ ...f, title: f.name })), a.name as string)
+      if (!hit) throw new Error(`no file in this conversation named like "${String(a.name).slice(0, 60)}"`)
+      avatar.point(ctx.locate('file', hit.name), 'opening it')
+      if (!c.openFile(hit.name)) throw new Error('that file would not open')
+      return { opened: true, name: hit.name }
+    },
+    dance: () => { avatar.dance(); return { danced: true } },
+    switch_agent: async (a) => {
+      const c = ctx.chat()
+      if (!c || c.view() !== 'thread') throw new Error('open a chat conversation first')
+      const want = (a.agent as string).trim().toLowerCase()
+      const name = c.agents().find((n) => n.toLowerCase() === want)
+      if (!name) throw new Error(`no agent named ${a.agent}`)
+      avatar.work(ctx.locate('composer'), `handing it to ${name}`)
+      await c.switchAgent(name)
+      return { agent: name }
+    },
+    type_in_composer: (a) => {
+      const c = ctx.chat()
+      if (!c) throw new Error('the message box is in the chat workspace: open a conversation first')
+      avatar.work(ctx.locate('composer'), 'typing')
+      c.draft(a.text as string, a.mode === 'append' ? 'append' : 'replace')
+      return { typed: true, chars: (a.text as string).length }
+    },
+    send_message: async (a) => {
+      // class write: the palette's tap confirms it; the owner's own call runs it outright (owner 11-11: no taps)
+      const c = ctx.chat()
+      if (!c || c.view() !== 'thread' || !c.agent()) throw new Error('open a chat conversation with an agent first')
+      await c.send(a.text as string)
+      avatar.cheer('sent')
+      return { sent: true }
     },
     open_desktop: (a) => {
       const want = (a.agent as string).trim().toLowerCase()

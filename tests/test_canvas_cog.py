@@ -8,10 +8,10 @@ Two fixture databases (one per org, each HOME's DSN; config.dsn allows a fixture
 naming two HOMEs (their .env: a fixture federation name, a fake OBS_KEY), and three runs of the REAL
 bridges/canvas.py in a child process each (its org is resolved at import): one org (no registry), HOME A, HOME B. Each
 child drives the app in process (TestClient, nothing bound): the bare /canvas bounce, an owner login, /api/me under
-its own cookie name and under another's, an invite link, a logout. Every call carries a caller's x-forwarded-prefix
+its own cookie name and under another's, a logout. Every call carries a caller's x-forwarded-prefix
 (/o/evil): the prefix is computed from the registry, never read from a request.
 
-  C1 one org: cookie cv_session, Path=/canvas; the bounce to /canvas/; the invite link .../canvas/#invite=; the logout
+  C1 one org: cookie cv_session, Path=/canvas; the bounce to /canvas/; the logout
      clears Path=/canvas; main.py's canvas upstream is :8091 and its bounce /canvas/
   C2 HOME A: cookie cv_session-<A>, Path=/o/<A>/canvas; the bounce, the link and the logout under /o/<A>/canvas;
      /api/me is the owner under that name, and 401 under the one-org name; main.py: A's registry port, /o/<A>/canvas/
@@ -84,8 +84,6 @@ with TestClient(b.root, base_url="http://testserver") as cl:
     out["me"] = me(b.COOKIE)
     out["me_plain"] = me("cv_session")
     cl.cookies.clear()
-    r = cl.post("/canvas/api/users", json={"name": "fxguest"}, headers={**H, **EVIL, "cookie": f"{b.COOKIE}={tok}"})
-    out["link"] = (r.json() or {}).get("link", "") if r.status_code == 200 else f"HTTP {r.status_code}"
     cl.cookies.clear()
     r = cl.post("/canvas/api/logout", headers={**H, **EVIL, "cookie": f"{b.COOKIE}={tok}"})
     out["logout"] = r.headers.get_list("set-cookie")
@@ -94,16 +92,18 @@ with TestClient(b.root, base_url="http://testserver") as cl:
 msrc = Path(os.environ.get("CANVAS_MAIN_SRC") or REPO / "observatory" / "api" / "main.py").read_text()
 keep = []
 for n in ast.parse(msrc).body:
-    if isinstance(n, ast.Assign) and any(getattr(t, "id", "") in ("CANVAS_UP", "CANVAS_PRE") for t in n.targets):
+    # _SEAT/_COG: "behind the cog's front" (orgs.here, cog front parity 11-13), read from the source, never re-derived
+    if isinstance(n, ast.Assign) and any(getattr(t, "id", "") in ("CANVAS_UP", "CANVAS_PRE", "_SEAT", "_COG")
+                                         for t in n.targets):
         keep.append(n)
     elif isinstance(n, ast.FunctionDef) and n.name == "_upstream":     # CANVAS_UP's one source (9b4c37c)
         keep.append(n)
     elif isinstance(n, ast.AsyncFunctionDef) and n.name == "canvas_root":
         n.decorator_list = []
         keep.append(n)
-from astryx import orgs
+from astryx import orgs, paths
 from starlette.responses import Response
-g = {"orgs": orgs, "_COG": orgs.multi(), "Response": Response}
+g = {"orgs": orgs, "Response": Response, "ESTATE": paths.estate(REPO / "observatory" / "api" / "main.py")}
 exec(compile(ast.Module(body=keep, type_ignores=[]), "main.py", "exec"), g)
 out["main_up"] = g.get("CANVAS_UP")
 out["main_bounce"] = asyncio.run(g["canvas_root"]()).headers.get("location") if "canvas_root" in g else None
@@ -165,8 +165,6 @@ def main():
           str(g))
     check("the bare /canvas bounces to /canvas/", g.get("bounce") == [308, "/canvas/"], str(g.get("bounce")))
     check("/api/me is the owner under cv_session", g.get("me") == 200, str(g))
-    check("the invite link is <host>/canvas/#invite=…", str(g.get("link", "")).startswith("http://testserver/canvas/#invite="),
-          str(g.get("link")))
     lo = [attrs(x) for x in g.get("logout", [])]
     check("logout clears cv_session at Path=/canvas", any(n == "cv_session" and a.get("path") == "/canvas" for n, a in lo),
           str(g.get("logout")))
@@ -184,8 +182,6 @@ def main():
         check(f"the bare /canvas bounces to {path}/", g.get("bounce") == [308, f"{path}/"], str(g.get("bounce")))
         check(f"/api/me is the owner under {name}, and 401 under the one-org name cv_session",
               g.get("me") == 200 and g.get("me_plain") == 401, str(g))
-        check(f"the invite link is <host>{path}/#invite=…", str(g.get("link", "")).startswith(f"http://testserver{path}/#invite="),
-              str(g.get("link")))
         lo = [attrs(x) for x in g.get("logout", [])]
         check(f"logout clears {name} at Path={path}", any(n == name and a.get("path") == path for n, a in lo),
               str(g.get("logout")))

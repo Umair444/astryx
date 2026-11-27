@@ -36,7 +36,19 @@ def _one(apply: bool) -> int:
     """This process's org. Reads its DSN from its own estate."""
     body = SCHEMA.read_bytes()
     sha = hashlib.sha256(body).hexdigest()
-    with psycopg.connect(config.dsn(paths.estate(__file__) / ".env"), autocommit=True) as c:
+    dsn = config.dsn(paths.estate(__file__) / ".env")
+    if apply:
+        # cog-rls slice 2: the org's DSN is org_<key> once provisioned, which owns nothing, so an APPLY runs as the
+        # provisioner (the root-only superuser file, hence sudo) on the org's own database. schema.sql's last statement
+        # (cog.adopt) puts ownership and grants back. Unprovisioned (no file): the org's DSN, as before.
+        try:
+            from psycopg.conninfo import conninfo_to_dict, make_conninfo
+            sys.path.insert(0, str(ROOT))
+            from devtools.cog_roles import super_dsn
+            dsn = make_conninfo(super_dsn(), dbname=conninfo_to_dict(dsn).get("dbname"))
+        except LookupError:
+            pass
+    with psycopg.connect(dsn, autocommit=True) as c:
         try:
             have = c.execute("SELECT sha FROM schema_applied WHERE id = 1").fetchone()
         except psycopg.errors.UndefinedTable:
@@ -52,6 +64,7 @@ def _one(apply: bool) -> int:
                   "applied_at timestamptz NOT NULL DEFAULT now())")
         c.execute("INSERT INTO schema_applied (id, sha) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET sha = "
                   "EXCLUDED.sha, applied_at = now()", (sha,))
+        c.execute("CALL cog.adopt()")          # schema_applied too (a no-op on an unprovisioned database)
     print(f"applied ({sha[:12]})")
     return 0
 

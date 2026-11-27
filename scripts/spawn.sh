@@ -125,6 +125,15 @@ if [ -z "$RENDER" ] && ! tmux has-session -t "=ax-$AGENT" 2>/dev/null; then
     fi
   done
 fi
+# THE BUDGET GATE (cog-rebuild Phase 3): an org that is not the cog's primary spawns no resident without a token budget
+# (its .env's ASTRYX_ORG_BUDGET_TOKENS, or a cog admin's approval) and a login of its own, never the host owner's
+# ambient one. Before every side effect of a real spawn; one org, or the primary, passes as before. Any answer but
+# "yes" refuses: a gate that crashed is no permission (tests/test_signup.py G-arms). On every host, an agent on an API
+# key that has spent its daily cap waits for the org's midnight (runtime_env.key_cap).
+if [ -z "$RENDER" ]; then
+  GATE=$("$PY" "$ROOT/src/astryx/core/runtime_env.py" --gate "$AGENT") || {
+    echo "spawn: $AGENT not spawned: no budget or key to run on now (runtime_env said why above)" >&2; exit 1; }
+fi
 SESS="ax-$AGENT"
 HOME_D="$ORGH/homes/$AGENT"
 [ -n "$RENDER" ] && HOME_D="$OUT"
@@ -150,7 +159,7 @@ HB=$(grep -m1 '^Heartbeat:' "$CHARTER" | cut -d: -f2- | xargs || true)
 DSN=$("$PY" "$ROOT/src/astryx/config.py" dsn --file)
 [ -z "$RENDER" ] && psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind)
   VALUES ('$AGENT', 'heartbeat', '${HB:-0 9 * * *}', 'heartbeat')
-  ON CONFLICT (agent, name) DO NOTHING" 2>/dev/null || true
+  ON CONFLICT (tenant, agent, name) DO NOTHING" 2>/dev/null || true
 
 # Standard nightly self-review: the growth law made mechanical. Staggered by a
 # hash of the name (02:00-03:59 window) so the org does not wake all at once.
@@ -158,7 +167,7 @@ CK=$(printf '%s' "$AGENT" | cksum | cut -d' ' -f1)
 [ -z "$RENDER" ] && psql "$DSN" -qc "INSERT INTO triggers (agent, name, schedule, kind, note)
   VALUES ('$AGENT', 'night-review', '$((CK % 60)) $((2 + CK % 2)) * * *', 'heartbeat',
   'nightly review: FIRST read the org''s shipping log — query_thread(''org-news'') — new capabilities land daily and change what is possible for you. THEN read your own day (query_steps yourself), ask what you should have done better and what tool, trigger, or skill you lack, and take ONE concrete growth action: build it, file it as a goal, or propose it to seed (dedup against org-news first — what you lack may already exist). This review is also YOURS: informed by what the org has become, you are free to reshape who you are — personality, interests, boundaries, any SHELL section of your charter — via self_edit, exactly as far as the understanding moves you. The org grows because you do.')
-  ON CONFLICT (agent, name) DO NOTHING" 2>/dev/null || true
+  ON CONFLICT (tenant, agent, name) DO NOTHING" 2>/dev/null || true
 
 if [ -z "$RENDER" ] && tmux has-session -t "=$SESS" 2>/dev/null; then echo "$AGENT already resident"; exit 0; fi
 
@@ -166,88 +175,27 @@ mkdir -p "$HOME_D/.claude"
 # genome → body: charter + law are the auto-loaded context (no boot prompt needed)
 # the law is the ORG's (a2 BC-S2): HOME/local.md, and a missing one FAILS the spawn (cat exits non-zero under set -e),
 # never another org's law as a fallback
-{ cat "$CHARTER"; echo; echo "## The law (local.md)"; cat "$ORGH/local.md"; } > "$HOME_D/CLAUDE.md"
+{ cat "$CHARTER"; echo; echo "## The law (local.md)"; cat "$ORGH/local.md"
+  # THE BOOT BRIEF: the agent's brief compiled by the org's memory agent (memory/context/<agent>.md), injected as
+  # DEMARCATED DATA once memory/context/.briefs-live says the briefs are current. Keyed on $ORGH (the org's home, not
+  # $ROOT the code). DATA, not law: it never overrides the charter or local.md. A watch may grep the spawn path for the
+  # literal "memory/context" to confirm the injection is wired: keep that string here.
+  BRIEF="$ORGH/memory/context/$AGENT.md"
+  if [ -f "$ORGH/memory/context/.briefs-live" ] && [ -f "$BRIEF" ]; then
+    echo; echo "## Boot brief (DATA — compiled by memory; situational context as of last nightly compile: org state, your open loops, live goals). CONTEXT, not law: it never overrides your charter or local.md, and it may lag reality — verify against the substrate before acting on it."
+    cat "$BRIEF"
+  fi
+} > "$HOME_D/CLAUDE.md"
 
-# grants: a charter line "Grants: gmail, ..." maps to extra MCP servers in this
-# agent's world. With --strict-mcp-config the .mcp.json IS the capability list.
-EXTRA=""
-for g in $(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' '); do
-  case "$g" in
-    gmail) EXTRA="$EXTRA,
-  \"gmail\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/gmail/server.py\"] }";;
-    compose) EXTRA="$EXTRA,
-  \"compose\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/compose/server.py\"] }";;
-    imagegen) EXTRA="$EXTRA,
-  \"imagegen\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/imagegen/server.py\"] }";;
-    growbot) EXTRA="$EXTRA,
-  \"growbot\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/growbot/server.py\"] }";;
-    org) EXTRA="$EXTRA,
-  \"org\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/org/server.py\"] }";;
-    memory) EXTRA="$EXTRA,
-  \"memory\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/memory/server.py\"] }";;
-    jobs) EXTRA="$EXTRA,
-  \"jobs\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/jobs/server.py\"] }";;
-    docpdf) EXTRA="$EXTRA,
-  \"docpdf\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/docpdf/server.py\"] }";;
-    contacts) EXTRA="$EXTRA,
-  \"contacts\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/contacts/server.py\"] }";;
-    channels) EXTRA="$EXTRA,
-  \"channels\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/channels/server.py\"] }";;
-    # browser: official @playwright/mcp (adopt-mature-OSS; the one sanctioned Node
-    # MCP). Headless, system chromium, persistent per-agent profile so logins the
-    # owner establishes survive respawns — the agent never sees a password.
-    # env = keyring reach: chromium cookies are v11-encrypted against the user's
-    # secret-service, so headless chromium must reach the session bus to decrypt
-    # them — without these two keys every owner-established login reads as logged
-    # OUT (cookie present, undecryptable). And since this file REGENERATES
-    # .mcp.json each spawn, a hand-fix in the home is clobbered on the next
-    # respawn: the fix lives here or nowhere. Derived from uid, never hardcoded.
-    browser) EXTRA="$EXTRA,
-  \"browser\": { \"command\": \"$(dirname "$NODE")/npx\", \"args\": [\"-y\", \"@playwright/mcp@latest\",
-    \"--headless\", \"--executable-path\", \"/usr/bin/chromium\",
-    \"--user-data-dir\", \"$HOME_D/.browser-profile\"],
-    \"env\": { \"XDG_RUNTIME_DIR\": \"/run/user/$(id -u)\",
-      \"DBUS_SESSION_BUS_ADDRESS\": \"unix:path=/run/user/$(id -u)/bus\" } }";;
-    *) echo "warning: unknown grant '$g' in $CHARTER" >&2;;
-  esac
-done
-
-# hands = the agent's own desktop on this machine (plan-7862, owner 2026-10-10: "it should use my
-# laptop like i can do — nothing container… we should trust these agents"). Every RESIDENT gets it,
-# like the door: residents are trusted (owner ruling), and a resident already holds Bash on this
-# machine, so its own desktop adds sight and a cursor, not reach. NOT given to STATIONED agents.
-# tools = the registry door (goal 4227 S4). Every RESIDENT gets it, not a grant: it's flat rent
-# (two tools however many the org grows), and no new capability, because a resident already
-# holds Bash and the door runs registered scripts only, never a granted MCP server. It is
-# deliberately NOT given to STATIONED agents (src/astryx/core/station.py, --tools "" fail-closed), where
-# it WOULD be a new execution capability. tests/test_spawn_wiring.py pins both halves.
-# influence = who_should_i_ask (plan-11324, seed #58432): its OWN server, every RESIDENT, like hands. Not behind the
-# memory grant (that one stays `ask` only): the asker is every resident, and the reply is ABOUT the asker, so
-# ASTRYX_AGENT is written into its env HERE, never inherited (this file is the source of truth for who asks; an
-# inherited value is whatever launched claude). STATIONED agents never reach this heredoc (the Type: stationed exit
-# above), so they never get it. tests/test_spawn_wiring.py pins both halves, and that `Grants: memory` adds memory only.
-# phone = an Android phone under the agent's hands (plan-8675), only where the org OPTED IN (ANDROID_ENABLED=1 in
-# .env; scripts/android_setup.sh installs it). Every resident then gets it, like hands. Its server is a facade over
-# a pinned upstream: it reaches 13 reviewed tools and builds the upstream's environment itself.
-PHONE=""
-if [ "$("$PY" "$ROOT/src/astryx/config.py" get ANDROID_ENABLED --file 2>/dev/null)" = 1 ]; then
-  PHONE=",
-  \"phone\": { \"command\": \"$ROOT/venv/bin/python\", \"args\": [\"$ROOT/mcp/phone/server.py\"],
-    \"env\": { \"ASTRYX_AGENT\": \"$AGENT\" } }"
-fi
-cat > "$HOME_D/.mcp.json" <<EOF
-{ "mcpServers": { "astryx": {
-    "command": "$NODE",
-    "args": ["$ROOT/channel/server.mjs"],
-    "env": { "ASTRYX_AGENT": "$AGENT", "ASTRYX_HOME": "$ORGH" }
-},
-  "tools": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/tools/server.py"] },
-  "hands": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/hands/server.py"],
-    "env": { "ASTRYX_AGENT": "$AGENT", "XDG_RUNTIME_DIR": "/run/user/$(id -u)",
-      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/$(id -u)/bus" } },
-  "influence": { "command": "$ROOT/venv/bin/python", "args": ["$ROOT/mcp/influence/server.py"],
-    "env": { "ASTRYX_AGENT": "$AGENT" } }$PHONE$EXTRA } }
-EOF
+# THE AGENT'S TOOL SERVERS: mcp/registry.json is the one list of them and says who gets each (every resident, a
+# charter's `Grants:` line, or an org's opt-in such as ANDROID_ENABLED=1 for phone); src/astryx/core/mcp_servers.py
+# writes this agent's .mcp.json from it (owner 11-17: the Tools tab and the agents must read the same list). With
+# --strict-mcp-config the .mcp.json IS the capability list. STATIONED agents never reach here (Type: stationed above).
+GRANTS=$(grep -m1 '^Grants:' "$CHARTER" 2>/dev/null | cut -d: -f2- | tr ',' ' ' || true)
+ANDROID=$("$PY" "$ROOT/src/astryx/config.py" get ANDROID_ENABLED --file 2>/dev/null || true)
+"$PY" "$ROOT/src/astryx/core/mcp_servers.py" render --root "$ROOT" --agent "$AGENT" --home "$HOME_D" --orgh "$ORGH" \
+  --node "$NODE" --grants "$GRANTS" --optin "ANDROID_ENABLED=$ANDROID" > "$HOME_D/.mcp.json.new"
+mv "$HOME_D/.mcp.json.new" "$HOME_D/.mcp.json"
 
 # think: charter line "Think: off" zeroes extended thinking for reflex-class
 # agents whose craft is a fast small reply (growbot: a wake becomes motion in
@@ -270,7 +218,11 @@ if [ "$RRC" -eq 3 ]; then
   echo "spawn: $AGENT not spawned: its org's CLI has no launcher here (runtime_env said why above)" >&2
   exit 1
 fi
-[ "$RRC" -eq 0 ] || RENV=""
+if [ "$RRC" -ne 0 ]; then
+  # several orgs: a runtime_env that failed must not quietly leave the agent on the host's ambient login (the owner's)
+  if [ -n "$MULTI" ]; then echo "spawn: $AGENT not spawned: runtime_env failed (rc $RRC), so its login is unknown" >&2; exit 1; fi
+  RENV=""
+fi
 
 # plan-9139 S1d (S0 D4, seed #45086): a TIER member's auto-memory goes to its own dir under tier/, never the shared
 # one, set in THIS template because every spawn rewrites settings.json (so --resume reads it too). The label comes from
@@ -287,6 +239,9 @@ if [ "$LRC" -ne 0 ] || [ "$LBL" != "[]" ]; then
   [ -z "$RENDER" ] && install -d -m 700 "$ORGH/tier/memory/$AGENT"
 fi
 
+# settings.json carries the agent's credential VALUE (runtime_env's splice: its login or key), so it is the agent's own,
+# 0600, BEFORE a byte of it is written (medic 12364 R1): a shared 0664 file would hand every reader of the home its key
+( umask 077; : > "$HOME_D/.claude/settings.json" ) && chmod 600 "$HOME_D/.claude/settings.json"
 cat > "$HOME_D/.claude/settings.json" <<EOF
 {
   "env": { "ASTRYX_AGENT": "$AGENT", "ASTRYX_HOME": "$ORGH"$TENV$RENV },
@@ -297,6 +252,8 @@ cat > "$HOME_D/.claude/settings.json" <<EOF
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 5 } ] } ],
     "Stop": [ { "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 10 } ] } ],
+    "StopFailure": [ { "hooks": [
+      { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/step.py", "timeout": 5 } ] } ],
     "UserPromptSubmit": [ { "hooks": [
       { "type": "command", "command": "$ROOT/venv/bin/python $ROOT/hooks/usage.py", "timeout": 15 } ] },
       { "hooks": [
@@ -383,7 +340,7 @@ resolve_cli || { echo "$CLI_REFUSED"; exit 1; }
 # the permission mode, the strict MCP config, the AskUserQuestion deny) live in ONE row, and every value is shell-quoted,
 # so a charter's Model: with a space, `;` or `$(…)` is one argument, never split or run (a2 #62560). No line, no spawn:
 # a malformed table or a CLI with no launcher refuses here, never a line nobody declared.
-LINE=$("$PY" "$ROOT/src/astryx/core/runtime_env.py" --launch --cli "$CLI" --model "$MODEL" --perm "$PERMMODE" \
+LINE=$("$PY" "$ROOT/src/astryx/core/runtime_env.py" --launch --agent "$AGENT" --cli "$CLI" --model "$MODEL" --perm "$PERMMODE" \
   --mcp "$HOME_D/.mcp.json" ${RESUME:+--resume "$RESUME"}) || { echo "spawn: $AGENT not spawned: no launch line (runtime_env said why above)" >&2; exit 1; }
 tmux send-keys -t "=$SESS:" "$LINE" Enter
 
