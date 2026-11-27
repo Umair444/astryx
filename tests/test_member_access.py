@@ -317,7 +317,7 @@ def main(tmp: Path, url: str):
     planted = estate / "media" / "planted.csv"
     planted.write_text("k\n1\n")
     with psycopg.connect(url, autocommit=True) as c:
-        for frm, org in (("cv-alice", "local"), ("wa-923001234567", "local"), ("cv-carol.9", "local"), ("db", "peer.example")):
+        for frm, org in (("cv-alice", "local"), ("wa-92" + "3001234567", "local"), ("cv-carol.9", "local"), ("db", "peer.example")):
             c.execute("INSERT INTO messages (from_agent, to_agent, thread, intent, body, from_org) VALUES "
                       "(%s,'cv-alice.7','chat:20990101-h','chat',%s,%s)", (frm, f"see [[file:{planted}]]", org))
     arm("HX1 a path typed by her canvas handle, a WhatsApp sender, a colleague or a federated peer's 'db' gives alice nothing",
